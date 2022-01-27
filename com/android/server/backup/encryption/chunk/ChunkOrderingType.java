@@ -11,16 +11,17 @@
  * distributed under the License is distributed on an "AS IS" BASIS,
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
  * See the License for the specific language governing permissions and
- * limitations under the License
+ * limitations under the License.
  */
 
 package com.android.server.backup.encryption.chunk;
 
-import static com.android.server.backup.encryption.chunk.ChunksMetadataProto.CHUNK_ORDERING_TYPE_UNSPECIFIED;
-import static com.android.server.backup.encryption.chunk.ChunksMetadataProto.EXPLICIT_STARTS;
-import static com.android.server.backup.encryption.chunk.ChunksMetadataProto.INLINE_LENGTHS;
+import static com.android.server.backup.encryption.protos.nano.ChunksMetadataProto.CHUNK_ORDERING_TYPE_UNSPECIFIED;
+import static com.android.server.backup.encryption.protos.nano.ChunksMetadataProto.EXPLICIT_STARTS;
+import static com.android.server.backup.encryption.protos.nano.ChunksMetadataProto.INLINE_LENGTHS;
 
 import android.annotation.IntDef;
+
 import java.lang.annotation.Retention;
 import java.lang.annotation.RetentionPolicy;
 

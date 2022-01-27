@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2017 The Android Open Source Project
+ * Copyright (C) 2020 The Android Open Source Project
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -11,29 +11,28 @@
  * distributed under the License is distributed on an "AS IS" BASIS,
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
  * See the License for the specific language governing permissions and
- * limitations under the License
+ * limitations under the License.
  */
 
 package android.telephony;
 
 import android.Manifest;
 import android.annotation.NonNull;
+import android.annotation.Nullable;
 import android.annotation.UserIdInt;
 import android.app.ActivityManager;
 import android.app.AppOpsManager;
 import android.content.Context;
 import android.content.pm.PackageManager;
-import android.content.pm.UserInfo;
 import android.location.LocationManager;
 import android.os.Binder;
 import android.os.Build;
 import android.os.Process;
 import android.os.UserHandle;
-import android.os.UserManager;
 import android.util.Log;
 import android.widget.Toast;
 
-import java.util.List;
+import com.android.internal.telephony.util.TelephonyUtils;
 
 /**
  * Helper for performing location access checks.
@@ -57,8 +56,10 @@ public final class LocationAccessPolicy {
         DENIED_HARD,
     }
 
+    /** Data structure for location permission query */
     public static class LocationPermissionQuery {
         public final String callingPackage;
+        public final String callingFeatureId;
         public final int callingUid;
         public final int callingPid;
         public final int minSdkVersionForCoarse;
@@ -66,10 +67,11 @@ public final class LocationAccessPolicy {
         public final boolean logAsInfo;
         public final String method;
 
-        private LocationPermissionQuery(String callingPackage, int callingUid, int callingPid,
-                int minSdkVersionForCoarse, int minSdkVersionForFine, boolean logAsInfo,
-                String method) {
+        private LocationPermissionQuery(String callingPackage, @Nullable String callingFeatureId,
+                int callingUid, int callingPid, int minSdkVersionForCoarse,
+                int minSdkVersionForFine, boolean logAsInfo, String method) {
             this.callingPackage = callingPackage;
+            this.callingFeatureId = callingFeatureId;
             this.callingUid = callingUid;
             this.callingPid = callingPid;
             this.minSdkVersionForCoarse = minSdkVersionForCoarse;
@@ -78,8 +80,10 @@ public final class LocationAccessPolicy {
             this.method = method;
         }
 
+        /** Builder for LocationPermissionQuery */
         public static class Builder {
             private String mCallingPackage;
+            private String mCallingFeatureId;
             private int mCallingUid;
             private int mCallingPid;
             private int mMinSdkVersionForCoarse = Integer.MAX_VALUE;
@@ -92,6 +96,14 @@ public final class LocationAccessPolicy {
              */
             public Builder setCallingPackage(String callingPackage) {
                 mCallingPackage = callingPackage;
+                return this;
+            }
+
+            /**
+             * Mandatory parameter, used for performing permission checks.
+             */
+            public Builder setCallingFeatureId(@Nullable String callingFeatureId) {
+                mCallingFeatureId = callingFeatureId;
                 return this;
             }
 
@@ -147,9 +159,10 @@ public final class LocationAccessPolicy {
                 return this;
             }
 
+            /** build LocationPermissionQuery */
             public LocationPermissionQuery build() {
-                return new LocationPermissionQuery(mCallingPackage, mCallingUid,
-                        mCallingPid, mMinSdkVersionForCoarse, mMinSdkVersionForFine,
+                return new LocationPermissionQuery(mCallingPackage, mCallingFeatureId,
+                        mCallingUid, mCallingPid, mMinSdkVersionForCoarse, mMinSdkVersionForFine,
                         mLogAsInfo, mMethod);
             }
         }
@@ -162,7 +175,7 @@ public final class LocationAccessPolicy {
         }
         Log.e(TAG, errorMsg);
         try {
-            if (Build.IS_DEBUGGABLE) {
+            if (TelephonyUtils.IS_DEBUGGABLE) {
                 Toast.makeText(context, errorMsg, Toast.LENGTH_SHORT).show();
             }
         } catch (Throwable t) {
@@ -181,6 +194,17 @@ public final class LocationAccessPolicy {
         }
     }
 
+    private static String getAppOpsString(String manifestPermission) {
+        switch (manifestPermission) {
+            case Manifest.permission.ACCESS_FINE_LOCATION:
+                return AppOpsManager.OPSTR_FINE_LOCATION;
+            case Manifest.permission.ACCESS_COARSE_LOCATION:
+                return AppOpsManager.OPSTR_COARSE_LOCATION;
+            default:
+                return null;
+        }
+    }
+
     private static LocationPermissionResult checkAppLocationPermissionHelper(Context context,
             LocationPermissionQuery query, String permissionToCheck) {
         String locationTypeForLog =
@@ -194,8 +218,8 @@ public final class LocationAccessPolicy {
         if (hasManifestPermission) {
             // Only check the app op if the app has the permission.
             int appOpMode = context.getSystemService(AppOpsManager.class)
-                    .noteOpNoThrow(AppOpsManager.permissionToOpCode(permissionToCheck),
-                            query.callingUid, query.callingPackage);
+                    .noteOpNoThrow(getAppOpsString(permissionToCheck), query.callingUid,
+                            query.callingPackage, query.callingFeatureId, null);
             if (appOpMode == AppOpsManager.MODE_ALLOWED) {
                 // If the app did everything right, return without logging.
                 return LocationPermissionResult.ALLOWED;
@@ -233,13 +257,15 @@ public final class LocationAccessPolicy {
         }
     }
 
+    /** Check if location permissions have been granted */
     public static LocationPermissionResult checkLocationPermission(
             Context context, LocationPermissionQuery query) {
-        // Always allow the phone process and system server to access location. This avoid
-        // breaking legacy code that rely on public-facing APIs to access cell location, and
-        // it doesn't create an info leak risk because the cell location is stored in the phone
+        // Always allow the phone process, system server, and network stack to access location.
+        // This avoid breaking legacy code that rely on public-facing APIs to access cell location,
+        // and it doesn't create an info leak risk because the cell location is stored in the phone
         // process anyway, and the system server already has location access.
         if (query.callingUid == Process.PHONE_UID || query.callingUid == Process.SYSTEM_UID
+                || query.callingUid == Process.NETWORK_STACK_UID
                 || query.callingUid == Process.ROOT_UID) {
             return LocationPermissionResult.ALLOWED;
         }
@@ -280,13 +306,13 @@ public final class LocationAccessPolicy {
     }
 
     private static boolean checkSystemLocationAccess(@NonNull Context context, int uid, int pid) {
-        if (!isLocationModeEnabled(context, UserHandle.getUserId(uid))) {
+        if (!isLocationModeEnabled(context, UserHandle.getUserHandleForUid(uid).getIdentifier())) {
             if (DBG) Log.w(TAG, "Location disabled, failed, (" + uid + ")");
             return false;
         }
         // If the user or profile is current, permission is granted.
         // Otherwise, uid must have INTERACT_ACROSS_USERS_FULL permission.
-        return isCurrentProfile(context, uid) || checkInteractAcrossUsersFull(context, uid, pid);
+        return isCurrentProfile(context, uid) || checkInteractAcrossUsersFull(context, pid, uid);
     }
 
     private static boolean isLocationModeEnabled(@NonNull Context context, @UserIdInt int userId) {
@@ -307,20 +333,17 @@ public final class LocationAccessPolicy {
     private static boolean isCurrentProfile(@NonNull Context context, int uid) {
         long token = Binder.clearCallingIdentity();
         try {
-            final int currentUser = ActivityManager.getCurrentUser();
-            final int callingUserId = UserHandle.getUserId(uid);
-            if (callingUserId == currentUser) {
+            if (UserHandle.getUserHandleForUid(uid).getIdentifier()
+                    == ActivityManager.getCurrentUser()) {
                 return true;
-            } else {
-                List<UserInfo> userProfiles = context.getSystemService(
-                        UserManager.class).getProfiles(currentUser);
-                for (UserInfo user : userProfiles) {
-                    if (user.id == callingUserId) {
-                        return true;
-                    }
-                }
             }
-            return false;
+            ActivityManager activityManager = context.getSystemService(ActivityManager.class);
+            if (activityManager != null) {
+                return activityManager.isProfileForeground(
+                        UserHandle.getUserHandleForUid(ActivityManager.getCurrentUser()));
+            } else {
+                return false;
+            }
         } finally {
             Binder.restoreCallingIdentity(token);
         }

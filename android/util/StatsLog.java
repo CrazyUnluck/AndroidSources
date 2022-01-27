@@ -24,21 +24,25 @@ import android.annotation.NonNull;
 import android.annotation.RequiresPermission;
 import android.annotation.SystemApi;
 import android.content.Context;
-import android.os.IStatsManager;
-import android.os.RemoteException;
-import android.os.ServiceManager;
+import android.os.IStatsd;
+import android.os.Process;
+import android.util.proto.ProtoOutputStream;
+
+import com.android.internal.statsd.StatsdStatsLog;
 
 /**
  * StatsLog provides an API for developers to send events to statsd. The events can be used to
  * define custom metrics inside statsd.
  */
-public final class StatsLog extends StatsLogInternal {
+public final class StatsLog {
+
+    // Load JNI library
+    static {
+        System.loadLibrary("stats_jni");
+    }
     private static final String TAG = "StatsLog";
     private static final boolean DEBUG = false;
-
-    private static IStatsManager sService;
-
-    private static Object sLogLock = new Object();
+    private static final int EXPERIMENT_IDS_FIELD_ID = 1;
 
     private StatsLog() {
     }
@@ -50,26 +54,13 @@ public final class StatsLog extends StatsLogInternal {
      * @return True if the log request was sent to statsd.
      */
     public static boolean logStart(int label) {
-        synchronized (sLogLock) {
-            try {
-                IStatsManager service = getIStatsManagerLocked();
-                if (service == null) {
-                    if (DEBUG) {
-                        Slog.d(TAG, "Failed to find statsd when logging start");
-                    }
-                    return false;
-                }
-                service.sendAppBreadcrumbAtom(label,
-                        StatsLog.APP_BREADCRUMB_REPORTED__STATE__START);
-                return true;
-            } catch (RemoteException e) {
-                sService = null;
-                if (DEBUG) {
-                    Slog.d(TAG, "Failed to connect to statsd when logging start");
-                }
-                return false;
-            }
-        }
+        int callingUid = Process.myUid();
+        StatsdStatsLog.write(
+                StatsdStatsLog.APP_BREADCRUMB_REPORTED,
+                callingUid,
+                label,
+                StatsdStatsLog.APP_BREADCRUMB_REPORTED__STATE__START);
+        return true;
     }
 
     /**
@@ -79,25 +70,13 @@ public final class StatsLog extends StatsLogInternal {
      * @return True if the log request was sent to statsd.
      */
     public static boolean logStop(int label) {
-        synchronized (sLogLock) {
-            try {
-                IStatsManager service = getIStatsManagerLocked();
-                if (service == null) {
-                    if (DEBUG) {
-                        Slog.d(TAG, "Failed to find statsd when logging stop");
-                    }
-                    return false;
-                }
-                service.sendAppBreadcrumbAtom(label, StatsLog.APP_BREADCRUMB_REPORTED__STATE__STOP);
-                return true;
-            } catch (RemoteException e) {
-                sService = null;
-                if (DEBUG) {
-                    Slog.d(TAG, "Failed to connect to statsd when logging stop");
-                }
-                return false;
-            }
-        }
+        int callingUid = Process.myUid();
+        StatsdStatsLog.write(
+                StatsdStatsLog.APP_BREADCRUMB_REPORTED,
+                callingUid,
+                label,
+                StatsdStatsLog.APP_BREADCRUMB_REPORTED__STATE__STOP);
+        return true;
     }
 
     /**
@@ -107,26 +86,13 @@ public final class StatsLog extends StatsLogInternal {
      * @return True if the log request was sent to statsd.
      */
     public static boolean logEvent(int label) {
-        synchronized (sLogLock) {
-            try {
-                IStatsManager service = getIStatsManagerLocked();
-                if (service == null) {
-                    if (DEBUG) {
-                        Slog.d(TAG, "Failed to find statsd when logging event");
-                    }
-                    return false;
-                }
-                service.sendAppBreadcrumbAtom(
-                        label, StatsLog.APP_BREADCRUMB_REPORTED__STATE__UNSPECIFIED);
-                return true;
-            } catch (RemoteException e) {
-                sService = null;
-                if (DEBUG) {
-                    Slog.d(TAG, "Failed to connect to statsd when logging event");
-                }
-                return false;
-            }
-        }
+        int callingUid = Process.myUid();
+        StatsdStatsLog.write(
+                StatsdStatsLog.APP_BREADCRUMB_REPORTED,
+                callingUid,
+                label,
+                StatsdStatsLog.APP_BREADCRUMB_REPORTED__STATE__UNSPECIFIED);
+        return true;
     }
 
     /**
@@ -149,87 +115,64 @@ public final class StatsLog extends StatsLogInternal {
     public static boolean logBinaryPushStateChanged(@NonNull String trainName,
             long trainVersionCode, int options, int state,
             @NonNull long[] experimentIds) {
-        synchronized (sLogLock) {
-            try {
-                IStatsManager service = getIStatsManagerLocked();
-                if (service == null) {
-                    if (DEBUG) {
-                        Slog.d(TAG, "Failed to find statsd when logging event");
-                    }
-                    return false;
-                }
-                service.sendBinaryPushStateChangedAtom(
-                        trainName, trainVersionCode, options, state, experimentIds);
-                return true;
-            } catch (RemoteException e) {
-                sService = null;
-                if (DEBUG) {
-                    Slog.d(TAG,
-                            "Failed to connect to StatsCompanionService when logging "
-                                    + "BinaryPushStateChanged");
-                }
-                return false;
-            }
+        ProtoOutputStream proto = new ProtoOutputStream();
+        for (long id : experimentIds) {
+            proto.write(
+                    ProtoOutputStream.FIELD_TYPE_INT64
+                    | ProtoOutputStream.FIELD_COUNT_REPEATED
+                    | EXPERIMENT_IDS_FIELD_ID,
+                    id);
         }
-    }
-
-    /**
-     * Logs an event for watchdog rollbacks.
-     *
-     * @param rollbackType          state of the rollback.
-     * @param packageName           package name being rolled back.
-     * @param packageVersionCode    version of the package being rolled back.
-     *
-     * @return True if the log request was sent to statsd.
-     *
-     * @hide
-     */
-    @RequiresPermission(allOf = {DUMP, PACKAGE_USAGE_STATS})
-    public static boolean logWatchdogRollbackOccurred(int rollbackType, String packageName,
-            long packageVersionCode) {
-        synchronized (sLogLock) {
-            try {
-                IStatsManager service = getIStatsManagerLocked();
-                if (service == null) {
-                    if (DEBUG) {
-                        Slog.d(TAG, "Failed to find statsd when logging event");
-                    }
-                    return false;
-                }
-
-                service.sendWatchdogRollbackOccurredAtom(rollbackType, packageName,
-                        packageVersionCode);
-                return true;
-            } catch (RemoteException e) {
-                sService = null;
-                if (DEBUG) {
-                    Slog.d(TAG,
-                            "Failed to connect to StatsCompanionService when logging "
-                                    + "WatchdogRollbackOccurred");
-                }
-                return false;
-            }
-        }
-    }
-
-
-    private static IStatsManager getIStatsManagerLocked() throws RemoteException {
-        if (sService != null) {
-            return sService;
-        }
-        sService = IStatsManager.Stub.asInterface(ServiceManager.getService("stats"));
-        return sService;
+        StatsdStatsLog.write(StatsdStatsLog.BINARY_PUSH_STATE_CHANGED,
+                trainName,
+                trainVersionCode,
+                (options & IStatsd.FLAG_REQUIRE_STAGING) > 0,
+                (options & IStatsd.FLAG_ROLLBACK_ENABLED) > 0,
+                (options & IStatsd.FLAG_REQUIRE_LOW_LATENCY_MONITOR) > 0,
+                state,
+                proto.getBytes(),
+                0,
+                0,
+                false);
+        return true;
     }
 
     /**
      * Write an event to stats log using the raw format.
      *
-     * @param buffer    The encoded buffer of data to write..
+     * @param buffer    The encoded buffer of data to write.
      * @param size      The number of bytes from the buffer to write.
      * @hide
      */
+    // TODO(b/144935988): Mark deprecated.
     @SystemApi
-    public static native void writeRaw(@NonNull byte[] buffer, int size);
+    public static void writeRaw(@NonNull byte[] buffer, int size) {
+        // TODO(b/144935988): make this no-op once clients have migrated to StatsEvent.
+        writeImpl(buffer, size, 0);
+    }
+
+    /**
+     * Write an event to stats log using the raw format.
+     *
+     * @param buffer    The encoded buffer of data to write.
+     * @param size      The number of bytes from the buffer to write.
+     * @param atomId    The id of the atom to which the event belongs.
+     */
+    private static native void writeImpl(@NonNull byte[] buffer, int size, int atomId);
+
+    /**
+     * Write an event to stats log using the raw format encapsulated in StatsEvent.
+     * After writing to stats log, release() is called on the StatsEvent object.
+     * No further action should be taken on the StatsEvent object following this call.
+     *
+     * @param statsEvent    The StatsEvent object containing the encoded buffer of data to write.
+     * @hide
+     */
+    @SystemApi
+    public static void write(@NonNull final StatsEvent statsEvent) {
+        writeImpl(statsEvent.getBytes(), statsEvent.getNumBytes(), statsEvent.getAtomId());
+        statsEvent.release();
+    }
 
     private static void enforceDumpCallingPermission(Context context) {
         context.enforceCallingPermission(android.Manifest.permission.DUMP, "Need DUMP permission.");

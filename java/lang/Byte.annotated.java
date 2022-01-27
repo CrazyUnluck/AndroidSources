@@ -32,21 +32,21 @@ public final class Byte extends java.lang.Number implements java.lang.Comparable
 
 public Byte(byte value) { throw new RuntimeException("Stub!"); }
 
-public Byte(java.lang.String s) throws java.lang.NumberFormatException { throw new RuntimeException("Stub!"); }
+public Byte(@libcore.util.NonNull java.lang.String s) throws java.lang.NumberFormatException { throw new RuntimeException("Stub!"); }
 
-public static java.lang.String toString(byte b) { throw new RuntimeException("Stub!"); }
+@libcore.util.NonNull public static java.lang.String toString(byte b) { throw new RuntimeException("Stub!"); }
 
-public static java.lang.Byte valueOf(byte b) { throw new RuntimeException("Stub!"); }
+@libcore.util.NonNull public static java.lang.Byte valueOf(byte b) { throw new RuntimeException("Stub!"); }
 
-public static byte parseByte(java.lang.String s, int radix) throws java.lang.NumberFormatException { throw new RuntimeException("Stub!"); }
+public static byte parseByte(@libcore.util.NonNull java.lang.String s, int radix) throws java.lang.NumberFormatException { throw new RuntimeException("Stub!"); }
 
-public static byte parseByte(java.lang.String s) throws java.lang.NumberFormatException { throw new RuntimeException("Stub!"); }
+public static byte parseByte(@libcore.util.NonNull java.lang.String s) throws java.lang.NumberFormatException { throw new RuntimeException("Stub!"); }
 
-public static java.lang.Byte valueOf(java.lang.String s, int radix) throws java.lang.NumberFormatException { throw new RuntimeException("Stub!"); }
+@libcore.util.NonNull public static java.lang.Byte valueOf(@libcore.util.NonNull java.lang.String s, int radix) throws java.lang.NumberFormatException { throw new RuntimeException("Stub!"); }
 
-public static java.lang.Byte valueOf(java.lang.String s) throws java.lang.NumberFormatException { throw new RuntimeException("Stub!"); }
+@libcore.util.NonNull public static java.lang.Byte valueOf(@libcore.util.NonNull java.lang.String s) throws java.lang.NumberFormatException { throw new RuntimeException("Stub!"); }
 
-public static java.lang.Byte decode(java.lang.String nm) throws java.lang.NumberFormatException { throw new RuntimeException("Stub!"); }
+@libcore.util.NonNull public static java.lang.Byte decode(@libcore.util.NonNull java.lang.String nm) throws java.lang.NumberFormatException { throw new RuntimeException("Stub!"); }
 
 public byte byteValue() { throw new RuntimeException("Stub!"); }
 
@@ -60,24 +60,21 @@ public float floatValue() { throw new RuntimeException("Stub!"); }
 
 public double doubleValue() { throw new RuntimeException("Stub!"); }
 
-public java.lang.String toString() { throw new RuntimeException("Stub!"); }
+@libcore.util.NonNull public java.lang.String toString() { throw new RuntimeException("Stub!"); }
 
 public int hashCode() { throw new RuntimeException("Stub!"); }
 
 public static int hashCode(byte value) { throw new RuntimeException("Stub!"); }
 
-public boolean equals(java.lang.Object obj) { throw new RuntimeException("Stub!"); }
+public boolean equals(@libcore.util.Nullable java.lang.Object obj) { throw new RuntimeException("Stub!"); }
 
-public int compareTo(java.lang.Byte anotherByte) { throw new RuntimeException("Stub!"); }
+public int compareTo(@libcore.util.NonNull java.lang.Byte anotherByte) { throw new RuntimeException("Stub!"); }
 
 public static int compare(byte x, byte y) { throw new RuntimeException("Stub!"); }
 
 public static int toUnsignedInt(byte x) { throw new RuntimeException("Stub!"); }
 
 public static long toUnsignedLong(byte x) { throw new RuntimeException("Stub!"); }
-
-@libcore.api.CorePlatformApi
-public static java.lang.String toHexString(byte b, boolean upperCase) { throw new RuntimeException("Stub!"); }
 
 public static final int BYTES = 1; // 0x1
 

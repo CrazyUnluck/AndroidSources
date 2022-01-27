@@ -16,27 +16,31 @@
 
 package com.android.server.job.controllers;
 
+import static com.android.server.job.JobSchedulerService.ACTIVE_INDEX;
+import static com.android.server.job.JobSchedulerService.NEVER_INDEX;
+import static com.android.server.job.JobSchedulerService.RESTRICTED_INDEX;
+import static com.android.server.job.JobSchedulerService.WORKING_INDEX;
 import static com.android.server.job.JobSchedulerService.sElapsedRealtimeClock;
 
 import android.app.AppGlobals;
-import android.app.IActivityManager;
 import android.app.job.JobInfo;
 import android.app.job.JobWorkItem;
 import android.content.ClipData;
 import android.content.ComponentName;
-import android.content.pm.PackageManagerInternal;
 import android.net.Network;
 import android.net.Uri;
 import android.os.RemoteException;
 import android.os.UserHandle;
-import android.text.format.Time;
+import android.provider.MediaStore;
+import android.text.format.DateFormat;
 import android.util.ArraySet;
 import android.util.Pair;
 import android.util.Slog;
-import android.util.StatsLog;
 import android.util.TimeUtils;
 import android.util.proto.ProtoOutputStream;
 
+import com.android.internal.util.ArrayUtils;
+import com.android.internal.util.FrameworkStatsLog;
 import com.android.server.LocalServices;
 import com.android.server.job.GrantedUriPermissions;
 import com.android.server.job.JobSchedulerInternal;
@@ -64,7 +68,7 @@ import java.util.function.Predicate;
  * @hide
  */
 public final class JobStatus {
-    static final String TAG = "JobSchedulerService";
+    private static final String TAG = "JobScheduler.JobStatus";
     static final boolean DEBUG = JobSchedulerService.DEBUG;
 
     public static final long NO_LATEST_RUNTIME = Long.MAX_VALUE;
@@ -76,11 +80,31 @@ public final class JobStatus {
     static final int CONSTRAINT_STORAGE_NOT_LOW = JobInfo.CONSTRAINT_FLAG_STORAGE_NOT_LOW; // 1 << 3
     static final int CONSTRAINT_TIMING_DELAY = 1<<31;
     static final int CONSTRAINT_DEADLINE = 1<<30;
-    static final int CONSTRAINT_CONNECTIVITY = 1<<28;
+    static final int CONSTRAINT_CONNECTIVITY = 1 << 28;
     static final int CONSTRAINT_CONTENT_TRIGGER = 1<<26;
     static final int CONSTRAINT_DEVICE_NOT_DOZING = 1 << 25; // Implicit constraint
     static final int CONSTRAINT_WITHIN_QUOTA = 1 << 24;      // Implicit constraint
     static final int CONSTRAINT_BACKGROUND_NOT_RESTRICTED = 1 << 22; // Implicit constraint
+
+    /**
+     * The additional set of dynamic constraints that must be met if the job's effective bucket is
+     * {@link JobSchedulerService#RESTRICTED_INDEX}. Connectivity can be ignored if the job doesn't
+     * need network.
+     */
+    private static final int DYNAMIC_RESTRICTED_CONSTRAINTS =
+            CONSTRAINT_BATTERY_NOT_LOW
+                    | CONSTRAINT_CHARGING
+                    | CONSTRAINT_CONNECTIVITY
+                    | CONSTRAINT_IDLE;
+
+    /**
+     * Standard media URIs that contain the media files that might be important to the user.
+     * @see #mHasMediaBackupExemption
+     */
+    private static final Uri[] MEDIA_URIS_FOR_STANDBY_EXEMPTION = {
+            MediaStore.Images.Media.EXTERNAL_CONTENT_URI,
+            MediaStore.Video.Media.EXTERNAL_CONTENT_URI,
+    };
 
     /**
      * The constraints that we want to log to statsd.
@@ -107,10 +131,14 @@ public final class JobStatus {
     // TODO(b/129954980)
     private static final boolean STATS_LOG_ENABLED = false;
 
+    // No override.
+    public static final int OVERRIDE_NONE = 0;
+    // Override to improve sorting order. Does not affect constraint evaluation.
+    public static final int OVERRIDE_SORTING = 1;
     // Soft override: ignore constraints like time that don't affect API availability
-    public static final int OVERRIDE_SOFT = 1;
+    public static final int OVERRIDE_SOFT = 2;
     // Full override: ignore all constraints including API-affecting like connectivity
-    public static final int OVERRIDE_FULL = 2;
+    public static final int OVERRIDE_FULL = 3;
 
     /** If not specified, trigger update delay is 10 seconds. */
     public static final long DEFAULT_TRIGGER_UPDATE_DELAY = 10*1000;
@@ -118,7 +146,7 @@ public final class JobStatus {
     /** The minimum possible update delay is 1/2 second. */
     public static final long MIN_TRIGGER_UPDATE_DELAY = 500;
 
-    /** If not specified, trigger maxumum delay is 2 minutes. */
+    /** If not specified, trigger maximum delay is 2 minutes. */
     public static final long DEFAULT_TRIGGER_MAX_DELAY = 2*60*1000;
 
     /** The minimum possible update delay is 1 second. */
@@ -131,7 +159,6 @@ public final class JobStatus {
      * that underly Sync Manager operation.
      */
     final int callingUid;
-    final int targetSdkVersion;
     final String batteryName;
 
     /**
@@ -171,12 +198,6 @@ public final class JobStatus {
     private final int numFailures;
 
     /**
-     * Current standby heartbeat when this job was scheduled or last ran.  Used to
-     * pin the runnability check regardless of the job's app moving between buckets.
-     */
-    private final long baseHeartbeat;
-
-    /**
      * Which app standby bucket this job's app is in.  Updated when the app is moved to a
      * different bucket.
      */
@@ -188,11 +209,31 @@ public final class JobStatus {
      */
     private long whenStandbyDeferred;
 
+    /** The first time this job was force batched. */
+    private long mFirstForceBatchedTimeElapsed;
+
     // Constraints.
     final int requiredConstraints;
     private final int mRequiredConstraintsOfInterest;
     int satisfiedConstraints = 0;
     private int mSatisfiedConstraintsOfInterest = 0;
+    /**
+     * Set of constraints that must be satisfied for the job if/because it's in the RESTRICTED
+     * bucket.
+     */
+    private int mDynamicConstraints = 0;
+
+    /**
+     * Indicates whether the job is responsible for backing up media, so we can be lenient in
+     * applying standby throttling.
+     *
+     * Doesn't exempt jobs with a deadline constraint, as they can be started without any content or
+     * network changes, in which case this exemption does not make sense.
+     *
+     * TODO(b/149519887): Use a more explicit signal, maybe an API flag, that the scheduling package
+     * needs to provide at the time of scheduling a job.
+     */
+    private final boolean mHasMediaBackupExemption;
 
     // Set to true if doze constraint was satisfied due to app being whitelisted.
     public boolean dozeWhitelisted;
@@ -267,7 +308,7 @@ public final class JobStatus {
     public int nextPendingWorkId = 1;
 
     // Used by shell commands
-    public int overrideState = 0;
+    public int overrideState = JobStatus.OVERRIDE_NONE;
 
     // When this job was enqueued, for ordering.  (in elapsedRealtimeMillis)
     public long enqueueTime;
@@ -305,7 +346,8 @@ public final class JobStatus {
      */
     ContentObserverController.JobInstance contentObserverJobInstance;
 
-    private long totalNetworkBytes = JobInfo.NETWORK_BYTES_UNKNOWN;
+    private long mTotalNetworkDownloadBytes = JobInfo.NETWORK_BYTES_UNKNOWN;
+    private long mTotalNetworkUploadBytes = JobInfo.NETWORK_BYTES_UNKNOWN;
 
     /////// Booleans that track if a job is ready to run. They should be updated whenever dependent
     /////// states change.
@@ -332,6 +374,9 @@ public final class JobStatus {
     /** The job is within its quota based on its standby bucket. */
     private boolean mReadyWithinQuota;
 
+    /** The job's dynamic requirements have been satisfied. */
+    private boolean mReadyDynamicSatisfied;
+
     /** Provide a handle to the service that this job will be run on. */
     public int getServiceToken() {
         return callingUid;
@@ -343,14 +388,11 @@ public final class JobStatus {
      * @param job The actual requested parameters for the job
      * @param callingUid Identity of the app that is scheduling the job.  This may not be the
      *     app in which the job is implemented; such as with sync jobs.
-     * @param targetSdkVersion The targetSdkVersion of the app in which the job will run.
      * @param sourcePackageName The package name of the app in which the job will run.
      * @param sourceUserId The user in which the job will run
      * @param standbyBucket The standby bucket that the source package is currently assigned to,
      *     cached here for speed of handling during runnability evaluations (and updated when bucket
      *     assignments are changed)
-     * @param heartbeat Timestamp of when the job was created, in the standby-related
-     *     timebase.
      * @param tag A string associated with the job for debugging/logging purposes.
      * @param numFailures Count of how many times this job has requested a reschedule because
      *     its work was not yet finished.
@@ -362,15 +404,13 @@ public final class JobStatus {
      * @param lastFailedRunTime When did we last run this job only to have it stop incomplete?
      * @param internalFlags Non-API property flags about this job
      */
-    private JobStatus(JobInfo job, int callingUid, int targetSdkVersion, String sourcePackageName,
-            int sourceUserId, int standbyBucket, long heartbeat, String tag, int numFailures,
+    private JobStatus(JobInfo job, int callingUid, String sourcePackageName,
+            int sourceUserId, int standbyBucket, String tag, int numFailures,
             long earliestRunTimeElapsedMillis, long latestRunTimeElapsedMillis,
             long lastSuccessfulRunTime, long lastFailedRunTime, int internalFlags) {
         this.job = job;
         this.callingUid = callingUid;
-        this.targetSdkVersion = targetSdkVersion;
         this.standbyBucket = standbyBucket;
-        this.baseHeartbeat = heartbeat;
 
         int tempSourceUid = -1;
         if (sourceUserId != -1 && sourcePackageName != null) {
@@ -403,9 +443,11 @@ public final class JobStatus {
         this.mOriginalLatestRunTimeElapsedMillis = latestRunTimeElapsedMillis;
         this.numFailures = numFailures;
 
+        boolean requiresNetwork = false;
         int requiredConstraints = job.getConstraintFlags();
         if (job.getRequiredNetwork() != null) {
             requiredConstraints |= CONSTRAINT_CONNECTIVITY;
+            requiresNetwork = true;
         }
         if (earliestRunTimeElapsedMillis != NO_EARLIEST_RUNTIME) {
             requiredConstraints |= CONSTRAINT_TIMING_DELAY;
@@ -413,12 +455,25 @@ public final class JobStatus {
         if (latestRunTimeElapsedMillis != NO_LATEST_RUNTIME) {
             requiredConstraints |= CONSTRAINT_DEADLINE;
         }
+        boolean exemptedMediaUrisOnly = false;
         if (job.getTriggerContentUris() != null) {
             requiredConstraints |= CONSTRAINT_CONTENT_TRIGGER;
+            exemptedMediaUrisOnly = true;
+            for (JobInfo.TriggerContentUri uri : job.getTriggerContentUris()) {
+                if (!ArrayUtils.contains(MEDIA_URIS_FOR_STANDBY_EXEMPTION, uri.getUri())) {
+                    exemptedMediaUrisOnly = false;
+                    break;
+                }
+            }
         }
         this.requiredConstraints = requiredConstraints;
         mRequiredConstraintsOfInterest = requiredConstraints & CONSTRAINTS_OF_INTEREST;
         mReadyNotDozing = (job.getFlags() & JobInfo.FLAG_WILL_BE_FOREGROUND) != 0;
+        if (standbyBucket == RESTRICTED_INDEX) {
+            addDynamicConstraints(DYNAMIC_RESTRICTED_CONSTRAINTS);
+        } else {
+            mReadyDynamicSatisfied = false;
+        }
 
         mLastSuccessfulRunTime = lastSuccessfulRunTime;
         mLastFailedRunTime = lastFailedRunTime;
@@ -433,14 +488,17 @@ public final class JobStatus {
             // our source UID into place.
             job.getRequiredNetwork().networkCapabilities.setSingleUid(this.sourceUid);
         }
+        final JobSchedulerInternal jsi = LocalServices.getService(JobSchedulerInternal.class);
+        mHasMediaBackupExemption = !job.hasLateConstraint() && exemptedMediaUrisOnly
+                && requiresNetwork && this.sourcePackageName.equals(jsi.getMediaBackupPackage());
     }
 
     /** Copy constructor: used specifically when cloning JobStatus objects for persistence,
      *   so we preserve RTC window bounds if the source object has them. */
     public JobStatus(JobStatus jobStatus) {
-        this(jobStatus.getJob(), jobStatus.getUid(), jobStatus.targetSdkVersion,
+        this(jobStatus.getJob(), jobStatus.getUid(),
                 jobStatus.getSourcePackageName(), jobStatus.getSourceUserId(),
-                jobStatus.getStandbyBucket(), jobStatus.getBaseHeartbeat(),
+                jobStatus.getStandbyBucket(),
                 jobStatus.getSourceTag(), jobStatus.getNumFailures(),
                 jobStatus.getEarliestRunTime(), jobStatus.getLatestRunTimeElapsed(),
                 jobStatus.getLastSuccessfulRunTime(), jobStatus.getLastFailedRunTime(),
@@ -462,13 +520,13 @@ public final class JobStatus {
      * standby bucket is whatever the OS thinks it should be at this moment.
      */
     public JobStatus(JobInfo job, int callingUid, String sourcePkgName, int sourceUserId,
-            int standbyBucket, long baseHeartbeat, String sourceTag,
+            int standbyBucket, String sourceTag,
             long earliestRunTimeElapsedMillis, long latestRunTimeElapsedMillis,
             long lastSuccessfulRunTime, long lastFailedRunTime,
             Pair<Long, Long> persistedExecutionTimesUTC,
             int innerFlags) {
-        this(job, callingUid, resolveTargetSdkVersion(job), sourcePkgName, sourceUserId,
-                standbyBucket, baseHeartbeat,
+        this(job, callingUid, sourcePkgName, sourceUserId,
+                standbyBucket,
                 sourceTag, 0,
                 earliestRunTimeElapsedMillis, latestRunTimeElapsedMillis,
                 lastSuccessfulRunTime, lastFailedRunTime, innerFlags);
@@ -486,13 +544,13 @@ public final class JobStatus {
     }
 
     /** Create a new job to be rescheduled with the provided parameters. */
-    public JobStatus(JobStatus rescheduling, long newBaseHeartbeat,
+    public JobStatus(JobStatus rescheduling,
             long newEarliestRuntimeElapsedMillis,
             long newLatestRuntimeElapsedMillis, int backoffAttempt,
             long lastSuccessfulRunTime, long lastFailedRunTime) {
-        this(rescheduling.job, rescheduling.getUid(), resolveTargetSdkVersion(rescheduling.job),
+        this(rescheduling.job, rescheduling.getUid(),
                 rescheduling.getSourcePackageName(), rescheduling.getSourceUserId(),
-                rescheduling.getStandbyBucket(), newBaseHeartbeat,
+                rescheduling.getStandbyBucket(),
                 rescheduling.getSourceTag(), backoffAttempt, newEarliestRuntimeElapsedMillis,
                 newLatestRuntimeElapsedMillis,
                 lastSuccessfulRunTime, lastFailedRunTime, rescheduling.getInternalFlags());
@@ -528,18 +586,14 @@ public final class JobStatus {
 
         int standbyBucket = JobSchedulerService.standbyBucketForPackage(jobPackage,
                 sourceUserId, elapsedNow);
-        JobSchedulerInternal js = LocalServices.getService(JobSchedulerInternal.class);
-        long currentHeartbeat = js != null
-                ? js.baseHeartbeatForApp(jobPackage, sourceUserId, standbyBucket)
-                : 0;
-        return new JobStatus(job, callingUid, resolveTargetSdkVersion(job), sourcePkg, sourceUserId,
-                standbyBucket, currentHeartbeat, tag, 0,
+        return new JobStatus(job, callingUid, sourcePkg, sourceUserId,
+                standbyBucket, tag, 0,
                 earliestRunTimeElapsedMillis, latestRunTimeElapsedMillis,
                 0 /* lastSuccessfulRunTime */, 0 /* lastFailedRunTime */,
                 /*innerFlags=*/ 0);
     }
 
-    public void enqueueWorkLocked(IActivityManager am, JobWorkItem work) {
+    public void enqueueWorkLocked(JobWorkItem work) {
         if (pendingWork == null) {
             pendingWork = new ArrayList<>();
         }
@@ -547,7 +601,7 @@ public final class JobStatus {
         nextPendingWorkId++;
         if (work.getIntent() != null
                 && GrantedUriPermissions.checkGrantFlags(work.getIntent().getFlags())) {
-            work.setGrants(GrantedUriPermissions.createFromIntent(am, work.getIntent(), sourceUid,
+            work.setGrants(GrantedUriPermissions.createFromIntent(work.getIntent(), sourceUid,
                     sourcePackageName, sourceUserId, toShortString()));
         }
         pendingWork.add(work);
@@ -578,20 +632,20 @@ public final class JobStatus {
         return executingWork != null && executingWork.size() > 0;
     }
 
-    private static void ungrantWorkItem(IActivityManager am, JobWorkItem work) {
+    private static void ungrantWorkItem(JobWorkItem work) {
         if (work.getGrants() != null) {
-            ((GrantedUriPermissions)work.getGrants()).revoke(am);
+            ((GrantedUriPermissions)work.getGrants()).revoke();
         }
     }
 
-    public boolean completeWorkLocked(IActivityManager am, int workId) {
+    public boolean completeWorkLocked(int workId) {
         if (executingWork != null) {
             final int N = executingWork.size();
             for (int i = 0; i < N; i++) {
                 JobWorkItem work = executingWork.get(i);
                 if (work.getWorkId() == workId) {
                     executingWork.remove(i);
-                    ungrantWorkItem(am, work);
+                    ungrantWorkItem(work);
                     return true;
                 }
             }
@@ -599,16 +653,16 @@ public final class JobStatus {
         return false;
     }
 
-    private static void ungrantWorkList(IActivityManager am, ArrayList<JobWorkItem> list) {
+    private static void ungrantWorkList(ArrayList<JobWorkItem> list) {
         if (list != null) {
             final int N = list.size();
             for (int i = 0; i < N; i++) {
-                ungrantWorkItem(am, list.get(i));
+                ungrantWorkItem(list.get(i));
             }
         }
     }
 
-    public void stopTrackingJobLocked(IActivityManager am, JobStatus incomingJob) {
+    public void stopTrackingJobLocked(JobStatus incomingJob) {
         if (incomingJob != null) {
             // We are replacing with a new job -- transfer the work!  We do any executing
             // work first, since that was originally at the front of the pending work.
@@ -626,15 +680,15 @@ public final class JobStatus {
             incomingJob.updateEstimatedNetworkBytesLocked();
         } else {
             // We are completely stopping the job...  need to clean up work.
-            ungrantWorkList(am, pendingWork);
+            ungrantWorkList(pendingWork);
             pendingWork = null;
-            ungrantWorkList(am, executingWork);
+            ungrantWorkList(executingWork);
             executingWork = null;
         }
         updateEstimatedNetworkBytesLocked();
     }
 
-    public void prepareLocked(IActivityManager am) {
+    public void prepareLocked() {
         if (prepared) {
             Slog.wtf(TAG, "Already prepared: " + this);
             return;
@@ -645,12 +699,12 @@ public final class JobStatus {
         }
         final ClipData clip = job.getClipData();
         if (clip != null) {
-            uriPerms = GrantedUriPermissions.createFromClip(am, clip, sourceUid, sourcePackageName,
+            uriPerms = GrantedUriPermissions.createFromClip(clip, sourceUid, sourcePackageName,
                     sourceUserId, job.getClipGrantFlags(), toShortString());
         }
     }
 
-    public void unprepareLocked(IActivityManager am) {
+    public void unprepareLocked() {
         if (!prepared) {
             Slog.wtf(TAG, "Hasn't been prepared: " + this);
             if (DEBUG_PREPARE && unpreparedPoint != null) {
@@ -663,7 +717,7 @@ public final class JobStatus {
             unpreparedPoint = new Throwable().fillInStackTrace();
         }
         if (uriPerms != null) {
-            uriPerms.revoke(am);
+            uriPerms.revoke();
             uriPerms = null;
         }
     }
@@ -678,10 +732,6 @@ public final class JobStatus {
 
     public int getJobId() {
         return job.getId();
-    }
-
-    public int getTargetSdkVersion() {
-        return targetSdkVersion;
     }
 
     public void printUniqueId(PrintWriter pw) {
@@ -714,15 +764,40 @@ public final class JobStatus {
         return UserHandle.getUserId(callingUid);
     }
 
+    /**
+     * Returns an appropriate standby bucket for the job, taking into account any standby
+     * exemptions.
+     */
+    public int getEffectiveStandbyBucket() {
+        if (uidActive || getJob().isExemptedFromAppStandby()) {
+            // Treat these cases as if they're in the ACTIVE bucket so that they get throttled
+            // like other ACTIVE apps.
+            return ACTIVE_INDEX;
+        }
+        final int actualBucket = getStandbyBucket();
+        if (actualBucket != RESTRICTED_INDEX && actualBucket != NEVER_INDEX
+                && mHasMediaBackupExemption) {
+            // Cap it at WORKING_INDEX as media back up jobs are important to the user, and the
+            // source package may not have been used directly in a while.
+            return Math.min(WORKING_INDEX, actualBucket);
+        }
+        return actualBucket;
+    }
+
+    /** Returns the real standby bucket of the job. */
     public int getStandbyBucket() {
         return standbyBucket;
     }
 
-    public long getBaseHeartbeat() {
-        return baseHeartbeat;
-    }
-
     public void setStandbyBucket(int newBucket) {
+        if (newBucket == RESTRICTED_INDEX) {
+            // Adding to the bucket.
+            addDynamicConstraints(DYNAMIC_RESTRICTED_CONSTRAINTS);
+        } else if (standbyBucket == RESTRICTED_INDEX) {
+            // Removing from the RESTRICTED bucket.
+            removeDynamicConstraints(DYNAMIC_RESTRICTED_CONSTRAINTS);
+        }
+
         standbyBucket = newBucket;
     }
 
@@ -734,6 +809,18 @@ public final class JobStatus {
     // Called only by the standby monitoring code
     public void setWhenStandbyDeferred(long now) {
         whenStandbyDeferred = now;
+    }
+
+    /**
+     * Returns the first time this job was force batched, in the elapsed realtime timebase. Will be
+     * 0 if this job was never force batched.
+     */
+    public long getFirstForceBatchedTimeElapsed() {
+        return mFirstForceBatchedTimeElapsed;
+    }
+
+    public void setFirstForceBatchedTimeElapsed(long now) {
+        mFirstForceBatchedTimeElapsed = now;
     }
 
     public String getSourceTag() {
@@ -787,72 +874,89 @@ public final class JobStatus {
     }
 
     private void updateEstimatedNetworkBytesLocked() {
-        totalNetworkBytes = computeEstimatedNetworkBytesLocked();
-    }
+        mTotalNetworkDownloadBytes = job.getEstimatedNetworkDownloadBytes();
+        mTotalNetworkUploadBytes = job.getEstimatedNetworkUploadBytes();
 
-    private long computeEstimatedNetworkBytesLocked() {
-        // If any component of the job has unknown usage, we don't have a
-        // complete picture of what data will be used, and we have to treat the
-        // entire job as unknown.
-        long totalNetworkBytes = 0;
-        long networkBytes = job.getEstimatedNetworkBytes();
-        if (networkBytes == JobInfo.NETWORK_BYTES_UNKNOWN) {
-            return JobInfo.NETWORK_BYTES_UNKNOWN;
-        } else {
-            totalNetworkBytes += networkBytes;
-        }
         if (pendingWork != null) {
             for (int i = 0; i < pendingWork.size(); i++) {
-                networkBytes = pendingWork.get(i).getEstimatedNetworkBytes();
-                if (networkBytes == JobInfo.NETWORK_BYTES_UNKNOWN) {
-                    return JobInfo.NETWORK_BYTES_UNKNOWN;
-                } else {
-                    totalNetworkBytes += networkBytes;
+                if (mTotalNetworkDownloadBytes != JobInfo.NETWORK_BYTES_UNKNOWN) {
+                    // If any component of the job has unknown usage, we don't have a
+                    // complete picture of what data will be used, and we have to treat the
+                    // entire up/download as unknown.
+                    long downloadBytes = pendingWork.get(i).getEstimatedNetworkDownloadBytes();
+                    if (downloadBytes != JobInfo.NETWORK_BYTES_UNKNOWN) {
+                        mTotalNetworkDownloadBytes += downloadBytes;
+                    }
+                }
+                if (mTotalNetworkUploadBytes != JobInfo.NETWORK_BYTES_UNKNOWN) {
+                    // If any component of the job has unknown usage, we don't have a
+                    // complete picture of what data will be used, and we have to treat the
+                    // entire up/download as unknown.
+                    long uploadBytes = pendingWork.get(i).getEstimatedNetworkUploadBytes();
+                    if (uploadBytes != JobInfo.NETWORK_BYTES_UNKNOWN) {
+                        mTotalNetworkUploadBytes += uploadBytes;
+                    }
                 }
             }
         }
-        return totalNetworkBytes;
     }
 
-    public long getEstimatedNetworkBytes() {
-        return totalNetworkBytes;
+    public long getEstimatedNetworkDownloadBytes() {
+        return mTotalNetworkDownloadBytes;
+    }
+
+    public long getEstimatedNetworkUploadBytes() {
+        return mTotalNetworkUploadBytes;
     }
 
     /** Does this job have any sort of networking constraint? */
     public boolean hasConnectivityConstraint() {
+        // No need to check mDynamicConstraints since connectivity will only be in that list if
+        // it's already in the requiredConstraints list.
         return (requiredConstraints&CONSTRAINT_CONNECTIVITY) != 0;
     }
 
     public boolean hasChargingConstraint() {
-        return (requiredConstraints&CONSTRAINT_CHARGING) != 0;
+        return hasConstraint(CONSTRAINT_CHARGING);
     }
 
     public boolean hasBatteryNotLowConstraint() {
-        return (requiredConstraints&CONSTRAINT_BATTERY_NOT_LOW) != 0;
+        return hasConstraint(CONSTRAINT_BATTERY_NOT_LOW);
     }
 
-    public boolean hasPowerConstraint() {
-        return (requiredConstraints&(CONSTRAINT_CHARGING|CONSTRAINT_BATTERY_NOT_LOW)) != 0;
+    /** Returns true if the job requires charging OR battery not low. */
+    boolean hasPowerConstraint() {
+        return hasConstraint(CONSTRAINT_CHARGING | CONSTRAINT_BATTERY_NOT_LOW);
     }
 
     public boolean hasStorageNotLowConstraint() {
-        return (requiredConstraints&CONSTRAINT_STORAGE_NOT_LOW) != 0;
+        return hasConstraint(CONSTRAINT_STORAGE_NOT_LOW);
     }
 
     public boolean hasTimingDelayConstraint() {
-        return (requiredConstraints&CONSTRAINT_TIMING_DELAY) != 0;
+        return hasConstraint(CONSTRAINT_TIMING_DELAY);
     }
 
     public boolean hasDeadlineConstraint() {
-        return (requiredConstraints&CONSTRAINT_DEADLINE) != 0;
+        return hasConstraint(CONSTRAINT_DEADLINE);
     }
 
     public boolean hasIdleConstraint() {
-        return (requiredConstraints&CONSTRAINT_IDLE) != 0;
+        return hasConstraint(CONSTRAINT_IDLE);
     }
 
     public boolean hasContentTriggerConstraint() {
+        // No need to check mDynamicConstraints since content trigger will only be in that list if
+        // it's already in the requiredConstraints list.
         return (requiredConstraints&CONSTRAINT_CONTENT_TRIGGER) != 0;
+    }
+
+    /**
+     * Checks both {@link #requiredConstraints} and {@link #mDynamicConstraints} to see if this job
+     * requires the specified constraint.
+     */
+    private boolean hasConstraint(int constraint) {
+        return (requiredConstraints & constraint) != 0 || (mDynamicConstraints & constraint) != 0;
     }
 
     public long getTriggerContentUpdateDelay() {
@@ -1021,13 +1125,22 @@ public final class JobStatus {
         if (old == state) {
             return false;
         }
+        if (DEBUG) {
+            Slog.v(TAG,
+                    "Constraint " + constraint + " is " + (!state ? "NOT " : "") + "satisfied for "
+                            + toShortString());
+        }
         satisfiedConstraints = (satisfiedConstraints&~constraint) | (state ? constraint : 0);
         mSatisfiedConstraintsOfInterest = satisfiedConstraints & CONSTRAINTS_OF_INTEREST;
+        mReadyDynamicSatisfied = mDynamicConstraints != 0
+                && mDynamicConstraints == (satisfiedConstraints & mDynamicConstraints);
         if (STATS_LOG_ENABLED && (STATSD_CONSTRAINTS_TO_LOG & constraint) != 0) {
-            StatsLog.write_non_chained(StatsLog.SCHEDULED_JOB_CONSTRAINT_CHANGED,
+            FrameworkStatsLog.write_non_chained(
+                    FrameworkStatsLog.SCHEDULED_JOB_CONSTRAINT_CHANGED,
                     sourceUid, null, getBatteryName(), getProtoConstraint(constraint),
-                    state ? StatsLog.SCHEDULED_JOB_CONSTRAINT_CHANGED__STATE__SATISFIED
-                            : StatsLog.SCHEDULED_JOB_CONSTRAINT_CHANGED__STATE__UNSATISFIED);
+                    state ? FrameworkStatsLog.SCHEDULED_JOB_CONSTRAINT_CHANGED__STATE__SATISFIED
+                            : FrameworkStatsLog
+                                    .SCHEDULED_JOB_CONSTRAINT_CHANGED__STATE__UNSATISFIED);
         }
         return true;
     }
@@ -1046,6 +1159,45 @@ public final class JobStatus {
 
     void setTrackingController(int which) {
         trackingControllers |= which;
+    }
+
+    /**
+     * Indicates that this job cannot run without the specified constraints. This is evaluated
+     * separately from the job's explicitly requested constraints and MUST be satisfied before
+     * the job can run if the app doesn't have quota.
+     */
+    private void addDynamicConstraints(int constraints) {
+        if ((constraints & CONSTRAINT_WITHIN_QUOTA) != 0) {
+            // Quota should never be used as a dynamic constraint.
+            Slog.wtf(TAG, "Tried to set quota as a dynamic constraint");
+            constraints &= ~CONSTRAINT_WITHIN_QUOTA;
+        }
+
+        // Connectivity and content trigger are special since they're only valid to add if the
+        // job has requested network or specific content URIs. Adding these constraints to jobs
+        // that don't need them doesn't make sense.
+        if (!hasConnectivityConstraint()) {
+            constraints &= ~CONSTRAINT_CONNECTIVITY;
+        }
+        if (!hasContentTriggerConstraint()) {
+            constraints &= ~CONSTRAINT_CONTENT_TRIGGER;
+        }
+
+        mDynamicConstraints |= constraints;
+        mReadyDynamicSatisfied = mDynamicConstraints != 0
+                && mDynamicConstraints == (satisfiedConstraints & mDynamicConstraints);
+    }
+
+    /**
+     * Removes dynamic constraints from a job, meaning that the requirements are not required for
+     * the job to run (if the job itself hasn't requested the constraint. This is separate from
+     * the job's explicitly requested constraints and does not remove those requested constraints.
+     *
+     */
+    private void removeDynamicConstraints(int constraints) {
+        mDynamicConstraints &= ~constraints;
+        mReadyDynamicSatisfied = mDynamicConstraints != 0
+                && mDynamicConstraints == (satisfiedConstraints & mDynamicConstraints);
     }
 
     public long getLastSuccessfulRunTime() {
@@ -1089,6 +1241,8 @@ public final class JobStatus {
                 break;
             default:
                 satisfied |= constraint;
+                mReadyDynamicSatisfied = mDynamicConstraints != 0
+                        && mDynamicConstraints == (satisfied & mDynamicConstraints);
                 break;
         }
 
@@ -1107,24 +1261,34 @@ public final class JobStatus {
             case CONSTRAINT_WITHIN_QUOTA:
                 mReadyWithinQuota = oldValue;
                 break;
+            default:
+                mReadyDynamicSatisfied = mDynamicConstraints != 0
+                        && mDynamicConstraints == (satisfiedConstraints & mDynamicConstraints);
+                break;
         }
         return toReturn;
     }
 
     private boolean isReady(int satisfiedConstraints) {
-        // Quota constraints trumps all other constraints.
-        if (!mReadyWithinQuota) {
+        // Quota and dynamic constraints trump all other constraints.
+        // NEVER jobs are not supposed to run at all. Since we're using quota to allow parole
+        // sessions (exempt from dynamic restrictions), we need the additional check to ensure
+        // that NEVER jobs don't run.
+        // TODO: cleanup quota and standby bucket management so we don't need the additional checks
+        if ((!mReadyWithinQuota && !mReadyDynamicSatisfied)
+                || getEffectiveStandbyBucket() == NEVER_INDEX) {
             return false;
         }
-        // Deadline constraint trumps other constraints besides quota (except for periodic jobs
-        // where deadline is an implementation detail. A periodic job should only run if its
-        // constraints are satisfied).
+        // Deadline constraint trumps other constraints besides quota and dynamic (except for
+        // periodic jobs where deadline is an implementation detail. A periodic job should only
+        // run if its constraints are satisfied).
         // DeviceNotDozing implicit constraint must be satisfied
         // NotRestrictedInBackground implicit constraint must be satisfied
         return mReadyNotDozing && mReadyNotRestrictedInBg && (mReadyDeadlineSatisfied
                 || isConstraintsSatisfied(satisfiedConstraints));
     }
 
+    /** All constraints besides implicit and deadline. */
     static final int CONSTRAINTS_OF_INTEREST = CONSTRAINT_CHARGING | CONSTRAINT_BATTERY_NOT_LOW
             | CONSTRAINT_STORAGE_NOT_LOW | CONSTRAINT_TIMING_DELAY | CONSTRAINT_CONNECTIVITY
             | CONSTRAINT_IDLE | CONSTRAINT_CONTENT_TRIGGER;
@@ -1133,6 +1297,11 @@ public final class JobStatus {
     static final int SOFT_OVERRIDE_CONSTRAINTS =
             CONSTRAINT_CHARGING | CONSTRAINT_BATTERY_NOT_LOW | CONSTRAINT_STORAGE_NOT_LOW
                     | CONSTRAINT_TIMING_DELAY | CONSTRAINT_IDLE;
+
+    /** Returns true whenever all dynamically set constraints are satisfied. */
+    public boolean areDynamicConstraintsSatisfied() {
+        return mReadyDynamicSatisfied;
+    }
 
     /**
      * @return Whether the constraints set on this job are satisfied.
@@ -1404,7 +1573,7 @@ public final class JobStatus {
         proto.write(JobStatusDumpProto.JobWorkItem.WORK_ID, work.getWorkId());
         proto.write(JobStatusDumpProto.JobWorkItem.DELIVERY_COUNT, work.getDeliveryCount());
         if (work.getIntent() != null) {
-            work.getIntent().writeToProto(proto, JobStatusDumpProto.JobWorkItem.INTENT);
+            work.getIntent().dumpDebug(proto, JobStatusDumpProto.JobWorkItem.INTENT);
         }
         Object grants = work.getGrants();
         if (grants != null) {
@@ -1431,14 +1600,11 @@ public final class JobStatus {
             case 2: return "FREQUENT";
             case 3: return "RARE";
             case 4: return "NEVER";
+            case 5:
+                return "RESTRICTED";
             default:
                 return "Unknown: " + standbyBucket;
         }
-    }
-
-    private static int resolveTargetSdkVersion(JobInfo job) {
-        return LocalServices.getService(PackageManagerInternal.class)
-                .getPackageTargetSdkVersion(job.getService().getPackageName());
     }
 
     // Dumpsys infrastructure
@@ -1502,18 +1668,18 @@ public final class JobStatus {
                     pw.println();
                 }
             }
-            if (job.getExtras() != null && !job.getExtras().maybeIsEmpty()) {
+            if (job.getExtras() != null && !job.getExtras().isDefinitelyEmpty()) {
                 pw.print(prefix); pw.print("  Extras: ");
                 pw.println(job.getExtras().toShortString());
             }
-            if (job.getTransientExtras() != null && !job.getTransientExtras().maybeIsEmpty()) {
+            if (job.getTransientExtras() != null && !job.getTransientExtras().isDefinitelyEmpty()) {
                 pw.print(prefix); pw.print("  Transient extras: ");
                 pw.println(job.getTransientExtras().toShortString());
             }
             if (job.getClipData() != null) {
                 pw.print(prefix); pw.print("  Clip data: ");
                 StringBuilder b = new StringBuilder(128);
-                job.getClipData().toShortString(b);
+                b.append(job.getClipData());
                 pw.println(b);
             }
             if (uriPerms != null) {
@@ -1524,9 +1690,13 @@ public final class JobStatus {
                 pw.print(prefix); pw.print("  Network type: ");
                 pw.println(job.getRequiredNetwork());
             }
-            if (totalNetworkBytes != JobInfo.NETWORK_BYTES_UNKNOWN) {
-                pw.print(prefix); pw.print("  Network bytes: ");
-                pw.println(totalNetworkBytes);
+            if (mTotalNetworkDownloadBytes != JobInfo.NETWORK_BYTES_UNKNOWN) {
+                pw.print(prefix); pw.print("  Network download bytes: ");
+                pw.println(mTotalNetworkDownloadBytes);
+            }
+            if (mTotalNetworkUploadBytes != JobInfo.NETWORK_BYTES_UNKNOWN) {
+                pw.print(prefix); pw.print("  Network upload bytes: ");
+                pw.println(mTotalNetworkUploadBytes);
             }
             if (job.getMinLatencyMillis() != 0) {
                 pw.print(prefix); pw.print("  Minimum latency: ");
@@ -1550,6 +1720,10 @@ public final class JobStatus {
         }
         pw.print(prefix); pw.print("Required constraints:");
         dumpConstraints(pw, requiredConstraints);
+        pw.println();
+        pw.print(prefix);
+        pw.print("Dynamic constraints:");
+        dumpConstraints(pw, mDynamicConstraints);
         pw.println();
         if (full) {
             pw.print(prefix); pw.print("Satisfied constraints:");
@@ -1590,17 +1764,23 @@ public final class JobStatus {
             pw.print(prefix); pw.print("  readyDeadlineSatisfied: ");
             pw.println(mReadyDeadlineSatisfied);
         }
+        pw.print(prefix);
+        pw.print("  readyDynamicSatisfied: ");
+        pw.println(mReadyDynamicSatisfied);
 
         if (changedAuthorities != null) {
             pw.print(prefix); pw.println("Changed authorities:");
             for (int i=0; i<changedAuthorities.size(); i++) {
                 pw.print(prefix); pw.print("  "); pw.println(changedAuthorities.valueAt(i));
             }
-            if (changedUris != null) {
-                pw.print(prefix); pw.println("Changed URIs:");
-                for (int i=0; i<changedUris.size(); i++) {
-                    pw.print(prefix); pw.print("  "); pw.println(changedUris.valueAt(i));
-                }
+        }
+        if (changedUris != null) {
+            pw.print(prefix);
+            pw.println("Changed URIs:");
+            for (int i = 0; i < changedUris.size(); i++) {
+                pw.print(prefix);
+                pw.print("  ");
+                pw.println(changedUris.valueAt(i));
             }
         }
         if (network != null) {
@@ -1620,13 +1800,15 @@ public final class JobStatus {
         }
         pw.print(prefix); pw.print("Standby bucket: ");
         pw.println(getBucketName());
-        if (standbyBucket > 0) {
-            pw.print(prefix); pw.print("Base heartbeat: ");
-            pw.println(baseHeartbeat);
-        }
         if (whenStandbyDeferred != 0) {
             pw.print(prefix); pw.print("  Deferred since: ");
             TimeUtils.formatDuration(whenStandbyDeferred, elapsedRealtimeMillis, pw);
+            pw.println();
+        }
+        if (mFirstForceBatchedTimeElapsed != 0) {
+            pw.print(prefix);
+            pw.print("  Time since first force batch attempt: ");
+            TimeUtils.formatDuration(mFirstForceBatchedTimeElapsed, elapsedRealtimeMillis, pw);
             pw.println();
         }
         pw.print(prefix); pw.print("Enqueue time: ");
@@ -1643,18 +1825,18 @@ public final class JobStatus {
         if (numFailures != 0) {
             pw.print(prefix); pw.print("Num failures: "); pw.println(numFailures);
         }
-        final Time t = new Time();
-        final String format = "%Y-%m-%d %H:%M:%S";
         if (mLastSuccessfulRunTime != 0) {
             pw.print(prefix); pw.print("Last successful run: ");
-            t.set(mLastSuccessfulRunTime);
-            pw.println(t.format(format));
+            pw.println(formatTime(mLastSuccessfulRunTime));
         }
         if (mLastFailedRunTime != 0) {
             pw.print(prefix); pw.print("Last failed run: ");
-            t.set(mLastFailedRunTime);
-            pw.println(t.format(format));
+            pw.println(formatTime(mLastFailedRunTime));
         }
+    }
+
+    private static CharSequence formatTime(long time) {
+        return DateFormat.format("yyyy-MM-dd HH:mm:ss", time);
     }
 
     public void dump(ProtoOutputStream proto, long fieldId, boolean full, long elapsedRealtimeMillis) {
@@ -1665,12 +1847,11 @@ public final class JobStatus {
         proto.write(JobStatusDumpProto.SOURCE_UID, getSourceUid());
         proto.write(JobStatusDumpProto.SOURCE_USER_ID, getSourceUserId());
         proto.write(JobStatusDumpProto.SOURCE_PACKAGE_NAME, getSourcePackageName());
-        proto.write(JobStatusDumpProto.INTERNAL_FLAGS, getInternalFlags());
 
         if (full) {
             final long jiToken = proto.start(JobStatusDumpProto.JOB_INFO);
 
-            job.getService().writeToProto(proto, JobStatusDumpProto.JobInfo.SERVICE);
+            job.getService().dumpDebug(proto, JobStatusDumpProto.JobInfo.SERVICE);
 
             proto.write(JobStatusDumpProto.JobInfo.IS_PERIODIC, job.isPeriodic());
             proto.write(JobStatusDumpProto.JobInfo.PERIOD_INTERVAL_MS, job.getIntervalMillis());
@@ -1679,6 +1860,8 @@ public final class JobStatus {
             proto.write(JobStatusDumpProto.JobInfo.IS_PERSISTED, job.isPersisted());
             proto.write(JobStatusDumpProto.JobInfo.PRIORITY, job.getPriority());
             proto.write(JobStatusDumpProto.JobInfo.FLAGS, job.getFlags());
+            proto.write(JobStatusDumpProto.INTERNAL_FLAGS, getInternalFlags());
+            // Foreground exemption can be determined from internal flags value.
 
             proto.write(JobStatusDumpProto.JobInfo.REQUIRES_CHARGING, job.isRequireCharging());
             proto.write(JobStatusDumpProto.JobInfo.REQUIRES_BATTERY_NOT_LOW, job.isRequireBatteryNotLow());
@@ -1706,23 +1889,28 @@ public final class JobStatus {
                             job.getTriggerContentMaxDelay());
                 }
             }
-            if (job.getExtras() != null && !job.getExtras().maybeIsEmpty()) {
-                job.getExtras().writeToProto(proto, JobStatusDumpProto.JobInfo.EXTRAS);
+            if (job.getExtras() != null && !job.getExtras().isDefinitelyEmpty()) {
+                job.getExtras().dumpDebug(proto, JobStatusDumpProto.JobInfo.EXTRAS);
             }
-            if (job.getTransientExtras() != null && !job.getTransientExtras().maybeIsEmpty()) {
-                job.getTransientExtras().writeToProto(proto, JobStatusDumpProto.JobInfo.TRANSIENT_EXTRAS);
+            if (job.getTransientExtras() != null && !job.getTransientExtras().isDefinitelyEmpty()) {
+                job.getTransientExtras().dumpDebug(proto, JobStatusDumpProto.JobInfo.TRANSIENT_EXTRAS);
             }
             if (job.getClipData() != null) {
-                job.getClipData().writeToProto(proto, JobStatusDumpProto.JobInfo.CLIP_DATA);
+                job.getClipData().dumpDebug(proto, JobStatusDumpProto.JobInfo.CLIP_DATA);
             }
             if (uriPerms != null) {
                 uriPerms.dump(proto, JobStatusDumpProto.JobInfo.GRANTED_URI_PERMISSIONS);
             }
             if (job.getRequiredNetwork() != null) {
-                job.getRequiredNetwork().writeToProto(proto, JobStatusDumpProto.JobInfo.REQUIRED_NETWORK);
+                job.getRequiredNetwork().dumpDebug(proto, JobStatusDumpProto.JobInfo.REQUIRED_NETWORK);
             }
-            if (totalNetworkBytes != JobInfo.NETWORK_BYTES_UNKNOWN) {
-                proto.write(JobStatusDumpProto.JobInfo.TOTAL_NETWORK_BYTES, totalNetworkBytes);
+            if (mTotalNetworkDownloadBytes != JobInfo.NETWORK_BYTES_UNKNOWN) {
+                proto.write(JobStatusDumpProto.JobInfo.TOTAL_NETWORK_DOWNLOAD_BYTES,
+                        mTotalNetworkDownloadBytes);
+            }
+            if (mTotalNetworkUploadBytes != JobInfo.NETWORK_BYTES_UNKNOWN) {
+                proto.write(JobStatusDumpProto.JobInfo.TOTAL_NETWORK_UPLOAD_BYTES,
+                        mTotalNetworkUploadBytes);
             }
             proto.write(JobStatusDumpProto.JobInfo.MIN_LATENCY_MS, job.getMinLatencyMillis());
             proto.write(JobStatusDumpProto.JobInfo.MAX_EXECUTION_DELAY_MS, job.getMaxExecutionDelayMillis());
@@ -1740,6 +1928,7 @@ public final class JobStatus {
         }
 
         dumpConstraints(proto, JobStatusDumpProto.REQUIRED_CONSTRAINTS, requiredConstraints);
+        dumpConstraints(proto, JobStatusDumpProto.DYNAMIC_CONSTRAINTS, mDynamicConstraints);
         if (full) {
             dumpConstraints(proto, JobStatusDumpProto.SATISFIED_CONSTRAINTS, satisfiedConstraints);
             dumpConstraints(proto, JobStatusDumpProto.UNSATISFIED_CONSTRAINTS,
@@ -1785,6 +1974,10 @@ public final class JobStatus {
         proto.write(JobStatusDumpProto.ImplicitConstraints.IS_NOT_DOZING, mReadyNotDozing);
         proto.write(JobStatusDumpProto.ImplicitConstraints.IS_NOT_RESTRICTED_IN_BG,
                 mReadyNotRestrictedInBg);
+        // mReadyDeadlineSatisfied isn't an implicit constraint...and can be determined from other
+        // field values.
+        proto.write(JobStatusDumpProto.ImplicitConstraints.IS_DYNAMIC_SATISFIED,
+                mReadyDynamicSatisfied);
         proto.end(icToken);
 
         if (changedAuthorities != null) {
@@ -1800,15 +1993,15 @@ public final class JobStatus {
         }
 
         if (network != null) {
-            network.writeToProto(proto, JobStatusDumpProto.NETWORK);
+            network.dumpDebug(proto, JobStatusDumpProto.NETWORK);
         }
 
-        if (pendingWork != null && pendingWork.size() > 0) {
+        if (pendingWork != null) {
             for (int i = 0; i < pendingWork.size(); i++) {
                 dumpJobWorkItem(proto, JobStatusDumpProto.PENDING_WORK, pendingWork.get(i));
             }
         }
-        if (executingWork != null && executingWork.size() > 0) {
+        if (executingWork != null) {
             for (int i = 0; i < executingWork.size(); i++) {
                 dumpJobWorkItem(proto, JobStatusDumpProto.EXECUTING_WORK, executingWork.get(i));
             }
@@ -1816,6 +2009,11 @@ public final class JobStatus {
 
         proto.write(JobStatusDumpProto.STANDBY_BUCKET, standbyBucket);
         proto.write(JobStatusDumpProto.ENQUEUE_DURATION_MS, elapsedRealtimeMillis - enqueueTime);
+        proto.write(JobStatusDumpProto.TIME_SINCE_FIRST_DEFERRAL_MS,
+                whenStandbyDeferred == 0 ? 0 : elapsedRealtimeMillis - whenStandbyDeferred);
+        proto.write(JobStatusDumpProto.TIME_SINCE_FIRST_FORCE_BATCH_ATTEMPT_MS,
+                mFirstForceBatchedTimeElapsed == 0
+                        ? 0 : elapsedRealtimeMillis - mFirstForceBatchedTimeElapsed);
         if (earliestRunTimeElapsedMillis == NO_EARLIEST_RUNTIME) {
             proto.write(JobStatusDumpProto.TIME_UNTIL_EARLIEST_RUNTIME_MS, 0);
         } else {
@@ -1828,6 +2026,8 @@ public final class JobStatus {
             proto.write(JobStatusDumpProto.TIME_UNTIL_LATEST_RUNTIME_MS,
                     latestRunTimeElapsedMillis - elapsedRealtimeMillis);
         }
+        proto.write(JobStatusDumpProto.ORIGINAL_LATEST_RUNTIME_ELAPSED,
+                mOriginalLatestRunTimeElapsedMillis);
 
         proto.write(JobStatusDumpProto.NUM_FAILURES, numFailures);
         proto.write(JobStatusDumpProto.LAST_SUCCESSFUL_RUN_TIME, mLastSuccessfulRunTime);

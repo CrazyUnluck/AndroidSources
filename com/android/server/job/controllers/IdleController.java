@@ -20,7 +20,6 @@ import android.content.Context;
 import android.content.pm.PackageManager;
 import android.os.UserHandle;
 import android.util.ArraySet;
-import android.util.Slog;
 import android.util.proto.ProtoOutputStream;
 
 import com.android.internal.util.IndentingPrintWriter;
@@ -33,7 +32,15 @@ import com.android.server.job.controllers.idle.IdlenessTracker;
 
 import java.util.function.Predicate;
 
-public final class IdleController extends StateController implements IdlenessListener {
+/**
+ * Simple controller that tracks whether the device is idle or not. Idleness depends on the device
+ * type and is not related to device-idle (Doze mode) despite the similar naming.
+ *
+ * @see CarIdlenessTracker
+ * @see DeviceIdlenessTracker
+ * @see IdlenessTracker
+ */
+public final class IdleController extends RestrictingController implements IdlenessListener {
     private static final String TAG = "JobScheduler.IdleController";
     // Policy: we decide that we're "idle" if the device has been unused /
     // screen off or dreaming or wireless charging dock idle for at least this long
@@ -58,10 +65,22 @@ public final class IdleController extends StateController implements IdlenessLis
     }
 
     @Override
+    public void startTrackingRestrictedJobLocked(JobStatus jobStatus) {
+        maybeStartTrackingJobLocked(jobStatus, null);
+    }
+
+    @Override
     public void maybeStopTrackingJobLocked(JobStatus taskStatus, JobStatus incomingJob,
             boolean forUpdate) {
         if (taskStatus.clearTrackingController(JobStatus.TRACKING_IDLE)) {
             mTrackedTasks.remove(taskStatus);
+        }
+    }
+
+    @Override
+    public void stopTrackingRestrictedJobLocked(JobStatus jobStatus) {
+        if (!jobStatus.hasIdleConstraint()) {
+            maybeStopTrackingJobLocked(jobStatus, null, false);
         }
     }
 
@@ -120,6 +139,7 @@ public final class IdleController extends StateController implements IdlenessLis
         final long mToken = proto.start(StateControllerProto.IDLE);
 
         proto.write(StateControllerProto.IdleController.IS_IDLE, mIdleTracker.isIdle());
+        mIdleTracker.dump(proto, StateControllerProto.IdleController.IDLENESS_TRACKER);
 
         for (int i = 0; i < mTrackedTasks.size(); i++) {
             final JobStatus js = mTrackedTasks.valueAt(i);

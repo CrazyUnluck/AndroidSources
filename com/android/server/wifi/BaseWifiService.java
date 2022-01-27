@@ -1,13 +1,11 @@
-/**
- * Copyright (c) 2018, The Android Open Source Project
+/*
+ * Copyright (c) 2018 The Android Open Source Project
  *
- * Licensed under the Apache License, Version 2.0 (the "License") {
- *  throw new UnsupportedOperationException();
- }
+ * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
  * You may obtain a copy of the License at
  *
- *     http://www.apache.org/licenses/LICENSE-2.0
+ *      http://www.apache.org/licenses/LICENSE-2.0
  *
  * Unless required by applicable law or agreed to in writing, software
  * distributed under the License is distributed on an "AS IS" BASIS,
@@ -21,25 +19,33 @@ package com.android.server.wifi;
 import android.content.pm.ParceledListSlice;
 import android.net.DhcpInfo;
 import android.net.Network;
+import android.net.wifi.IActionListener;
 import android.net.wifi.IDppCallback;
+import android.net.wifi.ILocalOnlyHotspotCallback;
 import android.net.wifi.INetworkRequestMatchCallback;
+import android.net.wifi.IOnWifiActivityEnergyInfoListener;
 import android.net.wifi.IOnWifiUsabilityStatsListener;
+import android.net.wifi.IScanResultsCallback;
 import android.net.wifi.ISoftApCallback;
+import android.net.wifi.ISuggestionConnectionStatusListener;
 import android.net.wifi.ITrafficStateCallback;
+import android.net.wifi.ITxPacketCountListener;
+import android.net.wifi.IWifiConnectedNetworkScorer;
 import android.net.wifi.IWifiManager;
 import android.net.wifi.ScanResult;
-import android.net.wifi.WifiActivityEnergyInfo;
+import android.net.wifi.SoftApConfiguration;
 import android.net.wifi.WifiConfiguration;
 import android.net.wifi.WifiInfo;
+import android.net.wifi.WifiManager;
 import android.net.wifi.WifiNetworkSuggestion;
 import android.net.wifi.hotspot2.IProvisioningCallback;
 import android.net.wifi.hotspot2.OsuProvider;
 import android.net.wifi.hotspot2.PasspointConfiguration;
 import android.os.IBinder;
-import android.os.Messenger;
 import android.os.RemoteException;
 import android.os.ResultReceiver;
 import android.os.WorkSource;
+import android.os.connectivity.WifiActivityEnergyInfo;
 
 import java.util.List;
 import java.util.Map;
@@ -69,23 +75,30 @@ public class BaseWifiService extends IWifiManager.Stub {
         throw new UnsupportedOperationException();
     }
 
-    @Override
+    /** @deprecated use {@link #getWifiActivityEnergyInfoAsync} instead */
+    @Deprecated
     public WifiActivityEnergyInfo reportActivityInfo() {
         throw new UnsupportedOperationException();
     }
 
-    @Override
+    /** @deprecated use {@link #getWifiActivityEnergyInfoAsync} instead */
+    @Deprecated
     public void requestActivityInfo(ResultReceiver result) {
         throw new UnsupportedOperationException();
     }
 
     @Override
-    public ParceledListSlice getConfiguredNetworks(String packageName) {
+    public void getWifiActivityEnergyInfoAsync(IOnWifiActivityEnergyInfoListener listener) {
         throw new UnsupportedOperationException();
     }
 
     @Override
-    public ParceledListSlice getPrivilegedConfiguredNetworks(String packageName) {
+    public ParceledListSlice getConfiguredNetworks(String packageName, String featureId) {
+        throw new UnsupportedOperationException();
+    }
+
+    @Override
+    public ParceledListSlice getPrivilegedConfiguredNetworks(String packageName, String featureId) {
         throw new UnsupportedOperationException();
     }
 
@@ -164,12 +177,43 @@ public class BaseWifiService extends IWifiManager.Stub {
     }
 
     @Override
-    public boolean startScan(String packageName) {
+    public void allowAutojoinGlobal(boolean choice) {
         throw new UnsupportedOperationException();
     }
 
     @Override
-    public List<ScanResult> getScanResults(String callingPackage) {
+    public void allowAutojoin(int netId, boolean choice) {
+        throw new UnsupportedOperationException();
+    }
+
+    @Override
+    public void allowAutojoinPasspoint(String fqdn, boolean enableAutoJoin) {
+        throw new UnsupportedOperationException();
+    }
+
+    @Override
+    public void setMacRandomizationSettingPasspointEnabled(String fqdn, boolean enable) {
+        throw new UnsupportedOperationException();
+    }
+
+    /** @deprecated use {@link #setPasspointMeteredOverride} instead */
+    @Deprecated
+    public void setMeteredOverridePasspoint(String fqdn, int meteredOverride) {
+        throw new UnsupportedOperationException();
+    }
+
+    @Override
+    public void setPasspointMeteredOverride(String fqdn, int meteredOverride) {
+        throw new UnsupportedOperationException();
+    }
+
+    @Override
+    public boolean startScan(String packageName, String featureId) {
+        throw new UnsupportedOperationException();
+    }
+
+    @Override
+    public List<ScanResult> getScanResults(String callingPackage, String callingFeatureId) {
         throw new UnsupportedOperationException();
     }
 
@@ -189,7 +233,7 @@ public class BaseWifiService extends IWifiManager.Stub {
     }
 
     @Override
-    public WifiInfo getConnectionInfo(String callingPackage) {
+    public WifiInfo getConnectionInfo(String callingPackage, String callingFeatureId) {
         throw new UnsupportedOperationException();
     }
 
@@ -204,27 +248,44 @@ public class BaseWifiService extends IWifiManager.Stub {
     }
 
     @Override
-    public void setCountryCode(String country) {
-        throw new UnsupportedOperationException();
-    }
-
-    @Override
     public String getCountryCode() {
         throw new UnsupportedOperationException();
     }
 
-    @Override
+    /** @deprecated use {@link #is5GHzBandSupported} instead */
+    @Deprecated
     public boolean isDualBandSupported() {
         throw new UnsupportedOperationException();
     }
 
     @Override
+    public boolean is5GHzBandSupported() {
+        throw new UnsupportedOperationException();
+    }
+
+    @Override
+    public boolean is6GHzBandSupported() {
+        throw new UnsupportedOperationException();
+    }
+
+    @Override
+    public boolean isWifiStandardSupported(int standard) {
+        throw new UnsupportedOperationException();
+    }
+
+    /** @deprecated use {@link WifiManager#isStaApConcurrencySupported()} */
+    @Deprecated
     public boolean needs5GHzToAnyApBandConversion() {
         throw new UnsupportedOperationException();
     }
 
     @Override
     public DhcpInfo getDhcpInfo() {
+        throw new UnsupportedOperationException();
+    }
+
+    @Override
+    public void setScanAlwaysAvailable(boolean isAvailable) {
         throw new UnsupportedOperationException();
     }
 
@@ -279,12 +340,18 @@ public class BaseWifiService extends IWifiManager.Stub {
     }
 
     @Override
+    public boolean startTetheredHotspot(SoftApConfiguration softApConfig) {
+        throw new UnsupportedOperationException();
+    }
+
+    @Override
     public boolean stopSoftAp() {
         throw new UnsupportedOperationException();
     }
 
     @Override
-    public int startLocalOnlyHotspot(Messenger messenger, IBinder binder, String packageName) {
+    public int startLocalOnlyHotspot(ILocalOnlyHotspotCallback callback, String packageName,
+            String featureId, SoftApConfiguration customConfig) {
         throw new UnsupportedOperationException();
     }
 
@@ -294,7 +361,7 @@ public class BaseWifiService extends IWifiManager.Stub {
     }
 
     @Override
-    public void startWatchLocalOnlyHotspot(Messenger messenger, IBinder binder) {
+    public void startWatchLocalOnlyHotspot(ILocalOnlyHotspotCallback callback) {
         throw new UnsupportedOperationException();
     }
 
@@ -314,17 +381,22 @@ public class BaseWifiService extends IWifiManager.Stub {
     }
 
     @Override
+    public SoftApConfiguration getSoftApConfiguration() {
+        throw new UnsupportedOperationException();
+    }
+
+    @Override
     public boolean setWifiApConfiguration(WifiConfiguration wifiConfig, String packageName) {
         throw new UnsupportedOperationException();
     }
 
     @Override
-    public void notifyUserOfApBandConversion(String packageName) {
+    public boolean setSoftApConfiguration(SoftApConfiguration softApConfig, String packageName) {
         throw new UnsupportedOperationException();
     }
 
     @Override
-    public Messenger getWifiServiceMessenger(String packageName) {
+    public void notifyUserOfApBandConversion(String packageName) {
         throw new UnsupportedOperationException();
     }
 
@@ -353,7 +425,8 @@ public class BaseWifiService extends IWifiManager.Stub {
         throw new UnsupportedOperationException();
     }
 
-    @Override
+    /** @deprecated use {@link #allowAutojoinGlobal(boolean)} instead */
+    @Deprecated
     public void enableWifiConnectivityManager(boolean enabled) {
         throw new UnsupportedOperationException();
     }
@@ -380,6 +453,16 @@ public class BaseWifiService extends IWifiManager.Stub {
 
     @Override
     public void restoreBackupData(byte[] data) {
+        throw new UnsupportedOperationException();
+    }
+
+    @Override
+    public byte[] retrieveSoftApBackupData() {
+        throw new UnsupportedOperationException();
+    }
+
+    @Override
+    public SoftApConfiguration restoreSoftApBackupData(byte[] data) {
         throw new UnsupportedOperationException();
     }
 
@@ -429,13 +512,19 @@ public class BaseWifiService extends IWifiManager.Stub {
 
     @Override
     public int addNetworkSuggestions(
-            List<WifiNetworkSuggestion> networkSuggestions, String callingPackageName) {
+            List<WifiNetworkSuggestion> networkSuggestions, String callingPackageName,
+            String callingFeatureId) {
         throw new UnsupportedOperationException();
     }
 
     @Override
     public int removeNetworkSuggestions(
             List<WifiNetworkSuggestion> networkSuggestions, String callingPackageName) {
+        throw new UnsupportedOperationException();
+    }
+
+    @Override
+    public List<WifiNetworkSuggestion> getNetworkSuggestions(String packageName) {
         throw new UnsupportedOperationException();
     }
 
@@ -479,6 +568,113 @@ public class BaseWifiService extends IWifiManager.Stub {
 
     @Override
     public void updateWifiUsabilityScore(int seqNum, int score, int predictionHorizonSec) {
+        throw new UnsupportedOperationException();
+    }
+
+    @Override
+    public void connect(WifiConfiguration config, int netId, IBinder binder,
+            IActionListener callback, int callbackIdentifier) {
+        throw new UnsupportedOperationException();
+    }
+
+    @Override
+    public void save(WifiConfiguration config, IBinder binder, IActionListener callback,
+            int callbackIdentifier) {
+        throw new UnsupportedOperationException();
+    }
+
+    @Override
+    public void forget(int netId, IBinder binder, IActionListener callback,
+            int callbackIdentifier) {
+        throw new UnsupportedOperationException();
+    }
+
+    /**
+     * @deprecated was only used by CTS test, now fully removed. Please also remove
+     * ITxPacketCountListener.aidl when removing this method.
+     */
+    @Deprecated
+    public void getTxPacketCount(String packageName, IBinder binder,
+            ITxPacketCountListener callback, int callbackIdentifier) {
+        throw new UnsupportedOperationException();
+    }
+
+    @Override
+    public void registerScanResultsCallback(IScanResultsCallback callback) {
+        throw new UnsupportedOperationException();
+    }
+
+    @Override
+    public void unregisterScanResultsCallback(IScanResultsCallback callback) {
+        throw new UnsupportedOperationException();
+    }
+
+    @Override
+    public void registerSuggestionConnectionStatusListener(IBinder binder,
+            ISuggestionConnectionStatusListener listener,
+            int listenerIdentifier, String packageName, String featureId) {
+        throw new UnsupportedOperationException();
+    }
+
+    @Override
+    public void unregisterSuggestionConnectionStatusListener(int listenerIdentifier,
+            String packageName) {
+        throw new UnsupportedOperationException();
+    }
+
+    @Override
+    public int calculateSignalLevel(int rssi) {
+        throw new UnsupportedOperationException();
+    }
+
+    @Override
+    public List<WifiConfiguration> getWifiConfigForMatchedNetworkSuggestionsSharedWithUser(
+            List<ScanResult> scanResults) {
+        throw new UnsupportedOperationException();
+    }
+
+    @Override
+    public boolean setWifiConnectedNetworkScorer(IBinder binder,
+            IWifiConnectedNetworkScorer scorer) {
+        throw new UnsupportedOperationException();
+    }
+
+    @Override
+    public void clearWifiConnectedNetworkScorer() {
+        throw new UnsupportedOperationException();
+    }
+
+    @Override
+    public Map<WifiNetworkSuggestion, List<ScanResult>> getMatchingScanResults(
+            List<WifiNetworkSuggestion> networkSuggestions,
+            List<ScanResult> scanResults,
+            String callingPackage, String callingFeatureId) {
+        throw new UnsupportedOperationException();
+    }
+
+    @Override
+    public void setScanThrottleEnabled(boolean enable) {
+        throw new UnsupportedOperationException();
+    }
+
+    @Override
+    public boolean isScanThrottleEnabled() {
+        throw new UnsupportedOperationException();
+    }
+
+    @Override
+    public Map<String, Map<Integer, List<ScanResult>>>
+            getAllMatchingPasspointProfilesForScanResults(List<ScanResult> scanResults) {
+        throw new UnsupportedOperationException();
+    }
+
+    @Override
+    public void setAutoWakeupEnabled(boolean enable) {
+        throw new UnsupportedOperationException();
+    }
+
+    @Override
+    public boolean isAutoWakeupEnabled() {
         throw new UnsupportedOperationException();
     }
 }

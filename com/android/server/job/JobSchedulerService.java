@@ -25,7 +25,6 @@ import android.annotation.UserIdInt;
 import android.app.Activity;
 import android.app.ActivityManager;
 import android.app.ActivityManagerInternal;
-import android.app.AlarmManager;
 import android.app.AppGlobals;
 import android.app.IUidObserver;
 import android.app.job.IJobScheduler;
@@ -38,13 +37,13 @@ import android.app.job.JobSnapshot;
 import android.app.job.JobWorkItem;
 import android.app.usage.UsageStatsManager;
 import android.app.usage.UsageStatsManagerInternal;
-import android.app.usage.UsageStatsManagerInternal.AppIdleStateChangeListener;
 import android.content.BroadcastReceiver;
 import android.content.ComponentName;
 import android.content.ContentResolver;
 import android.content.Context;
 import android.content.Intent;
 import android.content.IntentFilter;
+import android.content.pm.ApplicationInfo;
 import android.content.pm.IPackageManager;
 import android.content.pm.PackageManager;
 import android.content.pm.PackageManager.NameNotFoundException;
@@ -57,45 +56,41 @@ import android.os.BatteryStats;
 import android.os.BatteryStatsInternal;
 import android.os.Binder;
 import android.os.Handler;
-import android.os.IThermalService;
-import android.os.IThermalStatusListener;
+import android.os.LimitExceededException;
 import android.os.Looper;
 import android.os.Message;
+import android.os.ParcelFileDescriptor;
 import android.os.Process;
 import android.os.RemoteException;
-import android.os.ResultReceiver;
 import android.os.ServiceManager;
-import android.os.ShellCallback;
 import android.os.SystemClock;
-import android.os.Temperature;
 import android.os.UserHandle;
 import android.os.UserManagerInternal;
 import android.os.WorkSource;
 import android.provider.Settings;
 import android.text.format.DateUtils;
+import android.util.ArrayMap;
 import android.util.KeyValueListParser;
 import android.util.Log;
 import android.util.Slog;
 import android.util.SparseArray;
 import android.util.SparseIntArray;
-import android.util.StatsLog;
 import android.util.TimeUtils;
 import android.util.proto.ProtoOutputStream;
 
-import com.android.internal.annotations.GuardedBy;
+import com.android.internal.R;
 import com.android.internal.annotations.VisibleForTesting;
 import com.android.internal.app.IBatteryStats;
 import com.android.internal.util.ArrayUtils;
 import com.android.internal.util.DumpUtils;
+import com.android.internal.util.FrameworkStatsLog;
 import com.android.internal.util.IndentingPrintWriter;
-import com.android.internal.util.Preconditions;
 import com.android.server.AppStateTracker;
-import com.android.server.DeviceIdleController;
+import com.android.server.DeviceIdleInternal;
 import com.android.server.FgThread;
 import com.android.server.LocalServices;
 import com.android.server.job.JobSchedulerServiceDumpProto.ActiveJob;
 import com.android.server.job.JobSchedulerServiceDumpProto.PendingJob;
-import com.android.server.job.JobSchedulerServiceDumpProto.RegisteredJob;
 import com.android.server.job.controllers.BackgroundJobsController;
 import com.android.server.job.controllers.BatteryController;
 import com.android.server.job.controllers.ConnectivityController;
@@ -104,21 +99,32 @@ import com.android.server.job.controllers.DeviceIdleJobsController;
 import com.android.server.job.controllers.IdleController;
 import com.android.server.job.controllers.JobStatus;
 import com.android.server.job.controllers.QuotaController;
+import com.android.server.job.controllers.RestrictingController;
 import com.android.server.job.controllers.StateController;
 import com.android.server.job.controllers.StorageController;
 import com.android.server.job.controllers.TimeController;
+import com.android.server.job.restrictions.JobRestriction;
+import com.android.server.job.restrictions.ThermalStatusRestriction;
+import com.android.server.usage.AppStandbyInternal;
+import com.android.server.usage.AppStandbyInternal.AppIdleStateChangeListener;
+import com.android.server.utils.quota.Categorizer;
+import com.android.server.utils.quota.Category;
+import com.android.server.utils.quota.CountQuotaTracker;
 
 import libcore.util.EmptyArray;
 
 import java.io.FileDescriptor;
 import java.io.PrintWriter;
 import java.time.Clock;
+import java.time.Instant;
+import java.time.ZoneId;
+import java.time.ZoneOffset;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collections;
 import java.util.Comparator;
-import java.util.HashMap;
 import java.util.List;
+import java.util.Objects;
 import java.util.function.Consumer;
 import java.util.function.Predicate;
 
@@ -149,10 +155,53 @@ public class JobSchedulerService extends com.android.server.SystemService
 
     @VisibleForTesting
     public static Clock sSystemClock = Clock.systemUTC();
+
+    private abstract static class MySimpleClock extends Clock {
+        private final ZoneId mZoneId;
+
+        MySimpleClock(ZoneId zoneId) {
+            this.mZoneId = zoneId;
+        }
+
+        @Override
+        public ZoneId getZone() {
+            return mZoneId;
+        }
+
+        @Override
+        public Clock withZone(ZoneId zone) {
+            return new MySimpleClock(zone) {
+                @Override
+                public long millis() {
+                    return MySimpleClock.this.millis();
+                }
+            };
+        }
+
+        @Override
+        public abstract long millis();
+
+        @Override
+        public Instant instant() {
+            return Instant.ofEpochMilli(millis());
+        }
+    }
+
     @VisibleForTesting
-    public static Clock sUptimeMillisClock = SystemClock.uptimeMillisClock();
+    public static Clock sUptimeMillisClock = new MySimpleClock(ZoneOffset.UTC) {
+        @Override
+        public long millis() {
+            return SystemClock.uptimeMillis();
+        }
+    };
+
     @VisibleForTesting
-    public static Clock sElapsedRealtimeClock = SystemClock.elapsedRealtimeClock();
+    public static Clock sElapsedRealtimeClock =  new MySimpleClock(ZoneOffset.UTC) {
+        @Override
+        public long millis() {
+            return SystemClock.elapsedRealtime();
+        }
+    };
 
     /** Global local for all job scheduler state. */
     final Object mLock = new Object();
@@ -181,17 +230,43 @@ public class JobSchedulerService extends com.android.server.SystemService
 
     /** List of controllers that will notify this service of updates to jobs. */
     final List<StateController> mControllers;
+    /**
+     * List of controllers that will apply to all jobs in the RESTRICTED bucket. This is a subset of
+     * {@link #mControllers}.
+     */
+    private final List<RestrictingController> mRestrictiveControllers;
     /** Need direct access to this for testing. */
     private final BatteryController mBatteryController;
     /** Need direct access to this for testing. */
     private final StorageController mStorageController;
     /** Need directly for sending uid state changes */
     private final DeviceIdleJobsController mDeviceIdleJobsController;
-    /** Need directly for receiving thermal events */
-    private IThermalService mThermalService;
-    /** Thermal constraint. */
-    @GuardedBy("mLock")
-    private boolean mThermalConstraint = false;
+    /** Needed to get remaining quota time. */
+    private final QuotaController mQuotaController;
+    /**
+     * List of restrictions.
+     * Note: do not add to or remove from this list at runtime except in the constructor, because we
+     * do not synchronize access to this list.
+     */
+    private final List<JobRestriction> mJobRestrictions;
+
+    @NonNull
+    private final String mSystemGalleryPackage;
+
+    private final CountQuotaTracker mQuotaTracker;
+    private static final String QUOTA_TRACKER_SCHEDULE_PERSISTED_TAG = ".schedulePersisted()";
+    private static final String QUOTA_TRACKER_SCHEDULE_LOGGED =
+            ".schedulePersisted out-of-quota logged";
+    private static final Category QUOTA_TRACKER_CATEGORY_SCHEDULE_PERSISTED = new Category(
+            ".schedulePersisted()");
+    private static final Category QUOTA_TRACKER_CATEGORY_SCHEDULE_LOGGED = new Category(
+            ".schedulePersisted out-of-quota logged");
+    private static final Categorizer QUOTA_CATEGORIZER = (userId, packageName, tag) -> {
+        if (QUOTA_TRACKER_SCHEDULE_PERSISTED_TAG.equals(tag)) {
+            return QUOTA_TRACKER_CATEGORY_SCHEDULE_PERSISTED;
+        }
+        return QUOTA_TRACKER_CATEGORY_SCHEDULE_LOGGED;
+    };
 
     /**
      * Queue of pending jobs. The JobServiceContext class will receive jobs from this list
@@ -207,9 +282,11 @@ public class JobSchedulerService extends com.android.server.SystemService
     PackageManagerInternal mLocalPM;
     ActivityManagerInternal mActivityManagerInternal;
     IBatteryStats mBatteryStats;
-    DeviceIdleController.LocalService mLocalDeviceIdleController;
+    DeviceIdleInternal mLocalDeviceIdleController;
+    @VisibleForTesting
     AppStateTracker mAppStateTracker;
     final UsageStatsManagerInternal mUsageStats;
+    private final AppStandbyInternal mAppStandbyInternal;
 
     /**
      * Set to true once we are allowed to run third party apps.
@@ -222,11 +299,6 @@ public class JobSchedulerService extends com.android.server.SystemService
     boolean mReportedActive;
 
     /**
-     * Are we currently in device-wide standby parole?
-     */
-    volatile boolean mInParole;
-
-    /**
      * A mapping of which uids are currently in the foreground to their effective priority.
      */
     final SparseIntArray mUidPriorityOverride = new SparseIntArray();
@@ -237,18 +309,12 @@ public class JobSchedulerService extends com.android.server.SystemService
     final SparseIntArray mBackingUpUids = new SparseIntArray();
 
     /**
-     * Count standby heartbeats, and keep track of which beat each bucket's jobs will
-     * next become runnable.  Index into this array is by normalized bucket:
-     * { ACTIVE, WORKING, FREQUENT, RARE, NEVER }.  The ACTIVE and NEVER bucket
-     * milestones are not updated: ACTIVE apps get jobs whenever they ask for them,
-     * and NEVER apps don't get them at all.
+     * Cache of debuggable app status.
      */
-    final long[] mNextBucketHeartbeat = { 0, 0, 0, 0, Long.MAX_VALUE };
-    long mHeartbeat = 0;
-    long mLastHeartbeatTime = sElapsedRealtimeClock.millis();
+    final ArrayMap<String, Boolean> mDebuggableApps = new ArrayMap<>();
 
     /**
-     * Named indices into the STANDBY_BEATS array, for clarity in referring to
+     * Named indices into standby bucket arrays, for clarity in referring to
      * specific buckets' bookkeeping.
      */
     public static final int ACTIVE_INDEX = 0;
@@ -256,21 +322,9 @@ public class JobSchedulerService extends com.android.server.SystemService
     public static final int FREQUENT_INDEX = 2;
     public static final int RARE_INDEX = 3;
     public static final int NEVER_INDEX = 4;
-
-    /**
-     * Bookkeeping about when jobs last run.  We keep our own record in heartbeat time,
-     * rather than rely on Usage Stats' timestamps, because heartbeat time can be
-     * manipulated for testing purposes and we need job runnability to track that rather
-     * than real time.
-     *
-     * Outer SparseArray slices by user handle; inner map of package name to heartbeat
-     * is a HashMap<> rather than ArrayMap<> because we expect O(hundreds) of keys
-     * and it will be accessed in a known-hot code path.
-     */
-    final SparseArray<HashMap<String, Long>> mLastJobHeartbeats = new SparseArray<>();
-
-    static final String HEARTBEAT_TAG = "*job.heartbeat*";
-    final HeartbeatAlarmListener mHeartbeatAlarm = new HeartbeatAlarmListener();
+    // Putting RESTRICTED_INDEX after NEVER_INDEX to make it easier for proto dumping
+    // (ScheduledJobStateChanged and JobStatusDumpProto).
+    public static final int RESTRICTED_INDEX = 5;
 
     // -- Pre-allocated temporaries only for use in assignJobsToContextsLocked --
 
@@ -302,31 +356,22 @@ public class JobSchedulerService extends com.android.server.SystemService
                         final StateController sc = mControllers.get(controller);
                         sc.onConstantsUpdatedLocked();
                     }
+                    updateQuotaTracker();
                 } catch (IllegalArgumentException e) {
                     // Failed to parse the settings string, log this and move on
                     // with defaults.
                     Slog.e(TAG, "Bad jobscheduler settings", e);
                 }
             }
-
-            if (mConstants.USE_HEARTBEATS) {
-                // Reset the heartbeat alarm based on the new heartbeat duration
-                setNextHeartbeatAlarm();
-            }
         }
     }
 
-    /**
-     *  Thermal event received from Thermal Service
-     */
-    private final class ThermalStatusListener extends IThermalStatusListener.Stub {
-        @Override public void onStatusChange(int status) {
-            // Throttle for Temperature.THROTTLING_SEVERE and above
-            synchronized (mLock) {
-                mThermalConstraint = status >= Temperature.THROTTLING_SEVERE;
-            }
-            onControllerStateChanged();
-        }
+    @VisibleForTesting
+    void updateQuotaTracker() {
+        mQuotaTracker.setEnabled(mConstants.ENABLE_API_QUOTAS);
+        mQuotaTracker.setCountLimit(QUOTA_TRACKER_CATEGORY_SCHEDULE_PERSISTED,
+                mConstants.API_QUOTA_SCHEDULE_COUNT,
+                mConstants.API_QUOTA_SCHEDULE_WINDOW_MS);
     }
 
     static class MaxJobCounts {
@@ -436,13 +481,21 @@ public class JobSchedulerService extends com.android.server.SystemService
      */
     public static class Constants {
         // Key names stored in the settings value.
-        private static final String KEY_MIN_IDLE_COUNT = "min_idle_count";
-        private static final String KEY_MIN_CHARGING_COUNT = "min_charging_count";
-        private static final String KEY_MIN_BATTERY_NOT_LOW_COUNT = "min_battery_not_low_count";
-        private static final String KEY_MIN_STORAGE_NOT_LOW_COUNT = "min_storage_not_low_count";
-        private static final String KEY_MIN_CONNECTIVITY_COUNT = "min_connectivity_count";
-        private static final String KEY_MIN_CONTENT_COUNT = "min_content_count";
-        private static final String KEY_MIN_READY_JOBS_COUNT = "min_ready_jobs_count";
+        // TODO(124466289): remove deprecated flags when we migrate to DeviceConfig
+        private static final String DEPRECATED_KEY_MIN_IDLE_COUNT = "min_idle_count";
+        private static final String DEPRECATED_KEY_MIN_CHARGING_COUNT = "min_charging_count";
+        private static final String DEPRECATED_KEY_MIN_BATTERY_NOT_LOW_COUNT =
+                "min_battery_not_low_count";
+        private static final String DEPRECATED_KEY_MIN_STORAGE_NOT_LOW_COUNT =
+                "min_storage_not_low_count";
+        private static final String DEPRECATED_KEY_MIN_CONNECTIVITY_COUNT =
+                "min_connectivity_count";
+        private static final String DEPRECATED_KEY_MIN_CONTENT_COUNT = "min_content_count";
+        private static final String DEPRECATED_KEY_MIN_READY_JOBS_COUNT = "min_ready_jobs_count";
+        private static final String KEY_MIN_READY_NON_ACTIVE_JOBS_COUNT =
+                "min_ready_non_active_jobs_count";
+        private static final String KEY_MAX_NON_ACTIVE_JOB_BATCH_DELAY_MS =
+                "max_non_active_job_batch_delay_ms";
         private static final String KEY_HEAVY_USE_FACTOR = "heavy_use_factor";
         private static final String KEY_MODERATE_USE_FACTOR = "moderate_use_factor";
 
@@ -453,77 +506,54 @@ public class JobSchedulerService extends com.android.server.SystemService
         private static final String DEPRECATED_KEY_BG_LOW_JOB_COUNT = "bg_low_job_count";
         private static final String DEPRECATED_KEY_BG_CRITICAL_JOB_COUNT = "bg_critical_job_count";
 
-        private static final String KEY_MAX_STANDARD_RESCHEDULE_COUNT
+        private static final String DEPRECATED_KEY_MAX_STANDARD_RESCHEDULE_COUNT
                 = "max_standard_reschedule_count";
-        private static final String KEY_MAX_WORK_RESCHEDULE_COUNT = "max_work_reschedule_count";
+        private static final String DEPRECATED_KEY_MAX_WORK_RESCHEDULE_COUNT =
+                "max_work_reschedule_count";
         private static final String KEY_MIN_LINEAR_BACKOFF_TIME = "min_linear_backoff_time";
         private static final String KEY_MIN_EXP_BACKOFF_TIME = "min_exp_backoff_time";
-        private static final String KEY_STANDBY_HEARTBEAT_TIME = "standby_heartbeat_time";
-        private static final String KEY_STANDBY_WORKING_BEATS = "standby_working_beats";
-        private static final String KEY_STANDBY_FREQUENT_BEATS = "standby_frequent_beats";
-        private static final String KEY_STANDBY_RARE_BEATS = "standby_rare_beats";
+        private static final String DEPRECATED_KEY_STANDBY_HEARTBEAT_TIME =
+                "standby_heartbeat_time";
+        private static final String DEPRECATED_KEY_STANDBY_WORKING_BEATS = "standby_working_beats";
+        private static final String DEPRECATED_KEY_STANDBY_FREQUENT_BEATS =
+                "standby_frequent_beats";
+        private static final String DEPRECATED_KEY_STANDBY_RARE_BEATS = "standby_rare_beats";
         private static final String KEY_CONN_CONGESTION_DELAY_FRAC = "conn_congestion_delay_frac";
         private static final String KEY_CONN_PREFETCH_RELAX_FRAC = "conn_prefetch_relax_frac";
-        private static final String KEY_USE_HEARTBEATS = "use_heartbeats";
+        private static final String DEPRECATED_KEY_USE_HEARTBEATS = "use_heartbeats";
+        private static final String KEY_ENABLE_API_QUOTAS = "enable_api_quotas";
+        private static final String KEY_API_QUOTA_SCHEDULE_COUNT = "aq_schedule_count";
+        private static final String KEY_API_QUOTA_SCHEDULE_WINDOW_MS = "aq_schedule_window_ms";
+        private static final String KEY_API_QUOTA_SCHEDULE_THROW_EXCEPTION =
+                "aq_schedule_throw_exception";
+        private static final String KEY_API_QUOTA_SCHEDULE_RETURN_FAILURE_RESULT =
+                "aq_schedule_return_failure";
 
-        private static final int DEFAULT_MIN_IDLE_COUNT = 1;
-        private static final int DEFAULT_MIN_CHARGING_COUNT = 1;
-        private static final int DEFAULT_MIN_BATTERY_NOT_LOW_COUNT = 1;
-        private static final int DEFAULT_MIN_STORAGE_NOT_LOW_COUNT = 1;
-        private static final int DEFAULT_MIN_CONNECTIVITY_COUNT = 1;
-        private static final int DEFAULT_MIN_CONTENT_COUNT = 1;
-        private static final int DEFAULT_MIN_READY_JOBS_COUNT = 1;
+        private static final int DEFAULT_MIN_READY_NON_ACTIVE_JOBS_COUNT = 5;
+        private static final long DEFAULT_MAX_NON_ACTIVE_JOB_BATCH_DELAY_MS = 31 * MINUTE_IN_MILLIS;
         private static final float DEFAULT_HEAVY_USE_FACTOR = .9f;
         private static final float DEFAULT_MODERATE_USE_FACTOR = .5f;
-        private static final int DEFAULT_MAX_STANDARD_RESCHEDULE_COUNT = Integer.MAX_VALUE;
-        private static final int DEFAULT_MAX_WORK_RESCHEDULE_COUNT = Integer.MAX_VALUE;
         private static final long DEFAULT_MIN_LINEAR_BACKOFF_TIME = JobInfo.MIN_BACKOFF_MILLIS;
         private static final long DEFAULT_MIN_EXP_BACKOFF_TIME = JobInfo.MIN_BACKOFF_MILLIS;
-        private static final long DEFAULT_STANDBY_HEARTBEAT_TIME = 11 * 60 * 1000L;
-        private static final int DEFAULT_STANDBY_WORKING_BEATS = 11;  // ~ 2 hours, with 11min beats
-        private static final int DEFAULT_STANDBY_FREQUENT_BEATS = 43; // ~ 8 hours
-        private static final int DEFAULT_STANDBY_RARE_BEATS = 130; // ~ 24 hours
         private static final float DEFAULT_CONN_CONGESTION_DELAY_FRAC = 0.5f;
         private static final float DEFAULT_CONN_PREFETCH_RELAX_FRAC = 0.5f;
-        private static final boolean DEFAULT_USE_HEARTBEATS = false;
+        private static final boolean DEFAULT_ENABLE_API_QUOTAS = true;
+        private static final int DEFAULT_API_QUOTA_SCHEDULE_COUNT = 250;
+        private static final long DEFAULT_API_QUOTA_SCHEDULE_WINDOW_MS = MINUTE_IN_MILLIS;
+        private static final boolean DEFAULT_API_QUOTA_SCHEDULE_THROW_EXCEPTION = true;
+        private static final boolean DEFAULT_API_QUOTA_SCHEDULE_RETURN_FAILURE_RESULT = false;
 
         /**
-         * Minimum # of idle jobs that must be ready in order to force the JMS to schedule things
-         * early.
+         * Minimum # of non-ACTIVE jobs for which the JMS will be happy running some work early.
          */
-        int MIN_IDLE_COUNT = DEFAULT_MIN_IDLE_COUNT;
+        int MIN_READY_NON_ACTIVE_JOBS_COUNT = DEFAULT_MIN_READY_NON_ACTIVE_JOBS_COUNT;
+
         /**
-         * Minimum # of charging jobs that must be ready in order to force the JMS to schedule
-         * things early.
+         * Don't batch a non-ACTIVE job if it's been delayed due to force batching attempts for
+         * at least this amount of time.
          */
-        int MIN_CHARGING_COUNT = DEFAULT_MIN_CHARGING_COUNT;
-        /**
-         * Minimum # of "battery not low" jobs that must be ready in order to force the JMS to
-         * schedule things early.
-         */
-        int MIN_BATTERY_NOT_LOW_COUNT = DEFAULT_MIN_BATTERY_NOT_LOW_COUNT;
-        /**
-         * Minimum # of "storage not low" jobs that must be ready in order to force the JMS to
-         * schedule things early.
-         */
-        int MIN_STORAGE_NOT_LOW_COUNT = DEFAULT_MIN_STORAGE_NOT_LOW_COUNT;
-        /**
-         * Minimum # of connectivity jobs that must be ready in order to force the JMS to schedule
-         * things early.  1 == Run connectivity jobs as soon as ready.
-         */
-        int MIN_CONNECTIVITY_COUNT = DEFAULT_MIN_CONNECTIVITY_COUNT;
-        /**
-         * Minimum # of content trigger jobs that must be ready in order to force the JMS to
-         * schedule things early.
-         */
-        int MIN_CONTENT_COUNT = DEFAULT_MIN_CONTENT_COUNT;
-        /**
-         * Minimum # of jobs (with no particular constraints) for which the JMS will be happy
-         * running some work early.  This (and thus the other min counts) is now set to 1, to
-         * prevent any batching at this level.  Since we now do batching through doze, that is
-         * a much better mechanism.
-         */
-        int MIN_READY_JOBS_COUNT = DEFAULT_MIN_READY_JOBS_COUNT;
+        long MAX_NON_ACTIVE_JOB_BATCH_DELAY_MS = DEFAULT_MAX_NON_ACTIVE_JOB_BATCH_DELAY_MS;
+
         /**
          * This is the job execution factor that is considered to be heavy use of the system.
          */
@@ -579,16 +609,6 @@ public class JobSchedulerService extends com.android.server.SystemService
                         "screen_off_job_concurrency_increase_delay_ms", 30_000);
 
         /**
-         * The maximum number of times we allow a job to have itself rescheduled before
-         * giving up on it, for standard jobs.
-         */
-        int MAX_STANDARD_RESCHEDULE_COUNT = DEFAULT_MAX_STANDARD_RESCHEDULE_COUNT;
-        /**
-         * The maximum number of times we allow a job to have itself rescheduled before
-         * giving up on it, for jobs that are executing work.
-         */
-        int MAX_WORK_RESCHEDULE_COUNT = DEFAULT_MAX_WORK_RESCHEDULE_COUNT;
-        /**
          * The minimum backoff time to allow for linear backoff.
          */
         long MIN_LINEAR_BACKOFF_TIME = DEFAULT_MIN_LINEAR_BACKOFF_TIME;
@@ -596,26 +616,7 @@ public class JobSchedulerService extends com.android.server.SystemService
          * The minimum backoff time to allow for exponential backoff.
          */
         long MIN_EXP_BACKOFF_TIME = DEFAULT_MIN_EXP_BACKOFF_TIME;
-        /**
-         * How often we recalculate runnability based on apps' standby bucket assignment.
-         * This should be prime relative to common time interval lengths such as a quarter-
-         * hour or day, so that the heartbeat drifts relative to wall-clock milestones.
-         */
-        long STANDBY_HEARTBEAT_TIME = DEFAULT_STANDBY_HEARTBEAT_TIME;
-        /**
-         * Mapping: standby bucket -> number of heartbeats between each sweep of that
-         * bucket's jobs.
-         *
-         * Bucket assignments as recorded in the JobStatus objects are normalized to be
-         * indices into this array, rather than the raw constants used
-         * by AppIdleHistory.
-         */
-        final int[] STANDBY_BEATS = {
-                0,
-                DEFAULT_STANDBY_WORKING_BEATS,
-                DEFAULT_STANDBY_FREQUENT_BEATS,
-                DEFAULT_STANDBY_RARE_BEATS
-        };
+
         /**
          * The fraction of a job's running window that must pass before we
          * consider running it when the network is congested.
@@ -626,11 +627,29 @@ public class JobSchedulerService extends com.android.server.SystemService
          * we consider matching it against a metered network.
          */
         public float CONN_PREFETCH_RELAX_FRAC = DEFAULT_CONN_PREFETCH_RELAX_FRAC;
+
         /**
-         * Whether to use heartbeats or rolling window for quota management. True will use
-         * heartbeats, false will use a rolling window.
+         * Whether to enable quota limits on APIs.
          */
-        public boolean USE_HEARTBEATS = DEFAULT_USE_HEARTBEATS;
+        public boolean ENABLE_API_QUOTAS = DEFAULT_ENABLE_API_QUOTAS;
+        /**
+         * The maximum number of schedule() calls an app can make in a set amount of time.
+         */
+        public int API_QUOTA_SCHEDULE_COUNT = DEFAULT_API_QUOTA_SCHEDULE_COUNT;
+        /**
+         * The time window that {@link #API_QUOTA_SCHEDULE_COUNT} should be evaluated over.
+         */
+        public long API_QUOTA_SCHEDULE_WINDOW_MS = DEFAULT_API_QUOTA_SCHEDULE_WINDOW_MS;
+        /**
+         * Whether to throw an exception when an app hits its schedule quota limit.
+         */
+        public boolean API_QUOTA_SCHEDULE_THROW_EXCEPTION =
+                DEFAULT_API_QUOTA_SCHEDULE_THROW_EXCEPTION;
+        /**
+         * Whether or not to return a failure result when an app hits its schedule quota limit.
+         */
+        public boolean API_QUOTA_SCHEDULE_RETURN_FAILURE_RESULT =
+                DEFAULT_API_QUOTA_SCHEDULE_RETURN_FAILURE_RESULT;
 
         private final KeyValueListParser mParser = new KeyValueListParser(',');
 
@@ -643,20 +662,12 @@ public class JobSchedulerService extends com.android.server.SystemService
                 Slog.e(TAG, "Bad jobscheduler settings", e);
             }
 
-            MIN_IDLE_COUNT = mParser.getInt(KEY_MIN_IDLE_COUNT,
-                    DEFAULT_MIN_IDLE_COUNT);
-            MIN_CHARGING_COUNT = mParser.getInt(KEY_MIN_CHARGING_COUNT,
-                    DEFAULT_MIN_CHARGING_COUNT);
-            MIN_BATTERY_NOT_LOW_COUNT = mParser.getInt(KEY_MIN_BATTERY_NOT_LOW_COUNT,
-                    DEFAULT_MIN_BATTERY_NOT_LOW_COUNT);
-            MIN_STORAGE_NOT_LOW_COUNT = mParser.getInt(KEY_MIN_STORAGE_NOT_LOW_COUNT,
-                    DEFAULT_MIN_STORAGE_NOT_LOW_COUNT);
-            MIN_CONNECTIVITY_COUNT = mParser.getInt(KEY_MIN_CONNECTIVITY_COUNT,
-                    DEFAULT_MIN_CONNECTIVITY_COUNT);
-            MIN_CONTENT_COUNT = mParser.getInt(KEY_MIN_CONTENT_COUNT,
-                    DEFAULT_MIN_CONTENT_COUNT);
-            MIN_READY_JOBS_COUNT = mParser.getInt(KEY_MIN_READY_JOBS_COUNT,
-                    DEFAULT_MIN_READY_JOBS_COUNT);
+            MIN_READY_NON_ACTIVE_JOBS_COUNT = mParser.getInt(
+                    KEY_MIN_READY_NON_ACTIVE_JOBS_COUNT,
+                    DEFAULT_MIN_READY_NON_ACTIVE_JOBS_COUNT);
+            MAX_NON_ACTIVE_JOB_BATCH_DELAY_MS = mParser.getLong(
+                    KEY_MAX_NON_ACTIVE_JOB_BATCH_DELAY_MS,
+                    DEFAULT_MAX_NON_ACTIVE_JOB_BATCH_DELAY_MS);
             HEAVY_USE_FACTOR = mParser.getFloat(KEY_HEAVY_USE_FACTOR,
                     DEFAULT_HEAVY_USE_FACTOR);
             MODERATE_USE_FACTOR = mParser.getFloat(KEY_MODERATE_USE_FACTOR,
@@ -674,39 +685,38 @@ public class JobSchedulerService extends com.android.server.SystemService
 
             SCREEN_OFF_JOB_CONCURRENCY_INCREASE_DELAY_MS.parse(mParser);
 
-            MAX_STANDARD_RESCHEDULE_COUNT = mParser.getInt(KEY_MAX_STANDARD_RESCHEDULE_COUNT,
-                    DEFAULT_MAX_STANDARD_RESCHEDULE_COUNT);
-            MAX_WORK_RESCHEDULE_COUNT = mParser.getInt(KEY_MAX_WORK_RESCHEDULE_COUNT,
-                    DEFAULT_MAX_WORK_RESCHEDULE_COUNT);
             MIN_LINEAR_BACKOFF_TIME = mParser.getDurationMillis(KEY_MIN_LINEAR_BACKOFF_TIME,
                     DEFAULT_MIN_LINEAR_BACKOFF_TIME);
             MIN_EXP_BACKOFF_TIME = mParser.getDurationMillis(KEY_MIN_EXP_BACKOFF_TIME,
                     DEFAULT_MIN_EXP_BACKOFF_TIME);
-            STANDBY_HEARTBEAT_TIME = mParser.getDurationMillis(KEY_STANDBY_HEARTBEAT_TIME,
-                    DEFAULT_STANDBY_HEARTBEAT_TIME);
-            STANDBY_BEATS[WORKING_INDEX] = mParser.getInt(KEY_STANDBY_WORKING_BEATS,
-                    DEFAULT_STANDBY_WORKING_BEATS);
-            STANDBY_BEATS[FREQUENT_INDEX] = mParser.getInt(KEY_STANDBY_FREQUENT_BEATS,
-                    DEFAULT_STANDBY_FREQUENT_BEATS);
-            STANDBY_BEATS[RARE_INDEX] = mParser.getInt(KEY_STANDBY_RARE_BEATS,
-                    DEFAULT_STANDBY_RARE_BEATS);
             CONN_CONGESTION_DELAY_FRAC = mParser.getFloat(KEY_CONN_CONGESTION_DELAY_FRAC,
                     DEFAULT_CONN_CONGESTION_DELAY_FRAC);
             CONN_PREFETCH_RELAX_FRAC = mParser.getFloat(KEY_CONN_PREFETCH_RELAX_FRAC,
                     DEFAULT_CONN_PREFETCH_RELAX_FRAC);
-            USE_HEARTBEATS = mParser.getBoolean(KEY_USE_HEARTBEATS, DEFAULT_USE_HEARTBEATS);
+
+            ENABLE_API_QUOTAS = mParser.getBoolean(KEY_ENABLE_API_QUOTAS,
+                DEFAULT_ENABLE_API_QUOTAS);
+            // Set a minimum value on the quota limit so it's not so low that it interferes with
+            // legitimate use cases.
+            API_QUOTA_SCHEDULE_COUNT = Math.max(250,
+                    mParser.getInt(KEY_API_QUOTA_SCHEDULE_COUNT, DEFAULT_API_QUOTA_SCHEDULE_COUNT));
+            API_QUOTA_SCHEDULE_WINDOW_MS = mParser.getDurationMillis(
+                KEY_API_QUOTA_SCHEDULE_WINDOW_MS, DEFAULT_API_QUOTA_SCHEDULE_WINDOW_MS);
+            API_QUOTA_SCHEDULE_THROW_EXCEPTION = mParser.getBoolean(
+                    KEY_API_QUOTA_SCHEDULE_THROW_EXCEPTION,
+                    DEFAULT_API_QUOTA_SCHEDULE_THROW_EXCEPTION);
+            API_QUOTA_SCHEDULE_RETURN_FAILURE_RESULT = mParser.getBoolean(
+                    KEY_API_QUOTA_SCHEDULE_RETURN_FAILURE_RESULT,
+                    DEFAULT_API_QUOTA_SCHEDULE_RETURN_FAILURE_RESULT);
         }
 
         void dump(IndentingPrintWriter pw) {
             pw.println("Settings:");
             pw.increaseIndent();
-            pw.printPair(KEY_MIN_IDLE_COUNT, MIN_IDLE_COUNT).println();
-            pw.printPair(KEY_MIN_CHARGING_COUNT, MIN_CHARGING_COUNT).println();
-            pw.printPair(KEY_MIN_BATTERY_NOT_LOW_COUNT, MIN_BATTERY_NOT_LOW_COUNT).println();
-            pw.printPair(KEY_MIN_STORAGE_NOT_LOW_COUNT, MIN_STORAGE_NOT_LOW_COUNT).println();
-            pw.printPair(KEY_MIN_CONNECTIVITY_COUNT, MIN_CONNECTIVITY_COUNT).println();
-            pw.printPair(KEY_MIN_CONTENT_COUNT, MIN_CONTENT_COUNT).println();
-            pw.printPair(KEY_MIN_READY_JOBS_COUNT, MIN_READY_JOBS_COUNT).println();
+            pw.printPair(KEY_MIN_READY_NON_ACTIVE_JOBS_COUNT,
+                    MIN_READY_NON_ACTIVE_JOBS_COUNT).println();
+            pw.printPair(KEY_MAX_NON_ACTIVE_JOB_BATCH_DELAY_MS,
+                    MAX_NON_ACTIVE_JOB_BATCH_DELAY_MS).println();
             pw.printPair(KEY_HEAVY_USE_FACTOR, HEAVY_USE_FACTOR).println();
             pw.printPair(KEY_MODERATE_USE_FACTOR, MODERATE_USE_FACTOR).println();
 
@@ -722,33 +732,27 @@ public class JobSchedulerService extends com.android.server.SystemService
 
             SCREEN_OFF_JOB_CONCURRENCY_INCREASE_DELAY_MS.dump(pw, "");
 
-            pw.printPair(KEY_MAX_STANDARD_RESCHEDULE_COUNT, MAX_STANDARD_RESCHEDULE_COUNT).println();
-            pw.printPair(KEY_MAX_WORK_RESCHEDULE_COUNT, MAX_WORK_RESCHEDULE_COUNT).println();
             pw.printPair(KEY_MIN_LINEAR_BACKOFF_TIME, MIN_LINEAR_BACKOFF_TIME).println();
             pw.printPair(KEY_MIN_EXP_BACKOFF_TIME, MIN_EXP_BACKOFF_TIME).println();
-            pw.printPair(KEY_STANDBY_HEARTBEAT_TIME, STANDBY_HEARTBEAT_TIME).println();
-            pw.print("standby_beats={");
-            pw.print(STANDBY_BEATS[0]);
-            for (int i = 1; i < STANDBY_BEATS.length; i++) {
-                pw.print(", ");
-                pw.print(STANDBY_BEATS[i]);
-            }
-            pw.println('}');
             pw.printPair(KEY_CONN_CONGESTION_DELAY_FRAC, CONN_CONGESTION_DELAY_FRAC).println();
             pw.printPair(KEY_CONN_PREFETCH_RELAX_FRAC, CONN_PREFETCH_RELAX_FRAC).println();
-            pw.printPair(KEY_USE_HEARTBEATS, USE_HEARTBEATS).println();
+
+            pw.printPair(KEY_ENABLE_API_QUOTAS, ENABLE_API_QUOTAS).println();
+            pw.printPair(KEY_API_QUOTA_SCHEDULE_COUNT, API_QUOTA_SCHEDULE_COUNT).println();
+            pw.printPair(KEY_API_QUOTA_SCHEDULE_WINDOW_MS, API_QUOTA_SCHEDULE_WINDOW_MS).println();
+            pw.printPair(KEY_API_QUOTA_SCHEDULE_THROW_EXCEPTION,
+                    API_QUOTA_SCHEDULE_THROW_EXCEPTION).println();
+            pw.printPair(KEY_API_QUOTA_SCHEDULE_RETURN_FAILURE_RESULT,
+                    API_QUOTA_SCHEDULE_RETURN_FAILURE_RESULT).println();
 
             pw.decreaseIndent();
         }
 
         void dump(ProtoOutputStream proto) {
-            proto.write(ConstantsProto.MIN_IDLE_COUNT, MIN_IDLE_COUNT);
-            proto.write(ConstantsProto.MIN_CHARGING_COUNT, MIN_CHARGING_COUNT);
-            proto.write(ConstantsProto.MIN_BATTERY_NOT_LOW_COUNT, MIN_BATTERY_NOT_LOW_COUNT);
-            proto.write(ConstantsProto.MIN_STORAGE_NOT_LOW_COUNT, MIN_STORAGE_NOT_LOW_COUNT);
-            proto.write(ConstantsProto.MIN_CONNECTIVITY_COUNT, MIN_CONNECTIVITY_COUNT);
-            proto.write(ConstantsProto.MIN_CONTENT_COUNT, MIN_CONTENT_COUNT);
-            proto.write(ConstantsProto.MIN_READY_JOBS_COUNT, MIN_READY_JOBS_COUNT);
+            proto.write(ConstantsProto.MIN_READY_NON_ACTIVE_JOBS_COUNT,
+                    MIN_READY_NON_ACTIVE_JOBS_COUNT);
+            proto.write(ConstantsProto.MAX_NON_ACTIVE_JOB_BATCH_DELAY_MS,
+                    MAX_NON_ACTIVE_JOB_BATCH_DELAY_MS);
             proto.write(ConstantsProto.HEAVY_USE_FACTOR, HEAVY_USE_FACTOR);
             proto.write(ConstantsProto.MODERATE_USE_FACTOR, MODERATE_USE_FACTOR);
 
@@ -758,24 +762,31 @@ public class JobSchedulerService extends com.android.server.SystemService
             SCREEN_OFF_JOB_CONCURRENCY_INCREASE_DELAY_MS.dumpProto(proto,
                     ConstantsProto.SCREEN_OFF_JOB_CONCURRENCY_INCREASE_DELAY_MS);
 
-            proto.write(ConstantsProto.MAX_STANDARD_RESCHEDULE_COUNT, MAX_STANDARD_RESCHEDULE_COUNT);
-            proto.write(ConstantsProto.MAX_WORK_RESCHEDULE_COUNT, MAX_WORK_RESCHEDULE_COUNT);
             proto.write(ConstantsProto.MIN_LINEAR_BACKOFF_TIME_MS, MIN_LINEAR_BACKOFF_TIME);
             proto.write(ConstantsProto.MIN_EXP_BACKOFF_TIME_MS, MIN_EXP_BACKOFF_TIME);
-            proto.write(ConstantsProto.STANDBY_HEARTBEAT_TIME_MS, STANDBY_HEARTBEAT_TIME);
-            for (int period : STANDBY_BEATS) {
-                proto.write(ConstantsProto.STANDBY_BEATS, period);
-            }
             proto.write(ConstantsProto.CONN_CONGESTION_DELAY_FRAC, CONN_CONGESTION_DELAY_FRAC);
             proto.write(ConstantsProto.CONN_PREFETCH_RELAX_FRAC, CONN_PREFETCH_RELAX_FRAC);
-            proto.write(ConstantsProto.USE_HEARTBEATS, USE_HEARTBEATS);
+
+            proto.write(ConstantsProto.ENABLE_API_QUOTAS, ENABLE_API_QUOTAS);
+            proto.write(ConstantsProto.API_QUOTA_SCHEDULE_COUNT, API_QUOTA_SCHEDULE_COUNT);
+            proto.write(ConstantsProto.API_QUOTA_SCHEDULE_WINDOW_MS, API_QUOTA_SCHEDULE_WINDOW_MS);
+            proto.write(ConstantsProto.API_QUOTA_SCHEDULE_THROW_EXCEPTION,
+                    API_QUOTA_SCHEDULE_THROW_EXCEPTION);
+            proto.write(ConstantsProto.API_QUOTA_SCHEDULE_RETURN_FAILURE_RESULT,
+                    API_QUOTA_SCHEDULE_RETURN_FAILURE_RESULT);
         }
     }
 
     final Constants mConstants;
     final ConstantsObserver mConstantsObserver;
 
-    static final Comparator<JobStatus> mEnqueueTimeComparator = (o1, o2) -> {
+    private static final Comparator<JobStatus> sPendingJobComparator = (o1, o2) -> {
+        // Jobs with an override state set (via adb) should be put first as tests/developers
+        // expect the jobs to run immediately.
+        if (o1.overrideState != o2.overrideState) {
+            // Higher override state (OVERRIDE_FULL) should be before lower state (OVERRIDE_SOFT)
+            return o2.overrideState - o1.overrideState;
+        }
         if (o1.enqueueTime < o2.enqueueTime) {
             return -1;
         }
@@ -870,6 +881,7 @@ public class JobSchedulerService extends com.android.server.SystemService
                         for (int c = 0; c < mControllers.size(); ++c) {
                             mControllers.get(c).onAppRemovedLocked(pkgName, pkgUid);
                         }
+                        mDebuggableApps.remove(pkgName);
                     }
                 }
             } else if (Intent.ACTION_USER_REMOVED.equals(action)) {
@@ -921,7 +933,8 @@ public class JobSchedulerService extends com.android.server.SystemService
     }
 
     final private IUidObserver mUidObserver = new IUidObserver.Stub() {
-        @Override public void onUidStateChanged(int uid, int procState, long procStateSeq) {
+        @Override public void onUidStateChanged(int uid, int procState, long procStateSeq,
+                int capability) {
             mHandler.obtainMessage(MSG_UID_STATE_CHANGED, uid, procState).sendToTarget();
         }
 
@@ -994,6 +1007,57 @@ public class JobSchedulerService extends com.android.server.SystemService
 
     public int scheduleAsPackage(JobInfo job, JobWorkItem work, int uId, String packageName,
             int userId, String tag) {
+        final String servicePkg = job.getService().getPackageName();
+        if (job.isPersisted() && (packageName == null || packageName.equals(servicePkg))) {
+            // Only limit schedule calls for persisted jobs scheduled by the app itself.
+            final String pkg =
+                    packageName == null ? job.getService().getPackageName() : packageName;
+            if (!mQuotaTracker.isWithinQuota(userId, pkg, QUOTA_TRACKER_SCHEDULE_PERSISTED_TAG)) {
+                if (mQuotaTracker.isWithinQuota(userId, pkg, QUOTA_TRACKER_SCHEDULE_LOGGED)) {
+                    // Don't log too frequently
+                    Slog.wtf(TAG, userId + "-" + pkg + " has called schedule() too many times");
+                    mQuotaTracker.noteEvent(userId, pkg, QUOTA_TRACKER_SCHEDULE_LOGGED);
+                }
+                mAppStandbyInternal.restrictApp(
+                        pkg, userId, UsageStatsManager.REASON_SUB_FORCED_SYSTEM_FLAG_BUGGY);
+                if (mConstants.API_QUOTA_SCHEDULE_THROW_EXCEPTION) {
+                    final boolean isDebuggable;
+                    synchronized (mLock) {
+                        if (!mDebuggableApps.containsKey(packageName)) {
+                            try {
+                                final ApplicationInfo appInfo = AppGlobals.getPackageManager()
+                                        .getApplicationInfo(pkg, 0, userId);
+                                if (appInfo != null) {
+                                    mDebuggableApps.put(packageName,
+                                            (appInfo.flags & ApplicationInfo.FLAG_DEBUGGABLE) != 0);
+                                } else {
+                                    return JobScheduler.RESULT_FAILURE;
+                                }
+                            } catch (RemoteException e) {
+                                throw new RuntimeException(e);
+                            }
+                        }
+                        isDebuggable = mDebuggableApps.get(packageName);
+                    }
+                    if (isDebuggable) {
+                        // Only throw the exception for debuggable apps.
+                        throw new LimitExceededException(
+                                "schedule()/enqueue() called more than "
+                                        + mQuotaTracker.getLimit(
+                                        QUOTA_TRACKER_CATEGORY_SCHEDULE_PERSISTED)
+                                        + " times in the past "
+                                        + mQuotaTracker.getWindowSizeMs(
+                                        QUOTA_TRACKER_CATEGORY_SCHEDULE_PERSISTED)
+                                        + "ms. See the documentation for more information.");
+                    }
+                }
+                if (mConstants.API_QUOTA_SCHEDULE_RETURN_FAILURE_RESULT) {
+                    return JobScheduler.RESULT_FAILURE;
+                }
+            }
+            mQuotaTracker.noteEvent(userId, pkg, QUOTA_TRACKER_SCHEDULE_PERSISTED_TAG);
+        }
+
         try {
             if (ActivityManager.getService().isAppStartModeDisabled(uId,
                     job.getService().getPackageName())) {
@@ -1012,7 +1076,7 @@ public class JobSchedulerService extends com.android.server.SystemService
                 // changing.  We can just directly enqueue this work in to the job.
                 if (toCancel.getJob().equals(job)) {
 
-                    toCancel.enqueueWorkLocked(ActivityManager.getService(), work);
+                    toCancel.enqueueWorkLocked(work);
 
                     // If any of work item is enqueued when the source is in the foreground,
                     // exempt the entire job.
@@ -1041,12 +1105,7 @@ public class JobSchedulerService extends com.android.server.SystemService
             }
 
             // This may throw a SecurityException.
-            jobStatus.prepareLocked(ActivityManager.getService());
-
-            if (work != null) {
-                // If work has been supplied, enqueue it into the new job.
-                jobStatus.enqueueWorkLocked(ActivityManager.getService(), work);
-            }
+            jobStatus.prepareLocked();
 
             if (toCancel != null) {
                 // Implicitly replaces the existing job record with the new instance
@@ -1054,11 +1113,25 @@ public class JobSchedulerService extends com.android.server.SystemService
             } else {
                 startTrackingJobLocked(jobStatus, null);
             }
-            StatsLog.write_non_chained(StatsLog.SCHEDULED_JOB_STATE_CHANGED,
+
+            if (work != null) {
+                // If work has been supplied, enqueue it into the new job.
+                jobStatus.enqueueWorkLocked(work);
+            }
+
+            FrameworkStatsLog.write_non_chained(FrameworkStatsLog.SCHEDULED_JOB_STATE_CHANGED,
                     uId, null, jobStatus.getBatteryName(),
-                    StatsLog.SCHEDULED_JOB_STATE_CHANGED__STATE__SCHEDULED,
+                    FrameworkStatsLog.SCHEDULED_JOB_STATE_CHANGED__STATE__SCHEDULED,
                     JobProtoEnums.STOP_REASON_CANCELLED, jobStatus.getStandbyBucket(),
-                    jobStatus.getJobId());
+                    jobStatus.getJobId(),
+                    jobStatus.hasChargingConstraint(),
+                    jobStatus.hasBatteryNotLowConstraint(),
+                    jobStatus.hasStorageNotLowConstraint(),
+                    jobStatus.hasTimingDelayConstraint(),
+                    jobStatus.hasDeadlineConstraint(),
+                    jobStatus.hasIdleConstraint(),
+                    jobStatus.hasConnectivityConstraint(),
+                    jobStatus.hasContentTriggerConstraint());
 
             // If the job is immediately ready to run, then we can just immediately
             // put it in the pending list and try to schedule it.  This is especially
@@ -1073,7 +1146,7 @@ public class JobSchedulerService extends com.android.server.SystemService
                 // This is a new job, we can just immediately put it on the pending
                 // list and try to run it.
                 mJobPackageTracker.notePending(jobStatus);
-                addOrderedItem(mPendingJobs, jobStatus, mEnqueueTimeComparator);
+                addOrderedItem(mPendingJobs, jobStatus, sPendingJobComparator);
                 maybeRunPendingJobsLocked();
             } else {
                 evaluateControllerStatesLocked(jobStatus);
@@ -1193,7 +1266,7 @@ public class JobSchedulerService extends com.android.server.SystemService
      */
     private void cancelJobImplLocked(JobStatus cancelled, JobStatus incomingJob, String reason) {
         if (DEBUG) Slog.d(TAG, "CANCEL: " + cancelled.toShortString());
-        cancelled.unprepareLocked(ActivityManager.getService());
+        cancelled.unprepareLocked();
         stopTrackingJobLocked(cancelled, incomingJob, true /* writeBack */);
         // Remove from pending queue.
         if (mPendingJobs.remove(cancelled)) {
@@ -1259,6 +1332,30 @@ public class JobSchedulerService extends com.android.server.SystemService
         }
     }
 
+    @Override
+    public void onRestrictedBucketChanged(List<JobStatus> jobs) {
+        final int len = jobs.size();
+        if (len == 0) {
+            Slog.wtf(TAG, "onRestrictedBucketChanged called with no jobs");
+            return;
+        }
+        synchronized (mLock) {
+            for (int i = 0; i < len; ++i) {
+                JobStatus js = jobs.get(i);
+                for (int j = mRestrictiveControllers.size() - 1; j >= 0; --j) {
+                    // Effective standby bucket can change after this in some situations so use
+                    // the real bucket so that the job is tracked by the controllers.
+                    if (js.getStandbyBucket() == RESTRICTED_INDEX) {
+                        mRestrictiveControllers.get(j).startTrackingRestrictedJobLocked(js);
+                    } else {
+                        mRestrictiveControllers.get(j).stopTrackingRestrictedJobLocked(js);
+                    }
+                }
+            }
+        }
+        mHandler.obtainMessage(MSG_CHECK_JOB).sendToTarget();
+    }
+
     void reportActiveLocked() {
         // active is true if pending queue contains jobs OR some job is running.
         boolean active = mPendingJobs.size() > 0;
@@ -1304,7 +1401,7 @@ public class JobSchedulerService extends com.android.server.SystemService
         super(context);
 
         mLocalPM = LocalServices.getService(PackageManagerInternal.class);
-        mActivityManagerInternal = Preconditions.checkNotNull(
+        mActivityManagerInternal = Objects.requireNonNull(
                 LocalServices.getService(ActivityManagerInternal.class));
 
         mHandler = new JobHandler(context.getMainLooper());
@@ -1317,7 +1414,15 @@ public class JobSchedulerService extends com.android.server.SystemService
         // Set up the app standby bucketing tracker
         mStandbyTracker = new StandbyTracker();
         mUsageStats = LocalServices.getService(UsageStatsManagerInternal.class);
-        mUsageStats.addAppIdleStateChangeListener(mStandbyTracker);
+        mQuotaTracker = new CountQuotaTracker(context, QUOTA_CATEGORIZER);
+        mQuotaTracker.setCountLimit(QUOTA_TRACKER_CATEGORY_SCHEDULE_PERSISTED,
+                mConstants.API_QUOTA_SCHEDULE_COUNT,
+                mConstants.API_QUOTA_SCHEDULE_WINDOW_MS);
+        // Log at most once per minute.
+        mQuotaTracker.setCountLimit(QUOTA_TRACKER_CATEGORY_SCHEDULE_LOGGED, 1, 60_000);
+
+        mAppStandbyInternal = LocalServices.getService(AppStandbyInternal.class);
+        mAppStandbyInternal.addListener(mStandbyTracker);
 
         // The job store needs to call back
         publishLocalService(JobSchedulerInternal.class, new LocalService());
@@ -1327,9 +1432,11 @@ public class JobSchedulerService extends com.android.server.SystemService
 
         // Create the controllers.
         mControllers = new ArrayList<StateController>();
-        mControllers.add(new ConnectivityController(this));
+        final ConnectivityController connectivityController = new ConnectivityController(this);
+        mControllers.add(connectivityController);
         mControllers.add(new TimeController(this));
-        mControllers.add(new IdleController(this));
+        final IdleController idleController = new IdleController(this);
+        mControllers.add(idleController);
         mBatteryController = new BatteryController(this);
         mControllers.add(mBatteryController);
         mStorageController = new StorageController(this);
@@ -1338,7 +1445,20 @@ public class JobSchedulerService extends com.android.server.SystemService
         mControllers.add(new ContentObserverController(this));
         mDeviceIdleJobsController = new DeviceIdleJobsController(this);
         mControllers.add(mDeviceIdleJobsController);
-        mControllers.add(new QuotaController(this));
+        mQuotaController = new QuotaController(this);
+        mControllers.add(mQuotaController);
+
+        mRestrictiveControllers = new ArrayList<>();
+        mRestrictiveControllers.add(mBatteryController);
+        mRestrictiveControllers.add(connectivityController);
+        mRestrictiveControllers.add(idleController);
+
+        // Create restrictions
+        mJobRestrictions = new ArrayList<>();
+        mJobRestrictions.add(new ThermalStatusRestriction(this));
+
+        mSystemGalleryPackage = Objects.requireNonNull(
+                context.getString(R.string.config_systemGallery));
 
         // If the job store determined that it can't yet reschedule persisted jobs,
         // we need to start watching the clock.
@@ -1403,11 +1523,8 @@ public class JobSchedulerService extends com.android.server.SystemService
                 controller.onSystemServicesReady();
             }
 
-            mAppStateTracker = Preconditions.checkNotNull(
+            mAppStateTracker = Objects.requireNonNull(
                     LocalServices.getService(AppStateTracker.class));
-            if (mConstants.USE_HEARTBEATS) {
-                setNextHeartbeatAlarm();
-            }
 
             // Register br for package removals and user removals.
             final IntentFilter filter = new IntentFilter();
@@ -1434,15 +1551,9 @@ public class JobSchedulerService extends com.android.server.SystemService
 
             // Remove any jobs that are not associated with any of the current users.
             cancelJobsForNonExistentUsers();
-            // Register thermal callback
-            mThermalService = IThermalService.Stub.asInterface(
-                    ServiceManager.getService(Context.THERMAL_SERVICE));
-            if (mThermalService != null) {
-                try {
-                    mThermalService.registerThermalStatusListener(new ThermalStatusListener());
-                } catch (RemoteException e) {
-                    Slog.e(TAG, "Failed to register thermal callback.", e);
-                }
+
+            for (int i = mJobRestrictions.size() - 1; i >= 0; i--) {
+                mJobRestrictions.get(i).onSystemServicesReady();
             }
         } else if (phase == PHASE_THIRD_PARTY_APPS_CAN_START) {
             synchronized (mLock) {
@@ -1450,8 +1561,8 @@ public class JobSchedulerService extends com.android.server.SystemService
                 mReadyToRock = true;
                 mBatteryStats = IBatteryStats.Stub.asInterface(ServiceManager.getService(
                         BatteryStats.SERVICE_NAME));
-                mLocalDeviceIdleController
-                        = LocalServices.getService(DeviceIdleController.LocalService.class);
+                mLocalDeviceIdleController =
+                        LocalServices.getService(DeviceIdleInternal.class);
                 // Create the "runners".
                 for (int i = 0; i < MAX_JOB_CONTEXTS_COUNT; i++) {
                     mActiveServices.add(
@@ -1494,16 +1605,16 @@ public class JobSchedulerService extends com.android.server.SystemService
     }
 
     /**
-     * Called when we want to remove a JobStatus object that we've finished executing. Returns the
-     * object removed.
+     * Called when we want to remove a JobStatus object that we've finished executing.
+     * @return true if the job was removed.
      */
     private boolean stopTrackingJobLocked(JobStatus jobStatus, JobStatus incomingJob,
-            boolean writeBack) {
+            boolean removeFromPersisted) {
         // Deal with any remaining work items in the old job.
-        jobStatus.stopTrackingJobLocked(ActivityManager.getService(), incomingJob);
+        jobStatus.stopTrackingJobLocked(incomingJob);
 
         // Remove from store as well as controllers.
-        final boolean removed = mJobs.remove(jobStatus, writeBack);
+        final boolean removed = mJobs.remove(jobStatus, removeFromPersisted);
         if (removed && mReadyToRock) {
             for (int i=0; i<mControllers.size(); i++) {
                 StateController controller = mControllers.get(i);
@@ -1576,19 +1687,6 @@ public class JobSchedulerService extends com.android.server.SystemService
         final int backoffAttempts = failureToReschedule.getNumFailures() + 1;
         long delayMillis;
 
-        if (failureToReschedule.hasWorkLocked()) {
-            if (backoffAttempts > mConstants.MAX_WORK_RESCHEDULE_COUNT) {
-                Slog.w(TAG, "Not rescheduling " + failureToReschedule + ": attempt #"
-                        + backoffAttempts + " > work limit "
-                        + mConstants.MAX_STANDARD_RESCHEDULE_COUNT);
-                return null;
-            }
-        } else if (backoffAttempts > mConstants.MAX_STANDARD_RESCHEDULE_COUNT) {
-            Slog.w(TAG, "Not rescheduling " + failureToReschedule + ": attempt #"
-                    + backoffAttempts + " > std limit " + mConstants.MAX_STANDARD_RESCHEDULE_COUNT);
-            return null;
-        }
-
         switch (job.getBackoffPolicy()) {
             case JobInfo.BACKOFF_POLICY_LINEAR: {
                 long backoff = initialBackoffMillis;
@@ -1611,7 +1709,7 @@ public class JobSchedulerService extends com.android.server.SystemService
         }
         delayMillis =
                 Math.min(delayMillis, JobInfo.MAX_BACKOFF_DELAY_MILLIS);
-        JobStatus newJob = new JobStatus(failureToReschedule, getCurrentHeartbeat(),
+        JobStatus newJob = new JobStatus(failureToReschedule,
                 elapsedNowMillis + delayMillis,
                 JobStatus.NO_LATEST_RUNTIME, backoffAttempts,
                 failureToReschedule.getLastSuccessfulRunTime(), sSystemClock.millis());
@@ -1646,8 +1744,7 @@ public class JobSchedulerService extends com.android.server.SystemService
      * {@link com.android.server.job.JobServiceContext#EXECUTING_TIMESLICE_MILLIS}, but will lead
      * to underscheduling at least, rather than if we had taken the last execution time to be the
      * start of the execution.
-     * <p>Unlike a reschedule prior to execution, in this case we advance the next-heartbeat
-     * tracking as though the job were newly-scheduled.
+     *
      * @return A new job representing the execution criteria for this instantiation of the
      * recurring job.
      */
@@ -1700,7 +1797,7 @@ public class JobSchedulerService extends com.android.server.SystemService
         if (newLatestRuntimeElapsed < elapsedNow) {
             Slog.wtf(TAG, "Rescheduling calculated latest runtime in the past: "
                     + newLatestRuntimeElapsed);
-            return new JobStatus(periodicToReschedule, getCurrentHeartbeat(),
+            return new JobStatus(periodicToReschedule,
                     elapsedNow + period - flex, elapsedNow + period,
                     0 /* backoffAttempt */,
                     sSystemClock.millis() /* lastSuccessfulRunTime */,
@@ -1715,62 +1812,11 @@ public class JobSchedulerService extends com.android.server.SystemService
                     newEarliestRunTimeElapsed / 1000 + ", " + newLatestRuntimeElapsed / 1000
                     + "]s");
         }
-        return new JobStatus(periodicToReschedule, getCurrentHeartbeat(),
+        return new JobStatus(periodicToReschedule,
                 newEarliestRunTimeElapsed, newLatestRuntimeElapsed,
                 0 /* backoffAttempt */,
                 sSystemClock.millis() /* lastSuccessfulRunTime */,
                 periodicToReschedule.getLastFailedRunTime());
-    }
-
-    /*
-     * We default to "long enough ago that every bucket's jobs are immediately runnable" to
-     * avoid starvation of apps in uncommon-use buckets that might arise from repeated
-     * reboot behavior.
-     */
-    long heartbeatWhenJobsLastRun(String packageName, final @UserIdInt int userId) {
-        // The furthest back in pre-boot time that we need to bother with
-        long heartbeat = -mConstants.STANDBY_BEATS[RARE_INDEX];
-        boolean cacheHit = false;
-        synchronized (mLock) {
-            HashMap<String, Long> jobPackages = mLastJobHeartbeats.get(userId);
-            if (jobPackages != null) {
-                long cachedValue = jobPackages.getOrDefault(packageName, Long.MAX_VALUE);
-                if (cachedValue < Long.MAX_VALUE) {
-                    cacheHit = true;
-                    heartbeat = cachedValue;
-                }
-            }
-            if (!cacheHit) {
-                // We haven't seen it yet; ask usage stats about it
-                final long timeSinceJob = mUsageStats.getTimeSinceLastJobRun(packageName, userId);
-                if (timeSinceJob < Long.MAX_VALUE) {
-                    // Usage stats knows about it from before, so calculate back from that
-                    // and go from there.
-                    heartbeat = mHeartbeat - (timeSinceJob / mConstants.STANDBY_HEARTBEAT_TIME);
-                }
-                // If usage stats returned its "not found" MAX_VALUE, we still have the
-                // negative default 'heartbeat' value we established above
-                setLastJobHeartbeatLocked(packageName, userId, heartbeat);
-            }
-        }
-        if (DEBUG_STANDBY) {
-            Slog.v(TAG, "Last job heartbeat " + heartbeat + " for "
-                    + packageName + "/" + userId);
-        }
-        return heartbeat;
-    }
-
-    long heartbeatWhenJobsLastRun(JobStatus job) {
-        return heartbeatWhenJobsLastRun(job.getSourcePackageName(), job.getSourceUserId());
-    }
-
-    void setLastJobHeartbeatLocked(String packageName, int userId, long heartbeat) {
-        HashMap<String, Long> jobPackages = mLastJobHeartbeats.get(userId);
-        if (jobPackages == null) {
-            jobPackages = new HashMap<>();
-            mLastJobHeartbeats.put(userId, jobPackages);
-        }
-        jobPackages.put(packageName, heartbeat);
     }
 
     // JobCompletedListener implementations.
@@ -1808,7 +1854,7 @@ public class JobSchedulerService extends com.android.server.SystemService
 
         if (rescheduledJob != null) {
             try {
-                rescheduledJob.prepareLocked(ActivityManager.getService());
+                rescheduledJob.prepareLocked();
             } catch (SecurityException e) {
                 Slog.w(TAG, "Unable to regrant job permissions for " + rescheduledJob);
             }
@@ -1816,13 +1862,13 @@ public class JobSchedulerService extends com.android.server.SystemService
         } else if (jobStatus.getJob().isPeriodic()) {
             JobStatus rescheduledPeriodic = getRescheduleJobForPeriodic(jobStatus);
             try {
-                rescheduledPeriodic.prepareLocked(ActivityManager.getService());
+                rescheduledPeriodic.prepareLocked();
             } catch (SecurityException e) {
                 Slog.w(TAG, "Unable to regrant job permissions for " + rescheduledPeriodic);
             }
             startTrackingJobLocked(rescheduledPeriodic, jobStatus);
         }
-        jobStatus.unprepareLocked(ActivityManager.getService());
+        jobStatus.unprepareLocked();
         reportActiveLocked();
         mHandler.obtainMessage(MSG_CHECK_JOB_GREEDY).sendToTarget();
     }
@@ -1863,7 +1909,7 @@ public class JobSchedulerService extends com.android.server.SystemService
                         // state is such that all ready jobs should be run immediately.
                         if (runNow != null && isReadyToBeExecutedLocked(runNow)) {
                             mJobPackageTracker.notePending(runNow);
-                            addOrderedItem(mPendingJobs, runNow, mEnqueueTimeComparator);
+                            addOrderedItem(mPendingJobs, runNow, sPendingJobComparator);
                         } else {
                             queueReadyJobsForExecutionLocked();
                         }
@@ -1936,9 +1982,28 @@ public class JobSchedulerService extends com.android.server.SystemService
         }
     }
 
-    private boolean isJobThermalConstrainedLocked(JobStatus job) {
-        return mThermalConstraint && job.hasConnectivityConstraint()
-                && (evaluateJobPriorityLocked(job) < JobInfo.PRIORITY_FOREGROUND_APP);
+    /**
+     * Check if a job is restricted by any of the declared {@link JobRestriction}s.
+     * Note, that the jobs with {@link JobInfo#PRIORITY_FOREGROUND_APP} priority or higher may not
+     * be restricted, thus we won't even perform the check, but simply return null early.
+     *
+     * @param job to be checked
+     * @return the first {@link JobRestriction} restricting the given job that has been found; null
+     * - if passes all the restrictions or has priority {@link JobInfo#PRIORITY_FOREGROUND_APP}
+     * or higher.
+     */
+    private JobRestriction checkIfRestricted(JobStatus job) {
+        if (evaluateJobPriorityLocked(job) >= JobInfo.PRIORITY_FOREGROUND_APP) {
+            // Jobs with PRIORITY_FOREGROUND_APP or higher should not be restricted
+            return null;
+        }
+        for (int i = mJobRestrictions.size() - 1; i >= 0; i--) {
+            final JobRestriction restriction = mJobRestrictions.get(i);
+            if (restriction.isJobRestricted(job)) {
+                return restriction;
+            }
+        }
+        return null;
     }
 
     private void stopNonReadyActiveJobsLocked() {
@@ -1949,13 +2014,26 @@ public class JobSchedulerService extends com.android.server.SystemService
                 continue;
             }
             if (!running.isReady()) {
-                serviceContext.cancelExecutingJobLocked(
-                        JobParameters.REASON_CONSTRAINTS_NOT_SATISFIED,
-                        "cancelled due to unsatisfied constraints");
-            } else if (isJobThermalConstrainedLocked(running)) {
-                serviceContext.cancelExecutingJobLocked(
-                        JobParameters.REASON_DEVICE_THERMAL,
-                        "cancelled due to thermal condition");
+                // If a restricted job doesn't have dynamic constraints satisfied, assume that's
+                // the reason the job is being stopped, instead of because of other constraints
+                // not being satisfied.
+                if (running.getEffectiveStandbyBucket() == RESTRICTED_INDEX
+                        && !running.areDynamicConstraintsSatisfied()) {
+                    serviceContext.cancelExecutingJobLocked(
+                            JobParameters.REASON_RESTRICTED_BUCKET,
+                            "cancelled due to restricted bucket");
+                } else {
+                    serviceContext.cancelExecutingJobLocked(
+                            JobParameters.REASON_CONSTRAINTS_NOT_SATISFIED,
+                            "cancelled due to unsatisfied constraints");
+                }
+            } else {
+                final JobRestriction restriction = checkIfRestricted(running);
+                if (restriction != null) {
+                    final int reason = restriction.getReason();
+                    serviceContext.cancelExecutingJobLocked(reason,
+                            "restricted due to " + JobParameters.getReasonCodeDescription(reason));
+                }
             }
         }
     }
@@ -1985,16 +2063,13 @@ public class JobSchedulerService extends com.android.server.SystemService
     }
 
     final class ReadyJobQueueFunctor implements Consumer<JobStatus> {
-        ArrayList<JobStatus> newReadyJobs;
+        final ArrayList<JobStatus> newReadyJobs = new ArrayList<>();
 
         @Override
         public void accept(JobStatus job) {
             if (isReadyToBeExecutedLocked(job)) {
                 if (DEBUG) {
                     Slog.d(TAG, "    queued " + job.toShortString());
-                }
-                if (newReadyJobs == null) {
-                    newReadyJobs = new ArrayList<JobStatus>();
                 }
                 newReadyJobs.add(job);
             } else {
@@ -2003,14 +2078,13 @@ public class JobSchedulerService extends com.android.server.SystemService
         }
 
         public void postProcess() {
-            if (newReadyJobs != null) {
-                noteJobsPending(newReadyJobs);
-                mPendingJobs.addAll(newReadyJobs);
-                if (mPendingJobs.size() > 1) {
-                    mPendingJobs.sort(mEnqueueTimeComparator);
-                }
+            noteJobsPending(newReadyJobs);
+            mPendingJobs.addAll(newReadyJobs);
+            if (mPendingJobs.size() > 1) {
+                mPendingJobs.sort(sPendingJobComparator);
             }
-            newReadyJobs = null;
+
+            newReadyJobs.clear();
         }
     }
     private final ReadyJobQueueFunctor mReadyQueueFunctor = new ReadyJobQueueFunctor();
@@ -2020,14 +2094,9 @@ public class JobSchedulerService extends com.android.server.SystemService
      * policies on when we want to execute jobs.
      */
     final class MaybeReadyJobQueueFunctor implements Consumer<JobStatus> {
-        int chargingCount;
-        int batteryNotLowCount;
-        int storageNotLowCount;
-        int idleCount;
-        int backoffCount;
-        int connectivityCount;
-        int contentCount;
-        List<JobStatus> runnableJobs;
+        int forceBatchedCount;
+        int unbatchedCount;
+        final List<JobStatus> runnableJobs = new ArrayList<>();
 
         public MaybeReadyJobQueueFunctor() {
             reset();
@@ -2047,29 +2116,32 @@ public class JobSchedulerService extends com.android.server.SystemService
                     }
                 } catch (RemoteException e) {
                 }
-                if (job.getNumFailures() > 0) {
-                    backoffCount++;
+
+                final boolean shouldForceBatchJob;
+                // Restricted jobs must always be batched
+                if (job.getEffectiveStandbyBucket() == RESTRICTED_INDEX) {
+                    shouldForceBatchJob = true;
+                } else if (job.getNumFailures() > 0) {
+                    shouldForceBatchJob = false;
+                } else {
+                    final long nowElapsed = sElapsedRealtimeClock.millis();
+                    final boolean batchDelayExpired = job.getFirstForceBatchedTimeElapsed() > 0
+                            && nowElapsed - job.getFirstForceBatchedTimeElapsed()
+                            >= mConstants.MAX_NON_ACTIVE_JOB_BATCH_DELAY_MS;
+                    shouldForceBatchJob =
+                            mConstants.MIN_READY_NON_ACTIVE_JOBS_COUNT > 1
+                                    && job.getEffectiveStandbyBucket() != ACTIVE_INDEX
+                                    && !batchDelayExpired;
                 }
-                if (job.hasIdleConstraint()) {
-                    idleCount++;
-                }
-                if (job.hasConnectivityConstraint()) {
-                    connectivityCount++;
-                }
-                if (job.hasChargingConstraint()) {
-                    chargingCount++;
-                }
-                if (job.hasBatteryNotLowConstraint()) {
-                    batteryNotLowCount++;
-                }
-                if (job.hasStorageNotLowConstraint()) {
-                    storageNotLowCount++;
-                }
-                if (job.hasContentTriggerConstraint()) {
-                    contentCount++;
-                }
-                if (runnableJobs == null) {
-                    runnableJobs = new ArrayList<>();
+
+                if (shouldForceBatchJob) {
+                    // Force batching non-ACTIVE jobs. Don't include them in the other counts.
+                    forceBatchedCount++;
+                    if (job.getFirstForceBatchedTimeElapsed() == 0) {
+                        job.setFirstForceBatchedTimeElapsed(sElapsedRealtimeClock.millis());
+                    }
+                } else {
+                    unbatchedCount++;
                 }
                 runnableJobs.add(job);
             } else {
@@ -2078,22 +2150,15 @@ public class JobSchedulerService extends com.android.server.SystemService
         }
 
         public void postProcess() {
-            if (backoffCount > 0 ||
-                    idleCount >= mConstants.MIN_IDLE_COUNT ||
-                    connectivityCount >= mConstants.MIN_CONNECTIVITY_COUNT ||
-                    chargingCount >= mConstants.MIN_CHARGING_COUNT ||
-                    batteryNotLowCount >= mConstants.MIN_BATTERY_NOT_LOW_COUNT ||
-                    storageNotLowCount >= mConstants.MIN_STORAGE_NOT_LOW_COUNT ||
-                    contentCount >= mConstants.MIN_CONTENT_COUNT ||
-                    (runnableJobs != null
-                            && runnableJobs.size() >= mConstants.MIN_READY_JOBS_COUNT)) {
+            if (unbatchedCount > 0
+                    || forceBatchedCount >= mConstants.MIN_READY_NON_ACTIVE_JOBS_COUNT) {
                 if (DEBUG) {
                     Slog.d(TAG, "maybeQueueReadyJobsForExecutionLocked: Running jobs.");
                 }
                 noteJobsPending(runnableJobs);
                 mPendingJobs.addAll(runnableJobs);
                 if (mPendingJobs.size() > 1) {
-                    mPendingJobs.sort(mEnqueueTimeComparator);
+                    mPendingJobs.sort(sPendingJobComparator);
                 }
             } else {
                 if (DEBUG) {
@@ -2105,15 +2170,11 @@ public class JobSchedulerService extends com.android.server.SystemService
             reset();
         }
 
-        private void reset() {
-            chargingCount = 0;
-            idleCount =  0;
-            backoffCount = 0;
-            connectivityCount = 0;
-            batteryNotLowCount = 0;
-            storageNotLowCount = 0;
-            contentCount = 0;
-            runnableJobs = null;
+        @VisibleForTesting
+        void reset() {
+            forceBatchedCount = 0;
+            unbatchedCount = 0;
+            runnableJobs.clear();
         }
     }
     private final MaybeReadyJobQueueFunctor mMaybeQueueFunctor = new MaybeReadyJobQueueFunctor();
@@ -2126,82 +2187,6 @@ public class JobSchedulerService extends com.android.server.SystemService
         stopNonReadyActiveJobsLocked();
         mJobs.forEachJob(mMaybeQueueFunctor);
         mMaybeQueueFunctor.postProcess();
-    }
-
-    /**
-     * Heartbeat tracking.  The heartbeat alarm is intentionally non-wakeup.
-     */
-    class HeartbeatAlarmListener implements AlarmManager.OnAlarmListener {
-
-        @Override
-        public void onAlarm() {
-            synchronized (mLock) {
-                final long sinceLast = sElapsedRealtimeClock.millis() - mLastHeartbeatTime;
-                final long beatsElapsed = sinceLast / mConstants.STANDBY_HEARTBEAT_TIME;
-                if (beatsElapsed > 0) {
-                    mLastHeartbeatTime += beatsElapsed * mConstants.STANDBY_HEARTBEAT_TIME;
-                    advanceHeartbeatLocked(beatsElapsed);
-                }
-            }
-            setNextHeartbeatAlarm();
-        }
-    }
-
-    // Intentionally does not touch the alarm timing
-    void advanceHeartbeatLocked(long beatsElapsed) {
-        if (!mConstants.USE_HEARTBEATS) {
-            return;
-        }
-        mHeartbeat += beatsElapsed;
-        if (DEBUG_STANDBY) {
-            Slog.v(TAG, "Advancing standby heartbeat by " + beatsElapsed
-                    + " to " + mHeartbeat);
-        }
-        // Don't update ACTIVE or NEVER bucket milestones.  Note that mHeartbeat
-        // will be equal to mNextBucketHeartbeat[bucket] for one beat, during which
-        // new jobs scheduled by apps in that bucket will be permitted to run
-        // immediately.
-        boolean didAdvanceBucket = false;
-        for (int i = 1; i < mNextBucketHeartbeat.length - 1; i++) {
-            // Did we reach or cross a bucket boundary?
-            if (mHeartbeat >= mNextBucketHeartbeat[i]) {
-                didAdvanceBucket = true;
-            }
-            while (mHeartbeat > mNextBucketHeartbeat[i]) {
-                mNextBucketHeartbeat[i] += mConstants.STANDBY_BEATS[i];
-            }
-            if (DEBUG_STANDBY) {
-                Slog.v(TAG, "   Bucket " + i + " next heartbeat "
-                        + mNextBucketHeartbeat[i]);
-            }
-        }
-
-        if (didAdvanceBucket) {
-            if (DEBUG_STANDBY) {
-                Slog.v(TAG, "Hit bucket boundary; reevaluating job runnability");
-            }
-            mHandler.obtainMessage(MSG_CHECK_JOB).sendToTarget();
-        }
-    }
-
-    void setNextHeartbeatAlarm() {
-        final long heartbeatLength;
-        synchronized (mLock) {
-            if (!mConstants.USE_HEARTBEATS) {
-                return;
-            }
-            heartbeatLength = mConstants.STANDBY_HEARTBEAT_TIME;
-        }
-        final long now = sElapsedRealtimeClock.millis();
-        final long nextBeatOrdinal = (now + heartbeatLength) / heartbeatLength;
-        final long nextHeartbeat = nextBeatOrdinal * heartbeatLength;
-        if (DEBUG_STANDBY) {
-            Slog.i(TAG, "Setting heartbeat alarm for " + nextHeartbeat
-                    + " = " + TimeUtils.formatDuration(nextHeartbeat - now));
-        }
-        AlarmManager am = (AlarmManager) getContext().getSystemService(Context.ALARM_SERVICE);
-        am.setExact(AlarmManager.ELAPSED_REALTIME, nextHeartbeat,
-                HEARTBEAT_TAG, mHeartbeatAlarm, mHandler);
     }
 
     /** Returns true if both the calling and source users for the job are started. */
@@ -2222,7 +2207,8 @@ public class JobSchedulerService extends com.android.server.SystemService
      *      - The job's standby bucket has come due to be runnable.
      *      - The component is enabled and runnable.
      */
-    private boolean isReadyToBeExecutedLocked(JobStatus job) {
+    @VisibleForTesting
+    boolean isReadyToBeExecutedLocked(JobStatus job) {
         final boolean jobReady = job.isReady();
 
         if (DEBUG) {
@@ -2241,21 +2227,22 @@ public class JobSchedulerService extends com.android.server.SystemService
         }
 
         final boolean jobExists = mJobs.containsJob(job);
-
         final boolean userStarted = areUsersStartedLocked(job);
+        final boolean backingUp = mBackingUpUids.indexOfKey(job.getSourceUid()) >= 0;
 
         if (DEBUG) {
             Slog.v(TAG, "isReadyToBeExecutedLocked: " + job.toShortString()
-                    + " exists=" + jobExists + " userStarted=" + userStarted);
+                    + " exists=" + jobExists + " userStarted=" + userStarted
+                    + " backingUp=" + backingUp);
         }
 
         // These are also fairly cheap to check, though they typically will not
         // be conditions we fail.
-        if (!jobExists || !userStarted) {
+        if (!jobExists || !userStarted || backingUp) {
             return false;
         }
 
-        if (isJobThermalConstrainedLocked(job)) {
+        if (checkIfRestricted(job) != null) {
             return false;
         }
 
@@ -2274,54 +2261,6 @@ public class JobSchedulerService extends com.android.server.SystemService
             return false;
         }
 
-        if (mConstants.USE_HEARTBEATS) {
-            // If the app is in a non-active standby bucket, make sure we've waited
-            // an appropriate amount of time since the last invocation.  During device-
-            // wide parole, standby bucketing is ignored.
-            //
-            // Jobs in 'active' apps are not subject to standby, nor are jobs that are
-            // specifically marked as exempt.
-            if (DEBUG_STANDBY) {
-                Slog.v(TAG, "isReadyToBeExecutedLocked: " + job.toShortString()
-                        + " parole=" + mInParole + " active=" + job.uidActive
-                        + " exempt=" + job.getJob().isExemptedFromAppStandby());
-            }
-            if (!mInParole
-                    && !job.uidActive
-                    && !job.getJob().isExemptedFromAppStandby()) {
-                final int bucket = job.getStandbyBucket();
-                if (DEBUG_STANDBY) {
-                    Slog.v(TAG, "  bucket=" + bucket + " heartbeat=" + mHeartbeat
-                            + " next=" + mNextBucketHeartbeat[bucket]);
-                }
-                if (mHeartbeat < mNextBucketHeartbeat[bucket]) {
-                    // Only skip this job if the app is still waiting for the end of its nominal
-                    // bucket interval.  Once it's waited that long, we let it go ahead and clear.
-                    // The final (NEVER) bucket is special; we never age those apps' jobs into
-                    // runnability.
-                    final long appLastRan = heartbeatWhenJobsLastRun(job);
-                    if (bucket >= mConstants.STANDBY_BEATS.length
-                            || (mHeartbeat > appLastRan
-                            && mHeartbeat < appLastRan + mConstants.STANDBY_BEATS[bucket])) {
-                        if (job.getWhenStandbyDeferred() == 0) {
-                            if (DEBUG_STANDBY) {
-                                Slog.v(TAG, "Bucket deferral: " + mHeartbeat + " < "
-                                        + (appLastRan + mConstants.STANDBY_BEATS[bucket])
-                                        + " for " + job);
-                            }
-                            job.setWhenStandbyDeferred(sElapsedRealtimeClock.millis());
-                        }
-                        return false;
-                    } else {
-                        if (DEBUG_STANDBY) {
-                            Slog.v(TAG, "Bucket deferred job aged into runnability at "
-                                    + mHeartbeat + " : " + job);
-                        }
-                    }
-                }
-            }
-        }
-
         // The expensive check: validate that the defined package+service is
         // still present & viable.
         return isComponentUsable(job);
@@ -2335,7 +2274,7 @@ public class JobSchedulerService extends com.android.server.SystemService
                     job.getServiceComponent(), PackageManager.MATCH_DEBUG_TRIAGED_MISSING,
                     job.getUserId());
         } catch (RemoteException e) {
-            throw e.rethrowAsRuntimeException();
+            throw new RuntimeException(e);
         }
 
         if (service == null) {
@@ -2354,7 +2293,8 @@ public class JobSchedulerService extends com.android.server.SystemService
         return !appIsBad;
     }
 
-    private void evaluateControllerStatesLocked(final JobStatus job) {
+    @VisibleForTesting
+    void evaluateControllerStatesLocked(final JobStatus job) {
         for (int c = mControllers.size() - 1; c >= 0; --c) {
             final StateController sc = mControllers.get(c);
             sc.evaluateStateLocked(job);
@@ -2371,30 +2311,37 @@ public class JobSchedulerService extends com.android.server.SystemService
 
         final boolean jobExists = mJobs.containsJob(job);
         final boolean userStarted = areUsersStartedLocked(job);
+        final boolean backingUp = mBackingUpUids.indexOfKey(job.getSourceUid()) >= 0;
 
         if (DEBUG) {
             Slog.v(TAG, "areComponentsInPlaceLocked: " + job.toShortString()
-                    + " exists=" + jobExists + " userStarted=" + userStarted);
+                    + " exists=" + jobExists + " userStarted=" + userStarted
+                    + " backingUp=" + backingUp);
         }
 
         // These are also fairly cheap to check, though they typically will not
         // be conditions we fail.
-        if (!jobExists || !userStarted) {
+        if (!jobExists || !userStarted || backingUp) {
             return false;
         }
 
-        if (isJobThermalConstrainedLocked(job)) {
+        if (checkIfRestricted(job) != null) {
             return false;
         }
 
         // Job pending/active doesn't affect the readiness of a job.
 
-        // Skipping the heartbeat check as this will only come into play when using the rolling
-        // window quota management system.
-
         // The expensive check: validate that the defined package+service is
         // still present & viable.
         return isComponentUsable(job);
+    }
+
+    /** Returns the maximum amount of time this job could run for. */
+    public long getMaxJobExecutionTimeMs(JobStatus job) {
+        synchronized (mLock) {
+            return Math.min(mQuotaController.getMaxJobExecutionTimeMsLocked(job),
+                    JobServiceContext.EXECUTING_TIMESLICE_MILLIS);
+        }
     }
 
     /**
@@ -2435,56 +2382,6 @@ public class JobSchedulerService extends com.android.server.SystemService
     }
 
     final class LocalService implements JobSchedulerInternal {
-
-        /**
-         * The current bucket heartbeat ordinal
-         */
-        public long currentHeartbeat() {
-            return getCurrentHeartbeat();
-        }
-
-        /**
-         * Heartbeat ordinal at which the given standby bucket's jobs next become runnable
-         */
-        public long nextHeartbeatForBucket(int bucket) {
-            synchronized (mLock) {
-                return mNextBucketHeartbeat[bucket];
-            }
-        }
-
-        /**
-         * Heartbeat ordinal for the given app.  This is typically the heartbeat at which
-         * the app last ran jobs, so that a newly-scheduled job in an app that hasn't run
-         * jobs in a long time is immediately runnable even if the app is bucketed into
-         * an infrequent time allocation.
-         */
-        public long baseHeartbeatForApp(String packageName, @UserIdInt int userId,
-                final int appStandbyBucket) {
-            if (appStandbyBucket == 0 ||
-                    appStandbyBucket >= mConstants.STANDBY_BEATS.length) {
-                // ACTIVE => everything can be run right away
-                // NEVER => we won't run them anyway, so let them go in the future
-                // as soon as the app enters normal use
-                if (DEBUG_STANDBY) {
-                    Slog.v(TAG, "Base heartbeat forced ZERO for new job in "
-                            + packageName + "/" + userId);
-                }
-                return 0;
-            }
-
-            final long baseHeartbeat = heartbeatWhenJobsLastRun(packageName, userId);
-            if (DEBUG_STANDBY) {
-                Slog.v(TAG, "Base heartbeat " + baseHeartbeat + " for new job in "
-                        + packageName + "/" + userId);
-            }
-            return baseHeartbeat;
-        }
-
-        public void noteJobStart(String packageName, int userId) {
-            synchronized (mLock) {
-                setLastJobHeartbeatLocked(packageName, userId, mHeartbeat);
-            }
-        }
 
         /**
          * Returns a list of all pending jobs. A running job is not considered pending. Periodic
@@ -2541,6 +2438,11 @@ public class JobSchedulerService extends com.android.server.SystemService
         }
 
         @Override
+        public String getMediaBackupPackage() {
+            return mSystemGalleryPackage;
+        }
+
+        @Override
         public void reportAppUsage(String packageName, int userId) {
             JobSchedulerService.this.reportAppUsage(packageName, userId);
         }
@@ -2567,14 +2469,6 @@ public class JobSchedulerService extends com.android.server.SystemService
         }
 
         @Override
-        public void onParoleStateChanged(boolean isParoleOn) {
-            if (DEBUG_STANDBY) {
-                Slog.i(TAG, "Global parole state now " + (isParoleOn ? "ON" : "OFF"));
-            }
-            mInParole = isParoleOn;
-        }
-
-        @Override
         public void onUserInteractionStarted(String packageName, int userId) {
             final int uid = mLocalPM.getPackageUid(packageName,
                     PackageManager.MATCH_UNINSTALLED_PACKAGES, userId);
@@ -2596,7 +2490,8 @@ public class JobSchedulerService extends com.android.server.SystemService
                 BatteryStatsInternal mBatteryStatsInternal = LocalServices.getService
                         (BatteryStatsInternal.class);
                 mBatteryStatsInternal.noteJobsDeferred(uid, counter.numDeferred(), sinceLast);
-                StatsLog.write_non_chained(StatsLog.DEFERRED_JOB_STATS_REPORTED, uid, null,
+                FrameworkStatsLog.write_non_chained(
+                        FrameworkStatsLog.DEFERRED_JOB_STATS_REPORTED, uid, null,
                         counter.numDeferred(), sinceLast);
             }
         }
@@ -2619,11 +2514,19 @@ public class JobSchedulerService extends com.android.server.SystemService
 
     public static int standbyBucketToBucketIndex(int bucket) {
         // Normalize AppStandby constants to indices into our bookkeeping
-        if (bucket == UsageStatsManager.STANDBY_BUCKET_NEVER) return NEVER_INDEX;
-        else if (bucket > UsageStatsManager.STANDBY_BUCKET_FREQUENT) return RARE_INDEX;
-        else if (bucket > UsageStatsManager.STANDBY_BUCKET_WORKING_SET) return FREQUENT_INDEX;
-        else if (bucket > UsageStatsManager.STANDBY_BUCKET_ACTIVE) return WORKING_INDEX;
-        else return ACTIVE_INDEX;
+        if (bucket == UsageStatsManager.STANDBY_BUCKET_NEVER) {
+            return NEVER_INDEX;
+        } else if (bucket > UsageStatsManager.STANDBY_BUCKET_RARE) {
+            return RESTRICTED_INDEX;
+        } else if (bucket > UsageStatsManager.STANDBY_BUCKET_FREQUENT) {
+            return RARE_INDEX;
+        } else if (bucket > UsageStatsManager.STANDBY_BUCKET_WORKING_SET) {
+            return FREQUENT_INDEX;
+        } else if (bucket > UsageStatsManager.STANDBY_BUCKET_ACTIVE) {
+            return WORKING_INDEX;
+        } else {
+            return ACTIVE_INDEX;
+        }
     }
 
     // Static to support external callers
@@ -2905,10 +2808,12 @@ public class JobSchedulerService extends com.android.server.SystemService
         }
 
         @Override
-        public void onShellCommand(FileDescriptor in, FileDescriptor out, FileDescriptor err,
-                String[] args, ShellCallback callback, ResultReceiver resultReceiver) {
-                (new JobSchedulerShellCommand(JobSchedulerService.this)).exec(
-                        this, in, out, err, args, callback, resultReceiver);
+        public int handleShellCommand(@NonNull ParcelFileDescriptor in,
+                @NonNull ParcelFileDescriptor out, @NonNull ParcelFileDescriptor err,
+                @NonNull String[] args) {
+            return (new JobSchedulerShellCommand(JobSchedulerService.this)).exec(
+                    this, in.getFileDescriptor(), out.getFileDescriptor(), err.getFileDescriptor(),
+                    args);
         }
 
         /**
@@ -2959,14 +2864,12 @@ public class JobSchedulerService extends com.android.server.SystemService
                 return new ParceledListSlice<>(snapshots);
             }
         }
-    };
+    }
 
     // Shell command infrastructure: run the given job immediately
-    int executeRunCommand(String pkgName, int userId, int jobId, boolean force) {
-        if (DEBUG) {
-            Slog.v(TAG, "executeRunCommand(): " + pkgName + "/" + userId
-                    + " " + jobId + " f=" + force);
-        }
+    int executeRunCommand(String pkgName, int userId, int jobId, boolean satisfied, boolean force) {
+        Slog.d(TAG, "executeRunCommand(): " + pkgName + "/" + userId
+                + " " + jobId + " s=" + satisfied + " f=" + force);
 
         try {
             final int uid = AppGlobals.getPackageManager().getPackageUid(pkgName, 0,
@@ -2981,9 +2884,17 @@ public class JobSchedulerService extends com.android.server.SystemService
                     return JobSchedulerShellCommand.CMD_ERR_NO_JOB;
                 }
 
-                js.overrideState = (force) ? JobStatus.OVERRIDE_FULL : JobStatus.OVERRIDE_SOFT;
+                js.overrideState = (force) ? JobStatus.OVERRIDE_FULL
+                        : (satisfied ? JobStatus.OVERRIDE_SORTING : JobStatus.OVERRIDE_SOFT);
+
+                // Re-evaluate constraints after the override is set in case one of the overridden
+                // constraints was preventing another constraint from thinking it needed to update.
+                for (int c = mControllers.size() - 1; c >= 0; --c) {
+                    mControllers.get(c).reevaluateStateLocked(uid);
+                }
+
                 if (!js.isConstraintsSatisfied()) {
-                    js.overrideState = 0;
+                    js.overrideState = JobStatus.OVERRIDE_NONE;
                     return JobSchedulerShellCommand.CMD_ERR_CONSTRAINTS;
                 }
 
@@ -3097,12 +3008,6 @@ public class JobSchedulerService extends com.android.server.SystemService
         }
     }
 
-    long getCurrentHeartbeat() {
-        synchronized (mLock) {
-            return mHeartbeat;
-        }
-    }
-
     // Shell command infrastructure
     int getJobState(PrintWriter pw, String pkgName, int userId, int jobId) {
         try {
@@ -3188,19 +3093,12 @@ public class JobSchedulerService extends com.android.server.SystemService
         return 0;
     }
 
-    // Shell command infrastructure
-    int executeHeartbeatCommand(PrintWriter pw, int numBeats) {
-        if (numBeats < 1) {
-            pw.println(getCurrentHeartbeat());
-            return 0;
-        }
+    void resetExecutionQuota(@NonNull String pkgName, int userId) {
+        mQuotaController.clearAppStats(userId, pkgName);
+    }
 
-        pw.print("Advancing standby heartbeat by ");
-        pw.println(numBeats);
-        synchronized (mLock) {
-            advanceHeartbeatLocked(numBeats);
-        }
-        return 0;
+    void resetScheduleQuota() {
+        mQuotaTracker.clear();
     }
 
     void triggerDockState(boolean idleState) {
@@ -3258,26 +3156,14 @@ public class JobSchedulerService extends com.android.server.SystemService
             }
             pw.println();
 
-            pw.println("  Heartbeat:");
-            pw.print("    Current:    "); pw.println(mHeartbeat);
-            pw.println("    Next");
-            pw.print("      ACTIVE:   "); pw.println(mNextBucketHeartbeat[0]);
-            pw.print("      WORKING:  "); pw.println(mNextBucketHeartbeat[1]);
-            pw.print("      FREQUENT: "); pw.println(mNextBucketHeartbeat[2]);
-            pw.print("      RARE:     "); pw.println(mNextBucketHeartbeat[3]);
-            pw.print("    Last heartbeat: ");
-            TimeUtils.formatDuration(mLastHeartbeatTime, nowElapsed, pw);
+            for (int i = mJobRestrictions.size() - 1; i >= 0; i--) {
+                pw.print("    ");
+                mJobRestrictions.get(i).dumpConstants(pw);
+                pw.println();
+            }
             pw.println();
-            pw.print("    Next heartbeat: ");
-            TimeUtils.formatDuration(mLastHeartbeatTime + mConstants.STANDBY_HEARTBEAT_TIME,
-                    nowElapsed, pw);
-            pw.println();
-            pw.print("    In parole?: ");
-            pw.print(mInParole);
-            pw.println();
-            pw.print("    In thermal throttling?: ");
-            pw.print(mThermalConstraint);
-            pw.println();
+
+            mQuotaTracker.dump(pw);
             pw.println();
 
             pw.println("Started users: " + Arrays.toString(mStartedUsers));
@@ -3297,9 +3183,22 @@ public class JobSchedulerService extends com.android.server.SystemService
                     }
 
                     job.dump(pw, "    ", true, nowElapsed);
-                    pw.print("    Last run heartbeat: ");
-                    pw.print(heartbeatWhenJobsLastRun(job));
-                    pw.println();
+
+
+                    pw.print("    Restricted due to:");
+                    final boolean isRestricted = checkIfRestricted(job) != null;
+                    if (isRestricted) {
+                        for (int i = mJobRestrictions.size() - 1; i >= 0; i--) {
+                            final JobRestriction restriction = mJobRestrictions.get(i);
+                            if (restriction.isJobRestricted(job)) {
+                                final int reason = restriction.getReason();
+                                pw.print(" " + JobParameters.getReasonCodeDescription(reason));
+                            }
+                        }
+                    } else {
+                        pw.print(" none");
+                    }
+                    pw.println(".");
 
                     pw.print("    Ready: ");
                     pw.print(isReadyToBeExecutedLocked(job));
@@ -3307,6 +3206,8 @@ public class JobSchedulerService extends com.android.server.SystemService
                     pw.print(job.isReady());
                     pw.print(" user=");
                     pw.print(areUsersStartedLocked(job));
+                    pw.print(" !restricted=");
+                    pw.print(!isRestricted);
                     pw.print(" !pending=");
                     pw.print(!mPendingJobs.contains(job));
                     pw.print(" !active=");
@@ -3314,15 +3215,7 @@ public class JobSchedulerService extends com.android.server.SystemService
                     pw.print(" !backingup=");
                     pw.print(!(mBackingUpUids.indexOfKey(job.getSourceUid()) >= 0));
                     pw.print(" comp=");
-                    boolean componentPresent = false;
-                    try {
-                        componentPresent = (AppGlobals.getPackageManager().getServiceInfo(
-                                job.getServiceComponent(),
-                                PackageManager.MATCH_DEBUG_TRIAGED_MISSING,
-                                job.getUserId()) != null);
-                    } catch (RemoteException e) {
-                    }
-                    pw.print(componentPresent);
+                    pw.print(isComponentUsable(job));
                     pw.println(")");
                 }
             } else {
@@ -3453,21 +3346,16 @@ public class JobSchedulerService extends com.android.server.SystemService
             }
             proto.end(settingsToken);
 
-            proto.write(JobSchedulerServiceDumpProto.CURRENT_HEARTBEAT, mHeartbeat);
-            proto.write(JobSchedulerServiceDumpProto.NEXT_HEARTBEAT, mNextBucketHeartbeat[0]);
-            proto.write(JobSchedulerServiceDumpProto.NEXT_HEARTBEAT, mNextBucketHeartbeat[1]);
-            proto.write(JobSchedulerServiceDumpProto.NEXT_HEARTBEAT, mNextBucketHeartbeat[2]);
-            proto.write(JobSchedulerServiceDumpProto.NEXT_HEARTBEAT, mNextBucketHeartbeat[3]);
-            proto.write(JobSchedulerServiceDumpProto.LAST_HEARTBEAT_TIME_MILLIS,
-                    mLastHeartbeatTime - nowUptime);
-            proto.write(JobSchedulerServiceDumpProto.NEXT_HEARTBEAT_TIME_MILLIS,
-                    mLastHeartbeatTime + mConstants.STANDBY_HEARTBEAT_TIME - nowUptime);
-            proto.write(JobSchedulerServiceDumpProto.IN_PAROLE, mInParole);
-            proto.write(JobSchedulerServiceDumpProto.IN_THERMAL, mThermalConstraint);
+            for (int i = mJobRestrictions.size() - 1; i >= 0; i--) {
+                mJobRestrictions.get(i).dumpConstants(proto);
+            }
 
             for (int u : mStartedUsers) {
                 proto.write(JobSchedulerServiceDumpProto.STARTED_USERS, u);
             }
+
+            mQuotaTracker.dump(proto, JobSchedulerServiceDumpProto.QUOTA_TRACKER);
+
             if (mJobs.size() > 0) {
                 final List<JobStatus> jobs = mJobs.mJobSet.getAllJobs();
                 sortJobs(jobs);
@@ -3482,28 +3370,34 @@ public class JobSchedulerService extends com.android.server.SystemService
 
                     job.dump(proto, JobSchedulerServiceDumpProto.RegisteredJob.DUMP, true, nowElapsed);
 
-                    // isReadyToBeExecuted
+                    proto.write(
+                            JobSchedulerServiceDumpProto.RegisteredJob.IS_JOB_READY_TO_BE_EXECUTED,
+                            isReadyToBeExecutedLocked(job));
                     proto.write(JobSchedulerServiceDumpProto.RegisteredJob.IS_JOB_READY,
                             job.isReady());
-                    proto.write(JobSchedulerServiceDumpProto.RegisteredJob.IS_USER_STARTED,
+                    proto.write(JobSchedulerServiceDumpProto.RegisteredJob.ARE_USERS_STARTED,
                             areUsersStartedLocked(job));
+                    proto.write(
+                            JobSchedulerServiceDumpProto.RegisteredJob.IS_JOB_RESTRICTED,
+                            checkIfRestricted(job) != null);
                     proto.write(JobSchedulerServiceDumpProto.RegisteredJob.IS_JOB_PENDING,
                             mPendingJobs.contains(job));
                     proto.write(JobSchedulerServiceDumpProto.RegisteredJob.IS_JOB_CURRENTLY_ACTIVE,
                             isCurrentlyActiveLocked(job));
                     proto.write(JobSchedulerServiceDumpProto.RegisteredJob.IS_UID_BACKING_UP,
                             mBackingUpUids.indexOfKey(job.getSourceUid()) >= 0);
-                    boolean componentPresent = false;
-                    try {
-                        componentPresent = (AppGlobals.getPackageManager().getServiceInfo(
-                                job.getServiceComponent(),
-                                PackageManager.MATCH_DEBUG_TRIAGED_MISSING,
-                                job.getUserId()) != null);
-                    } catch (RemoteException e) {
+                    proto.write(JobSchedulerServiceDumpProto.RegisteredJob.IS_COMPONENT_USABLE,
+                            isComponentUsable(job));
+
+                    for (JobRestriction restriction : mJobRestrictions) {
+                        final long restrictionsToken = proto.start(
+                                JobSchedulerServiceDumpProto.RegisteredJob.RESTRICTIONS);
+                        proto.write(JobSchedulerServiceDumpProto.JobRestriction.REASON,
+                                restriction.getReason());
+                        proto.write(JobSchedulerServiceDumpProto.JobRestriction.IS_RESTRICTING,
+                                restriction.isJobRestricted(job));
+                        proto.end(restrictionsToken);
                     }
-                    proto.write(JobSchedulerServiceDumpProto.RegisteredJob.IS_COMPONENT_PRESENT,
-                            componentPresent);
-                    proto.write(RegisteredJob.LAST_RUN_HEARTBEAT, heartbeatWhenJobsLastRun(job));
 
                     proto.end(rjToken);
                 }
@@ -3540,7 +3434,7 @@ public class JobSchedulerService extends com.android.server.SystemService
                 job.writeToShortProto(proto, PendingJob.INFO);
                 job.dump(proto, PendingJob.DUMP, false, nowElapsed);
                 proto.write(PendingJob.EVALUATED_PRIORITY, evaluateJobPriorityLocked(job));
-                proto.write(PendingJob.ENQUEUED_DURATION_MS, nowUptime - job.madePending);
+                proto.write(PendingJob.PENDING_DURATION_MS, nowUptime - job.madePending);
 
                 proto.end(pjToken);
             }
@@ -3589,6 +3483,8 @@ public class JobSchedulerService extends com.android.server.SystemService
             }
             mConcurrencyManager.dumpProtoLocked(proto,
                     JobSchedulerServiceDumpProto.CONCURRENCY_MANAGER, now, nowElapsed);
+
+            mJobs.getPersistStats().dumpDebug(proto, JobSchedulerServiceDumpProto.PERSIST_STATS);
         }
 
         proto.flush();

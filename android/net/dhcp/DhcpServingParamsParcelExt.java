@@ -16,15 +16,17 @@
 
 package android.net.dhcp;
 
-import static android.net.shared.Inet4AddressUtils.inet4AddressToIntHTH;
+import static com.android.net.module.util.Inet4AddressUtils.inet4AddressToIntHTH;
 
-import android.annotation.NonNull;
 import android.net.LinkAddress;
+import android.util.ArraySet;
 
-import com.google.android.collect.Sets;
+import androidx.annotation.NonNull;
+import androidx.annotation.Nullable;
 
 import java.net.Inet4Address;
 import java.util.Collection;
+import java.util.Collections;
 import java.util.Set;
 
 /**
@@ -68,7 +70,7 @@ public class DhcpServingParamsParcelExt extends DhcpServingParamsParcel {
      * but it must always be set explicitly.
      */
     public DhcpServingParamsParcelExt setDefaultRouters(@NonNull Inet4Address... defaultRouters) {
-        return setDefaultRouters(Sets.newArraySet(defaultRouters));
+        return setDefaultRouters(newArraySet(defaultRouters));
     }
 
     /**
@@ -96,7 +98,7 @@ public class DhcpServingParamsParcelExt extends DhcpServingParamsParcel {
      * <p>This may be an empty list of servers, but it must always be set explicitly.
      */
     public DhcpServingParamsParcelExt setDnsServers(@NonNull Inet4Address... dnsServers) {
-        return setDnsServers(Sets.newArraySet(dnsServers));
+        return setDnsServers(newArraySet(dnsServers));
     }
 
     /**
@@ -126,7 +128,7 @@ public class DhcpServingParamsParcelExt extends DhcpServingParamsParcel {
      * and do not need to be set here.
      */
     public DhcpServingParamsParcelExt setExcludedAddrs(@NonNull Inet4Address... excludedAddrs) {
-        return setExcludedAddrs(Sets.newArraySet(excludedAddrs));
+        return setExcludedAddrs(newArraySet(excludedAddrs));
     }
 
     /**
@@ -160,6 +162,29 @@ public class DhcpServingParamsParcelExt extends DhcpServingParamsParcel {
         return this;
     }
 
+    /**
+     * Set the client address to tell DHCP server only offer this address.
+     * The client's prefix length is the same as server's.
+     *
+     * <p>If not set, the default value is null.
+     */
+    public DhcpServingParamsParcelExt setSingleClientAddr(@Nullable Inet4Address clientAddr) {
+        this.singleClientAddr = clientAddr == null ? 0 : inet4AddressToIntHTH(clientAddr);
+        return this;
+    }
+
+    /**
+     * Set whether the DHCP server should request a new prefix from IpServer when receiving
+     * DHCPDECLINE message in certain particular link (e.g. there is only one downstream USB
+     * tethering client). If it's false, process DHCPDECLINE message as RFC2131#4.3.3 suggests.
+     *
+     * <p>If not set, the default value is false.
+     */
+    public DhcpServingParamsParcelExt setChangePrefixOnDecline(boolean changePrefixOnDecline) {
+        this.changePrefixOnDecline = changePrefixOnDecline;
+        return this;
+    }
+
     private static int[] toIntArray(@NonNull Collection<Inet4Address> addrs) {
         int[] res = new int[addrs.size()];
         int i = 0;
@@ -168,5 +193,11 @@ public class DhcpServingParamsParcelExt extends DhcpServingParamsParcel {
             i++;
         }
         return res;
+    }
+
+    private static ArraySet<Inet4Address> newArraySet(Inet4Address... addrs) {
+        ArraySet<Inet4Address> addrSet = new ArraySet<>(addrs.length);
+        Collections.addAll(addrSet, addrs);
+        return addrSet;
     }
 }

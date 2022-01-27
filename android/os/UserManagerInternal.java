@@ -11,22 +11,39 @@
  * distributed under the License is distributed on an "AS IS" BASIS,
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
  * See the License for the specific language governing permissions and
- * limitations under the License
+ * limitations under the License.
  */
 package android.os;
 
+import android.annotation.IntDef;
+import android.annotation.NonNull;
 import android.annotation.Nullable;
+import android.annotation.UserIdInt;
 import android.content.Context;
 import android.content.pm.UserInfo;
 import android.graphics.Bitmap;
+
+import com.android.server.pm.RestrictionsSet;
+
+import java.lang.annotation.Retention;
+import java.lang.annotation.RetentionPolicy;
+import java.util.List;
 
 /**
  * @hide Only for use within the system server.
  */
 public abstract class UserManagerInternal {
-    public static final int CAMERA_NOT_DISABLED = 0;
-    public static final int CAMERA_DISABLED_LOCALLY = 1;
-    public static final int CAMERA_DISABLED_GLOBALLY = 2;
+
+    public static final int OWNER_TYPE_DEVICE_OWNER = 0;
+    public static final int OWNER_TYPE_PROFILE_OWNER = 1;
+    public static final int OWNER_TYPE_PROFILE_OWNER_OF_ORGANIZATION_OWNED_DEVICE = 2;
+    public static final int OWNER_TYPE_NO_OWNER = 3;
+
+    @Retention(RetentionPolicy.SOURCE)
+    @IntDef(value = {OWNER_TYPE_DEVICE_OWNER, OWNER_TYPE_PROFILE_OWNER,
+            OWNER_TYPE_PROFILE_OWNER_OF_ORGANIZATION_OWNED_DEVICE, OWNER_TYPE_NO_OWNER})
+    public @interface OwnerType {
+    }
 
     public interface UserRestrictionsListener {
         /**
@@ -43,15 +60,18 @@ public abstract class UserManagerInternal {
      * Called by {@link com.android.server.devicepolicy.DevicePolicyManagerService} to set
      * restrictions enforced by the user.
      *
-     * @param userId target user id for the local restrictions.
-     * @param restrictions a bundle of user restrictions.
-     * @param isDeviceOwner whether {@code userId} corresponds to device owner user id.
-     * @param cameraRestrictionScope is camera disabled and if so what is the scope of restriction.
-     *        Should be one of {@link #CAMERA_NOT_DISABLED}, {@link #CAMERA_DISABLED_LOCALLY} or
-     *                               {@link #CAMERA_DISABLED_GLOBALLY}
+     * @param originatingUserId user id of the user where the restrictions originated.
+     * @param global            a bundle of global user restrictions. Global restrictions are
+     *                          restrictions that apply device-wide: to the managed profile,
+     *                          primary profile and secondary users and any profile created in
+     *                          any secondary user.
+     * @param local             a restriction set of local user restrictions. The key is the user
+     *                          id of the user whom the restrictions are targeting.
+     * @param isDeviceOwner     whether {@code originatingUserId} corresponds to device owner
+     *                          user id.
      */
-    public abstract void setDevicePolicyUserRestrictions(int userId, @Nullable Bundle restrictions,
-            boolean isDeviceOwner, int cameraRestrictionScope);
+    public abstract void setDevicePolicyUserRestrictions(int originatingUserId,
+            @Nullable Bundle global, @Nullable RestrictionsSet local, boolean isDeviceOwner);
 
     /**
      * Returns the "base" user restrictions.
@@ -84,10 +104,20 @@ public abstract class UserManagerInternal {
     public abstract void setDeviceManaged(boolean isManaged);
 
     /**
+     * Returns whether the device is managed by device owner.
+     */
+    public abstract boolean isDeviceManaged();
+
+    /**
      * Called by {@link com.android.server.devicepolicy.DevicePolicyManagerService} to update
      * whether the user is managed by profile owner.
      */
     public abstract void setUserManaged(int userId, boolean isManaged);
+
+    /**
+     * whether a profile owner manages this user.
+     */
+    public abstract boolean isUserManaged(int userId);
 
     /**
      * Called by {@link com.android.server.devicepolicy.DevicePolicyManagerService} to omit
@@ -131,11 +161,12 @@ public abstract class UserManagerInternal {
      * <p>Called by the {@link com.android.server.devicepolicy.DevicePolicyManagerService} when
      * createAndManageUser is called by the device owner.
      */
-    public abstract UserInfo createUserEvenWhenDisallowed(String name, int flags,
-            String[] disallowedPackages);
+    public abstract UserInfo createUserEvenWhenDisallowed(String name, String userType,
+            int flags, String[] disallowedPackages)
+            throws UserManager.CheckedUserOperationException;
 
     /**
-     * Same as {@link UserManager#removeUser(int userHandle)}, but bypasses the check for
+     * Same as {@link UserManager#removeUser(int userId)}, but bypasses the check for
      * {@link UserManager#DISALLOW_REMOVE_USER} and
      * {@link UserManager#DISALLOW_REMOVE_MANAGED_PROFILE} and does not require the
      * {@link android.Manifest.permission#MANAGE_USERS} permission.
@@ -189,9 +220,15 @@ public abstract class UserManagerInternal {
     public abstract int[] getUserIds();
 
     /**
+     * Internal implementation of getUsers does not check permissions.
+     * This improves performance for calls from inside system server which already have permissions
+     * checked.
+     */
+    public abstract @NonNull List<UserInfo> getUsers(boolean excludeDying);
+
+    /**
      * Checks if the {@code callingUserId} and {@code targetUserId} are same or in same group
-     * and that the {@code callingUserId} is not a managed profile and
-     * {@code targetUserId} is enabled.
+     * and that the {@code callingUserId} is not a profile and {@code targetUserId} is enabled.
      *
      * @return TRUE if the {@code callingUserId} can access {@code targetUserId}. FALSE
      * otherwise
@@ -203,8 +240,7 @@ public abstract class UserManagerInternal {
             String debugMsg, boolean throwSecurityException);
 
     /**
-     * If {@code userId} is of a managed profile, return the parent user ID. Otherwise return
-     * itself.
+     * If {@code userId} is of a profile, return the parent user ID. Otherwise return itself.
      */
     public abstract int getProfileParentId(int userId);
 
@@ -221,4 +257,18 @@ public abstract class UserManagerInternal {
      */
     public abstract boolean isSettingRestrictedForUser(String setting, int userId, String value,
             int callingUid);
+
+    /** @return a specific user restriction that's in effect currently. */
+    public abstract boolean hasUserRestriction(String restriction, int userId);
+
+    /**
+     * Gets an {@link UserInfo} for the given {@code userId}, or {@code null} if not
+     * found.
+     */
+    public abstract @Nullable UserInfo getUserInfo(@UserIdInt int userId);
+
+    /**
+     * Gets all {@link UserInfo UserInfos}.
+     */
+    public abstract @NonNull UserInfo[] getUserInfos();
 }

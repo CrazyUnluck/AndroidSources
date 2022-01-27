@@ -17,51 +17,41 @@
 package com.android.server.backup.encryption.chunk;
 
 import android.annotation.Nullable;
-import android.util.proto.ProtoInputStream;
 
-import java.io.IOException;
-import java.util.Collections;
+import com.android.server.backup.encryption.protos.nano.ChunksMetadataProto;
+
 import java.util.HashMap;
 import java.util.Map;
 
 /**
- * Chunk listing in a format optimized for quick look-up of chunks via their hash keys. This is
+ * Chunk listing in a format optimized for quick look up of chunks via their hash keys. This is
  * useful when building an incremental backup. After a chunk has been produced, the algorithm can
  * quickly look up whether the chunk existed in the previous backup by checking this chunk listing.
  * It can then tell the server to use that chunk, through telling it the position and length of the
  * chunk in the previous backup's blob.
  */
 public class ChunkListingMap {
-    /**
-     * Reads a ChunkListingMap from a {@link ProtoInputStream}. Expects the message to be of format
-     * {@link ChunksMetadataProto.ChunkListing}.
-     *
-     * @param inputStream Currently at a {@link ChunksMetadataProto.ChunkListing} message.
-     * @throws IOException when the message is not structured as expected or a field can not be
-     *     read.
-     */
-    public static ChunkListingMap readFromProto(ProtoInputStream inputStream) throws IOException {
-        Map<ChunkHash, Entry> entries = new HashMap();
+
+    private final Map<ChunkHash, Entry> mChunksByHash;
+
+    /** Construct a map from a {@link ChunksMetadataProto.ChunkListing} protobuf */
+    public static ChunkListingMap fromProto(ChunksMetadataProto.ChunkListing chunkListingProto) {
+        Map<ChunkHash, Entry> entries = new HashMap<>();
 
         long start = 0;
 
-        while (inputStream.nextField() != ProtoInputStream.NO_MORE_FIELDS) {
-            if (inputStream.getFieldNumber() == (int) ChunksMetadataProto.ChunkListing.CHUNKS) {
-                long chunkToken = inputStream.start(ChunksMetadataProto.ChunkListing.CHUNKS);
-                Chunk chunk = Chunk.readFromProto(inputStream);
-                entries.put(new ChunkHash(chunk.getHash()), new Entry(start, chunk.getLength()));
-                start += chunk.getLength();
-                inputStream.end(chunkToken);
-            }
+        for (ChunksMetadataProto.Chunk chunk : chunkListingProto.chunks) {
+            entries.put(new ChunkHash(chunk.hash), new Entry(start, chunk.length));
+            start += chunk.length;
         }
 
         return new ChunkListingMap(entries);
     }
 
-    private final Map<ChunkHash, Entry> mChunksByHash;
-
     private ChunkListingMap(Map<ChunkHash, Entry> chunksByHash) {
-        mChunksByHash = Collections.unmodifiableMap(new HashMap<>(chunksByHash));
+        // This is only called from the {@link #fromProto} method, so we don't
+        // need to take a copy.
+        this.mChunksByHash = chunksByHash;
     }
 
     /** Returns {@code true} if there is a chunk with the given SHA-256 MAC key in the listing. */
@@ -81,19 +71,14 @@ public class ChunkListingMap {
         return mChunksByHash.get(hash);
     }
 
-    /** Returns the number of chunks in this listing. */
-    public int getChunkCount() {
-        return mChunksByHash.size();
-    }
-
     /** Information about a chunk entry in a backup blob - i.e., its position and length. */
     public static final class Entry {
         private final int mLength;
         private final long mStart;
 
         private Entry(long start, int length) {
-            mStart = start;
             mLength = length;
+            mStart = start;
         }
 
         /** Returns the length of the chunk in bytes. */

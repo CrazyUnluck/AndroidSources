@@ -41,6 +41,10 @@ public class DeviceIdleManager {
         mService = service;
     }
 
+    IDeviceIdleController getService() {
+        return mService;
+    }
+
     /**
      * @return package names the system has white-listed to opt out of power save restrictions,
      * except for device idle mode.
@@ -49,8 +53,7 @@ public class DeviceIdleManager {
         try {
             return mService.getSystemPowerWhitelistExceptIdle();
         } catch (RemoteException e) {
-            e.rethrowFromSystemServer();
-            return new String[0];
+            throw e.rethrowFromSystemServer();
         }
     }
 
@@ -62,8 +65,7 @@ public class DeviceIdleManager {
         try {
             return mService.getSystemPowerWhitelist();
         } catch (RemoteException e) {
-            e.rethrowFromSystemServer();
-            return new String[0];
+            throw e.rethrowFromSystemServer();
         }
     }
 }

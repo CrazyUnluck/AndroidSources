@@ -18,11 +18,11 @@ package com.android.server.job;
 
 import static com.android.server.job.JobSchedulerService.sElapsedRealtimeClock;
 
-import android.app.ActivityManager;
 import android.app.job.IJobCallback;
 import android.app.job.IJobService;
 import android.app.job.JobInfo;
 import android.app.job.JobParameters;
+import android.app.job.JobProtoEnums;
 import android.app.job.JobWorkItem;
 import android.app.usage.UsageStatsManagerInternal;
 import android.content.ComponentName;
@@ -46,6 +46,7 @@ import android.util.TimeUtils;
 import com.android.internal.annotations.GuardedBy;
 import com.android.internal.annotations.VisibleForTesting;
 import com.android.internal.app.IBatteryStats;
+import com.android.internal.util.FrameworkStatsLog;
 import com.android.server.EventLogTags;
 import com.android.server.LocalServices;
 import com.android.server.job.controllers.JobStatus;
@@ -252,7 +253,7 @@ public final class JobServiceContext implements ServiceConnection {
                 binding = mContext.bindServiceAsUser(intent, this,
                         Context.BIND_AUTO_CREATE | Context.BIND_NOT_FOREGROUND
                         | Context.BIND_NOT_PERCEPTIBLE,
-                        new UserHandle(job.getUserId()));
+                        UserHandle.of(job.getUserId()));
             } catch (SecurityException e) {
                 // Some permission policy, for example INTERACT_ACROSS_USERS and
                 // android:singleUser, can result in a SecurityException being thrown from
@@ -274,9 +275,20 @@ public final class JobServiceContext implements ServiceConnection {
                 return false;
             }
             mJobPackageTracker.noteActive(job);
+            FrameworkStatsLog.write_non_chained(FrameworkStatsLog.SCHEDULED_JOB_STATE_CHANGED,
+                    job.getSourceUid(), null, job.getBatteryName(),
+                    FrameworkStatsLog.SCHEDULED_JOB_STATE_CHANGED__STATE__STARTED,
+                    JobProtoEnums.STOP_REASON_UNKNOWN, job.getStandbyBucket(), job.getJobId(),
+                    job.hasChargingConstraint(),
+                    job.hasBatteryNotLowConstraint(),
+                    job.hasStorageNotLowConstraint(),
+                    job.hasTimingDelayConstraint(),
+                    job.hasDeadlineConstraint(),
+                    job.hasIdleConstraint(),
+                    job.hasConnectivityConstraint(),
+                    job.hasContentTriggerConstraint());
             try {
-                mBatteryStats.noteJobStart(job.getBatteryName(), job.getSourceUid(),
-                        job.getStandbyBucket(), job.getJobId());
+                mBatteryStats.noteJobStart(job.getBatteryName(), job.getSourceUid());
             } catch (RemoteException e) {
                 // Whatever.
             }
@@ -285,9 +297,6 @@ public final class JobServiceContext implements ServiceConnection {
             UsageStatsManagerInternal usageStats =
                     LocalServices.getService(UsageStatsManagerInternal.class);
             usageStats.setLastJobRunTime(jobPackage, jobUserId, mExecutionStartTimeElapsed);
-            JobSchedulerInternal jobScheduler =
-                    LocalServices.getService(JobSchedulerInternal.class);
-            jobScheduler.noteJobStart(jobPackage, jobUserId);
             mAvailable = false;
             mStoppedReason = null;
             mStoppedTime = 0;
@@ -392,7 +401,7 @@ public final class JobServiceContext implements ServiceConnection {
         try {
             synchronized (mLock) {
                 assertCallerLocked(cb);
-                return mRunningJob.completeWorkLocked(ActivityManager.getService(), workId);
+                return mRunningJob.completeWorkLocked(workId);
             }
         } finally {
             Binder.restoreCallingIdentity(ident);
@@ -783,10 +792,21 @@ public final class JobServiceContext implements ServiceConnection {
         applyStoppedReasonLocked(reason);
         completedJob = mRunningJob;
         mJobPackageTracker.noteInactive(completedJob, mParams.getStopReason(), reason);
+        FrameworkStatsLog.write_non_chained(FrameworkStatsLog.SCHEDULED_JOB_STATE_CHANGED,
+                completedJob.getSourceUid(), null, completedJob.getBatteryName(),
+                FrameworkStatsLog.SCHEDULED_JOB_STATE_CHANGED__STATE__FINISHED,
+                mParams.getStopReason(), completedJob.getStandbyBucket(), completedJob.getJobId(),
+                completedJob.hasChargingConstraint(),
+                completedJob.hasBatteryNotLowConstraint(),
+                completedJob.hasStorageNotLowConstraint(),
+                completedJob.hasTimingDelayConstraint(),
+                completedJob.hasDeadlineConstraint(),
+                completedJob.hasIdleConstraint(),
+                completedJob.hasConnectivityConstraint(),
+                completedJob.hasContentTriggerConstraint());
         try {
-            mBatteryStats.noteJobFinish(mRunningJob.getBatteryName(),
-                    mRunningJob.getSourceUid(), mParams.getStopReason(),
-                    mRunningJob.getStandbyBucket(), mRunningJob.getJobId());
+            mBatteryStats.noteJobFinish(mRunningJob.getBatteryName(), mRunningJob.getSourceUid(),
+                    mParams.getStopReason());
         } catch (RemoteException e) {
             // Whatever.
         }

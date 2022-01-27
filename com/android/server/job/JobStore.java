@@ -20,8 +20,6 @@ import static com.android.server.job.JobSchedulerService.sElapsedRealtimeClock;
 import static com.android.server.job.JobSchedulerService.sSystemClock;
 
 import android.annotation.Nullable;
-import android.app.ActivityManager;
-import android.app.IActivityManager;
 import android.app.job.JobInfo;
 import android.content.ComponentName;
 import android.content.Context;
@@ -180,7 +178,6 @@ public final class JobStore {
     public void getRtcCorrectedJobsLocked(final ArrayList<JobStatus> toAdd,
             final ArrayList<JobStatus> toRemove) {
         final long elapsedNow = sElapsedRealtimeClock.millis();
-        final IActivityManager am = ActivityManager.getService();
 
         // Find the jobs that need to be fixed up, collecting them for post-iteration
         // replacement with their new versions
@@ -189,10 +186,10 @@ public final class JobStore {
             if (utcTimes != null) {
                 Pair<Long, Long> elapsedRuntimes =
                         convertRtcBoundsToElapsed(utcTimes, elapsedNow);
-                JobStatus newJob = new JobStatus(job, job.getBaseHeartbeat(),
+                JobStatus newJob = new JobStatus(job,
                         elapsedRuntimes.first, elapsedRuntimes.second,
                         0, job.getLastSuccessfulRunTime(), job.getLastFailedRunTime());
-                newJob.prepareLocked(am);
+                newJob.prepareLocked();
                 toAdd.add(newJob);
                 toRemove.add(job);
             }
@@ -235,10 +232,11 @@ public final class JobStore {
 
     /**
      * Remove the provided job. Will also delete the job if it was persisted.
-     * @param writeBack If true, the job will be deleted (if it was persisted) immediately.
+     * @param removeFromPersisted If true, the job will be removed from the persisted job list
+     *                            immediately (if it was persisted).
      * @return Whether or not the job existed to be removed.
      */
-    public boolean remove(JobStatus jobStatus, boolean writeBack) {
+    public boolean remove(JobStatus jobStatus, boolean removeFromPersisted) {
         boolean removed = mJobSet.remove(jobStatus);
         if (!removed) {
             if (DEBUG) {
@@ -246,7 +244,7 @@ public final class JobStore {
             }
             return false;
         }
-        if (writeBack && jobStatus.isPersisted()) {
+        if (removeFromPersisted && jobStatus.isPersisted()) {
             maybeWriteStatusToDiskAsync();
         }
         return removed;
@@ -342,6 +340,19 @@ public final class JobStore {
     @VisibleForTesting
     public void readJobMapFromDisk(JobSet jobSet, boolean rtcGood) {
         new ReadJobMapFromDiskRunnable(jobSet, rtcGood).run();
+    }
+
+    /** Write persisted JobStore state to disk synchronously. Should only be used for testing. */
+    @VisibleForTesting
+    public void writeStatusToDiskForTesting() {
+        synchronized (mWriteScheduleLock) {
+            if (mWriteScheduled) {
+                throw new IllegalStateException("An asynchronous write is already scheduled.");
+            }
+
+            mWriteScheduled = mWriteInProgress = true;
+            mWriteRunnable.run();
+        }
     }
 
     /**
@@ -653,10 +664,9 @@ public final class JobStore {
                     jobs = readJobMapImpl(fis, rtcGood);
                     if (jobs != null) {
                         long now = sElapsedRealtimeClock.millis();
-                        IActivityManager am = ActivityManager.getService();
                         for (int i=0; i<jobs.size(); i++) {
                             JobStatus js = jobs.get(i);
-                            js.prepareLocked(am);
+                            js.prepareLocked();
                             js.enqueueTime = now;
                             this.jobSet.add(js);
 
@@ -930,10 +940,9 @@ public final class JobStore {
             JobSchedulerInternal service = LocalServices.getService(JobSchedulerInternal.class);
             final int appBucket = JobSchedulerService.standbyBucketForPackage(sourcePackageName,
                     sourceUserId, elapsedNow);
-            long currentHeartbeat = service != null ? service.currentHeartbeat() : 0;
             JobStatus js = new JobStatus(
                     jobBuilder.build(), uid, sourcePackageName, sourceUserId,
-                    appBucket, currentHeartbeat, sourceTag,
+                    appBucket, sourceTag,
                     elapsedRuntimes.first, elapsedRuntimes.second,
                     lastSuccessfulRunTime, lastFailedRunTime,
                     (rtcIsGood) ? null : rtcRuntimes, internalFlags);
@@ -1049,7 +1058,9 @@ public final class JobStore {
         }
     }
 
-    static final class JobSet {
+    /** Set of all tracked jobs. */
+    @VisibleForTesting
+    public static final class JobSet {
         @VisibleForTesting // Key is the getUid() originator of the jobs in each sheaf
         final SparseArray<ArraySet<JobStatus>> mJobs;
 
@@ -1146,22 +1157,14 @@ public final class JobStore {
         private void removeAll(Predicate<JobStatus> predicate) {
             for (int jobSetIndex = mJobs.size() - 1; jobSetIndex >= 0; jobSetIndex--) {
                 final ArraySet<JobStatus> jobs = mJobs.valueAt(jobSetIndex);
-                for (int jobIndex = jobs.size() - 1; jobIndex >= 0; jobIndex--) {
-                    if (predicate.test(jobs.valueAt(jobIndex))) {
-                        jobs.removeAt(jobIndex);
-                    }
-                }
+                jobs.removeIf(predicate);
                 if (jobs.size() == 0) {
                     mJobs.removeAt(jobSetIndex);
                 }
             }
             for (int jobSetIndex = mJobsPerSourceUid.size() - 1; jobSetIndex >= 0; jobSetIndex--) {
                 final ArraySet<JobStatus> jobs = mJobsPerSourceUid.valueAt(jobSetIndex);
-                for (int jobIndex = jobs.size() - 1; jobIndex >= 0; jobIndex--) {
-                    if (predicate.test(jobs.valueAt(jobIndex))) {
-                        jobs.removeAt(jobIndex);
-                    }
-                }
+                jobs.removeIf(predicate);
                 if (jobs.size() == 0) {
                     mJobsPerSourceUid.removeAt(jobSetIndex);
                 }

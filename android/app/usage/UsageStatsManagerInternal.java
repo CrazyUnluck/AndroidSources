@@ -16,11 +16,16 @@
 
 package android.app.usage;
 
+import android.annotation.NonNull;
+import android.annotation.Nullable;
 import android.annotation.UserIdInt;
 import android.app.usage.UsageStatsManager.StandbyBuckets;
 import android.content.ComponentName;
+import android.content.LocusId;
 import android.content.res.Configuration;
+import android.os.IBinder;
 import android.os.UserHandle;
+import android.os.UserManager;
 
 import java.util.List;
 import java.util.Set;
@@ -33,7 +38,10 @@ import java.util.Set;
 public abstract class UsageStatsManagerInternal {
 
     /**
-     * Reports an event to the UsageStatsManager.
+     * Reports an event to the UsageStatsManager. <br/>
+     * <em>Note: Starting from {@link android.os.Build.VERSION_CODES#R Android R}, if the user's
+     * device is not in an unlocked state (as defined by {@link UserManager#isUserUnlocked()}),
+     * then this event will be added to a queue and processed once the device is unlocked.</em>
      *
      * @param component The component for which this event occurred.
      * @param userId The user id to which the component belongs to.
@@ -48,7 +56,10 @@ public abstract class UsageStatsManagerInternal {
             int instanceId, ComponentName taskRoot);
 
     /**
-     * Reports an event to the UsageStatsManager.
+     * Reports an event to the UsageStatsManager. <br/>
+     * <em>Note: Starting from {@link android.os.Build.VERSION_CODES#R Android R}, if the user's
+     * device is not in an unlocked state (as defined by {@link UserManager#isUserUnlocked()}),
+     * then this event will be added to a queue and processed once the device is unlocked.</em>
      *
      * @param packageName The package for which this event occurred.
      * @param userId The user id to which the component belongs to.
@@ -58,14 +69,20 @@ public abstract class UsageStatsManagerInternal {
     public abstract void reportEvent(String packageName, @UserIdInt int userId, int eventType);
 
     /**
-     * Reports a configuration change to the UsageStatsManager.
+     * Reports a configuration change to the UsageStatsManager. <br/>
+     * <em>Note: Starting from {@link android.os.Build.VERSION_CODES#R Android R}, if the user's
+     * device is not in an unlocked state (as defined by {@link UserManager#isUserUnlocked()}),
+     * then this event will be added to a queue and processed once the device is unlocked.</em>
      *
      * @param config The new device configuration.
      */
     public abstract void reportConfigurationChange(Configuration config, @UserIdInt int userId);
 
     /**
-     * Reports that an application has posted an interruptive notification.
+     * Reports that an application has posted an interruptive notification. <br/>
+     * <em>Note: Starting from {@link android.os.Build.VERSION_CODES#R Android R}, if the user's
+     * device is not in an unlocked state (as defined by {@link UserManager#isUserUnlocked()}),
+     * then this event will be added to a queue and processed once the device is unlocked.</em>
      *
      * @param packageName The package name of the app that posted the notification
      * @param channelId The ID of the NotificationChannel to which the notification was posted
@@ -75,7 +92,10 @@ public abstract class UsageStatsManagerInternal {
             @UserIdInt int userId);
 
     /**
-     * Reports that an action equivalent to a ShortcutInfo is taken by the user.
+     * Reports that an action equivalent to a ShortcutInfo is taken by the user. <br/>
+     * <em>Note: Starting from {@link android.os.Build.VERSION_CODES#R Android R}, if the user's
+     * device is not in an unlocked state (as defined by {@link UserManager#isUserUnlocked()}),
+     * then this event will be added to a queue and processed once the device is unlocked.</em>
      *
      * @param packageName The package name of the shortcut publisher
      * @param shortcutId The ID of the shortcut in question
@@ -94,6 +114,20 @@ public abstract class UsageStatsManagerInternal {
      */
     public abstract void reportContentProviderUsage(String name, String pkgName,
             @UserIdInt int userId);
+
+
+    /**
+     * Reports locusId update for a given activity.
+     *
+     * @param activity The component name of the app.
+     * @param userId The user id of who uses the app.
+     * @param locusId The locusId a unique, stable id that identifies this activity.
+     * @param appToken ActivityRecord's appToken.
+     * {@link UsageEvents}
+     * @hide
+     */
+    public abstract void reportLocusUpdate(@NonNull ComponentName activity, @UserIdInt int userId,
+            @Nullable LocusId locusId, @NonNull IBinder appToken);
 
     /**
      * Prepares the UsageStatsService for shutdown.
@@ -137,47 +171,6 @@ public abstract class UsageStatsManagerInternal {
      */
     public abstract int[] getIdleUidsForUser(@UserIdInt int userId);
 
-    /**
-     * @return True if currently app idle parole mode is on.  This means all idle apps are allow to
-     * run for a short period of time.
-     */
-    public abstract boolean isAppIdleParoleOn();
-
-    /**
-     * Sets up a listener for changes to packages being accessed.
-     * @param listener A listener within the system process.
-     */
-    public abstract void addAppIdleStateChangeListener(
-            AppIdleStateChangeListener listener);
-
-    /**
-     * Removes a listener that was previously added for package usage state changes.
-     * @param listener The listener within the system process to remove.
-     */
-    public abstract void removeAppIdleStateChangeListener(
-            AppIdleStateChangeListener listener);
-
-    public static abstract class AppIdleStateChangeListener {
-
-        /** Callback to inform listeners that the idle state has changed to a new bucket. */
-        public abstract void onAppIdleStateChanged(String packageName, @UserIdInt int userId,
-                boolean idle, int bucket, int reason);
-
-        /**
-         * Callback to inform listeners that the parole state has changed. This means apps are
-         * allowed to do work even if they're idle or in a low bucket.
-         */
-        public abstract void onParoleStateChanged(boolean isParoleOn);
-
-        /**
-         * Optional callback to inform the listener that the app has transitioned into
-         * an active state due to user interaction.
-         */
-        public void onUserInteractionStarted(String packageName, @UserIdInt int userId) {
-            // No-op by default
-        }
-    }
-
     /**  Backup/Restore API */
     public abstract byte[] getBackupPayload(@UserIdInt int userId, String key);
 
@@ -219,6 +212,15 @@ public abstract class UsageStatsManagerInternal {
      */
     public abstract List<UsageStats> queryUsageStatsForUser(@UserIdInt int userId, int interval,
             long beginTime, long endTime, boolean obfuscateInstantApps);
+
+    /**
+     * Returns the events for the user in the given time period.
+     *
+     * @param flags defines the visibility of certain usage events - see flags defined in
+     * {@link UsageEvents}.
+     */
+    public abstract UsageEvents queryEventsForUser(@UserIdInt int userId, long beginTime,
+            long endTime, int flags);
 
     /**
      * Used to persist the last time a job was run for this app, in order to make decisions later
@@ -304,4 +306,24 @@ public abstract class UsageStatsManagerInternal {
             return mUsageRemaining;
         }
     }
+
+    /**
+     * Called by {@link com.android.server.usage.UsageStatsIdleService} when the device is idle to
+     * prune usage stats data for uninstalled packages.
+     *
+     * @param userId the user associated with the job
+     * @return {@code true} if the pruning was successful, {@code false} otherwise
+     */
+    public abstract boolean pruneUninstalledPackagesData(@UserIdInt int userId);
+
+    /**
+     * Called by {@link com.android.server.usage.UsageStatsIdleService} between 24 to 48 hours of
+     * when the user is first unlocked to update the usage stats package mappings data that might
+     * be stale or have existed from a restore and belongs to packages that are not installed for
+     * this user anymore.
+     * Note: this is only executed for the system user.
+     *
+     * @return {@code true} if the updating was successful, {@code false} otherwise
+     */
+    public abstract boolean updatePackageMappingsData();
 }

@@ -16,6 +16,8 @@
 
 package com.android.server.job.controllers;
 
+import static com.android.server.job.JobSchedulerService.NEVER_INDEX;
+
 import android.os.SystemClock;
 import android.os.UserHandle;
 import android.util.Log;
@@ -23,7 +25,6 @@ import android.util.Slog;
 import android.util.proto.ProtoOutputStream;
 
 import com.android.internal.util.IndentingPrintWriter;
-import com.android.internal.util.Preconditions;
 import com.android.server.AppStateTracker;
 import com.android.server.AppStateTracker.Listener;
 import com.android.server.LocalServices;
@@ -32,6 +33,7 @@ import com.android.server.job.JobStore;
 import com.android.server.job.StateControllerProto;
 import com.android.server.job.StateControllerProto.BackgroundJobsController.TrackedJob;
 
+import java.util.Objects;
 import java.util.function.Consumer;
 import java.util.function.Predicate;
 
@@ -59,7 +61,7 @@ public final class BackgroundJobsController extends StateController {
     public BackgroundJobsController(JobSchedulerService service) {
         super(service);
 
-        mAppStateTracker = Preconditions.checkNotNull(
+        mAppStateTracker = Objects.requireNonNull(
                 LocalServices.getService(AppStateTracker.class));
         mAppStateTracker.addListener(mForceAppStandbyListener);
     }
@@ -115,32 +117,27 @@ public final class BackgroundJobsController extends StateController {
         final long mToken = proto.start(StateControllerProto.BACKGROUND);
 
         mAppStateTracker.dumpProto(proto,
-                StateControllerProto.BackgroundJobsController.FORCE_APP_STANDBY_TRACKER);
+                StateControllerProto.BackgroundJobsController.APP_STATE_TRACKER);
 
         mService.getJobStore().forEachJob(predicate, (jobStatus) -> {
             final long jsToken =
                     proto.start(StateControllerProto.BackgroundJobsController.TRACKED_JOBS);
 
-            jobStatus.writeToShortProto(proto,
-                    TrackedJob.INFO);
+            jobStatus.writeToShortProto(proto, TrackedJob.INFO);
             final int sourceUid = jobStatus.getSourceUid();
             proto.write(TrackedJob.SOURCE_UID, sourceUid);
             final String sourcePkg = jobStatus.getSourcePackageName();
             proto.write(TrackedJob.SOURCE_PACKAGE_NAME, sourcePkg);
 
-            proto.write(TrackedJob.IS_IN_FOREGROUND,
-                    mAppStateTracker.isUidActive(sourceUid));
+            proto.write(TrackedJob.IS_IN_FOREGROUND, mAppStateTracker.isUidActive(sourceUid));
             proto.write(TrackedJob.IS_WHITELISTED,
                     mAppStateTracker.isUidPowerSaveWhitelisted(sourceUid) ||
                     mAppStateTracker.isUidTempPowerSaveWhitelisted(sourceUid));
 
-            proto.write(
-                    TrackedJob.CAN_RUN_ANY_IN_BACKGROUND,
-                    mAppStateTracker.isRunAnyInBackgroundAppOpsAllowed(
-                            sourceUid, sourcePkg));
+            proto.write(TrackedJob.CAN_RUN_ANY_IN_BACKGROUND,
+                    mAppStateTracker.isRunAnyInBackgroundAppOpsAllowed(sourceUid, sourcePkg));
 
-            proto.write(
-                    TrackedJob.ARE_CONSTRAINTS_SATISFIED,
+            proto.write(TrackedJob.ARE_CONSTRAINTS_SATISFIED,
                     (jobStatus.satisfiedConstraints &
                             JobStatus.CONSTRAINT_BACKGROUND_NOT_RESTRICTED) != 0);
 
@@ -187,7 +184,6 @@ public final class BackgroundJobsController extends StateController {
     }
 
     boolean updateSingleJobRestrictionLocked(JobStatus jobStatus, int activeState) {
-
         final int uid = jobStatus.getSourceUid();
         final String packageName = jobStatus.getSourcePackageName();
 
@@ -200,6 +196,9 @@ public final class BackgroundJobsController extends StateController {
             isActive = mAppStateTracker.isUidActive(uid);
         } else {
             isActive = (activeState == KNOWN_ACTIVE);
+        }
+        if (isActive && jobStatus.getStandbyBucket() == NEVER_INDEX) {
+            Slog.wtf(TAG, "App " + packageName + " became active but still in NEVER bucket");
         }
         boolean didChange = jobStatus.setBackgroundNotRestrictedConstraintSatisfied(canRun);
         didChange |= jobStatus.setUidActive(isActive);

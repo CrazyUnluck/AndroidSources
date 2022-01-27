@@ -29,7 +29,7 @@ import android.annotation.IntDef;
 import android.annotation.NonNull;
 import android.annotation.Nullable;
 import android.annotation.RequiresPermission;
-import android.annotation.UnsupportedAppUsage;
+import android.compat.annotation.UnsupportedAppUsage;
 import android.content.ClipData;
 import android.content.ComponentName;
 import android.net.NetworkRequest;
@@ -53,9 +53,12 @@ import java.util.Objects;
  * Container of data passed to the {@link android.app.job.JobScheduler} fully encapsulating the
  * parameters required to schedule work against the calling application. These are constructed
  * using the {@link JobInfo.Builder}.
- * You must specify at least one sort of constraint on the JobInfo object that you are creating.
  * The goal here is to provide the scheduler with high-level semantics about the work you want to
- * accomplish. Doing otherwise with throw an exception in your app.
+ * accomplish.
+ * <p> Prior to Android version {@link Build.VERSION_CODES#Q}, you had to specify at least one
+ * constraint on the JobInfo object that you are creating. Otherwise, the builder would throw an
+ * exception when building. From Android version {@link Build.VERSION_CODES#Q} and onwards, it is
+ * valid to schedule jobs with no constraints.
  */
 public class JobInfo implements Parcelable {
     private static String TAG = "JobInfo";
@@ -147,7 +150,7 @@ public class JobInfo implements Parcelable {
 
     /**
      * Query the minimum interval allowed for periodic scheduled jobs.  Attempting
-     * to declare a smaller period that this when scheduling a job will result in a
+     * to declare a smaller period than this when scheduling a job will result in a
      * job that is still periodic, but will run with this effective period.
      *
      * @return The minimum available interval for scheduling periodic jobs, in milliseconds.
@@ -481,25 +484,6 @@ public class JobInfo implements Parcelable {
     }
 
     /**
-     * @deprecated replaced by {@link #getEstimatedNetworkDownloadBytes()} and
-     *             {@link #getEstimatedNetworkUploadBytes()}.
-     * @removed
-     */
-    @Deprecated
-    public @BytesLong long getEstimatedNetworkBytes() {
-        if (networkDownloadBytes == NETWORK_BYTES_UNKNOWN
-                && networkUploadBytes == NETWORK_BYTES_UNKNOWN) {
-            return NETWORK_BYTES_UNKNOWN;
-        } else if (networkDownloadBytes == NETWORK_BYTES_UNKNOWN) {
-            return networkUploadBytes;
-        } else if (networkUploadBytes == NETWORK_BYTES_UNKNOWN) {
-            return networkDownloadBytes;
-        } else {
-            return networkDownloadBytes + networkUploadBytes;
-        }
-    }
-
-    /**
      * Return the estimated size of download traffic that will be performed by
      * this job, in bytes.
      *
@@ -625,10 +609,6 @@ public class JobInfo implements Parcelable {
         return hasLateConstraint;
     }
 
-    private static boolean kindofEqualsBundle(BaseBundle a, BaseBundle b) {
-        return (a == b) || (a != null && a.kindofEquals(b));
-    }
-
     @Override
     public boolean equals(Object o) {
         if (!(o instanceof JobInfo)) {
@@ -639,11 +619,11 @@ public class JobInfo implements Parcelable {
             return false;
         }
         // XXX won't be correct if one is parcelled and the other not.
-        if (!kindofEqualsBundle(extras, j.extras)) {
+        if (!BaseBundle.kindofEquals(extras, j.extras)) {
             return false;
         }
         // XXX won't be correct if one is parcelled and the other not.
-        if (!kindofEqualsBundle(transientExtras, j.transientExtras)) {
+        if (!BaseBundle.kindofEquals(transientExtras, j.transientExtras)) {
             return false;
         }
         // XXX for now we consider two different clip data objects to be different,
@@ -915,7 +895,7 @@ public class JobInfo implements Parcelable {
          * @param flags Flags for the observer.
          */
         public TriggerContentUri(@NonNull Uri uri, @Flags int flags) {
-            mUri = uri;
+            mUri = Objects.requireNonNull(uri);
             mFlags = flags;
         }
 
@@ -1178,16 +1158,6 @@ public class JobInfo implements Parcelable {
         }
 
         /**
-         * @deprecated replaced by
-         *             {@link #setEstimatedNetworkBytes(long, long)}.
-         * @removed
-         */
-        @Deprecated
-        public Builder setEstimatedNetworkBytes(@BytesLong long networkBytes) {
-            return setEstimatedNetworkBytes(networkBytes, NETWORK_BYTES_UNKNOWN);
-        }
-
-        /**
          * Set the estimated size of network traffic that will be performed by
          * this job, in bytes.
          * <p>
@@ -1316,7 +1286,7 @@ public class JobInfo implements Parcelable {
          * {@link #setPeriodic(long)} or {@link #setPersisted(boolean)}.  To continually monitor
          * for content changes, you need to schedule a new JobInfo observing the same URIs
          * before you finish execution of the JobService handling the most recent changes.
-         * Following this pattern will ensure you do not lost any content changes: while your
+         * Following this pattern will ensure you do not lose any content changes: while your
          * job is running, the system will continue monitoring for content changes, and propagate
          * any it sees over to the next job you schedule.</p>
          *
@@ -1494,15 +1464,6 @@ public class JobInfo implements Parcelable {
                 mFlags &= (~FLAG_IMPORTANT_WHILE_FOREGROUND);
             }
             return this;
-        }
-
-        /**
-         * @removed
-         * @deprecated replaced with {@link #setPrefetch(boolean)}
-         */
-        @Deprecated
-        public Builder setIsPrefetch(boolean isPrefetch) {
-            return setPrefetch(isPrefetch);
         }
 
         /**

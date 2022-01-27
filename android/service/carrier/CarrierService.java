@@ -16,16 +16,17 @@ package android.service.carrier;
 
 import android.annotation.CallSuper;
 import android.app.Service;
+import android.content.Context;
 import android.content.Intent;
 import android.os.Bundle;
 import android.os.IBinder;
 import android.os.PersistableBundle;
-import android.os.RemoteException;
 import android.os.ResultReceiver;
-import android.os.ServiceManager;
+import android.telephony.TelephonyRegistryManager;
 import android.util.Log;
 
-import com.android.internal.telephony.ITelephonyRegistry;
+import java.io.FileDescriptor;
+import java.io.PrintWriter;
 
 /**
  * A service that exposes carrier-specific functionality to the system.
@@ -55,16 +56,10 @@ public abstract class CarrierService extends Service {
 
     public static final String CARRIER_SERVICE_INTERFACE = "android.service.carrier.CarrierService";
 
-    private static ITelephonyRegistry sRegistry;
-
     private final ICarrierService.Stub mStubWrapper;
 
     public CarrierService() {
         mStubWrapper = new ICarrierServiceWrapper();
-        if (sRegistry == null) {
-            sRegistry = ITelephonyRegistry.Stub.asInterface(
-                    ServiceManager.getService("telephony.registry"));
-        }
     }
 
     /**
@@ -122,9 +117,12 @@ public abstract class CarrierService extends Service {
      * @see android.telephony.TelephonyManager#hasCarrierPrivileges
      */
     public final void notifyCarrierNetworkChange(boolean active) {
-        try {
-            if (sRegistry != null) sRegistry.notifyCarrierNetworkChange(active);
-        } catch (RemoteException | NullPointerException ex) {}
+        TelephonyRegistryManager telephonyRegistryMgr =
+            (TelephonyRegistryManager) this.getSystemService(
+                Context.TELEPHONY_REGISTRY_SERVICE);
+        if (telephonyRegistryMgr != null) {
+            telephonyRegistryMgr.notifyCarrierNetworkChange(active);
+        }
     }
 
     /**
@@ -160,6 +158,11 @@ public abstract class CarrierService extends Service {
                 Log.e(LOG_TAG, "Error in onLoadConfig: " + e.getMessage(), e);
                 result.send(RESULT_ERROR, null);
             }
+        }
+
+        @Override
+        protected void dump(FileDescriptor fd, PrintWriter pw, String[] args) {
+            CarrierService.this.dump(fd, pw, args);
         }
     }
 }

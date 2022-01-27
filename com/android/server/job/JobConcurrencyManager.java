@@ -372,9 +372,10 @@ class JobConcurrencyManager {
                     continue;
                 }
 
-                // TODO lastEvaluatedPriority should be evaluateJobPriorityLocked. (double check it)
-                if (minPriorityForPreemption > nextPending.lastEvaluatedPriority) {
-                    minPriorityForPreemption = nextPending.lastEvaluatedPriority;
+                if (minPriorityForPreemption > jobPriority) {
+                    // Step down the preemption threshold - wind up replacing
+                    // the lowest-priority running job
+                    minPriorityForPreemption = jobPriority;
                     selectedContextId = j;
                     // In this case, we're just going to preempt a low priority job, we're not
                     // actually starting a job, so don't set startingJob.
@@ -480,7 +481,7 @@ class JobConcurrencyManager {
             pw.print(mEffectiveInteractiveState ? "ON" : "OFF");
             pw.println();
 
-            pw.print("Last screen ON : ");
+            pw.print("Last screen ON: ");
             TimeUtils.dumpTimeWithDelta(pw, now - nowRealtime + mLastScreenOnRealtime, now);
             pw.println();
 
@@ -509,9 +510,8 @@ class JobConcurrencyManager {
     public void dumpProtoLocked(ProtoOutputStream proto, long tag, long now, long nowRealtime) {
         final long token = proto.start(tag);
 
-        proto.write(JobConcurrencyManagerProto.CURRENT_INTERACTIVE,
-                mCurrentInteractiveState);
-        proto.write(JobConcurrencyManagerProto.EFFECTIVE_INTERACTIVE,
+        proto.write(JobConcurrencyManagerProto.CURRENT_INTERACTIVE_STATE, mCurrentInteractiveState);
+        proto.write(JobConcurrencyManagerProto.EFFECTIVE_INTERACTIVE_STATE,
                 mEffectiveInteractiveState);
 
         proto.write(JobConcurrencyManagerProto.TIME_SINCE_LAST_SCREEN_ON_MS,
@@ -521,8 +521,9 @@ class JobConcurrencyManager {
 
         mJobCountTracker.dumpProto(proto, JobConcurrencyManagerProto.JOB_COUNT_TRACKER);
 
-        proto.write(JobConcurrencyManagerProto.MEMORY_TRIM_LEVEL,
-                mLastMemoryTrimLevel);
+        proto.write(JobConcurrencyManagerProto.MEMORY_TRIM_LEVEL, mLastMemoryTrimLevel);
+
+        mStatLogger.dumpProto(proto, JobConcurrencyManagerProto.STATS);
 
         proto.end(token);
     }
@@ -676,19 +677,14 @@ class JobConcurrencyManager {
                             + " Res BG: %d"
                             + " Starting: %d / %d (%d)"
                             + " Total: %d%s / %d%s (%d%s)",
-                    mConfigNumMaxTotalJobs,
-                    mConfigNumMinBgJobs,
-                    mConfigNumMaxBgJobs,
+                    mConfigNumMaxTotalJobs, mConfigNumMinBgJobs, mConfigNumMaxBgJobs,
 
-                    mNumRunningFgJobs, mNumRunningBgJobs,
-                    mNumRunningFgJobs + mNumRunningBgJobs,
+                    mNumRunningFgJobs, mNumRunningBgJobs, mNumRunningFgJobs + mNumRunningBgJobs,
 
-                    mNumPendingFgJobs, mNumPendingBgJobs,
-                    mNumPendingFgJobs + mNumPendingBgJobs,
+                    mNumPendingFgJobs, mNumPendingBgJobs, mNumPendingFgJobs + mNumPendingBgJobs,
 
                     mNumActualMaxFgJobs, (totalFg <= mConfigNumMaxTotalJobs) ? "" : "*",
                     mNumActualMaxBgJobs, (totalBg <= mConfigNumMaxBgJobs) ? "" : "*",
-
                     mNumActualMaxFgJobs + mNumActualMaxBgJobs,
                     (mNumActualMaxFgJobs + mNumActualMaxBgJobs <= mConfigNumMaxTotalJobs)
                             ? "" : "*",
@@ -715,6 +711,14 @@ class JobConcurrencyManager {
 
             proto.write(JobCountTrackerProto.NUM_PENDING_FG_JOBS, mNumPendingFgJobs);
             proto.write(JobCountTrackerProto.NUM_PENDING_BG_JOBS, mNumPendingBgJobs);
+
+            proto.write(JobCountTrackerProto.NUM_ACTUAL_MAX_FG_JOBS, mNumActualMaxFgJobs);
+            proto.write(JobCountTrackerProto.NUM_ACTUAL_MAX_BG_JOBS, mNumActualMaxBgJobs);
+
+            proto.write(JobCountTrackerProto.NUM_RESERVED_FOR_BG, mNumReservedForBg);
+
+            proto.write(JobCountTrackerProto.NUM_STARTING_FG_JOBS, mNumStartingFgJobs);
+            proto.write(JobCountTrackerProto.NUM_STARTING_BG_JOBS, mNumStartingBgJobs);
 
             proto.end(token);
         }

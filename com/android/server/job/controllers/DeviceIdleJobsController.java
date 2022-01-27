@@ -34,7 +34,7 @@ import android.util.proto.ProtoOutputStream;
 
 import com.android.internal.util.ArrayUtils;
 import com.android.internal.util.IndentingPrintWriter;
-import com.android.server.DeviceIdleController;
+import com.android.server.DeviceIdleInternal;
 import com.android.server.LocalServices;
 import com.android.server.job.JobSchedulerService;
 import com.android.server.job.StateControllerProto;
@@ -66,7 +66,7 @@ public final class DeviceIdleJobsController extends StateController {
     private final DeviceIdleUpdateFunctor mDeviceIdleUpdateFunctor;
     private final DeviceIdleJobsDelayHandler mHandler;
     private final PowerManager mPowerManager;
-    private final DeviceIdleController.LocalService mLocalDeviceIdleController;
+    private final DeviceIdleInternal mLocalDeviceIdleController;
 
     /**
      * True when in device idle mode, so we don't want to schedule any jobs.
@@ -123,7 +123,7 @@ public final class DeviceIdleJobsController extends StateController {
         // Register for device idle mode changes
         mPowerManager = (PowerManager) mContext.getSystemService(Context.POWER_SERVICE);
         mLocalDeviceIdleController =
-                LocalServices.getService(DeviceIdleController.LocalService.class);
+                LocalServices.getService(DeviceIdleInternal.class);
         mDeviceIdleWhitelistAppIds = mLocalDeviceIdleController.getPowerSaveWhitelistUserAppIds();
         mPowerSaveTempWhitelistAppIds =
                 mLocalDeviceIdleController.getPowerSaveTempWhitelistAppIds();
@@ -269,8 +269,7 @@ public final class DeviceIdleJobsController extends StateController {
             proto.write(TrackedJob.SOURCE_UID, jobStatus.getSourceUid());
             proto.write(TrackedJob.SOURCE_PACKAGE_NAME, jobStatus.getSourcePackageName());
             proto.write(TrackedJob.ARE_CONSTRAINTS_SATISFIED,
-                    (jobStatus.satisfiedConstraints &
-                        JobStatus.CONSTRAINT_DEVICE_NOT_DOZING) != 0);
+                    (jobStatus.satisfiedConstraints & JobStatus.CONSTRAINT_DEVICE_NOT_DOZING) != 0);
             proto.write(TrackedJob.IS_DOZE_WHITELISTED, jobStatus.dozeWhitelisted);
             proto.write(TrackedJob.IS_ALLOWED_IN_DOZE, mAllowInIdleJobs.contains(jobStatus));
 

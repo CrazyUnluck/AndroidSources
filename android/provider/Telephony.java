@@ -16,6 +16,7 @@
 
 package android.provider;
 
+import android.Manifest;
 import android.annotation.IntDef;
 import android.annotation.NonNull;
 import android.annotation.RequiresPermission;
@@ -23,8 +24,9 @@ import android.annotation.SdkConstant;
 import android.annotation.SdkConstant.SdkConstantType;
 import android.annotation.SystemApi;
 import android.annotation.TestApi;
-import android.annotation.UnsupportedAppUsage;
-import android.app.job.JobService;
+import android.compat.annotation.ChangeId;
+import android.compat.annotation.EnabledAfter;
+import android.compat.annotation.UnsupportedAppUsage;
 import android.content.ComponentName;
 import android.content.ContentResolver;
 import android.content.ContentValues;
@@ -35,16 +37,17 @@ import android.database.Cursor;
 import android.database.sqlite.SqliteWrapper;
 import android.net.Uri;
 import android.os.Build;
-import android.os.Parcel;
+import android.os.Bundle;
+import android.telephony.CarrierConfigManager;
 import android.telephony.Rlog;
 import android.telephony.ServiceState;
 import android.telephony.SmsMessage;
 import android.telephony.SubscriptionManager;
 import android.telephony.TelephonyManager;
+import android.telephony.UiccAccessRule;
 import android.text.TextUtils;
 import android.util.Patterns;
 
-import com.android.internal.telephony.PhoneConstants;
 import com.android.internal.telephony.SmsApplication;
 
 import java.lang.annotation.Retention;
@@ -693,7 +696,7 @@ public final class Telephony {
         }
 
         /**
-         * Contains all sent text-based SMS messages in the SMS app.
+         * Contains all draft text-based SMS messages in the SMS app.
          */
         public static final class Draft implements BaseColumns, TextBasedSmsColumns {
 
@@ -809,7 +812,15 @@ public final class Telephony {
         }
 
         /**
-         * Contains all sent text-based SMS messages in the SMS app.
+         * Contains a view of SMS conversations (also referred to as threads). This is similar to
+         * {@link Threads}, but only includes SMS messages and columns relevant to SMS
+         * conversations.
+         * <p>
+         * Note that this view ignores any information about MMS messages, it is a
+         * view of conversations as if MMS messages did not exist at all. This means that all
+         * relevant information, such as snippets and message count, will ignore any MMS messages
+         * that might be in the same thread through other views and present only data based on the
+         * SMS messages in that thread.
          */
         public static final class Conversations
                 implements BaseColumns, TextBasedSmsColumns {
@@ -832,7 +843,7 @@ public final class Telephony {
             public static final String DEFAULT_SORT_ORDER = "date DESC";
 
             /**
-             * The first 45 characters of the body of the message.
+             * The first 45 characters of the body of the most recent message.
              * <P>Type: TEXT</P>
              */
             public static final String SNIPPET = "snippet";
@@ -869,22 +880,58 @@ public final class Telephony {
             public static final int RESULT_SMS_GENERIC_ERROR = 2;
 
             /**
-             * Set by BroadcastReceiver to indicate insufficient memory to store
-             * the message.
+             * Set as a "result" extra in the {@link #SMS_REJECTED_ACTION} intent to indicate
+             * insufficient memory to store the message.
              */
             public static final int RESULT_SMS_OUT_OF_MEMORY = 3;
 
             /**
-             * Set by BroadcastReceiver to indicate that the message, while
-             * possibly valid, is of a format or encoding that is not
-             * supported.
+             * Set as a "result" extra in the {@link #SMS_REJECTED_ACTION} intent to indicate that
+             * the message, while possibly valid, is of a format or encoding that is not supported.
              */
             public static final int RESULT_SMS_UNSUPPORTED = 4;
 
             /**
-             * Set by BroadcastReceiver to indicate a duplicate incoming message.
+             * Set as a "result" extra in the {@link #SMS_REJECTED_ACTION} intent to indicate a
+             * duplicate incoming message.
              */
             public static final int RESULT_SMS_DUPLICATED = 5;
+
+            /**
+             * Set as a "result" extra in the {@link #SMS_REJECTED_ACTION} intent to indicate a
+             * dispatch failure.
+             */
+            public static final int RESULT_SMS_DISPATCH_FAILURE = 6;
+
+            /**
+             * Set as a "result" extra in the {@link #SMS_REJECTED_ACTION} intent to indicate a null
+             * PDU was received.
+             */
+            public static final int RESULT_SMS_NULL_PDU = 7;
+
+            /**
+             * Set as a "result" extra in the {@link #SMS_REJECTED_ACTION} intent to indicate a null
+             * message was encountered.
+             */
+            public static final int RESULT_SMS_NULL_MESSAGE = 8;
+
+            /**
+             * Set as a "result" extra in the {@link #SMS_REJECTED_ACTION} intent to indicate an sms
+             * was received while the phone was in encrypted state.
+             */
+            public static final int RESULT_SMS_RECEIVED_WHILE_ENCRYPTED = 9;
+
+            /**
+             * Set as a "result" extra in the {@link #SMS_REJECTED_ACTION} intent to indicate a
+             * telephony database error.
+             */
+            public static final int RESULT_SMS_DATABASE_ERROR = 10;
+
+            /**
+             * Set as a "result" extra in the {@link #SMS_REJECTED_ACTION} intent to indicate an
+             * invalid uri.
+             */
+            public static final int RESULT_SMS_INVALID_URI = 11;
 
             /**
              * Activity action: Ask the user to change the default
@@ -1118,8 +1165,9 @@ public final class Telephony {
              * values:</p>
              *
              * <ul>
-             *   <li><em>"message"</em> - An SmsCbMessage object containing the broadcast message
-             *   data, including ETWS or CMAS warning notification info if present.</li>
+             *   <li><em>"message"</em> - An {@link android.telephony.SmsCbMessage} object
+             *   containing the broadcast message data, including ETWS or CMAS warning notification
+             *   info if present.</li>
              * </ul>
              *
              * <p>The extra values can be extracted using
@@ -1130,11 +1178,12 @@ public final class Telephony {
              *
              * <p>Requires {@link android.Manifest.permission#RECEIVE_EMERGENCY_BROADCAST} to
              * receive.</p>
-             * @removed
+             * @hide
              */
             @SdkConstant(SdkConstantType.BROADCAST_INTENT_ACTION)
-            public static final String SMS_EMERGENCY_CB_RECEIVED_ACTION =
-                    "android.provider.Telephony.SMS_EMERGENCY_CB_RECEIVED";
+            @SystemApi
+            public static final String ACTION_SMS_EMERGENCY_CB_RECEIVED =
+                    "android.provider.action.SMS_EMERGENCY_CB_RECEIVED";
 
             /**
              * Broadcast Action: A new CDMA SMS has been received containing Service Category
@@ -1248,22 +1297,10 @@ public final class Telephony {
                           "android.provider.action.EXTERNAL_PROVIDER_CHANGE";
 
             /**
-             * Same as {@link #ACTION_DEFAULT_SMS_PACKAGE_CHANGED} but it's implicit (e.g. sent to
-             * all apps) and requires
-             * {@link android.Manifest.permission#MONITOR_DEFAULT_SMS_PACKAGE} to receive.
-             *
-             * @hide
-             */
-            @SdkConstant(SdkConstantType.BROADCAST_INTENT_ACTION)
-            public static final String ACTION_DEFAULT_SMS_PACKAGE_CHANGED_INTERNAL =
-                    "android.provider.action.DEFAULT_SMS_PACKAGE_CHANGED_INTERNAL";
-
-            /**
              * Broadcast action: When SMS-MMS db is being created. If file-based encryption is
              * supported, this broadcast indicates creation of the db in credential-encrypted
              * storage. A boolean is specified in {@link #EXTRA_IS_INITIAL_CREATE} to indicate if
-             * this is the initial create of the db. Requires
-             * {@link android.Manifest.permission#READ_SMS} to receive.
+             * this is the initial create of the db.
              *
              * @see #EXTRA_IS_INITIAL_CREATE
              *
@@ -1295,7 +1332,6 @@ public final class Telephony {
              * @hide
              */
             @SdkConstant(SdkConstantType.BROADCAST_INTENT_ACTION)
-            @RequiresPermission(android.Manifest.permission.READ_PRIVILEGED_PHONE_STATE)
             public static final String ACTION_SMS_MMS_DB_LOST =
                     "android.provider.action.SMS_MMS_DB_LOST";
 
@@ -1333,7 +1369,7 @@ public final class Telephony {
                 }
 
                 String format = intent.getStringExtra("format");
-                int subId = intent.getIntExtra(PhoneConstants.SUBSCRIPTION_KEY,
+                int subId = intent.getIntExtra(SubscriptionManager.EXTRA_SUBSCRIPTION_INDEX,
                         SubscriptionManager.getDefaultSmsSubscriptionId());
 
                 Rlog.v(TAG, " getMessagesFromIntent sub_id : " + subId);
@@ -1344,7 +1380,6 @@ public final class Telephony {
                 for (int i = 0; i < pduCount; i++) {
                     byte[] pdu = (byte[]) messages[i];
                     msgs[i] = SmsMessage.createFromPdu(pdu, format);
-                    if (msgs[i] != null) msgs[i].setSubId(subId);
                 }
                 return msgs;
             }
@@ -1357,20 +1392,73 @@ public final class Telephony {
      */
     public interface CarrierColumns extends BaseColumns {
 
+        /**
+         * Mobile Country Code (MCC).
+         * <P> Type: TEXT </P>
+         */
         public static final String MCC = "mcc";
+
+        /**
+         * Mobile Network Code (MNC).
+         * <P> Type: TEXT </P>
+         */
         public static final String MNC = "mnc";
+
+        /**
+         * KeyType whether the key is being used for WLAN or ePDG.
+         * <P> Type: INTEGER </P>
+         */
         public static final String KEY_TYPE = "key_type";
+
+        /**
+         * MVNO type:
+         * {@code SPN (Service Provider Name), IMSI, GID (Group Identifier Level 1)}.
+         * <P> Type: TEXT </P>
+         */
         public static final String MVNO_TYPE = "mvno_type";
+
+        /**
+         * MVNO data.
+         * Use the following examples.
+         * <ul>
+         *     <li>SPN: A MOBILE, BEN NL, ...</li>
+         *     <li>IMSI: 302720x94, 2060188, ...</li>
+         *     <li>GID: 4E, 33, ...</li>
+         * </ul>
+         * <P> Type: TEXT </P>
+         */
         public static final String MVNO_MATCH_DATA = "mvno_match_data";
+
+        /**
+         * The carrier public key that is used for the IMSI encryption.
+         * <P> Type: TEXT </P>
+         */
         public static final String PUBLIC_KEY = "public_key";
+
+        /**
+         * The key identifier Attribute value pair that helps a server locate
+         * the private key to decrypt the permanent identity.
+         * <P> Type: TEXT </P>
+         */
         public static final String KEY_IDENTIFIER = "key_identifier";
+
+        /**
+         * Date-Time in UTC when the key will expire.
+         * <P> Type: INTEGER (long) </P>
+         */
         public static final String EXPIRATION_TIME = "expiration_time";
+
+        /**
+         * Timestamp when this table was last modified, in milliseconds since
+         * January 1, 1970 00:00:00.0 UTC.
+         * <P> Type: INTEGER (long) </P>
+         */
         public static final String LAST_MODIFIED = "last_modified";
 
         /**
          * The {@code content://} style URL for this table.
-         * @hide
          */
+        @NonNull
         public static final Uri CONTENT_URI = Uri.parse("content://carrier_information/carrier");
     }
 
@@ -3026,6 +3114,20 @@ public final class Telephony {
              * <P>Type: INTEGER</P>
              */
             public static final String CHARSET = "charset";
+
+            /**
+             * Generates a Addr {@link Uri} for message, used to perform Addr table operation
+             * for mms.
+             *
+             * @param messageId the messageId used to generate Addr {@link Uri} dynamically
+             * @return the addrUri used to perform Addr table operation for mms
+             */
+            @NonNull
+            public static Uri getAddrUriForMessage(@NonNull String messageId) {
+                Uri addrUri = Mms.CONTENT_URI.buildUpon()
+                        .appendPath(String.valueOf(messageId)).appendPath("addr").build();
+                return addrUri;
+            }
         }
 
         /**
@@ -3044,11 +3146,16 @@ public final class Telephony {
             }
 
             /**
+             * The name of part table.
+             */
+            private static final String TABLE_PART = "part";
+
+            /**
              * The {@code content://} style URL for this table. Can be appended with a part ID to
              * address individual parts.
              */
             @NonNull
-            public static final Uri CONTENT_URI = Uri.withAppendedPath(Mms.CONTENT_URI, "part");
+            public static final Uri CONTENT_URI = Uri.withAppendedPath(Mms.CONTENT_URI, TABLE_PART);
 
             /**
              * The identifier of the message which this part belongs to.
@@ -3127,6 +3234,21 @@ public final class Telephony {
              * <P>Type: TEXT</P>
              */
             public static final String TEXT = "text";
+
+            /**
+             * Generates a Part {@link Uri} for message, used to perform Part table operation
+             * for mms.
+             *
+             * @param messageId the messageId used to generate Part {@link Uri} dynamically
+             * @return the partUri used to perform Part table operation for mms
+             */
+            @NonNull
+            public static Uri getPartUriForMessage(@NonNull String messageId) {
+                Uri partUri = Mms.CONTENT_URI.buildUpon()
+                        .appendPath(String.valueOf(messageId)).appendPath(
+                                TABLE_PART).build();
+                return partUri;
+            }
         }
 
         /**
@@ -3231,6 +3353,8 @@ public final class Telephony {
 
         /**
          * The {@code content://} style URL for locked messages in this table.
+         * <P>This {@link Uri} is used to check at most one locked message found in the union of MMS
+         * and SMS messages. Also this will return only _id column in response.</P>
          */
         public static final Uri CONTENT_LOCKED_URI = Uri.parse(
                 "content://mms-sms/locked");
@@ -3425,7 +3549,7 @@ public final class Telephony {
          * can manage DPC-owned APNs.
          * @hide
          */
-        public static final Uri DPC_URI = Uri.parse("content://telephony/carriers/dpc");
+        public static final @NonNull Uri DPC_URI = Uri.parse("content://telephony/carriers/dpc");
 
         /**
          * The {@code content://} style URL to be called from Telephony to query APNs.
@@ -3734,6 +3858,12 @@ public final class Telephony {
         public static final String USER_EDITABLE = "user_editable";
 
         /**
+         * Integer value denoting an invalid APN id
+         * @hide
+         */
+        public static final int INVALID_APN_ID = -1;
+
+        /**
          * {@link #EDITED_STATUS APN edit status} indicates that this APN has not been edited or
          * fails to edit.
          * <p>Type: INTEGER </p>
@@ -3888,21 +4018,25 @@ public final class Telephony {
         @Retention(RetentionPolicy.SOURCE)
         public @interface EditStatus {}
 
-        /** @hide */
-        @IntDef({
-                SKIP_464XLAT_DEFAULT,
-                SKIP_464XLAT_DISABLE,
-                SKIP_464XLAT_ENABLE,
-        })
-        @Retention(RetentionPolicy.SOURCE)
-        public @interface Skip464XlatStatus {}
-
+        /**
+         * Compat framework change ID for the APN db read permission change.
+         *
+         * In API level 30 and beyond, accessing the APN database will require the
+         * {@link android.Manifest.permission#WRITE_APN_SETTINGS} permission. This change ID tracks
+         * apps that are affected because they don't hold this permission.
+         * @hide
+         */
+        @ChangeId
+        @EnabledAfter(targetSdkVersion = android.os.Build.VERSION_CODES.Q)
+        public static final long APN_READING_PERMISSION_CHANGE_ID = 124107808L;
     }
 
     /**
-     * Contains received SMS cell broadcast messages.
+     * Contains received cell broadcast messages. More details are available in 3GPP TS 23.041.
      * @hide
      */
+    @SystemApi
+    @TestApi
     public static final class CellBroadcasts implements BaseColumns {
 
         /**
@@ -3913,31 +4047,200 @@ public final class Telephony {
 
         /**
          * The {@code content://} URI for this table.
+         * Only privileged framework components running on phone or network stack uid can
+         * query or modify this table.
          */
+        @NonNull
         public static final Uri CONTENT_URI = Uri.parse("content://cellbroadcasts");
 
         /**
-         * Message geographical scope.
+         * The {@code content://} URI for query cellbroadcast message history.
+         * query results include following entries
+         * <ul>
+         *     <li>{@link #_ID}</li>
+         *     <li>{@link #SLOT_INDEX}</li>
+         *     <li>{@link #GEOGRAPHICAL_SCOPE}</li>
+         *     <li>{@link #PLMN}</li>
+         *     <li>{@link #LAC}</li>
+         *     <li>{@link #CID}</li>
+         *     <li>{@link #SERIAL_NUMBER}</li>
+         *     <li>{@link #SERVICE_CATEGORY}</li>
+         *     <li>{@link #LANGUAGE_CODE}</li>
+         *     <li>{@link #MESSAGE_BODY}</li>
+         *     <li>{@link #DELIVERY_TIME}</li>
+         *     <li>{@link #MESSAGE_READ}</li>
+         *     <li>{@link #MESSAGE_FORMAT}</li>
+         *     <li>{@link #MESSAGE_PRIORITY}</li>
+         *     <li>{@link #ETWS_WARNING_TYPE}</li>
+         *     <li>{@link #CMAS_MESSAGE_CLASS}</li>
+         *     <li>{@link #CMAS_CATEGORY}</li>
+         *     <li>{@link #CMAS_RESPONSE_TYPE}</li>
+         *     <li>{@link #CMAS_SEVERITY}</li>
+         *     <li>{@link #CMAS_URGENCY}</li>
+         *     <li>{@link #CMAS_CERTAINTY}</li>
+         * </ul>
+         */
+        @RequiresPermission(Manifest.permission.READ_CELL_BROADCASTS)
+        @NonNull
+        public static final Uri MESSAGE_HISTORY_URI = Uri.parse("content://cellbroadcasts/history");
+
+        /**
+         * The authority for the legacy cellbroadcast provider.
+         * This is used for OEM data migration. OEMs want to migrate message history or
+         * sharepreference data to mainlined cellbroadcastreceiver app, should have a
+         * contentprovider with authority: cellbroadcast-legacy. Mainlined cellbroadcastreceiver
+         * will interact with this URI to retrieve data and persists to mainlined cellbroadcast app.
+         *
+         * @hide
+         */
+        @SystemApi
+        public static final @NonNull String AUTHORITY_LEGACY = "cellbroadcast-legacy";
+
+        /**
+         * A content:// style uri to the authority for the legacy cellbroadcast provider.
+         * @hide
+         */
+        @SystemApi
+        public static final @NonNull Uri AUTHORITY_LEGACY_URI =
+                Uri.parse("content://cellbroadcast-legacy");
+
+        /**
+         * Method name to {@link android.content.ContentProvider#call(String, String, Bundle)
+         * for {@link #AUTHORITY_LEGACY}. Used to query cellbroadcast {@link Preference},
+         * containing following supported entries
+         * <ul>
+         *     <li>{@link #ENABLE_AREA_UPDATE_INFO_PREF}</li>
+         *     <li>{@link #ENABLE_TEST_ALERT_PREF}</li>
+         *     <li>{@link #ENABLE_STATE_LOCAL_TEST_PREF}</li>
+         *     <li>{@link #ENABLE_PUBLIC_SAFETY_PREF}</li>
+         *     <li>{@link #ENABLE_CMAS_AMBER_PREF}</li>
+         *     <li>{@link #ENABLE_CMAS_SEVERE_THREAT_PREF}</li>
+         *     <li>{@link #ENABLE_CMAS_EXTREME_THREAT_PREF}</li>
+         *     <li>{@link #ENABLE_CMAS_PRESIDENTIAL_PREF}</li>
+         *     <li>{@link #ENABLE_ALERT_VIBRATION_PREF}</li>
+         *     <li>{@link #ENABLE_EMERGENCY_PERF}</li>
+         *     <li>{@link #ENABLE_CMAS_IN_SECOND_LANGUAGE_PREF}</li>
+         * </ul>
+         * @hide
+         */
+        @SystemApi
+        public static final @NonNull String CALL_METHOD_GET_PREFERENCE = "get_preference";
+
+        /**
+         * Arg name to {@link android.content.ContentProvider#call(String, String, Bundle)}
+         * for {@link #AUTHORITY_LEGACY}.
+         * Contains all supported shared preferences for cellbroadcast.
+         *
+         * @hide
+         */
+        @SystemApi
+        public static final class Preference {
+            /**
+             * Not Instantiatable.
+             * @hide
+             */
+            private Preference() {}
+
+            /** Preference to enable area update info alert */
+            public static final @NonNull String ENABLE_AREA_UPDATE_INFO_PREF =
+                    "enable_area_update_info_alerts";
+
+            /** Preference to enable test alert */
+            public static final @NonNull String ENABLE_TEST_ALERT_PREF =
+                    "enable_test_alerts";
+
+            /** Preference to enable state local test alert */
+            public static final @NonNull String ENABLE_STATE_LOCAL_TEST_PREF
+                    = "enable_state_local_test_alerts";
+
+            /** Preference to enable public safety alert */
+            public static final @NonNull String ENABLE_PUBLIC_SAFETY_PREF
+                    = "enable_public_safety_messages";
+
+            /** Preference to enable amber alert */
+            public static final @NonNull String ENABLE_CMAS_AMBER_PREF
+                    = "enable_cmas_amber_alerts";
+
+            /** Preference to enable severe threat alert */
+            public static final @NonNull String ENABLE_CMAS_SEVERE_THREAT_PREF
+                    = "enable_cmas_severe_threat_alerts";
+
+            /** Preference to enable extreme threat alert */
+            public static final @NonNull String ENABLE_CMAS_EXTREME_THREAT_PREF =
+                    "enable_cmas_extreme_threat_alerts";
+
+            /** Preference to enable presidential alert */
+            public static final @NonNull String ENABLE_CMAS_PRESIDENTIAL_PREF =
+                    "enable_cmas_presidential_alerts";
+
+            /** Preference to enable alert vibration */
+            public static final @NonNull String ENABLE_ALERT_VIBRATION_PREF =
+                    "enable_alert_vibrate";
+
+            /** Preference to enable emergency alert */
+            public static final @NonNull String ENABLE_EMERGENCY_PERF =
+                    "enable_emergency_alerts";
+
+            /** Preference to enable receive alerts in second language */
+            public static final @NonNull String ENABLE_CMAS_IN_SECOND_LANGUAGE_PREF =
+                    "receive_cmas_in_second_language";
+        }
+
+        /**
+         * The subscription which received this cell broadcast message.
+         * <P>Type: INTEGER</P>
+         */
+        public static final String SUBSCRIPTION_ID = "sub_id";
+
+        /**
+         * The slot which received this cell broadcast message.
+         * <P>Type: INTEGER</P>
+         */
+        public static final String SLOT_INDEX = "slot_index";
+
+        /**
+         * Message geographical scope. Valid values are:
+         * <ul>
+         * <li>{@link android.telephony.SmsCbMessage#GEOGRAPHICAL_SCOPE_CELL_WIDE}. meaning the
+         * message is for the radio service cell</li>
+         * <li>{@link android.telephony.SmsCbMessage#GEOGRAPHICAL_SCOPE_CELL_WIDE_IMMEDIATE},
+         * meaning the message is for the radio service cell and immediately displayed</li>
+         * <li>{@link android.telephony.SmsCbMessage#GEOGRAPHICAL_SCOPE_PLMN_WIDE}, meaning the
+         * message is for the PLMN (i.e. MCC/MNC)</li>
+         * <li>{@link android.telephony.SmsCbMessage#GEOGRAPHICAL_SCOPE_LOCATION_AREA_WIDE},
+         * meaning the message is for the location area (in GSM) or service area (in UMTS)</li>
+         * </ul>
+         *
+         * <p>A message meant for a particular scope is automatically dismissed when the device
+         * exits that scope.</p>
          * <P>Type: INTEGER</P>
          */
         public static final String GEOGRAPHICAL_SCOPE = "geo_scope";
 
         /**
          * Message serial number.
+         * <p>
+         * A 16-bit integer which identifies a particular CBS (cell
+         * broadcast short message service) message. The core network is responsible for
+         * allocating this value, and the value may be managed cyclically (3GPP TS 23.041 section
+         * 9.2.1) once the serial message has been incremented a sufficient number of times.
+         * </p>
          * <P>Type: INTEGER</P>
          */
         public static final String SERIAL_NUMBER = "serial_number";
 
         /**
-         * PLMN of broadcast sender. {@code SERIAL_NUMBER + PLMN + LAC + CID} uniquely identifies
-         * a broadcast for duplicate detection purposes.
+         * PLMN (i.e. MCC/MNC) of broadcast sender. {@code SERIAL_NUMBER + PLMN + LAC + CID}
+         * uniquely identifies a broadcast for duplicate detection purposes.
          * <P>Type: TEXT</P>
          */
         public static final String PLMN = "plmn";
 
         /**
-         * Location Area (GSM) or Service Area (UMTS) of broadcast sender. Unused for CDMA.
-         * Only included if Geographical Scope of message is not PLMN wide (01).
+         * Location area code (LAC).
+         * <p>Code representing location area (GSM) or service area (UMTS) of broadcast sender.
+         * Unused for CDMA. Only included if Geographical Scope of message is not PLMN wide (01).
+         * This value is sent by the network based on the cell tower.
          * <P>Type: INTEGER</P>
          */
         public static final String LAC = "lac";
@@ -3950,28 +4253,29 @@ public final class Telephony {
         public static final String CID = "cid";
 
         /**
-         * Message code. <em>OBSOLETE: merged into SERIAL_NUMBER.</em>
-         * <P>Type: INTEGER</P>
-         */
-        public static final String V1_MESSAGE_CODE = "message_code";
-
-        /**
-         * Message identifier. <em>OBSOLETE: renamed to SERVICE_CATEGORY.</em>
-         * <P>Type: INTEGER</P>
-         */
-        public static final String V1_MESSAGE_IDENTIFIER = "message_id";
-
-        /**
-         * Service category (GSM/UMTS: message identifier; CDMA: service category).
+         * Service category which represents the general topic of the message.
+         * <p>
+         * For GSM/UMTS: message identifier (see 3GPP TS 23.041 section 9.4.1.2.2)
+         * For CDMA: a 16-bit CDMA service category (see 3GPP2 C.R1001-D section 9.3)
+         * </p>
          * <P>Type: INTEGER</P>
          */
         public static final String SERVICE_CATEGORY = "service_category";
 
         /**
-         * Message language code.
+         * Message language code. (See 3GPP TS 23.041 section 9.4.1.2.3 for details).
          * <P>Type: TEXT</P>
          */
         public static final String LANGUAGE_CODE = "language";
+
+        /**
+         * Dats coding scheme of the message.
+         * <p>
+         * The data coding scheme (dcs) value defined in 3GPP TS 23.038 section 4
+         * </p>
+         * <P>Type: INTEGER</P>
+         */
+        public static final String DATA_CODING_SCHEME = "dcs";
 
         /**
          * Message body.
@@ -3981,6 +4285,7 @@ public final class Telephony {
 
         /**
          * Message delivery time.
+         * <p>This value is a system timestamp using {@link System#currentTimeMillis}</p>
          * <P>Type: INTEGER (long)</P>
          */
         public static final String DELIVERY_TIME = "date";
@@ -3992,25 +4297,45 @@ public final class Telephony {
         public static final String MESSAGE_READ = "read";
 
         /**
-         * Message format (3GPP or 3GPP2).
+         * Message format ({@link android.telephony.SmsCbMessage#MESSAGE_FORMAT_3GPP} or
+         * {@link android.telephony.SmsCbMessage#MESSAGE_FORMAT_3GPP2}).
          * <P>Type: INTEGER</P>
          */
         public static final String MESSAGE_FORMAT = "format";
 
         /**
-         * Message priority (including emergency).
+         * Message priority.
+         * <p>This includes
+         * <ul>
+         * <li>{@link android.telephony.SmsCbMessage#MESSAGE_PRIORITY_NORMAL}</li>
+         * <li>{@link android.telephony.SmsCbMessage#MESSAGE_PRIORITY_INTERACTIVE}</li>
+         * <li>{@link android.telephony.SmsCbMessage#MESSAGE_PRIORITY_URGENT}</li>
+         * <li>{@link android.telephony.SmsCbMessage#MESSAGE_PRIORITY_EMERGENCY}</li>
+         * </p>
+         * </ul>
          * <P>Type: INTEGER</P>
          */
         public static final String MESSAGE_PRIORITY = "priority";
 
         /**
-         * ETWS warning type (ETWS alerts only).
+         * ETWS (Earthquake and Tsunami Warning System) warning type (ETWS alerts only).
+         * <p>See {@link android.telephony.SmsCbEtwsInfo}</p>
          * <P>Type: INTEGER</P>
          */
         public static final String ETWS_WARNING_TYPE = "etws_warning_type";
 
         /**
-         * CMAS message class (CMAS alerts only).
+         * ETWS (Earthquake and Tsunami Warning System) primary message or not (ETWS alerts only).
+         * <p>See {@link android.telephony.SmsCbEtwsInfo}</p>
+         * <P>Type: BOOLEAN</P>
+         *
+         * @hide        // TODO: Unhide this for S.
+         */
+        public static final String ETWS_IS_PRIMARY = "etws_is_primary";
+
+        /**
+         * CMAS (Commercial Mobile Alert System) message class (CMAS alerts only).
+         * <p>See {@link android.telephony.SmsCbCmasInfo}</p>
          * <P>Type: INTEGER</P>
          */
         public static final String CMAS_MESSAGE_CLASS = "cmas_message_class";
@@ -4049,8 +4374,83 @@ public final class Telephony {
         public static final String DEFAULT_SORT_ORDER = DELIVERY_TIME + " DESC";
 
         /**
-         * Query columns for instantiating {@link android.telephony.CellBroadcastMessage} objects.
+         * The timestamp in millisecond, reported by {@link System#currentTimeMillis()}, when the
+         * device received the message.
+         * <P>Type: BIGINT</P>
          */
+        public static final String RECEIVED_TIME = "received_time";
+
+        /**
+         * The timestamp in millisecond, reported by {@link System#currentTimeMillis()}, when
+         * location was checked last time. Note this is only applicable to geo-targeting message.
+         * For non geo-targeting message. the field will be set to -1.
+         * <P>Type: BIGINT</P>
+         */
+        public static final String LOCATION_CHECK_TIME = "location_check_time";
+        /**
+         * Indicates that whether the message has been broadcasted to the application.
+         * <P>Type: BOOLEAN</P>
+         */
+        // TODO: deprecate this in S.
+        public static final String MESSAGE_BROADCASTED = "message_broadcasted";
+
+        /**
+         * Indicates that whether the message has been displayed to the user.
+         * <P>Type: BOOLEAN</P>
+         */
+        public static final String MESSAGE_DISPLAYED = "message_displayed";
+
+        /**
+         * The Warning Area Coordinates Elements. This element is used for geo-fencing purpose.
+         *
+         * The geometry and its coordinates are separated vertical bar, the first item is the
+         * geometry type and the remaining items are the parameter of this geometry.
+         *
+         * Only circle and polygon are supported. The coordinates are represented in Horizontal
+         * coordinates format.
+         *
+         * Coordinate encoding:
+         * "latitude, longitude"
+         * where -90.00000 <= latitude <= 90.00000 and -180.00000 <= longitude <= 180.00000
+         *
+         * Polygon encoding:
+         * "polygon|lat1,lng1|lat2,lng2|...|latn,lngn"
+         * lat1,lng1 ... latn,lngn are the vertices coordinate of the polygon.
+         *
+         * Circle encoding:
+         * "circle|lat,lng|radius".
+         * lat,lng is the center of the circle. The unit of circle's radius is meter.
+         *
+         * Example:
+         * "circle|0,0|100" mean a circle which center located at (0,0) and its radius is 100 meter.
+         * "polygon|0,1.5|0,1|1,1|1,0" mean a polygon has vertices (0,1.5),(0,1),(1,1),(1,0).
+         *
+         * There could be more than one geometry store in this field, they are separated by a
+         * semicolon.
+         *
+         * Example:
+         * "circle|0,0|100;polygon|0,0|0,1.5|1,1|1,0;circle|100.123,100|200.123"
+         *
+         * <P>Type: TEXT</P>
+         */
+        public static final String GEOMETRIES = "geometries";
+
+        /**
+         * Geo-Fencing Maximum Wait Time in second. The range of the time is [0, 255]. A device
+         * shall allow to determine its position meeting operator policy. If the device is unable to
+         * determine its position meeting operator policy within the GeoFencing Maximum Wait Time,
+         * it shall present the alert to the user and discontinue further positioning determination
+         * for the alert.
+         *
+         * <P>Type: INTEGER</P>
+         */
+        public static final String MAXIMUM_WAIT_TIME = "maximum_wait_time";
+
+        /**
+         * Query columns for instantiating com.android.cellbroadcastreceiver.CellBroadcastMessage.
+         * @hide
+         */
+        @NonNull
         public static final String[] QUERY_COLUMNS = {
                 _ID,
                 GEOGRAPHICAL_SCOPE,
@@ -4102,9 +4502,11 @@ public final class Telephony {
          * ServiceState provider.
          * <p>
          * Use this {@link Uri} with a {@link ContentObserver} to be notified of changes to the
-         * {@link ServiceState} while your app is running.  You can also use a {@link JobService} to
+         * {@link ServiceState} while your app is running.
+         * You can also use a {@link android.app.job.JobService} to
          * ensure your app is notified of changes to the {@link Uri} even when it is not running.
-         * Note, however, that using a {@link JobService} does not guarantee timely delivery of
+         * Note, however, that using a {@link android.app.job.JobService}
+         * does not guarantee timely delivery of
          * updates to the {@link Uri}.
          *
          * @param subscriptionId the subscriptionId to receive updates on
@@ -4121,9 +4523,11 @@ public final class Telephony {
          * ServiceState provider.
          * <p>
          * Use this {@link Uri} with a {@link ContentObserver} to be notified of changes to the
-         * {@link ServiceState} while your app is running.  You can also use a {@link JobService} to
+         * {@link ServiceState} while your app is running.  You can also use a
+         * {@link android.app.job.JobService} to
          * ensure your app is notified of changes to the {@link Uri} even when it is not running.
-         * Note, however, that using a {@link JobService} does not guarantee timely delivery of
+         * Note, however, that using a {@link android.app.job.JobService}
+         * does not guarantee timely delivery of
          * updates to the {@link Uri}.
          *
          * @param subscriptionId the subscriptionId to receive updates on
@@ -4132,32 +4536,6 @@ public final class Telephony {
         public static Uri getUriForSubscriptionId(int subscriptionId) {
             return CONTENT_URI.buildUpon().appendEncodedPath(String.valueOf(subscriptionId)).build();
         }
-
-        /**
-         * Used to insert a ServiceState into the ServiceStateProvider as a ContentValues instance.
-         *
-         * @param state the ServiceState to convert into ContentValues
-         * @return the convertedContentValues instance
-         * @hide
-         */
-        public static ContentValues getContentValuesForServiceState(ServiceState state) {
-            ContentValues values = new ContentValues();
-            final Parcel p = Parcel.obtain();
-            state.writeToParcel(p, 0);
-            // Turn the parcel to byte array. Safe to do this because the content values were never
-            // written into a persistent storage. ServiceStateProvider keeps values in the memory.
-            values.put(SERVICE_STATE, p.marshall());
-            return values;
-        }
-
-        /**
-         * The current service state.
-         *
-         * This is the entire {@link ServiceState} object in byte array.
-         *
-         * @hide
-         */
-        public static final String SERVICE_STATE = "service_state";
 
         /**
          * An integer value indicating the current voice service state.
@@ -4171,54 +4549,6 @@ public final class Telephony {
         public static final String VOICE_REG_STATE = "voice_reg_state";
 
         /**
-         * An integer value indicating the current data service state.
-         * <p>
-         * Valid values: {@link ServiceState#STATE_IN_SERVICE},
-         * {@link ServiceState#STATE_OUT_OF_SERVICE}, {@link ServiceState#STATE_EMERGENCY_ONLY},
-         * {@link ServiceState#STATE_POWER_OFF}.
-         * <p>
-         * This is the same as {@link ServiceState#getDataRegState()}.
-         * @hide
-         */
-        public static final String DATA_REG_STATE = "data_reg_state";
-
-        /**
-         * An integer value indicating the current voice roaming type.
-         * <p>
-         * This is the same as {@link ServiceState#getVoiceRoamingType()}.
-         * @hide
-         */
-        public static final String VOICE_ROAMING_TYPE = "voice_roaming_type";
-
-        /**
-         * An integer value indicating the current data roaming type.
-         * <p>
-         * This is the same as {@link ServiceState#getDataRoamingType()}.
-         * @hide
-         */
-        public static final String DATA_ROAMING_TYPE = "data_roaming_type";
-
-        /**
-         * The current registered voice network operator name in long alphanumeric format.
-         * <p>
-         * This is the same as {@link ServiceState#getVoiceOperatorAlphaLong()}.
-         * @hide
-         */
-        public static final String VOICE_OPERATOR_ALPHA_LONG = "voice_operator_alpha_long";
-
-        /**
-         * The current registered operator name in short alphanumeric format.
-         * <p>
-         * In GSM/UMTS, short format can be up to 8 characters long. The current registered voice
-         * network operator name in long alphanumeric format.
-         * <p>
-         * This is the same as {@link ServiceState#getVoiceOperatorAlphaShort()}.
-         * @hide
-         */
-        public static final String VOICE_OPERATOR_ALPHA_SHORT = "voice_operator_alpha_short";
-
-
-        /**
          * The current registered operator numeric id.
          * <p>
          * In GSM/UMTS, numeric format is 3 digit country code plus 2 or 3 digit
@@ -4229,125 +4559,11 @@ public final class Telephony {
         public static final String VOICE_OPERATOR_NUMERIC = "voice_operator_numeric";
 
         /**
-         * The current registered data network operator name in long alphanumeric format.
-         * <p>
-         * This is the same as {@link ServiceState#getDataOperatorAlphaLong()}.
-         * @hide
-         */
-        public static final String DATA_OPERATOR_ALPHA_LONG = "data_operator_alpha_long";
-
-        /**
-         * The current registered data network operator name in short alphanumeric format.
-         * <p>
-         * This is the same as {@link ServiceState#getDataOperatorAlphaShort()}.
-         * @hide
-         */
-        public static final String DATA_OPERATOR_ALPHA_SHORT = "data_operator_alpha_short";
-
-        /**
-         * The current registered data network operator numeric id.
-         * <p>
-         * This is the same as {@link ServiceState#getDataOperatorNumeric()}.
-         * @hide
-         */
-        public static final String DATA_OPERATOR_NUMERIC = "data_operator_numeric";
-
-        /**
          * The current network selection mode.
          * <p>
          * This is the same as {@link ServiceState#getIsManualSelection()}.
          */
         public static final String IS_MANUAL_NETWORK_SELECTION = "is_manual_network_selection";
-
-        /**
-         * This is the same as {@link ServiceState#getRilVoiceRadioTechnology()}.
-         * @hide
-         */
-        public static final String RIL_VOICE_RADIO_TECHNOLOGY = "ril_voice_radio_technology";
-
-        /**
-         * This is the same as {@link ServiceState#getRilDataRadioTechnology()}.
-         * @hide
-         */
-        public static final String RIL_DATA_RADIO_TECHNOLOGY = "ril_data_radio_technology";
-
-        /**
-         * This is the same as {@link ServiceState#getCssIndicator()}.
-         * @hide
-         */
-        public static final String CSS_INDICATOR = "css_indicator";
-
-        /**
-         * This is the same as {@link ServiceState#getCdmaNetworkId()}.
-         * @hide
-         */
-        public static final String NETWORK_ID = "network_id";
-
-        /**
-         * This is the same as {@link ServiceState#getCdmaSystemId()}.
-         * @hide
-         */
-        public static final String SYSTEM_ID = "system_id";
-
-        /**
-         * This is the same as {@link ServiceState#getCdmaRoamingIndicator()}.
-         * @hide
-         */
-        public static final String CDMA_ROAMING_INDICATOR = "cdma_roaming_indicator";
-
-        /**
-         * This is the same as {@link ServiceState#getCdmaDefaultRoamingIndicator()}.
-         * @hide
-         */
-        public static final String CDMA_DEFAULT_ROAMING_INDICATOR =
-                "cdma_default_roaming_indicator";
-
-        /**
-         * This is the same as {@link ServiceState#getCdmaEriIconIndex()}.
-         * @hide
-         */
-        public static final String CDMA_ERI_ICON_INDEX = "cdma_eri_icon_index";
-
-        /**
-         * This is the same as {@link ServiceState#getCdmaEriIconMode()}.
-         * @hide
-         */
-        public static final String CDMA_ERI_ICON_MODE = "cdma_eri_icon_mode";
-
-        /**
-         * This is the same as {@link ServiceState#isEmergencyOnly()}.
-         * @hide
-         */
-        public static final String IS_EMERGENCY_ONLY = "is_emergency_only";
-
-        /**
-         * This is the same as {@link ServiceState#getDataRoamingFromRegistration()}.
-         * @hide
-         */
-        public static final String IS_DATA_ROAMING_FROM_REGISTRATION =
-                "is_data_roaming_from_registration";
-
-        /**
-         * This is the same as {@link ServiceState#isUsingCarrierAggregation()}.
-         * @hide
-         */
-        public static final String IS_USING_CARRIER_AGGREGATION = "is_using_carrier_aggregation";
-
-        /**
-         * The current registered raw data network operator name in long alphanumeric format.
-         * <p>
-         * This is the same as {@link ServiceState#getOperatorAlphaLongRaw()}.
-         * @hide
-         */
-        public static final String OPERATOR_ALPHA_LONG_RAW = "operator_alpha_long_raw";
-
-        /**
-         * The current registered raw data network operator name in short alphanumeric format.
-         * <p>
-         * This is the same as {@link ServiceState#getOperatorAlphaShortRaw()}.
-         * @hide
-         */
-        public static final String OPERATOR_ALPHA_SHORT_RAW = "operator_alpha_short_raw";
     }
 
     /**
@@ -4378,10 +4594,11 @@ public final class Telephony {
          * <p>
          * Use this {@link Uri} with a {@link ContentObserver} to be notified of changes to the
          * carrier identity {@link TelephonyManager#getSimCarrierId()}
-         * while your app is running. You can also use a {@link JobService} to ensure your app
+         * while your app is running. You can also use a {@link android.app.job.JobService}
+         * to ensure your app
          * is notified of changes to the {@link Uri} even when it is not running.
-         * Note, however, that using a {@link JobService} does not guarantee timely delivery of
-         * updates to the {@link Uri}.
+         * Note, however, that using a {@link android.app.job.JobService} does not guarantee
+         * timely delivery of updates to the {@link Uri}.
          *
          * @param subscriptionId the subscriptionId to receive updates on
          * @return the Uri used to observe carrier identity changes
@@ -4399,10 +4616,11 @@ public final class Telephony {
          * <p>
          * Use this {@link Uri} with a {@link ContentObserver} to be notified of changes to the
          * specific carrier identity {@link TelephonyManager#getSimSpecificCarrierId()}
-         * while your app is running. You can also use a {@link JobService} to ensure your app
+         * while your app is running. You can also use a {@link android.app.job.JobService}
+         * to ensure your app
          * is notified of changes to the {@link Uri} even when it is not running.
-         * Note, however, that using a {@link JobService} does not guarantee timely delivery of
-         * updates to the {@link Uri}.
+         * Note, however, that using a {@link android.app.job.JobService} does not guarantee timely
+         * delivery of updates to the {@link Uri}.
          *
          * @param subscriptionId the subscriptionId to receive updates on
          * @return the Uri used to observe specific carrier identity changes
@@ -4463,6 +4681,14 @@ public final class Telephony {
          * @hide
          */
         public static final class All implements BaseColumns {
+
+            /**
+             * Not instantiable.
+             * @hide
+             */
+            private All() {
+            }
+
             /**
              * Numeric operator ID (as String). {@code MCC + MNC}
              * <P>Type: TEXT </P>
@@ -4520,7 +4746,521 @@ public final class Telephony {
             /**
              * The {@code content://} URI for this table.
              */
+            @NonNull
             public static final Uri CONTENT_URI = Uri.parse("content://carrier_id/all");
         }
+    }
+
+    /**
+     * Contains SIM Information
+     * @hide
+     */
+    public static final class SimInfo {
+        /**
+         * Not instantiable.
+         * @hide
+         */
+        private SimInfo() {}
+
+        /**
+         * The {@code content://} style URI for this provider.
+         * @hide
+         */
+        @NonNull
+        public static final Uri CONTENT_URI = Uri.parse("content://telephony/siminfo");
+
+        /**
+         * TelephonyProvider unique key column name is the subscription id.
+         * <P>Type: TEXT (String)</P>
+         *
+         * @hide
+         */
+        public static final String COLUMN_UNIQUE_KEY_SUBSCRIPTION_ID = "_id";
+
+        /**
+         * TelephonyProvider column name for a unique identifier for the subscription within the
+         * specific subscription type. For example, it contains SIM ICC Identifier subscriptions
+         * on Local SIMs. and Mac-address for Remote-SIM Subscriptions for Bluetooth devices.
+         * <P>Type: TEXT (String)</P>
+         *
+         * @hide
+         */
+        public static final String COLUMN_ICC_ID = "icc_id";
+
+        /**
+         * TelephonyProvider column name for user SIM_SlOT_INDEX
+         * <P>Type: INTEGER (int)</P>
+         *
+         * @hide
+         */
+        public static final String COLUMN_SIM_SLOT_INDEX = "sim_id";
+
+        /**
+         * SIM is not inserted
+         * @hide
+         */
+        public static final int SIM_NOT_INSERTED = -1;
+
+        /**
+         * TelephonyProvider column name Subscription-type.
+         * <P>Type: INTEGER (int)</P> {@link #SUBSCRIPTION_TYPE_LOCAL_SIM} for Local-SIM
+         * Subscriptions, {@link #SUBSCRIPTION_TYPE_REMOTE_SIM} for Remote-SIM Subscriptions.
+         * Default value is 0.
+         *
+         * @hide
+         */
+        public static final String COLUMN_SUBSCRIPTION_TYPE = "subscription_type";
+
+        /**
+         * This constant is to designate a subscription as a Local-SIM Subscription.
+         * <p> A Local-SIM can be a physical SIM inserted into a sim-slot in the device, or eSIM on
+         * the device.
+         * </p>
+         *
+         * @hide
+         */
+        public static final int SUBSCRIPTION_TYPE_LOCAL_SIM = 0;
+
+        /**
+         * This constant is to designate a subscription as a Remote-SIM Subscription.
+         * <p>
+         * A Remote-SIM subscription is for a SIM on a phone connected to this device via some
+         * connectivity mechanism, for example bluetooth. Similar to Local SIM, this subscription
+         * can be used for SMS, Voice and data by proxying data through the connected device.
+         * Certain data of the SIM, such as IMEI, are not accessible for Remote SIMs.
+         * </p>
+         *
+         * <p>
+         * A Remote-SIM is available only as long the phone stays connected to this device.
+         * When the phone disconnects, Remote-SIM subscription is removed from this device and is
+         * no longer known. All data associated with the subscription, such as stored SMS, call
+         * logs, contacts etc, are removed from this device.
+         * </p>
+         *
+         * <p>
+         * If the phone re-connects to this device, a new Remote-SIM subscription is created for
+         * the phone. The Subscription Id associated with the new subscription is different from
+         * the Subscription Id of the previous Remote-SIM subscription created (and removed) for the
+         * phone; i.e., new Remote-SIM subscription treats the reconnected phone as a Remote-SIM
+         * that was never seen before.
+         * </p>
+         *
+         * @hide
+         */
+        public static final int SUBSCRIPTION_TYPE_REMOTE_SIM = 1;
+
+        /**
+         * TelephonyProvider column name data_enabled_override_rules.
+         * It's a list of rules for overriding data enabled settings. The syntax is
+         * For example, "mms=nonDefault" indicates enabling data for mms in non-default
+         * subscription.
+         * "default=nonDefault&inVoiceCall" indicates enabling data for internet in non-default
+         * subscription and while is in voice call.
+         *
+         * Default value is empty string.
+         *
+         * @hide
+         */
+        public static final String COLUMN_DATA_ENABLED_OVERRIDE_RULES =
+                "data_enabled_override_rules";
+
+        /**
+         * TelephonyProvider column name for user displayed name.
+         * <P>Type: TEXT (String)</P>
+         *
+         * @hide
+         */
+        public static final String COLUMN_DISPLAY_NAME = "display_name";
+
+        /**
+         * TelephonyProvider column name for the service provider name for the SIM.
+         * <P>Type: TEXT (String)</P>
+         *
+         * @hide
+         */
+        public static final String COLUMN_CARRIER_NAME = "carrier_name";
+
+        /**
+         * TelephonyProvider column name for source of the user displayed name.
+         * <P>Type: INT (int)</P> with one of the NAME_SOURCE_XXXX values below
+         *
+         * @hide
+         */
+        public static final String COLUMN_NAME_SOURCE = "name_source";
+
+        /** The name_source is from the carrier id. {@hide} */
+        public static final int NAME_SOURCE_CARRIER_ID = 0;
+
+        /**
+         * The name_source is from SIM EF_SPN.
+         * @hide
+         */
+        public static final int NAME_SOURCE_SIM_SPN = 1;
+
+        /**
+         * The name_source is from user input
+         * @hide
+         */
+        public static final int NAME_SOURCE_USER_INPUT = 2;
+
+        /**
+         * The name_source is carrier (carrier app, carrier config, etc.)
+         * @hide
+         */
+        public static final int NAME_SOURCE_CARRIER = 3;
+
+        /**
+         * The name_source is from SIM EF_PNN.
+         * @hide
+         */
+        public static final int NAME_SOURCE_SIM_PNN = 4;
+
+        /**
+         * TelephonyProvider column name for the color of a SIM.
+         * <P>Type: INTEGER (int)</P>
+         *
+         * @hide
+         */
+        public static final String COLUMN_COLOR = "color";
+
+        /** The default color of a SIM {@hide} */
+        public static final int COLOR_DEFAULT = 0;
+
+        /**
+         * TelephonyProvider column name for the phone number of a SIM.
+         * <P>Type: TEXT (String)</P>
+         *
+         * @hide
+         */
+        public static final String COLUMN_NUMBER = "number";
+
+        /**
+         * TelephonyProvider column name for the number display format of a SIM.
+         * <P>Type: INTEGER (int)</P>
+         *
+         * @hide
+         */
+        public static final String COLUMN_DISPLAY_NUMBER_FORMAT = "display_number_format";
+
+        /**
+         * TelephonyProvider column name for the default display format of a SIM
+         * @hide
+         */
+        public static final int DISPLAY_NUMBER_DEFAULT = 1;
+
+        /**
+         * TelephonyProvider column name for whether data roaming is enabled.
+         * <P>Type: INTEGER (int)</P>
+         *
+         * @hide
+         */
+        public static final String COLUMN_DATA_ROAMING = "data_roaming";
+
+        /** Indicates that data roaming is enabled for a subscription {@hide} */
+        public static final int DATA_ROAMING_ENABLE = 1;
+
+        /** Indicates that data roaming is disabled for a subscription {@hide} */
+        public static final int DATA_ROAMING_DISABLE = 0;
+
+        /**
+         * TelephonyProvider column name for subscription carrier id.
+         * @see TelephonyManager#getSimCarrierId()
+         * <p>Type: INTEGER (int) </p>
+         *
+         * @hide
+         */
+        public static final String COLUMN_CARRIER_ID = "carrier_id";
+
+        /**
+         * A comma-separated list of EHPLMNs associated with the subscription
+         * <P>Type: TEXT (String)</P>
+         *
+         * @hide
+         */
+        public static final String COLUMN_EHPLMNS = "ehplmns";
+
+        /**
+         * A comma-separated list of HPLMNs associated with the subscription
+         * <P>Type: TEXT (String)</P>
+         *
+         * @hide
+         */
+        public static final String COLUMN_HPLMNS = "hplmns";
+
+        /**
+         * TelephonyProvider column name for the MCC associated with a SIM, stored as a string.
+         * <P>Type: TEXT (String)</P>
+         *
+         * @hide
+         */
+        public static final String COLUMN_MCC_STRING = "mcc_string";
+
+        /**
+         * TelephonyProvider column name for the MNC associated with a SIM, stored as a string.
+         * <P>Type: TEXT (String)</P>
+         *
+         * @hide
+         */
+        public static final String COLUMN_MNC_STRING = "mnc_string";
+
+        /**
+         * TelephonyProvider column name for the MCC associated with a SIM.
+         * <P>Type: INTEGER (int)</P>
+         *
+         * @hide
+         */
+        public static final String COLUMN_MCC = "mcc";
+
+        /**
+         * TelephonyProvider column name for the MNC associated with a SIM.
+         * <P>Type: INTEGER (int)</P>
+         *
+         * @hide
+         */
+        public static final String COLUMN_MNC = "mnc";
+
+        /**
+         * TelephonyProvider column name for the iso country code associated with a SIM.
+         * <P>Type: TEXT (String)</P>
+         *
+         * @hide
+         */
+        public static final String COLUMN_ISO_COUNTRY_CODE = "iso_country_code";
+
+        /**
+         * TelephonyProvider column name for the sim provisioning status associated with a SIM.
+         * <P>Type: INTEGER (int)</P>
+         *
+         * @hide
+         */
+        public static final String COLUMN_SIM_PROVISIONING_STATUS = "sim_provisioning_status";
+
+        /** The sim is provisioned {@hide} */
+        public static final int SIM_PROVISIONED = 0;
+
+        /**
+         * TelephonyProvider column name for whether a subscription is embedded (that is, present on
+         * an eSIM).
+         * <p>Type: INTEGER (int), 1 for embedded or 0 for non-embedded.
+         *
+         * @hide
+         */
+        public static final String COLUMN_IS_EMBEDDED = "is_embedded";
+
+        /**
+         * TelephonyProvider column name for SIM card identifier. For UICC card it is the ICCID of
+         * the current enabled profile on the card, while for eUICC card it is the EID of the card.
+         * <P>Type: TEXT (String)</P>
+         *
+         * @hide
+         */
+        public static final String COLUMN_CARD_ID = "card_id";
+
+        /**
+         * TelephonyProvider column name for the encoded {@link UiccAccessRule}s from
+         * {@link UiccAccessRule#encodeRules}. Only present if {@link #COLUMN_IS_EMBEDDED} is 1.
+         * <p>TYPE: BLOB
+         *
+         * @hide
+         */
+        public static final String COLUMN_ACCESS_RULES = "access_rules";
+
+        /**
+         * TelephonyProvider column name for the encoded {@link UiccAccessRule}s from
+         * {@link UiccAccessRule#encodeRules} but for the rules that come from CarrierConfigs.
+         * Only present if there are access rules in CarrierConfigs
+         * <p>TYPE: BLOB
+         *
+         * @hide
+         */
+        public static final String COLUMN_ACCESS_RULES_FROM_CARRIER_CONFIGS =
+                "access_rules_from_carrier_configs";
+
+        /**
+         * TelephonyProvider column name identifying whether an embedded subscription is on a
+         * removable card. Such subscriptions are marked inaccessible as soon as the current card
+         * is removed. Otherwise, they will remain accessible unless explicitly deleted. Only
+         * present if {@link #COLUMN_IS_EMBEDDED} is 1.
+         * <p>TYPE: INTEGER (int), 1 for removable or 0 for non-removable.
+         *
+         * @hide
+         */
+        public static final String COLUMN_IS_REMOVABLE = "is_removable";
+
+        /** TelephonyProvider column name for extreme threat in CB settings {@hide} */
+        public static final String COLUMN_CB_EXTREME_THREAT_ALERT =
+                "enable_cmas_extreme_threat_alerts";
+
+        /** TelephonyProvider column name for severe threat in CB settings {@hide} */
+        public static final String COLUMN_CB_SEVERE_THREAT_ALERT =
+                "enable_cmas_severe_threat_alerts";
+
+        /** TelephonyProvider column name for amber alert in CB settings {@hide} */
+        public static final String COLUMN_CB_AMBER_ALERT = "enable_cmas_amber_alerts";
+
+        /** TelephonyProvider column name for emergency alert in CB settings {@hide} */
+        public static final String COLUMN_CB_EMERGENCY_ALERT = "enable_emergency_alerts";
+
+        /** TelephonyProvider column name for alert sound duration in CB settings {@hide} */
+        public static final String COLUMN_CB_ALERT_SOUND_DURATION = "alert_sound_duration";
+
+        /** TelephonyProvider column name for alert reminder interval in CB settings {@hide} */
+        public static final String COLUMN_CB_ALERT_REMINDER_INTERVAL = "alert_reminder_interval";
+
+        /** TelephonyProvider column name for enabling vibrate in CB settings {@hide} */
+        public static final String COLUMN_CB_ALERT_VIBRATE = "enable_alert_vibrate";
+
+        /** TelephonyProvider column name for enabling alert speech in CB settings {@hide} */
+        public static final String COLUMN_CB_ALERT_SPEECH = "enable_alert_speech";
+
+        /** TelephonyProvider column name for ETWS test alert in CB settings {@hide} */
+        public static final String COLUMN_CB_ETWS_TEST_ALERT = "enable_etws_test_alerts";
+
+        /** TelephonyProvider column name for enable channel50 alert in CB settings {@hide} */
+        public static final String COLUMN_CB_CHANNEL_50_ALERT = "enable_channel_50_alerts";
+
+        /** TelephonyProvider column name for CMAS test alert in CB settings {@hide} */
+        public static final String COLUMN_CB_CMAS_TEST_ALERT = "enable_cmas_test_alerts";
+
+        /** TelephonyProvider column name for Opt out dialog in CB settings {@hide} */
+        public static final String COLUMN_CB_OPT_OUT_DIALOG = "show_cmas_opt_out_dialog";
+
+        /**
+         * TelephonyProvider column name for enable Volte.
+         *
+         * If this setting is not initialized (set to -1)  then we use the Carrier Config value
+         * {@link CarrierConfigManager#KEY_ENHANCED_4G_LTE_ON_BY_DEFAULT_BOOL}.
+         *
+         * @hide
+         */
+        public static final String COLUMN_ENHANCED_4G_MODE_ENABLED = "volte_vt_enabled";
+
+        /** TelephonyProvider column name for enable VT (Video Telephony over IMS) {@hide} */
+        public static final String COLUMN_VT_IMS_ENABLED = "vt_ims_enabled";
+
+        /** TelephonyProvider column name for enable Wifi calling {@hide} */
+        public static final String COLUMN_WFC_IMS_ENABLED = "wfc_ims_enabled";
+
+        /** TelephonyProvider column name for Wifi calling mode {@hide} */
+        public static final String COLUMN_WFC_IMS_MODE = "wfc_ims_mode";
+
+        /** TelephonyProvider column name for Wifi calling mode in roaming {@hide} */
+        public static final String COLUMN_WFC_IMS_ROAMING_MODE = "wfc_ims_roaming_mode";
+
+        /** TelephonyProvider column name for enable Wifi calling in roaming {@hide} */
+        public static final String COLUMN_WFC_IMS_ROAMING_ENABLED = "wfc_ims_roaming_enabled";
+
+        /**
+         * TelephonyProvider column name for determining if the user has enabled IMS RCS User
+         * Capability Exchange (UCE) for this subscription.
+         *
+         * @hide
+         */
+        public static final String COLUMN_IMS_RCS_UCE_ENABLED = "ims_rcs_uce_enabled";
+
+        /**
+         * TelephonyProvider column name for whether a subscription is opportunistic, that is,
+         * whether the network it connects to is limited in functionality or coverage.
+         * For example, CBRS.
+         * <p>Type: INTEGER (int), 1 for opportunistic or 0 for non-opportunistic.
+         *
+         * @hide
+         */
+        public static final String COLUMN_IS_OPPORTUNISTIC = "is_opportunistic";
+
+        /**
+         * TelephonyProvider column name for group ID. Subscriptions with same group ID
+         * are considered bundled together, and should behave as a single subscription at
+         * certain scenarios.
+         *
+         * @hide
+         */
+        public static final String COLUMN_GROUP_UUID = "group_uuid";
+
+        /**
+         * TelephonyProvider column name for group owner. It's the package name who created
+         * the subscription group.
+         *
+         * @hide
+         */
+        public static final String COLUMN_GROUP_OWNER = "group_owner";
+
+        /**
+         * TelephonyProvider column name for whether a subscription is metered or not, that is,
+         * whether the network it connects to charges for subscription or not. For example, paid
+         * CBRS or unpaid.
+         *
+         * @hide
+         */
+        public static final String COLUMN_IS_METERED = "is_metered";
+
+        /**
+         * TelephonyProvider column name for the profile class of a subscription
+         * Only present if {@link #COLUMN_IS_EMBEDDED} is 1.
+         * <P>Type: INTEGER (int)</P>
+         *
+         * @hide
+         */
+        public static final String COLUMN_PROFILE_CLASS = "profile_class";
+
+        /**
+         * A testing profile can be pre-loaded or downloaded onto
+         * the eUICC and provides connectivity to test equipment
+         * for the purpose of testing the device and the eUICC. It
+         * is not intended to store any operator credentials.
+         *
+         * @hide
+         */
+        public static final int PROFILE_CLASS_TESTING = 0;
+
+        /**
+         * A provisioning profile is pre-loaded onto the eUICC and
+         * provides connectivity to a mobile network solely for the
+         * purpose of provisioning profiles.
+         *
+         * @hide
+         */
+        public static final int PROFILE_CLASS_PROVISIONING = 1;
+
+        /**
+         * An operational profile can be pre-loaded or downloaded
+         * onto the eUICC and provides services provided by the
+         * operator.
+         *
+         * @hide
+         */
+        public static final int PROFILE_CLASS_OPERATIONAL = 2;
+
+        /**
+         * The profile class is unset. This occurs when profile class
+         * info is not available. The subscription either has no profile
+         * metadata or the profile metadata did not encode profile class.
+         *
+         * @hide
+         */
+        public static final int PROFILE_CLASS_UNSET = -1;
+
+        /**
+         * IMSI (International Mobile Subscriber Identity).
+         * <P>Type: TEXT </P>
+         *
+         * @hide
+         */
+        public static final String COLUMN_IMSI = "imsi";
+
+        /**
+         * Whether uicc applications is set to be enabled or disabled. By default it's enabled.
+         * @hide
+         */
+        public static final String COLUMN_UICC_APPLICATIONS_ENABLED = "uicc_applications_enabled";
+
+        /**
+         * TelephonyProvider column name for allowed network types. Indicate which network types
+         * are allowed. Default is -1.
+         * <P>Type: BIGINT (long) </P>
+         *
+         * @hide
+         */
+        public static final String COLUMN_ALLOWED_NETWORK_TYPES = "allowed_network_types";
     }
 }

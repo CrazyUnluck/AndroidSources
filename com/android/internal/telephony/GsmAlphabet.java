@@ -16,10 +16,10 @@
 
 package com.android.internal.telephony;
 
-import android.annotation.UnsupportedAppUsage;
+import android.compat.annotation.UnsupportedAppUsage;
 import android.content.res.Resources;
 import android.os.Build;
-import android.telephony.Rlog;
+import android.util.Log;
 import android.text.TextUtils;
 import android.util.SparseIntArray;
 
@@ -81,6 +81,11 @@ public class GsmAlphabet {
      * data.
      */
     public static class TextEncodingDetails {
+
+        @UnsupportedAppUsage
+        public TextEncodingDetails() {
+        }
+
         /**
          *The number of SMS's required to encode the text.
          */
@@ -493,11 +498,11 @@ public class GsmAlphabet {
         StringBuilder ret = new StringBuilder(lengthSeptets);
 
         if (languageTable < 0 || languageTable > sLanguageTables.length) {
-            Rlog.w(TAG, "unknown language table " + languageTable + ", using default");
+            Log.w(TAG, "unknown language table " + languageTable + ", using default");
             languageTable = 0;
         }
         if (shiftTable < 0 || shiftTable > sLanguageShiftTables.length) {
-            Rlog.w(TAG, "unknown single shift table " + shiftTable + ", using default");
+            Log.w(TAG, "unknown single shift table " + shiftTable + ", using default");
             shiftTable = 0;
         }
 
@@ -507,11 +512,11 @@ public class GsmAlphabet {
             String shiftTableToChar = sLanguageShiftTables[shiftTable];
 
             if (languageTableToChar.isEmpty()) {
-                Rlog.w(TAG, "no language table for code " + languageTable + ", using default");
+                Log.w(TAG, "no language table for code " + languageTable + ", using default");
                 languageTableToChar = sLanguageTables[0];
             }
             if (shiftTableToChar.isEmpty()) {
-                Rlog.w(TAG, "no single shift table for code " + shiftTable + ", using default");
+                Log.w(TAG, "no single shift table for code " + shiftTable + ", using default");
                 shiftTableToChar = sLanguageShiftTables[0];
             }
 
@@ -551,7 +556,7 @@ public class GsmAlphabet {
                 }
             }
         } catch (RuntimeException ex) {
-            Rlog.e(TAG, "Error GSM 7 bit packed: ", ex);
+            Log.e(TAG, "Error GSM 7 bit packed: ", ex);
             return null;
         }
 
@@ -808,7 +813,7 @@ public class GsmAlphabet {
         for (int i = 0; i < sz; i++) {
             char c = s.charAt(i);
             if (c == GSM_EXTENDED_ESCAPE) {
-                Rlog.w(TAG, "countGsmSeptets() string contains Escape character, skipping.");
+                Log.w(TAG, "countGsmSeptets() string contains Escape character, skipping.");
                 continue;
             }
             if (charToLanguageTable.get(c, -1) != -1) {
@@ -887,7 +892,7 @@ public class GsmAlphabet {
         for (int i = 0; i < sz && !lpcList.isEmpty(); i++) {
             char c = s.charAt(i);
             if (c == GSM_EXTENDED_ESCAPE) {
-                Rlog.w(TAG, "countGsmSeptets() string contains Escape character, ignoring!");
+                Log.w(TAG, "countGsmSeptets() string contains Escape character, ignoring!");
                 continue;
             }
             // iterate through enabled locking shift tables
@@ -1491,7 +1496,7 @@ public class GsmAlphabet {
         int numTables = sLanguageTables.length;
         int numShiftTables = sLanguageShiftTables.length;
         if (numTables != numShiftTables) {
-            Rlog.e(TAG, "Error: language tables array length " + numTables +
+            Log.e(TAG, "Error: language tables array length " + numTables +
                     " != shift tables array length " + numShiftTables);
         }
 
@@ -1501,7 +1506,7 @@ public class GsmAlphabet {
 
             int tableLen = table.length();
             if (tableLen != 0 && tableLen != 128) {
-                Rlog.e(TAG, "Error: language tables index " + i +
+                Log.e(TAG, "Error: language tables index " + i +
                         " length " + tableLen + " (expected 128 or 0)");
             }
 
@@ -1513,13 +1518,13 @@ public class GsmAlphabet {
             }
         }
 
-        sCharsToShiftTables = new SparseIntArray[numTables];
+        sCharsToShiftTables = new SparseIntArray[numShiftTables];
         for (int i = 0; i < numShiftTables; i++) {
             String shiftTable = sLanguageShiftTables[i];
 
             int shiftTableLen = shiftTable.length();
             if (shiftTableLen != 0 && shiftTableLen != 128) {
-                Rlog.e(TAG, "Error: language shift tables index " + i +
+                Log.e(TAG, "Error: language shift tables index " + i +
                         " length " + shiftTableLen + " (expected 128 or 0)");
             }
 

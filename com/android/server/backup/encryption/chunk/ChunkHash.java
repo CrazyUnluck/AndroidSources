@@ -11,12 +11,13 @@
  * distributed under the License is distributed on an "AS IS" BASIS,
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
  * See the License for the specific language governing permissions and
- * limitations under the License
+ * limitations under the License.
  */
 
 package com.android.server.backup.encryption.chunk;
 
 import com.android.internal.util.Preconditions;
+
 import java.util.Arrays;
 import java.util.Base64;
 

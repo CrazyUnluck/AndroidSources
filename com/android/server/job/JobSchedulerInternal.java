@@ -16,8 +16,9 @@
 
 package com.android.server.job;
 
-import android.annotation.UserIdInt;
+import android.annotation.NonNull;
 import android.app.job.JobInfo;
+import android.util.proto.ProtoOutputStream;
 
 import java.util.List;
 
@@ -26,31 +27,6 @@ import java.util.List;
  * {@hide} Only for use within the system server.
  */
 public interface JobSchedulerInternal {
-
-    // Bookkeeping about app standby bucket scheduling
-
-    /**
-     * The current bucket heartbeat ordinal
-     */
-    long currentHeartbeat();
-
-    /**
-     * Heartbeat ordinal at which the given standby bucket's jobs next become runnable
-     */
-    long nextHeartbeatForBucket(int bucket);
-
-    /**
-     * Heartbeat ordinal for the given app.  This is typically the heartbeat at which
-     * the app last ran jobs, so that a newly-scheduled job in an app that hasn't run
-     * jobs in a long time is immediately runnable even if the app is bucketed into
-     * an infrequent time allocation.
-     */
-    public long baseHeartbeatForApp(String packageName, @UserIdInt int userId, int appBucket);
-
-    /**
-     * Tell the scheduler when a JobServiceContext starts running a job in an app
-     */
-    void noteJobStart(String packageName, int userId);
 
     /**
      * Returns a list of pending jobs scheduled by the system service.
@@ -68,6 +44,10 @@ public interface JobSchedulerInternal {
     void addBackingUpUid(int uid);
     void removeBackingUpUid(int uid);
     void clearAllBackingUpUids();
+
+    /** Returns the package responsible for backing up media on the device. */
+    @NonNull
+    String getMediaBackupPackage();
 
     /**
      * The user has started interacting with the app.  Take any appropriate action.
@@ -114,6 +94,31 @@ public interface JobSchedulerInternal {
                     + countAllJobsSaved + "/"
                     + countSystemServerJobsSaved + "/"
                     + countSystemSyncManagerJobsSaved;
+        }
+
+        /**
+         * Write the persist stats to the specified field.
+         */
+        public void dumpDebug(ProtoOutputStream proto, long fieldId) {
+            final long token = proto.start(fieldId);
+
+            final long flToken = proto.start(JobStorePersistStatsProto.FIRST_LOAD);
+            proto.write(JobStorePersistStatsProto.Stats.NUM_TOTAL_JOBS, countAllJobsLoaded);
+            proto.write(JobStorePersistStatsProto.Stats.NUM_SYSTEM_SERVER_JOBS,
+                    countSystemServerJobsLoaded);
+            proto.write(JobStorePersistStatsProto.Stats.NUM_SYSTEM_SYNC_MANAGER_JOBS,
+                    countSystemSyncManagerJobsLoaded);
+            proto.end(flToken);
+
+            final long lsToken = proto.start(JobStorePersistStatsProto.LAST_SAVE);
+            proto.write(JobStorePersistStatsProto.Stats.NUM_TOTAL_JOBS, countAllJobsSaved);
+            proto.write(JobStorePersistStatsProto.Stats.NUM_SYSTEM_SERVER_JOBS,
+                    countSystemServerJobsSaved);
+            proto.write(JobStorePersistStatsProto.Stats.NUM_SYSTEM_SYNC_MANAGER_JOBS,
+                    countSystemSyncManagerJobsSaved);
+            proto.end(lsToken);
+
+            proto.end(token);
         }
     }
 }

@@ -11,7 +11,7 @@
  * distributed under the License is distributed on an "AS IS" BASIS,
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
  * See the License for the specific language governing permissions and
- * limitations under the License
+ * limitations under the License.
  */
 
 package com.android.server.backup.encryption.chunking;
@@ -78,22 +78,22 @@ public class ChunkEncryptorTest {
 
         // Return NONCE_1, then NONCE_2 for invocations of mSecureRandomMock.nextBytes().
         doAnswer(
-                        new Answer<Void>() {
-                            private int mInvocation = 0;
+                    new Answer<Void>() {
+                        private int mInvocation = 0;
 
-                            @Override
-                            public Void answer(InvocationOnMock invocation) {
-                                byte[] nonceDestination = invocation.getArgument(0);
-                                System.arraycopy(
-                                        NONCES[this.mInvocation],
-                                        0,
-                                        nonceDestination,
-                                        0,
-                                        GCM_NONCE_LENGTH_BYTES);
-                                this.mInvocation++;
-                                return null;
-                            }
-                        })
+                        @Override
+                        public Void answer(InvocationOnMock invocation) {
+                            byte[] nonceDestination = invocation.getArgument(0);
+                            System.arraycopy(
+                                    NONCES[this.mInvocation],
+                                    0,
+                                    nonceDestination,
+                                    0,
+                                    GCM_NONCE_LENGTH_BYTES);
+                            this.mInvocation++;
+                            return null;
+                        }
+                    })
                 .when(mSecureRandomMock)
                 .nextBytes(any(byte[].class));
     }

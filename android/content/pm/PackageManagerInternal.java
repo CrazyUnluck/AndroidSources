@@ -16,29 +16,36 @@
 
 package android.content.pm;
 
+import android.annotation.AppIdInt;
 import android.annotation.IntDef;
 import android.annotation.NonNull;
 import android.annotation.Nullable;
 import android.annotation.UserIdInt;
+import android.annotation.WorkerThread;
 import android.content.ComponentName;
+import android.content.ContentResolver;
 import android.content.Intent;
 import android.content.IntentSender;
 import android.content.pm.PackageManager.ApplicationInfoFlags;
 import android.content.pm.PackageManager.ComponentInfoFlags;
 import android.content.pm.PackageManager.PackageInfoFlags;
 import android.content.pm.PackageManager.ResolveInfoFlags;
+import android.content.pm.parsing.component.ParsedMainComponent;
 import android.os.Bundle;
 import android.os.PersistableBundle;
+import android.util.ArrayMap;
 import android.util.ArraySet;
 import android.util.SparseArray;
 
-import com.android.internal.util.function.TriFunction;
+import com.android.server.pm.PackageList;
+import com.android.server.pm.PackageSetting;
+import com.android.server.pm.parsing.pkg.AndroidPackage;
 
 import java.io.IOException;
 import java.lang.annotation.Retention;
 import java.lang.annotation.RetentionPolicy;
+import java.util.Collection;
 import java.util.List;
-import java.util.function.BiFunction;
 import java.util.function.Consumer;
 
 /**
@@ -59,6 +66,50 @@ public abstract class PackageManagerInternal {
     public static final int PACKAGE_CONFIGURATOR = 9;
     public static final int PACKAGE_INCIDENT_REPORT_APPROVER = 10;
     public static final int PACKAGE_APP_PREDICTOR = 11;
+    public static final int PACKAGE_WIFI = 13;
+    public static final int PACKAGE_COMPANION = 14;
+    public static final int PACKAGE_RETAIL_DEMO = 15;
+
+    @IntDef(flag = true, prefix = "RESOLVE_", value = {
+            RESOLVE_NON_BROWSER_ONLY,
+            RESOLVE_NON_RESOLVER_ONLY
+    })
+    @Retention(RetentionPolicy.SOURCE)
+    public @interface PrivateResolveFlags {}
+
+    /**
+     * Internal {@link #resolveIntent(Intent, String, int, int, int, boolean, int)} flag:
+     * only match components that contain a generic web intent filter.
+     */
+    public static final int RESOLVE_NON_BROWSER_ONLY = 0x00000001;
+
+    /**
+     * Internal {@link #resolveIntent(Intent, String, int, int, int, boolean, int)} flag: do not
+     * match to the resolver.
+     */
+    public static final int RESOLVE_NON_RESOLVER_ONLY = 0x00000002;
+
+    @IntDef(value = {
+            INTEGRITY_VERIFICATION_ALLOW,
+            INTEGRITY_VERIFICATION_REJECT,
+    })
+    @Retention(RetentionPolicy.SOURCE)
+    public @interface IntegrityVerificationResult {}
+
+    /**
+     * Used as the {@code verificationCode} argument for
+     * {@link PackageManagerInternal#setIntegrityVerificationResult(int, int)} to indicate that the
+     * integrity component allows the install to proceed.
+     */
+    public static final int INTEGRITY_VERIFICATION_ALLOW = 1;
+
+    /**
+     * Used as the {@code verificationCode} argument for
+     * {@link PackageManagerInternal#setIntegrityVerificationResult(int, int)} to indicate that the
+     * integrity component does not allow install to proceed.
+     */
+    public static final int INTEGRITY_VERIFICATION_REJECT = 0;
+
     @IntDef(value = {
         PACKAGE_SYSTEM,
         PACKAGE_SETUP_WIZARD,
@@ -72,6 +123,9 @@ public abstract class PackageManagerInternal {
         PACKAGE_CONFIGURATOR,
         PACKAGE_INCIDENT_REPORT_APPROVER,
         PACKAGE_APP_PREDICTOR,
+        PACKAGE_WIFI,
+        PACKAGE_COMPANION,
+        PACKAGE_RETAIL_DEMO,
     })
     @Retention(RetentionPolicy.SOURCE)
     public @interface KnownPackage {}
@@ -85,165 +139,6 @@ public abstract class PackageManagerInternal {
         /** A package was removed from the system. */
         void onPackageRemoved(@NonNull String packageName, int uid);
     }
-
-    /** Interface to override permission checks via composition */
-    public interface CheckPermissionDelegate {
-        /**
-         * Allows overriding check permission behavior.
-         *
-         * @param permName The permission to check.
-         * @param pkgName The package for which to check.
-         * @param userId The user for which to check.
-         * @param superImpl The super implementation.
-         * @return The check permission result.
-         */
-        int checkPermission(String permName, String pkgName, int userId,
-                TriFunction<String, String, Integer, Integer> superImpl);
-
-        /**
-         * Allows overriding check UID permission behavior.
-         *
-         * @param permName The permission to check.
-         * @param uid The UID for which to check.
-         * @param superImpl The super implementation.
-         * @return The check permission result.
-         */
-        int checkUidPermission(String permName, int uid,
-                BiFunction<String, Integer, Integer> superImpl);
-    }
-
-    /**
-     * Provider for package names.
-     */
-    public interface PackagesProvider {
-
-        /**
-         * Gets the packages for a given user.
-         * @param userId The user id.
-         * @return The package names.
-         */
-        public String[] getPackages(int userId);
-    }
-
-    /**
-     * Provider for package names.
-     */
-    public interface SyncAdapterPackagesProvider {
-
-        /**
-         * Gets the sync adapter packages for given authority and user.
-         * @param authority The authority.
-         * @param userId The user id.
-         * @return The package names.
-         */
-        public String[] getPackages(String authority, int userId);
-    }
-
-    /**
-     * Provider for default browser
-     */
-    public interface DefaultBrowserProvider {
-
-        /**
-         * Get the package name of the default browser.
-         *
-         * @param userId the user id
-         *
-         * @return the package name of the default browser, or {@code null} if none
-         */
-        @Nullable
-        String getDefaultBrowser(@UserIdInt int userId);
-
-        /**
-         * Set the package name of the default browser.
-         *
-         * @param packageName package name of the default browser, or {@code null} to remove
-         * @param userId the user id
-         *
-         * @return whether the default browser was successfully set.
-         */
-        boolean setDefaultBrowser(@Nullable String packageName, @UserIdInt int userId);
-
-        /**
-         * Set the package name of the default browser asynchronously.
-         *
-         * @param packageName package name of the default browser, or {@code null} to remove
-         * @param userId the user id
-         */
-        void setDefaultBrowserAsync(@Nullable String packageName, @UserIdInt int userId);
-    }
-
-    /**
-     * Provider for default dialer
-     */
-    public interface DefaultDialerProvider {
-
-        /**
-         * Get the package name of the default dialer.
-         *
-         * @param userId the user id
-         *
-         * @return the package name of the default dialer, or {@code null} if none
-         */
-        @Nullable
-        String getDefaultDialer(@UserIdInt int userId);
-    }
-
-    /**
-     * Provider for default home
-     */
-    public interface DefaultHomeProvider {
-
-        /**
-         * Get the package name of the default home.
-         *
-         * @param userId the user id
-         *
-         * @return the package name of the default home, or {@code null} if none
-         */
-        @Nullable
-        String getDefaultHome(@UserIdInt int userId);
-
-        /**
-         * Set the package name of the default home.
-         *
-         * @param packageName package name of the default home, or {@code null} to remove
-         * @param userId the user id
-         * @param callback the callback made after the default home as been updated
-         */
-        void setDefaultHomeAsync(@Nullable String packageName, @UserIdInt int userId,
-                @NonNull Consumer<Boolean> callback);
-    }
-
-    /**
-     * Sets the location provider packages provider.
-     * @param provider The packages provider.
-     */
-    public abstract void setLocationPackagesProvider(PackagesProvider provider);
-
-    /**
-     * Set the location extra packages provider.
-     * @param provider The packages provider.
-     */
-    public abstract  void setLocationExtraPackagesProvider(PackagesProvider provider);
-
-    /**
-     * Sets the voice interaction packages provider.
-     * @param provider The packages provider.
-     */
-    public abstract void setVoiceInteractionPackagesProvider(PackagesProvider provider);
-
-    /**
-     * Sets the Use Open Wifi packages provider.
-     * @param provider The packages provider.
-     */
-    public abstract void setUseOpenWifiAppPackagesProvider(PackagesProvider provider);
-
-    /**
-     * Sets the sync adapter packages provider.
-     * @param provider The provider.
-     */
-    public abstract void setSyncAdapterPackagesprovider(SyncAdapterPackagesProvider provider);
 
     /**
      * Called when the package for the default SMS handler changed
@@ -260,14 +155,6 @@ public abstract class PackageManagerInternal {
      * @param userId user for which the change was made
      */
     public void onDefaultSimCallManagerAppChanged(String packageName, int userId) {}
-
-    /**
-     * Requests granting of the default permissions to the current default Use Open Wifi app.
-     * @param packageName The default use open wifi package name.
-     * @param userId The user for which to grant the permissions.
-     */
-    public abstract void grantDefaultPermissionsToDefaultUseOpenWifiApp(String packageName,
-            int userId);
 
     /**
      * Sets a list of apps to keep in PM's internal data structures and as APKs even if no user has
@@ -295,10 +182,16 @@ public abstract class PackageManagerInternal {
             @PackageInfoFlags int flags, int filterCallingUid, int userId);
 
     /**
+     * Retrieve CE data directory inode number of an application.
+     * Return 0 if there's error.
+     */
+    public abstract long getCeDataInode(String packageName, int userId);
+
+    /**
      * Return a List of all application packages that are installed on the
      * device, for a specific user. If flag GET_UNINSTALLED_PACKAGES has been
      * set, a list of all applications including those deleted with
-     * {@code DONT_DELETE_DATA} (partially installed apps with data directory)
+     * {@code DELETE_KEEP_DATA} (partially installed apps with data directory)
      * will be returned.
      *
      * @param flags Additional option flags to modify the data returned.
@@ -312,7 +205,7 @@ public abstract class PackageManagerInternal {
      *         information is retrieved from the list of uninstalled
      *         applications (which includes installed applications as well as
      *         applications with data directory i.e. applications which had been
-     *         deleted with {@code DONT_DELETE_DATA} flag set).
+     *         deleted with {@code DELETE_KEEP_DATA} flag set).
      */
     public abstract List<ApplicationInfo> getInstalledApplications(
             @ApplicationInfoFlags int flags, @UserIdInt int userId, int callingUid);
@@ -343,6 +236,34 @@ public abstract class PackageManagerInternal {
     public abstract boolean isPackageSuspended(String packageName, int userId);
 
     /**
+     * Removes all package suspensions imposed by any non-system packages.
+     */
+    public abstract void removeAllNonSystemPackageSuspensions(int userId);
+
+    /**
+     * Removes all suspensions imposed on the given package by non-system packages.
+     */
+    public abstract void removeNonSystemPackageSuspensions(String packageName, int userId);
+
+    /**
+     * Removes all {@link PackageManager.DistractionRestriction restrictions} set on the given
+     * package
+     */
+    public abstract void removeDistractingPackageRestrictions(String packageName, int userId);
+
+    /**
+     * Removes all {@link PackageManager.DistractionRestriction restrictions} set on all the
+     * packages.
+     */
+    public abstract void removeAllDistractingPackageRestrictions(int userId);
+
+    /**
+     * Flushes package restrictions for the given user immediately to disk.
+     */
+    @WorkerThread
+    public abstract void flushPackageRestrictions(int userId);
+
+    /**
      * Get the name of the package that suspended the given package. Packages can be suspended by
      * device administrators or apps holding {@link android.Manifest.permission#MANAGE_USERS} or
      * {@link android.Manifest.permission#SUSPEND_APPS}.
@@ -360,11 +281,13 @@ public abstract class PackageManagerInternal {
      * suspended application.
      *
      * @param suspendedPackage The package that has been suspended.
+     * @param suspendingPackage
      * @param userId The user for which to check.
      * @return A {@link SuspendDialogInfo} object describing the dialog to be shown.
      */
     @Nullable
-    public abstract SuspendDialogInfo getSuspendedDialogInfo(String suspendedPackage, int userId);
+    public abstract SuspendDialogInfo getSuspendedDialogInfo(String suspendedPackage,
+            String suspendingPackage, int userId);
 
     /**
      * Gets any distraction flags set via
@@ -378,11 +301,23 @@ public abstract class PackageManagerInternal {
             String packageName, int userId);
 
     /**
+     * Do a straight uid lookup for the given package/application in the given user. This enforces
+     * app visibility rules and permissions. Call {@link #getPackageUidInternal} for the internal
+     * implementation.
+     * @deprecated Use {@link PackageManager#getPackageUid(String, int)}
+     * @return The app's uid, or < 0 if the package was not found in that user
+     */
+    @Deprecated
+    public abstract int getPackageUid(String packageName,
+            @PackageInfoFlags int flags, int userId);
+
+    /**
      * Do a straight uid lookup for the given package/application in the given user.
      * @see PackageManager#getPackageUidAsUser(String, int, int)
      * @return The app's uid, or < 0 if the package was not found in that user
+     * TODO(b/148235092): rename this to getPackageUid
      */
-    public abstract int getPackageUid(String packageName,
+    public abstract int getPackageUidInternal(String packageName,
             @PackageInfoFlags int flags, int userId);
 
     /**
@@ -405,12 +340,16 @@ public abstract class PackageManagerInternal {
 
     /**
      * Retrieve all activities that can be performed for the given intent.
+     * @param resolvedType the resolved type of the intent, which should be resolved via
+     * {@link Intent#resolveTypeIfNeeded(ContentResolver)} before passing to {@link PackageManager}
      * @param filterCallingUid The results will be filtered in the context of this UID instead
      * of the calling UID.
      * @see PackageManager#queryIntentActivities(Intent, int)
      */
-    public abstract List<ResolveInfo> queryIntentActivities(Intent intent,
-            @ResolveInfoFlags int flags, int filterCallingUid, int userId);
+    public abstract List<ResolveInfo> queryIntentActivities(
+            Intent intent, @Nullable String resolvedType, @ResolveInfoFlags int flags,
+            int filterCallingUid, int userId);
+
 
     /**
      * Retrieve all services that can be performed for the given intent.
@@ -431,11 +370,22 @@ public abstract class PackageManagerInternal {
     public abstract ComponentName getDefaultHomeActivity(int userId);
 
     /**
+     * @return The SystemUI service component name.
+     */
+    public abstract ComponentName getSystemUiServiceComponent();
+
+    /**
      * Called by DeviceOwnerManagerService to set the package names of device owner and profile
      * owners.
      */
     public abstract void setDeviceAndProfileOwnerPackages(
             int deviceOwnerUserId, String deviceOwner, SparseArray<String> profileOwners);
+
+    /**
+     * Called by DevicePolicyManagerService to set the package names protected by the device
+     * owner.
+     */
+    public abstract void setDeviceOwnerProtectedPackages(List<String> packageNames);
 
     /**
      * Returns {@code true} if a given package can't be wiped. Otherwise, returns {@code false}.
@@ -464,26 +414,6 @@ public abstract class PackageManagerInternal {
     public abstract boolean wasPackageEverLaunched(String packageName, int userId);
 
     /**
-     * Grants a runtime permission
-     * @param packageName The package name.
-     * @param name The name of the permission.
-     * @param userId The userId for which to grant the permission.
-     * @param overridePolicy If true, grant this permission even if it is fixed by policy.
-     */
-    public abstract void grantRuntimePermission(String packageName, String name, int userId,
-            boolean overridePolicy);
-
-    /**
-     * Revokes a runtime permission
-     * @param packageName The package name.
-     * @param name The name of the permission.
-     * @param userId The userId for which to revoke the permission.
-     * @param overridePolicy If true, revoke this permission even if it is fixed by policy.
-     */
-    public abstract void revokeRuntimePermission(String packageName, String name, int userId,
-            boolean overridePolicy);
-
-    /**
      * Retrieve the official name associated with a uid. This name is
      * guaranteed to never change, though it is possible for the underlying
      * uid to be changed. That is, if you are storing information about
@@ -501,35 +431,46 @@ public abstract class PackageManagerInternal {
      * @param responseObj The response of the first phase of ephemeral resolution
      * @param origIntent The original intent that triggered ephemeral resolution
      * @param resolvedType The resolved type of the intent
-     * @param callingPackage The name of the package requesting the ephemeral application
+     * @param callingPkg The app requesting the ephemeral application
+     * @param callingFeatureId The feature in the package
+     * @param isRequesterInstantApp Whether or not the app requesting the ephemeral application
+     *                              is an instant app
      * @param verificationBundle Optional bundle to pass to the installer for additional
      * verification
      * @param userId The ID of the user that triggered ephemeral resolution
      */
     public abstract void requestInstantAppResolutionPhaseTwo(AuxiliaryResolveInfo responseObj,
-            Intent origIntent, String resolvedType, String callingPackage,
+            Intent origIntent, String resolvedType, String callingPkg,
+            @Nullable String callingFeatureId, boolean isRequesterInstantApp,
             Bundle verificationBundle, int userId);
 
     /**
-     * Grants access to the package metadata for an ephemeral application.
+     * Grants implicit access based on an interaction between two apps. This grants access to the
+     * from one application to the other's package metadata.
      * <p>
-     * When an ephemeral application explicitly tries to interact with a full
-     * install application [via an activity, service or provider that has been
-     * exposed using the {@code visibleToInstantApp} attribute], the normal
-     * application must be able to see metadata about the connecting ephemeral
-     * app. If the ephemeral application uses an implicit intent [ie action VIEW,
-     * category BROWSABLE], it remains hidden from the launched activity.
+     * When an application explicitly tries to interact with another application [via an
+     * activity, service or provider that is either declared in the caller's
+     * manifest via the {@code <queries>} tag or has been exposed via the target apps manifest using
+     * the {@code visibleToInstantApp} attribute], the target application must be able to see
+     * metadata about the calling app. If the calling application uses an implicit intent [ie
+     * action VIEW, category BROWSABLE], it remains hidden from the launched app.
      * <p>
-     * If the {@code sourceUid} is not for an ephemeral app or {@code targetUid}
-     * is not for a fully installed app, this method will be a no-op.
-     *
+     * If an interaction is not explicit, the {@code direct} argument should be set to false as
+     * visibility should not be granted in some cases. This method handles that logic.
+     * <p>
      * @param userId the user
      * @param intent the intent that triggered the grant
-     * @param targetAppId The app ID of the fully installed application
-     * @param ephemeralAppId The app ID of the ephemeral application
+     * @param recipientAppId The app ID of the application that is being given access to {@code
+     *                       visibleUid}
+     * @param visibleUid The uid of the application that is becoming accessible to {@code
+     *                   recipientAppId}
+     * @param direct true if the access is being made due to direct interaction between visibleUid
+     *               and recipientAppId.
      */
-    public abstract void grantEphemeralAccess(int userId, Intent intent,
-            int targetAppId, int ephemeralAppId);
+    public abstract void grantImplicitAccess(
+            @UserIdInt int userId, Intent intent,
+            @AppIdInt int recipientAppId, int visibleUid,
+            boolean direct);
 
     public abstract boolean isInstantAppInstallerComponent(ComponentName component);
     /**
@@ -537,6 +478,12 @@ public abstract class PackageManagerInternal {
      * instant apps according to the current platform policy.
      */
     public abstract void pruneInstantApps();
+
+    /**
+     * Prunes the cache of the APKs in the given APEXes.
+     * @param apexPackages The list of APEX packages that may contain APK-in-APEX.
+     */
+    public abstract void pruneCachedApksInApex(@NonNull List<PackageInfo> apexPackages);
 
     /**
      * @return The SetupWizard package name.
@@ -570,12 +517,6 @@ public abstract class PackageManagerInternal {
     public abstract boolean isPackagePersistent(String packageName);
 
     /**
-     * Returns whether or not the given package represents a legacy system application released
-     * prior to runtime permissions.
-     */
-    public abstract boolean isLegacySystemApp(PackageParser.Package pkg);
-
-    /**
      * Get all overlay packages for a user.
      * @param userId The user for which to get the overlays.
      * @return A list of overlay packages. An empty list is returned if the
@@ -599,16 +540,19 @@ public abstract class PackageManagerInternal {
      *                            will be disabled. Pass in null or an empty list to disable
      *                            all overlays. The order of the items is significant if several
      *                            overlays modify the same resource.
+     * @param outUpdatedPackageNames An output list that contains the package names of packages
+     *                               affected by the update of enabled overlays.
      * @return true if all packages names were known by the package manager, false otherwise
      */
     public abstract boolean setEnabledOverlayPackages(int userId, String targetPackageName,
-            List<String> overlayPackageNames);
+            List<String> overlayPackageNames, Collection<String> outUpdatedPackageNames);
 
     /**
      * Resolves an activity intent, allowing instant apps to be resolved.
      */
     public abstract ResolveInfo resolveIntent(Intent intent, String resolvedType,
-            int flags, int userId, boolean resolveForStart, int filterCallingUid);
+            int flags, @PrivateResolveFlags int privateResolveFlags, int userId,
+            boolean resolveForStart, int filterCallingUid);
 
     /**
     * Resolves a service intent, allowing instant apps to be resolved.
@@ -665,7 +609,15 @@ public abstract class PackageManagerInternal {
     /**
      * Returns a package object for the given package name.
      */
-    public abstract @Nullable PackageParser.Package getPackage(@NonNull String packageName);
+    public abstract @Nullable AndroidPackage getPackage(@NonNull String packageName);
+
+    public abstract @Nullable PackageSetting getPackageSetting(String packageName);
+
+    /**
+     * Returns a package for the given UID. If the UID is part of a shared user ID, one
+     * of the packages will be chosen to be returned.
+     */
+    public abstract @Nullable AndroidPackage getPackage(int uid);
 
     /**
      * Returns a list without a change observer.
@@ -699,14 +651,15 @@ public abstract class PackageManagerInternal {
     /**
      * Returns a package object for the disabled system package name.
      */
-    public abstract @Nullable PackageParser.Package getDisabledSystemPackage(
-            @NonNull String packageName);
+    public abstract @Nullable PackageSetting getDisabledSystemPackage(@NonNull String packageName);
 
     /**
      * Returns the package name for the disabled system package.
      *
      * This is equivalent to
-     * {@link #getDisabledSystemPackage(String)}.{@link PackageParser.Package#packageName}
+     * {@link #getDisabledSystemPackage(String)}
+     *     .{@link PackageSetting#pkg}
+     *     .{@link AndroidPackage#getPackageName()}
      */
     public abstract @Nullable String getDisabledSystemPackageName(@NonNull String packageName);
 
@@ -715,10 +668,11 @@ public abstract class PackageManagerInternal {
      */
     public abstract boolean isResolveActivityComponent(@NonNull ComponentInfo component);
 
+
     /**
-     * Returns the package name for a known package.
+     * Returns a list of package names for a known package
      */
-    public abstract @Nullable String getKnownPackageName(
+    public abstract @NonNull String[] getKnownPackageNames(
             @KnownPackage int knownPackage, int userId);
 
     /**
@@ -740,18 +694,15 @@ public abstract class PackageManagerInternal {
      * @see #canAccessInstantApps
      */
     public abstract boolean filterAppAccess(
-            @Nullable PackageParser.Package pkg, int callingUid, int userId);
+            @NonNull AndroidPackage pkg, int callingUid, int userId);
 
-    /*
-     * NOTE: The following methods are temporary until permissions are extracted from
-     * the package manager into a component specifically for handling permissions.
+    /**
+     * Returns whether or not access to the application should be filtered.
+     *
+     * @see #filterAppAccess(AndroidPackage, int, int)
      */
-    /** Returns the flags for the given permission. */
-    public abstract @Nullable int getPermissionFlagsTEMP(@NonNull String permName,
-            @NonNull String packageName, int userId);
-    /** Updates the flags for the given permission. */
-    public abstract void updatePermissionFlagsTEMP(@NonNull String permName,
-            @NonNull String packageName, int flagMask, int flagValues, int userId);
+    public abstract boolean filterAppAccess(
+            @NonNull String packageName, int callingUid, int userId);
 
     /** Returns whether the given package was signed by the platform */
     public abstract boolean isPlatformSigned(String pkg);
@@ -782,20 +733,6 @@ public abstract class PackageManagerInternal {
             @PackageParser.SigningDetails.CertCapabilities int capability);
 
     /**
-     * Get the delegate to influence permission checking.
-     *
-     * @return The delegate instance or null to clear.
-     */
-    public abstract @Nullable CheckPermissionDelegate getCheckPermissionDelegate();
-
-    /**
-     * Set a delegate to influence permission checking.
-     *
-     * @param delegate A delegate instance or null to clear.
-     */
-    public abstract void setCheckPermissionDelegate(@Nullable CheckPermissionDelegate delegate);
-
-    /**
      * Get appIds of all available apps which specified android:sharedUserId in the manifest.
      *
      * @return a SparseArray mapping from appId to it's sharedUserId.
@@ -803,16 +740,33 @@ public abstract class PackageManagerInternal {
     public abstract SparseArray<String> getAppsWithSharedUserIds();
 
     /**
-     * Get the value of attribute android:sharedUserId for the given packageName if specified,
-     * otherwise {@code null}.
+     * Get all packages which share the same userId as the specified package, or an empty array
+     * if the package does not have a shared userId.
      */
-    public abstract String getSharedUserIdForPackage(@NonNull String packageName);
+    @NonNull
+    public abstract String[] getSharedUserPackagesForPackage(@NonNull String packageName,
+            int userId);
 
     /**
-     * Get all packages which specified the given sharedUserId as android:sharedUserId attribute
-     * or an empty array if no package specified it.
+     * Return the processes that have been declared for a uid.
+     *
+     * @param uid The uid to query.
+     *
+     * @return Returns null if there are no declared processes for the uid; otherwise,
+     * returns the set of processes it declared.
      */
-    public abstract String[] getPackagesForSharedUserId(@NonNull String sharedUserId, int userId);
+    public abstract ArrayMap<String, ProcessInfo> getProcessesForUid(int uid);
+
+    /**
+     * Return the gids associated with a particular permission.
+     *
+     * @param permissionName The name of the permission to query.
+     * @param userId The user id the gids will be associated with.
+     *
+     * @return Returns null if there are no gids associated with the permission, otherwise an
+     * array if the gid ints.
+     */
+    public abstract int[] getPermissionGids(String permissionName, int userId);
 
     /**
      * Return if device is currently in a "core" boot environment, typically
@@ -831,25 +785,34 @@ public abstract class PackageManagerInternal {
             throws IOException;
 
     /** Returns {@code true} if the specified component is enabled and matches the given flags. */
-    public abstract boolean isEnabledAndMatches(@NonNull ComponentInfo info, int flags, int userId);
+    public abstract boolean isEnabledAndMatches(@NonNull ParsedMainComponent component, int flags,
+            int userId);
 
     /** Returns {@code true} if the given user requires extra badging for icons. */
     public abstract boolean userNeedsBadging(int userId);
 
     /**
      * Perform the given action for each package.
-     * Note that packages lock will be held while performin the actions.
+     * Note that packages lock will be held while performing the actions.
      *
      * @param actionLocked action to be performed
      */
-    public abstract void forEachPackage(Consumer<PackageParser.Package> actionLocked);
+    public abstract void forEachPackage(Consumer<AndroidPackage> actionLocked);
+
+    /**
+     * Perform the given action for each {@link PackageSetting}.
+     * Note that packages lock will be held while performing the actions.
+     *
+     * @param actionLocked action to be performed
+     */
+    public abstract void forEachPackageSetting(Consumer<PackageSetting> actionLocked);
 
     /**
      * Perform the given action for each installed package for a user.
      * Note that packages lock will be held while performin the actions.
      */
     public abstract void forEachInstalledPackage(
-            @NonNull Consumer<PackageParser.Package> actionLocked, @UserIdInt int userId);
+            @NonNull Consumer<AndroidPackage> actionLocked, @UserIdInt int userId);
 
     /** Returns the list of enabled components */
     public abstract ArraySet<String> getEnabledComponents(String packageName, int userId);
@@ -869,24 +832,11 @@ public abstract class PackageManagerInternal {
             "android.content.pm.extra.ENABLE_ROLLBACK_TOKEN";
 
     /**
-     * Extra field name for the installFlags of a request to enable rollback
+     * Extra field name for the session id of a request to enable rollback
      * for a package.
      */
-    public static final String EXTRA_ENABLE_ROLLBACK_INSTALL_FLAGS =
-            "android.content.pm.extra.ENABLE_ROLLBACK_INSTALL_FLAGS";
-
-    /**
-     * Extra field name for the set of installed users for a given rollback package.
-     */
-    public static final String EXTRA_ENABLE_ROLLBACK_INSTALLED_USERS =
-            "android.content.pm.extra.ENABLE_ROLLBACK_INSTALLED_USERS";
-
-    /**
-     * Extra field name for the user id an install is associated with when
-     * enabling rollback.
-     */
-    public static final String EXTRA_ENABLE_ROLLBACK_USER =
-            "android.content.pm.extra.ENABLE_ROLLBACK_USER";
+    public static final String EXTRA_ENABLE_ROLLBACK_SESSION_ID =
+            "android.content.pm.extra.ENABLE_ROLLBACK_SESSION_ID";
 
     /**
      * Used as the {@code enableRollbackCode} argument for
@@ -940,30 +890,15 @@ public abstract class PackageManagerInternal {
     public abstract String removeLegacyDefaultBrowserPackageName(int userId);
 
     /**
-     * Sets the default browser provider.
-     *
-     * @param provider the provider
-     */
-    public abstract void setDefaultBrowserProvider(@NonNull DefaultBrowserProvider provider);
-
-    /**
-     * Sets the default dialer provider.
-     *
-     * @param provider the provider
-     */
-    public abstract void setDefaultDialerProvider(@NonNull DefaultDialerProvider provider);
-
-    /**
-     * Sets the default home provider.
-     *
-     * @param provider the provider
-     */
-    public abstract void setDefaultHomeProvider(@NonNull DefaultHomeProvider provider);
-
-    /**
      * Returns {@code true} if given {@code packageName} is an apex package.
      */
     public abstract boolean isApexPackage(String packageName);
+
+    /**
+     * Returns list of {@code packageName} of apks inside the given apex.
+     * @param apexPackageName Package name of the apk container of apex
+     */
+    public abstract List<String> getApksInApex(String apexPackageName);
 
     /**
      * Uninstalls given {@code packageName}.
@@ -973,30 +908,94 @@ public abstract class PackageManagerInternal {
      * @param userId user to uninstall apex package for. Must be
      *               {@link android.os.UserHandle#USER_ALL}, otherwise failure will be reported.
      * @param intentSender a {@link IntentSender} to send result of an uninstall to.
+     * @param flags flags about the uninstall.
      */
     public abstract void uninstallApex(String packageName, long versionCode, int userId,
-            IntentSender intentSender);
+            IntentSender intentSender, int flags);
 
     /**
-     * Whether default permission grants have been performed for a user
-     * since the device booted.
-     *
-     * @param userId The user id.
-     * @return true if default permissions
-     */
-    public abstract boolean wereDefaultPermissionsGrantedSinceBoot(int userId);
-
-    /**
-     * Get fingerprint of build that updated the runtime permissions for a user.
+     * Update fingerprint of build that updated the runtime permissions for a user.
      *
      * @param userId The user to update
-     * @param fingerPrint The fingerprint to set
      */
-    public abstract void setRuntimePermissionsFingerPrint(@NonNull String fingerPrint,
-            @UserIdInt int userId);
+    public abstract void updateRuntimePermissionsFingerprint(@UserIdInt int userId);
 
     /**
      * Migrates legacy obb data to its new location.
      */
     public abstract void migrateLegacyObbData();
+
+    /**
+     * Writes all package manager settings to disk. If {@code async} is {@code true}, the
+     * settings are written at some point in the future. Otherwise, the call blocks until
+     * the settings have been written.
+     */
+    public abstract void writeSettings(boolean async);
+
+    /**
+     * Writes all permission settings for the given set of users to disk. If {@code async}
+     * is {@code true}, the settings are written at some point in the future. Otherwise,
+     * the call blocks until the settings have been written.
+     */
+    public abstract void writePermissionSettings(@NonNull @UserIdInt int[] userIds, boolean async);
+
+    /**
+     * Returns {@code true} if the caller is the installer of record for the given package.
+     * Otherwise, {@code false}.
+     */
+    public abstract boolean isCallerInstallerOfRecord(
+            @NonNull AndroidPackage pkg, int callingUid);
+
+    /** Returns whether or not permissions need to be upgraded for the given user */
+    public abstract boolean isPermissionUpgradeNeeded(@UserIdInt int userId);
+
+    /** Sets the enforcement of reading external storage */
+    public abstract void setReadExternalStorageEnforced(boolean enforced);
+
+    /**
+     * Allows the integrity component to respond to the
+     * {@link Intent#ACTION_PACKAGE_NEEDS_INTEGRITY_VERIFICATION package verification
+     * broadcast} to respond to the package manager. The response must include
+     * the {@code verificationCode} which is one of
+     * {@link #INTEGRITY_VERIFICATION_ALLOW} and {@link #INTEGRITY_VERIFICATION_REJECT}.
+     *
+     * @param verificationId pending package identifier as passed via the
+     *            {@link PackageManager#EXTRA_VERIFICATION_ID} Intent extra.
+     * @param verificationResult either {@link #INTEGRITY_VERIFICATION_ALLOW}
+     *            or {@link #INTEGRITY_VERIFICATION_REJECT}.
+     */
+    public abstract void setIntegrityVerificationResult(int verificationId,
+            @IntegrityVerificationResult int verificationResult);
+
+    /**
+     * Returns MIME types contained in {@code mimeGroup} from {@code packageName} package
+     */
+    public abstract List<String> getMimeGroup(String packageName, String mimeGroup);
+
+    /**
+     * Toggles visibility logging to help in debugging the app enumeration feature.
+     * @param packageName the package name that should begin logging
+     * @param enabled true if visibility blocks should be logged
+     */
+    public abstract void setVisibilityLogging(String packageName, boolean enabled);
+
+    /**
+     * Returns if a package name is a valid system package.
+     */
+    public abstract boolean isSystemPackage(@NonNull String packageName);
+
+    /**
+     * Unblocks uninstall for all packages for the user.
+     */
+    public abstract void clearBlockUninstallForUser(@UserIdInt int userId);
+
+    /**
+     * Unsuspends all packages suspended by the given package for the user.
+     */
+    public abstract void unsuspendForSuspendingPackage(String suspendingPackage, int userId);
+
+    /**
+     * Returns {@code true} if the package is suspending any packages for the user.
+     */
+    public abstract boolean isSuspendingAnyPackages(String suspendingPackage, int userId);
 }

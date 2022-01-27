@@ -20,6 +20,8 @@ import static android.net.NetworkCapabilities.LINK_BANDWIDTH_UNSPECIFIED;
 import static android.net.NetworkCapabilities.NET_CAPABILITY_NOT_CONGESTED;
 import static android.net.NetworkCapabilities.NET_CAPABILITY_NOT_METERED;
 
+import static com.android.server.job.JobSchedulerService.RESTRICTED_INDEX;
+
 import android.app.job.JobInfo;
 import android.net.ConnectivityManager;
 import android.net.ConnectivityManager.NetworkCallback;
@@ -29,13 +31,14 @@ import android.net.NetworkCapabilities;
 import android.net.NetworkInfo;
 import android.net.NetworkPolicyManager;
 import android.net.NetworkRequest;
-import android.net.TrafficStats;
 import android.os.Handler;
 import android.os.Looper;
 import android.os.Message;
 import android.os.UserHandle;
 import android.text.format.DateUtils;
+import android.util.ArrayMap;
 import android.util.ArraySet;
+import android.util.DataUnit;
 import android.util.Log;
 import android.util.Slog;
 import android.util.SparseArray;
@@ -47,7 +50,6 @@ import com.android.internal.util.IndentingPrintWriter;
 import com.android.server.LocalServices;
 import com.android.server.job.JobSchedulerService;
 import com.android.server.job.JobSchedulerService.Constants;
-import com.android.server.job.JobServiceContext;
 import com.android.server.job.StateControllerProto;
 import com.android.server.net.NetworkPolicyManagerInternal;
 
@@ -63,7 +65,7 @@ import java.util.function.Predicate;
  *
  * Test: atest com.android.server.job.controllers.ConnectivityControllerTest
  */
-public final class ConnectivityController extends StateController implements
+public final class ConnectivityController extends RestrictingController implements
         ConnectivityManager.OnNetworkActiveListener {
     private static final String TAG = "JobScheduler.Connectivity";
     private static final boolean DEBUG = JobSchedulerService.DEBUG
@@ -90,6 +92,7 @@ public final class ConnectivityController extends StateController implements
 
     private static final int MSG_DATA_SAVER_TOGGLED = 0;
     private static final int MSG_UID_RULES_CHANGES = 1;
+    private static final int MSG_REEVALUATE_JOBS = 2;
 
     private final Handler mHandler;
 
@@ -137,22 +140,26 @@ public final class ConnectivityController extends StateController implements
         }
     }
 
-    @GuardedBy("mLock")
     @Override
-    public void onConstantsUpdatedLocked() {
-        if (mConstants.USE_HEARTBEATS) {
-            // App idle exceptions are only requested for the rolling quota system.
-            if (DEBUG) Slog.i(TAG, "Revoking all standby exceptions");
-            for (int i = 0; i < mRequestedWhitelistJobs.size(); ++i) {
-                int uid = mRequestedWhitelistJobs.keyAt(i);
-                mNetPolicyManagerInternal.setAppIdleWhitelist(uid, false);
-            }
-            mRequestedWhitelistJobs.clear();
+    public void startTrackingRestrictedJobLocked(JobStatus jobStatus) {
+        // Don't need to start tracking the job. If the job needed network, it would already be
+        // tracked.
+        if (jobStatus.hasConnectivityConstraint()) {
+            updateConstraintsSatisfied(jobStatus);
+        }
+    }
+
+    @Override
+    public void stopTrackingRestrictedJobLocked(JobStatus jobStatus) {
+        // Shouldn't stop tracking the job here. If the job was tracked, it still needs network,
+        // even after being unrestricted.
+        if (jobStatus.hasConnectivityConstraint()) {
+            updateConstraintsSatisfied(jobStatus);
         }
     }
 
     /**
-     * Returns true if the job's requested network is available. This DOES NOT necesarilly mean
+     * Returns true if the job's requested network is available. This DOES NOT necessarily mean
      * that the UID has been granted access to the network.
      */
     public boolean isNetworkAvailable(JobStatus job) {
@@ -228,11 +235,6 @@ public final class ConnectivityController extends StateController implements
     @GuardedBy("mLock")
     @Override
     public void evaluateStateLocked(JobStatus jobStatus) {
-        if (mConstants.USE_HEARTBEATS) {
-            // This should only be used for the rolling quota system.
-            return;
-        }
-
         if (!jobStatus.hasConnectivityConstraint()) {
             return;
         }
@@ -254,9 +256,6 @@ public final class ConnectivityController extends StateController implements
     @GuardedBy("mLock")
     @Override
     public void reevaluateStateLocked(final int uid) {
-        if (mConstants.USE_HEARTBEATS) {
-            return;
-        }
         // Check if we still need a connectivity exception in case the JobService was disabled.
         ArraySet<JobStatus> jobs = mTrackedJobs.get(uid);
         if (jobs == null) {
@@ -318,38 +317,49 @@ public final class ConnectivityController extends StateController implements
      * connection, it would take 10.4 minutes, and has no chance of succeeding
      * before the job times out, so we'd be insane to try running it.
      */
-    @SuppressWarnings("unused")
-    private static boolean isInsane(JobStatus jobStatus, Network network,
+    private boolean isInsane(JobStatus jobStatus, Network network,
             NetworkCapabilities capabilities, Constants constants) {
-        final long estimatedBytes = jobStatus.getEstimatedNetworkBytes();
-        if (estimatedBytes == JobInfo.NETWORK_BYTES_UNKNOWN) {
-            // We don't know how large the job is; cross our fingers!
-            return false;
+        final long maxJobExecutionTimeMs = mService.getMaxJobExecutionTimeMs(jobStatus);
+
+        final long downloadBytes = jobStatus.getEstimatedNetworkDownloadBytes();
+        if (downloadBytes != JobInfo.NETWORK_BYTES_UNKNOWN) {
+            final long bandwidth = capabilities.getLinkDownstreamBandwidthKbps();
+            // If we don't know the bandwidth, all we can do is hope the job finishes in time.
+            if (bandwidth != LINK_BANDWIDTH_UNSPECIFIED) {
+                // Divide by 8 to convert bits to bytes.
+                final long estimatedMillis = ((downloadBytes * DateUtils.SECOND_IN_MILLIS)
+                        / (DataUnit.KIBIBYTES.toBytes(bandwidth) / 8));
+                if (estimatedMillis > maxJobExecutionTimeMs) {
+                    // If we'd never finish before the timeout, we'd be insane!
+                    Slog.w(TAG, "Estimated " + downloadBytes + " download bytes over " + bandwidth
+                            + " kbps network would take " + estimatedMillis + "ms and job has "
+                            + maxJobExecutionTimeMs + "ms to run; that's insane!");
+                    return true;
+                }
+            }
         }
 
-        // We don't ask developers to differentiate between upstream/downstream
-        // in their size estimates, so test against the slowest link direction.
-        final long slowest = NetworkCapabilities.minBandwidth(
-                capabilities.getLinkDownstreamBandwidthKbps(),
-                capabilities.getLinkUpstreamBandwidthKbps());
-        if (slowest == LINK_BANDWIDTH_UNSPECIFIED) {
-            // We don't know what the network is like; cross our fingers!
-            return false;
+        final long uploadBytes = jobStatus.getEstimatedNetworkUploadBytes();
+        if (uploadBytes != JobInfo.NETWORK_BYTES_UNKNOWN) {
+            final long bandwidth = capabilities.getLinkUpstreamBandwidthKbps();
+            // If we don't know the bandwidth, all we can do is hope the job finishes in time.
+            if (bandwidth != LINK_BANDWIDTH_UNSPECIFIED) {
+                // Divide by 8 to convert bits to bytes.
+                final long estimatedMillis = ((uploadBytes * DateUtils.SECOND_IN_MILLIS)
+                        / (DataUnit.KIBIBYTES.toBytes(bandwidth) / 8));
+                if (estimatedMillis > maxJobExecutionTimeMs) {
+                    // If we'd never finish before the timeout, we'd be insane!
+                    Slog.w(TAG, "Estimated " + uploadBytes + " upload bytes over " + bandwidth
+                            + " kbps network would take " + estimatedMillis + "ms and job has "
+                            + maxJobExecutionTimeMs + "ms to run; that's insane!");
+                    return true;
+                }
+            }
         }
 
-        final long estimatedMillis = ((estimatedBytes * DateUtils.SECOND_IN_MILLIS)
-                / (slowest * TrafficStats.KB_IN_BYTES / 8));
-        if (estimatedMillis > JobServiceContext.EXECUTING_TIMESLICE_MILLIS) {
-            // If we'd never finish before the timeout, we'd be insane!
-            Slog.w(TAG, "Estimated " + estimatedBytes + " bytes over " + slowest
-                    + " kbps network would take " + estimatedMillis + "ms; that's insane!");
-            return true;
-        } else {
-            return false;
-        }
+        return false;
     }
 
-    @SuppressWarnings("unused")
     private static boolean isCongestionDelayed(JobStatus jobStatus, Network network,
             NetworkCapabilities capabilities, Constants constants) {
         // If network is congested, and job is less than 50% through the
@@ -361,18 +371,26 @@ public final class ConnectivityController extends StateController implements
         }
     }
 
-    @SuppressWarnings("unused")
     private static boolean isStrictSatisfied(JobStatus jobStatus, Network network,
             NetworkCapabilities capabilities, Constants constants) {
-        return jobStatus.getJob().getRequiredNetwork().networkCapabilities
-                .satisfiedByNetworkCapabilities(capabilities);
+        final NetworkCapabilities required;
+        // A restricted job that's out of quota MUST use an unmetered network.
+        if (jobStatus.getEffectiveStandbyBucket() == RESTRICTED_INDEX
+                && !jobStatus.isConstraintSatisfied(JobStatus.CONSTRAINT_WITHIN_QUOTA)) {
+            required = new NetworkCapabilities(
+                    jobStatus.getJob().getRequiredNetwork().networkCapabilities)
+                    .addCapability(NET_CAPABILITY_NOT_METERED);
+        } else {
+            required = jobStatus.getJob().getRequiredNetwork().networkCapabilities;
+        }
+
+        return required.satisfiedByNetworkCapabilities(capabilities);
     }
 
-    @SuppressWarnings("unused")
     private static boolean isRelaxedSatisfied(JobStatus jobStatus, Network network,
             NetworkCapabilities capabilities, Constants constants) {
-        // Only consider doing this for prefetching jobs
-        if (!jobStatus.getJob().isPrefetch()) {
+        // Only consider doing this for unrestricted prefetching jobs
+        if (!jobStatus.getJob().isPrefetch() || jobStatus.getStandbyBucket() == RESTRICTED_INDEX) {
             return false;
         }
 
@@ -389,7 +407,7 @@ public final class ConnectivityController extends StateController implements
     }
 
     @VisibleForTesting
-    static boolean isSatisfied(JobStatus jobStatus, Network network,
+    boolean isSatisfied(JobStatus jobStatus, Network network,
             NetworkCapabilities capabilities, Constants constants) {
         // Zeroth, we gotta have a network to think about being satisfied
         if (network == null || capabilities == null) return false;
@@ -454,7 +472,7 @@ public final class ConnectivityController extends StateController implements
         synchronized (mLock) {
             // Since this is a really hot codepath, temporarily cache any
             // answers that we get from ConnectivityManager.
-            final SparseArray<NetworkCapabilities> networkToCapabilities = new SparseArray<>();
+            final ArrayMap<Network, NetworkCapabilities> networkToCapabilities = new ArrayMap<>();
 
             boolean changed = false;
             if (filterUid == -1) {
@@ -473,17 +491,16 @@ public final class ConnectivityController extends StateController implements
     }
 
     private boolean updateTrackedJobsLocked(ArraySet<JobStatus> jobs, Network filterNetwork,
-            SparseArray<NetworkCapabilities> networkToCapabilities) {
+            ArrayMap<Network, NetworkCapabilities> networkToCapabilities) {
         if (jobs == null || jobs.size() == 0) {
             return false;
         }
 
         final Network network = mConnManager.getActiveNetworkForUid(jobs.valueAt(0).getSourceUid());
-        final int netId = network != null ? network.netId : -1;
-        NetworkCapabilities capabilities = networkToCapabilities.get(netId);
+        NetworkCapabilities capabilities = networkToCapabilities.get(network);
         if (capabilities == null) {
             capabilities = mConnManager.getNetworkCapabilities(network);
-            networkToCapabilities.put(netId, capabilities);
+            networkToCapabilities.put(network, capabilities);
         }
         final boolean networkMatch = (filterNetwork == null
                 || Objects.equals(filterNetwork, network));
@@ -585,6 +602,9 @@ public final class ConnectivityController extends StateController implements
                     case MSG_UID_RULES_CHANGES:
                         updateTrackedJobs(msg.arg1, null);
                         break;
+                    case MSG_REEVALUATE_JOBS:
+                        updateTrackedJobs(-1, null);
+                        break;
                 }
             }
         }
@@ -594,6 +614,7 @@ public final class ConnectivityController extends StateController implements
     @Override
     public void dumpControllerStateLocked(IndentingPrintWriter pw,
             Predicate<JobStatus> predicate) {
+
         if (mRequestedWhitelistJobs.size() > 0) {
             pw.print("Requested standby exceptions:");
             for (int i = 0; i < mRequestedWhitelistJobs.size(); i++) {
@@ -640,6 +661,18 @@ public final class ConnectivityController extends StateController implements
         final long token = proto.start(fieldId);
         final long mToken = proto.start(StateControllerProto.CONNECTIVITY);
 
+        for (int i = 0; i < mRequestedWhitelistJobs.size(); i++) {
+            proto.write(
+                    StateControllerProto.ConnectivityController.REQUESTED_STANDBY_EXCEPTION_UIDS,
+                    mRequestedWhitelistJobs.keyAt(i));
+        }
+        for (int i = 0; i < mAvailableNetworks.size(); i++) {
+            Network network = mAvailableNetworks.valueAt(i);
+            if (network != null) {
+                network.dumpDebug(proto,
+                        StateControllerProto.ConnectivityController.AVAILABLE_NETWORKS);
+            }
+        }
         for (int i = 0; i < mTrackedJobs.size(); i++) {
             final ArraySet<JobStatus> jobs = mTrackedJobs.valueAt(i);
             for (int j = 0; j < jobs.size(); j++) {
@@ -655,7 +688,7 @@ public final class ConnectivityController extends StateController implements
                         js.getSourceUid());
                 NetworkRequest rn = js.getJob().getRequiredNetwork();
                 if (rn != null) {
-                    rn.writeToProto(proto,
+                    rn.dumpDebug(proto,
                             StateControllerProto.ConnectivityController.TrackedJob
                                     .REQUIRED_NETWORK);
                 }

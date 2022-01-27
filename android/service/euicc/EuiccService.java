@@ -15,10 +15,13 @@
  */
 package android.service.euicc;
 
+import static android.telephony.euicc.EuiccCardManager.ResetOption;
+
 import android.annotation.CallSuper;
 import android.annotation.IntDef;
 import android.annotation.NonNull;
 import android.annotation.Nullable;
+import android.annotation.SdkConstant;
 import android.annotation.SystemApi;
 import android.app.Service;
 import android.content.Intent;
@@ -28,10 +31,13 @@ import android.os.RemoteException;
 import android.telephony.TelephonyManager;
 import android.telephony.euicc.DownloadableSubscription;
 import android.telephony.euicc.EuiccInfo;
+import android.telephony.euicc.EuiccManager;
 import android.telephony.euicc.EuiccManager.OtaStatus;
-import android.util.ArraySet;
+import android.text.TextUtils;
 import android.util.Log;
 
+import java.io.PrintWriter;
+import java.io.StringWriter;
 import java.lang.annotation.Retention;
 import java.lang.annotation.RetentionPolicy;
 import java.util.concurrent.LinkedBlockingQueue;
@@ -103,6 +109,26 @@ public abstract class EuiccService extends Service {
             "android.service.euicc.action.BIND_CARRIER_PROVISIONING_SERVICE";
 
     /**
+     * Intent action sent by the LPA to launch a carrier app Activity for eSIM activation, e.g. a
+     * carrier login screen. Carrier apps wishing to support this activation method must implement
+     * an Activity that responds to this intent action. Upon completion, the Activity must return
+     * one of the following results to the LPA:
+     *
+     * <p>{@code Activity.RESULT_CANCELED}: The LPA should treat this as an back button and abort
+     * the activation flow.
+     * <p>{@code Activity.RESULT_OK}: The LPA should try to get an activation code from the carrier
+     * app by binding to the carrier app service implementing
+     * {@link #ACTION_BIND_CARRIER_PROVISIONING_SERVICE}.
+     * <p>{@code Activity.RESULT_OK} with
+     * {@link android.telephony.euicc.EuiccManager#EXTRA_USE_QR_SCANNER} set to true: The LPA should
+     * start a QR scanner for the user to scan an eSIM profile QR code.
+     * <p>For other results: The LPA should treat this as an error.
+     **/
+    @SdkConstant(SdkConstant.SdkConstantType.ACTIVITY_INTENT_ACTION)
+    public static final String ACTION_START_CARRIER_ACTIVATION =
+            "android.service.euicc.action.START_CARRIER_ACTIVATION";
+
+    /**
      * @see android.telephony.euicc.EuiccManager#ACTION_MANAGE_EMBEDDED_SUBSCRIPTIONS
      * The difference is this one is used by system to bring up the LUI.
      */
@@ -136,6 +162,15 @@ public abstract class EuiccService extends Service {
      */
     public static final String ACTION_RENAME_SUBSCRIPTION_PRIVILEGED =
             "android.service.euicc.action.RENAME_SUBSCRIPTION_PRIVILEGED";
+
+    /**
+     * @see android.telephony.euicc.EuiccManager#ACTION_START_EUICC_ACTIVATION. This is
+     * a protected intent that can only be sent by the system, and requires the
+     * {@link android.Manifest.permission#BIND_EUICC_SERVICE} permission.
+     */
+    @SdkConstant(SdkConstant.SdkConstantType.ACTIVITY_INTENT_ACTION)
+    public static final String ACTION_START_EUICC_ACTIVATION =
+            "android.service.euicc.action.START_EUICC_ACTIVATION";
 
     // LUI resolution actions. These are called by the platform to resolve errors in situations that
     // require user interaction.
@@ -252,18 +287,6 @@ public abstract class EuiccService extends Service {
     public static final int RESULT_FIRST_USER = 1;
 
     /**
-     * List of all valid resolution actions for validation purposes.
-     * @hide
-     */
-    public static final ArraySet<String> RESOLUTION_ACTIONS;
-    static {
-        RESOLUTION_ACTIONS = new ArraySet<>();
-        RESOLUTION_ACTIONS.add(EuiccService.ACTION_RESOLVE_DEACTIVATE_SIM);
-        RESOLUTION_ACTIONS.add(EuiccService.ACTION_RESOLVE_NO_PRIVILEGES);
-        RESOLUTION_ACTIONS.add(EuiccService.ACTION_RESOLVE_RESOLVABLE_ERRORS);
-    }
-
-    /**
      * Boolean extra for resolution actions indicating whether the user granted consent.
      * This is used and set by the implementation and used in {@code EuiccOperation}.
      */
@@ -288,6 +311,65 @@ public abstract class EuiccService extends Service {
 
     public EuiccService() {
         mStubWrapper = new IEuiccServiceWrapper();
+    }
+
+    /**
+     * Given a SubjectCode[5.2.6.1] and ReasonCode[5.2.6.2] from GSMA (SGP.22 v2.2), encode it to
+     * the format described in
+     * {@link android.telephony.euicc.EuiccManager#OPERATION_SMDX_SUBJECT_REASON_CODE}
+     *
+     * @param subjectCode SubjectCode[5.2.6.1] from GSMA (SGP.22 v2.2)
+     * @param reasonCode  ReasonCode[5.2.6.2] from GSMA (SGP.22 v2.2)
+     * @return encoded error code described in
+     * {@link android.telephony.euicc.EuiccManager#OPERATION_SMDX_SUBJECT_REASON_CODE}
+     * @throws NumberFormatException         when the Subject/Reason code contains non digits
+     * @throws IllegalArgumentException      when Subject/Reason code is null/empty
+     * @throws UnsupportedOperationException when sections has more than four layers (e.g 5.8.1.2)
+     *                                       or when an number is bigger than 15
+     */
+    public int encodeSmdxSubjectAndReasonCode(@Nullable String subjectCode,
+            @Nullable String reasonCode)
+            throws NumberFormatException, IllegalArgumentException, UnsupportedOperationException {
+        final int maxSupportedSection = 3;
+        final int maxSupportedDigit = 15;
+        final int bitsPerSection = 4;
+
+        if (TextUtils.isEmpty(subjectCode) || TextUtils.isEmpty(reasonCode)) {
+            throw new IllegalArgumentException("SubjectCode/ReasonCode is empty");
+        }
+
+        final String[] subjectCodeToken = subjectCode.split("\\.");
+        final String[] reasonCodeToken = reasonCode.split("\\.");
+
+        if (subjectCodeToken.length > maxSupportedSection
+                || reasonCodeToken.length > maxSupportedSection) {
+            throw new UnsupportedOperationException("Only three nested layer is supported.");
+        }
+
+        int result = EuiccManager.OPERATION_SMDX_SUBJECT_REASON_CODE;
+
+        // Pad the 0s needed for subject code
+        result = result << (maxSupportedSection - subjectCodeToken.length) * bitsPerSection;
+
+        for (String digitString : subjectCodeToken) {
+            int num = Integer.parseInt(digitString);
+            if (num > maxSupportedDigit) {
+                throw new UnsupportedOperationException("SubjectCode exceeds " + maxSupportedDigit);
+            }
+            result = (result << bitsPerSection) + num;
+        }
+
+        // Pad the 0s needed for reason code
+        result = result << (maxSupportedSection - reasonCodeToken.length) * bitsPerSection;
+        for (String digitString : reasonCodeToken) {
+            int num = Integer.parseInt(digitString);
+            if (num > maxSupportedDigit) {
+                throw new UnsupportedOperationException("ReasonCode exceeds " + maxSupportedDigit);
+            }
+            result = (result << bitsPerSection) + num;
+        }
+
+        return result;
     }
 
     @Override
@@ -516,7 +598,7 @@ public abstract class EuiccService extends Service {
             String nickname);
 
     /**
-     * Erase all of the subscriptions on the device.
+     * Erase all operational subscriptions on the device.
      *
      * <p>This is intended to be used for device resets. As such, the reset should be performed even
      * if an active SIM must be deactivated in order to access the eUICC.
@@ -525,8 +607,29 @@ public abstract class EuiccService extends Service {
      * @return the result of the erase operation. May be one of the predefined {@code RESULT_}
      *     constants or any implementation-specific code starting with {@link #RESULT_FIRST_USER}.
      * @see android.telephony.euicc.EuiccManager#eraseSubscriptions
+     *
+     * @deprecated From R, callers should specify a flag for specific set of subscriptions to erase
+     * and use {@link #onEraseSubscriptions(int, int)} instead
      */
+    @Deprecated
     public abstract int onEraseSubscriptions(int slotId);
+
+    /**
+     * Erase specific subscriptions on the device.
+     *
+     * <p>This is intended to be used for device resets. As such, the reset should be performed even
+     * if an active SIM must be deactivated in order to access the eUICC.
+     *
+     * @param slotIndex index of the SIM slot to use for the operation.
+     * @param options flag for specific group of subscriptions to erase
+     * @return the result of the erase operation. May be one of the predefined {@code RESULT_}
+     *     constants or any implementation-specific code starting with {@link #RESULT_FIRST_USER}.
+     * @see android.telephony.euicc.EuiccManager#eraseSubscriptionsWithOptions
+     */
+    public int onEraseSubscriptions(int slotIndex, @ResetOption int options) {
+        throw new UnsupportedOperationException(
+                "This method must be overridden to enable the ResetOption parameter");
+    }
 
     /**
      * Ensure that subscriptions will be retained on the next factory reset.
@@ -541,6 +644,13 @@ public abstract class EuiccService extends Service {
      *     or any implementation-specific code starting with {@link #RESULT_FIRST_USER}.
      */
     public abstract int onRetainSubscriptionsForFactoryReset(int slotId);
+
+    /**
+     * Dump to a provided printWriter.
+     */
+    public void dump(@NonNull PrintWriter printWriter) {
+        printWriter.println("The connected LPA does not implement EuiccService#dump()");
+    }
 
     /**
      * Wrapper around IEuiccService that forwards calls to implementations of {@link EuiccService}.
@@ -764,6 +874,22 @@ public abstract class EuiccService extends Service {
         }
 
         @Override
+        public void eraseSubscriptionsWithOptions(
+                int slotIndex, @ResetOption int options, IEraseSubscriptionsCallback callback) {
+            mExecutor.execute(new Runnable() {
+                @Override
+                public void run() {
+                    int result = EuiccService.this.onEraseSubscriptions(slotIndex, options);
+                    try {
+                        callback.onComplete(result);
+                    } catch (RemoteException e) {
+                        // Can't communicate with the phone process; ignore.
+                    }
+                }
+            });
+        }
+
+        @Override
         public void retainSubscriptionsForFactoryReset(int slotId,
                 IRetainSubscriptionsForFactoryResetCallback callback) {
             mExecutor.execute(new Runnable() {
@@ -772,6 +898,23 @@ public abstract class EuiccService extends Service {
                     int result = EuiccService.this.onRetainSubscriptionsForFactoryReset(slotId);
                     try {
                         callback.onComplete(result);
+                    } catch (RemoteException e) {
+                        // Can't communicate with the phone process; ignore.
+                    }
+                }
+            });
+        }
+
+        @Override
+        public void dump(IEuiccServiceDumpResultCallback callback) throws RemoteException {
+            mExecutor.execute(new Runnable() {
+                @Override
+                public void run() {
+                    try {
+                        final StringWriter sw = new StringWriter();
+                        final PrintWriter pw = new PrintWriter(sw);
+                        EuiccService.this.dump(pw);
+                        callback.onComplete(sw.toString());
                     } catch (RemoteException e) {
                         // Can't communicate with the phone process; ignore.
                     }
