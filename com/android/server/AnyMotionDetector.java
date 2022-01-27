@@ -16,9 +16,6 @@
 
 package com.android.server;
 
-import android.app.AlarmManager;
-import android.content.BroadcastReceiver;
-import android.content.Intent;
 import android.hardware.Sensor;
 import android.hardware.SensorEvent;
 import android.hardware.SensorEventListener;
@@ -61,9 +58,6 @@ public class AnyMotionDetector {
     /** Current measurement state. */
     private int mState;
 
-    /** Threshold angle in degrees beyond which the device is considered moving. */
-    private final float THRESHOLD_ANGLE = 2f;
-
     /** Threshold energy above which the device is considered moving. */
     private final float THRESHOLD_ENERGY = 5f;
 
@@ -85,16 +79,14 @@ public class AnyMotionDetector {
     /** The accelerometer sampling interval. */
     private static final int SAMPLING_INTERVAL_MILLIS = 40;
 
-    private AlarmManager mAlarmManager;
     private final Handler mHandler;
-    private Intent mAlarmIntent;
     private final Object mLock = new Object();
     private Sensor mAccelSensor;
     private SensorManager mSensorManager;
     private PowerManager.WakeLock mWakeLock;
 
-    /** The time when detection was last performed. */
-    private long mDetectionStartTime;
+    /** Threshold angle in degrees beyond which the device is considered moving. */
+    private final float mThresholdAngle;
 
     /** The minimum number of samples required to detect AnyMotion. */
     private int mNumSufficientSamples;
@@ -113,50 +105,74 @@ public class AnyMotionDetector {
 
     private DeviceIdleCallback mCallback = null;
 
-    public AnyMotionDetector(AlarmManager am, PowerManager pm, Handler handler, SensorManager sm,
-            DeviceIdleCallback callback) {
+    public AnyMotionDetector(PowerManager pm, Handler handler, SensorManager sm,
+            DeviceIdleCallback callback, float thresholdAngle) {
         if (DEBUG) Slog.d(TAG, "AnyMotionDetector instantiated.");
-        mAlarmManager = am;
-        mWakeLock = pm.newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, TAG);
-        mHandler = handler;
-        mSensorManager = sm;
-        mAccelSensor = mSensorManager.getDefaultSensor(Sensor.TYPE_ACCELEROMETER);
-        mMeasurementInProgress = false;
-        mState = STATE_INACTIVE;
-        mCallback = callback;
-        mRunningStats = new RunningSignalStats();
-        mNumSufficientSamples = (int) Math.ceil(
-                ((double)ORIENTATION_MEASUREMENT_DURATION_MILLIS / SAMPLING_INTERVAL_MILLIS));
-        if (DEBUG) Slog.d(TAG, "mNumSufficientSamples = " + mNumSufficientSamples);
+        synchronized (mLock) {
+            mWakeLock = pm.newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, TAG);
+            mWakeLock.setReferenceCounted(false);
+            mHandler = handler;
+            mSensorManager = sm;
+            mAccelSensor = mSensorManager.getDefaultSensor(Sensor.TYPE_ACCELEROMETER);
+            mMeasurementInProgress = false;
+            mState = STATE_INACTIVE;
+            mCallback = callback;
+            mThresholdAngle = thresholdAngle;
+            mRunningStats = new RunningSignalStats();
+            mNumSufficientSamples = (int) Math.ceil(
+                    ((double)ORIENTATION_MEASUREMENT_DURATION_MILLIS / SAMPLING_INTERVAL_MILLIS));
+            if (DEBUG) Slog.d(TAG, "mNumSufficientSamples = " + mNumSufficientSamples);
+        }
     }
 
     /*
      * Acquire accel data until we determine AnyMotion status.
      */
     public void checkForAnyMotion() {
-      if (DEBUG) Slog.d(TAG, "checkForAnyMotion(). mState = " + mState);
+        if (DEBUG) {
+            Slog.d(TAG, "checkForAnyMotion(). mState = " + mState);
+        }
         if (mState != STATE_ACTIVE) {
-            mState = STATE_ACTIVE;
-            if (DEBUG) Slog.d(TAG, "Moved from STATE_INACTIVE to STATE_ACTIVE.");
-            mCurrentGravityVector = null;
-            mPreviousGravityVector = null;
-            startOrientationMeasurement();
+            synchronized (mLock) {
+                mState = STATE_ACTIVE;
+                if (DEBUG) {
+                    Slog.d(TAG, "Moved from STATE_INACTIVE to STATE_ACTIVE.");
+                }
+                mCurrentGravityVector = null;
+                mPreviousGravityVector = null;
+                mWakeLock.acquire();
+                startOrientationMeasurementLocked();
+            }
         }
     }
 
-    private void startOrientationMeasurement() {
-        if (DEBUG) Slog.d(TAG, "startOrientationMeasurement: mMeasurementInProgress=" +
-            mMeasurementInProgress + ", (mAccelSensor != null)=" + (mAccelSensor != null));
+    public void stop() {
+        if (mState == STATE_ACTIVE) {
+            synchronized (mLock) {
+                mState = STATE_INACTIVE;
+                if (DEBUG) Slog.d(TAG, "Moved from STATE_ACTIVE to STATE_INACTIVE.");
+                if (mMeasurementInProgress) {
+                    mMeasurementInProgress = false;
+                    mSensorManager.unregisterListener(mListener);
+                }
+                mHandler.removeCallbacks(mMeasurementTimeout);
+                mHandler.removeCallbacks(mSensorRestart);
+                mCurrentGravityVector = null;
+                mPreviousGravityVector = null;
+                mWakeLock.release();
+            }
+        }
+    }
 
+    private void startOrientationMeasurementLocked() {
+        if (DEBUG) Slog.d(TAG, "startOrientationMeasurementLocked: mMeasurementInProgress=" +
+            mMeasurementInProgress + ", (mAccelSensor != null)=" + (mAccelSensor != null));
         if (!mMeasurementInProgress && mAccelSensor != null) {
             if (mSensorManager.registerListener(mListener, mAccelSensor,
                     SAMPLING_INTERVAL_MILLIS * 1000)) {
-                mWakeLock.acquire();
                 mMeasurementInProgress = true;
-                mDetectionStartTime = SystemClock.elapsedRealtime();
                 mRunningStats.reset();
             }
-
             Message msg = Message.obtain(mHandler, mMeasurementTimeout);
             msg.setAsynchronous(true);
             mHandler.sendMessageDelayed(msg, ACCELEROMETER_DATA_TIMEOUT_MILLIS);
@@ -170,9 +186,6 @@ public class AnyMotionDetector {
         if (mMeasurementInProgress) {
             mSensorManager.unregisterListener(mListener);
             mHandler.removeCallbacks(mMeasurementTimeout);
-            if (mWakeLock.isHeld()) {
-                mWakeLock.release();
-            }
             long detectionEndTime = SystemClock.elapsedRealtime();
             mMeasurementInProgress = false;
             mPreviousGravityVector = mCurrentGravityVector;
@@ -190,8 +203,10 @@ public class AnyMotionDetector {
             status = getStationaryStatus();
             if (DEBUG) Slog.d(TAG, "getStationaryStatus() returned " + status);
             if (status != RESULT_UNKNOWN) {
-                if (DEBUG) Slog.d(TAG, "Moved from STATE_ACTIVE to STATE_INACTIVE. status = " +
-                        status);
+                mWakeLock.release();
+                if (DEBUG) {
+                    Slog.d(TAG, "Moved from STATE_ACTIVE to STATE_INACTIVE. status = " + status);
+                }
                 mState = STATE_INACTIVE;
             } else {
                 /*
@@ -219,8 +234,9 @@ public class AnyMotionDetector {
         Vector3 previousGravityVectorNormalized = mPreviousGravityVector.normalized();
         Vector3 currentGravityVectorNormalized = mCurrentGravityVector.normalized();
         float angle = previousGravityVectorNormalized.angleBetween(currentGravityVectorNormalized);
-        if (DEBUG) Slog.d(TAG, "getStationaryStatus: angle = " + angle);
-        if ((angle < THRESHOLD_ANGLE) && (mRunningStats.getEnergy() < THRESHOLD_ENERGY)) {
+        if (DEBUG) Slog.d(TAG, "getStationaryStatus: angle = " + angle
+                + " energy = " + mRunningStats.getEnergy());
+        if ((angle < mThresholdAngle) && (mRunningStats.getEnergy() < THRESHOLD_ENERGY)) {
             return RESULT_STATIONARY;
         } else if (Float.isNaN(angle)) {
           /**
@@ -268,7 +284,7 @@ public class AnyMotionDetector {
         @Override
         public void run() {
             synchronized (mLock) {
-                startOrientationMeasurement();
+                startOrientationMeasurementLocked();
             }
         }
     };
@@ -292,7 +308,7 @@ public class AnyMotionDetector {
     /**
      * A timestamped three dimensional vector and some vector operations.
      */
-    private static class Vector3 {
+    public static final class Vector3 {
         public long timeMillisSinceBoot;
         public float x;
         public float y;
@@ -305,11 +321,11 @@ public class AnyMotionDetector {
             this.z = z;
         }
 
-        private float norm() {
+        public float norm() {
             return (float) Math.sqrt(dotProduct(this));
         }
 
-        private Vector3 normalized() {
+        public Vector3 normalized() {
             float mag = norm();
             return new Vector3(timeMillisSinceBoot, x / mag, y / mag, z / mag);
         }
@@ -322,12 +338,20 @@ public class AnyMotionDetector {
          * @return angle between this vector and the other given one.
          */
         public float angleBetween(Vector3 other) {
-            double degrees = Math.toDegrees(Math.acos(this.dotProduct(other)));
-            float returnValue = (float) degrees;
+            Vector3 crossVector = cross(other);
+            float degrees = Math.abs((float)Math.toDegrees(
+                    Math.atan2(crossVector.norm(), dotProduct(other))));
             Slog.d(TAG, "angleBetween: this = " + this.toString() +
-                    ", other = " + other.toString());
-            Slog.d(TAG, "    degrees = " + degrees + ", returnValue = " + returnValue);
-            return returnValue;
+                ", other = " + other.toString() + ", degrees = " + degrees);
+            return degrees;
+        }
+
+        public Vector3 cross(Vector3 v) {
+            return new Vector3(
+                v.timeMillisSinceBoot,
+                y * v.z - z * v.y,
+                z * v.x - x * v.z,
+                x * v.y - y * v.x);
         }
 
         @Override

@@ -21,6 +21,8 @@ import android.content.ClipDescription;
 import android.os.Parcel;
 import android.os.Parcelable;
 
+import com.android.internal.view.IDragAndDropPermissions;
+
 //TODO: Improve Javadoc
 /**
  * Represents an event that is sent out by the system at various times during a drag and drop
@@ -100,8 +102,8 @@ import android.os.Parcelable;
  *  </tr>
  *  <tr>
  *      <td>ACTION_DRAG_ENDED</td>
- *      <td style="text-align: center;">X</td>
- *      <td style="text-align: center;">X</td>
+ *      <td style="text-align: center;">&nbsp;</td>
+ *      <td style="text-align: center;">&nbsp;</td>
  *      <td style="text-align: center;">&nbsp;</td>
  *      <td style="text-align: center;">&nbsp;</td>
  *      <td style="text-align: center;">&nbsp;</td>
@@ -128,6 +130,8 @@ public class DragEvent implements Parcelable {
     float mX, mY;
     ClipDescription mClipDescription;
     ClipData mClipData;
+    IDragAndDropPermissions mDragAndDropPermissions;
+
     Object mLocalState;
     boolean mDragResult;
 
@@ -144,7 +148,7 @@ public class DragEvent implements Parcelable {
      * Action constant returned by {@link #getAction()}: Signals the start of a
      * drag and drop operation. The View should return {@code true} from its
      * {@link View#onDragEvent(DragEvent) onDragEvent()} handler method or
-     * {@link View.View.OnDragListener#onDrag(View,DragEvent) OnDragListener.onDrag()} listener
+     * {@link View.OnDragListener#onDrag(View,DragEvent) OnDragListener.onDrag()} listener
      * if it can accept a drop. The onDragEvent() or onDrag() methods usually inspect the metadata
      * from {@link #getClipDescription()} to determine if they can accept the data contained in
      * this drag. For an operation that doesn't represent data transfer, these methods may
@@ -156,6 +160,8 @@ public class DragEvent implements Parcelable {
      * ACTION_DRAG_STARTED.
      * </p>
      * @see #ACTION_DRAG_ENDED
+     * @see #getX()
+     * @see #getY()
      */
     public static final int ACTION_DRAG_STARTED = 1;
 
@@ -188,7 +194,7 @@ public class DragEvent implements Parcelable {
      * within the View object's bounding box.
      * <p>
      * The View should return {@code true} from its {@link View#onDragEvent(DragEvent)}
-     * handler or {@link View.View.OnDragListener#onDrag(View,DragEvent) OnDragListener.onDrag()}
+     * handler or {@link View.OnDragListener#onDrag(View,DragEvent) OnDragListener.onDrag()}
      * listener if it accepted the drop, and {@code false} if it ignored the drop.
      * </p>
      * <p>
@@ -253,28 +259,31 @@ public class DragEvent implements Parcelable {
     }
 
     private void init(int action, float x, float y, ClipDescription description, ClipData data,
-            Object localState, boolean result) {
+            IDragAndDropPermissions dragAndDropPermissions, Object localState, boolean result) {
         mAction = action;
         mX = x;
         mY = y;
         mClipDescription = description;
         mClipData = data;
+        this.mDragAndDropPermissions = dragAndDropPermissions;
         mLocalState = localState;
         mDragResult = result;
     }
 
     static DragEvent obtain() {
-        return DragEvent.obtain(0, 0f, 0f, null, null, null, false);
+        return DragEvent.obtain(0, 0f, 0f, null, null, null, null, false);
     }
 
     /** @hide */
     public static DragEvent obtain(int action, float x, float y, Object localState,
-            ClipDescription description, ClipData data, boolean result) {
+            ClipDescription description, ClipData data,
+            IDragAndDropPermissions dragAndDropPermissions, boolean result) {
         final DragEvent ev;
         synchronized (gRecyclerLock) {
             if (gRecyclerTop == null) {
                 ev = new DragEvent();
-                ev.init(action, x, y, description, data, localState, result);
+                ev.init(action, x, y, description, data, dragAndDropPermissions, localState,
+                        result);
                 return ev;
             }
             ev = gRecyclerTop;
@@ -285,7 +294,7 @@ public class DragEvent implements Parcelable {
         ev.mRecycled = false;
         ev.mNext = null;
 
-        ev.init(action, x, y, description, data, localState, result);
+        ev.init(action, x, y, description, data, dragAndDropPermissions, localState, result);
 
         return ev;
     }
@@ -293,7 +302,8 @@ public class DragEvent implements Parcelable {
     /** @hide */
     public static DragEvent obtain(DragEvent source) {
         return obtain(source.mAction, source.mX, source.mY, source.mLocalState,
-                source.mClipDescription, source.mClipData, source.mDragResult);
+                source.mClipDescription, source.mClipData, source.mDragAndDropPermissions,
+                source.mDragResult);
     }
 
     /**
@@ -315,17 +325,16 @@ public class DragEvent implements Parcelable {
 
     /**
      * Gets the X coordinate of the drag point. The value is only valid if the event action is
-     * {@link #ACTION_DRAG_LOCATION} or {@link #ACTION_DROP}.
-     * @return The current drag point's Y coordinate
+     * {@link #ACTION_DRAG_STARTED}, {@link #ACTION_DRAG_LOCATION} or {@link #ACTION_DROP}.
+     * @return The current drag point's X coordinate
      */
     public float getX() {
         return mX;
     }
 
     /**
-     * Gets the Y coordinate of the drag point. The value is valid if the
-     * event action is {@link #ACTION_DRAG_ENTERED}, {@link #ACTION_DRAG_LOCATION},
-     * {@link #ACTION_DROP}, or {@link #ACTION_DRAG_EXITED}.
+     * Gets the Y coordinate of the drag point. The value is only valid if the event action is
+     * {@link #ACTION_DRAG_STARTED}, {@link #ACTION_DRAG_LOCATION} or {@link #ACTION_DROP}.
      * @return The current drag point's Y coordinate
      */
     public float getY() {
@@ -350,11 +359,16 @@ public class DragEvent implements Parcelable {
      * The drag handler or listener for a View can use the metadata in this object to decide if the
      * View can accept the dragged View object's data.
      * <p>
-     * This method returns valid data for all event actions.
+     * This method returns valid data for all event actions except for {@link #ACTION_DRAG_ENDED}.
      * @return The ClipDescription that was part of the ClipData sent to the system by startDrag().
      */
     public ClipDescription getClipDescription() {
         return mClipDescription;
+    }
+
+    /** @hide */
+    public IDragAndDropPermissions getDragAndDropPermissions() {
+        return mDragAndDropPermissions;
     }
 
     /**
@@ -363,7 +377,7 @@ public class DragEvent implements Parcelable {
      * The object is intended to provide local information about the drag and drop operation. For
      * example, it can indicate whether the drag and drop operation is a copy or a move.
      * <p>
-     *  This method returns valid data for all event actions.
+     *  This method returns valid data for all event actions except for {@link #ACTION_DRAG_ENDED}.
      * </p>
      * @return The local state object sent to the system by startDrag().
      */
@@ -477,6 +491,12 @@ public class DragEvent implements Parcelable {
             dest.writeInt(1);
             mClipDescription.writeToParcel(dest, flags);
         }
+        if (mDragAndDropPermissions == null) {
+            dest.writeInt(0);
+        } else {
+            dest.writeInt(1);
+            dest.writeStrongBinder(mDragAndDropPermissions.asBinder());
+        }
     }
 
     /**
@@ -495,6 +515,10 @@ public class DragEvent implements Parcelable {
             }
             if (in.readInt() != 0) {
                 event.mClipDescription = ClipDescription.CREATOR.createFromParcel(in);
+            }
+            if (in.readInt() != 0) {
+                event.mDragAndDropPermissions =
+                        IDragAndDropPermissions.Stub.asInterface(in.readStrongBinder());;
             }
             return event;
         }
