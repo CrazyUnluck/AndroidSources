@@ -63,6 +63,8 @@ public class PhotoView extends View implements OnGestureListener,
     private static final long SNAP_DELAY = 250L;
     /** By how much to scale the image when double click occurs */
     private final static float DOUBLE_TAP_SCALE_FACTOR = 2.0f;
+    /** Amount which can be zoomed in past the maximum scale, and then scaled back */
+    private final static float SCALE_OVERZOOM_FACTOR = 1.5f;
     /** Amount of translation needed before starting a snap animation */
     private final static float SNAP_THRESHOLD = 20.0f;
     /** The width & height of the bitmap returned by {@link #getCroppedPhoto()} */
@@ -339,7 +341,7 @@ public class PhotoView extends View implements OnGestureListener,
 
     @Override
     public boolean onScroll(MotionEvent e1, MotionEvent e2, float distanceX, float distanceY) {
-        if (mTransformsEnabled) {
+        if (mTransformsEnabled && !mScaleRunnable.mRunning) {
             translate(-distanceX, -distanceY);
         }
         return true;
@@ -356,7 +358,7 @@ public class PhotoView extends View implements OnGestureListener,
 
     @Override
     public boolean onFling(MotionEvent e1, MotionEvent e2, float velocityX, float velocityY) {
-        if (mTransformsEnabled) {
+        if (mTransformsEnabled && !mScaleRunnable.mRunning) {
             mTranslateRunnable.start(velocityX, velocityY);
         }
         return true;
@@ -384,6 +386,37 @@ public class PhotoView extends View implements OnGestureListener,
 
     @Override
     public void onScaleEnd(ScaleGestureDetector detector) {
+        // Scale back to the maximum if over-zoomed
+        float currentScale = getScale();
+        if (currentScale > mMaxScale) {
+            // The number of times the crop amount pulled in can fit on the screen
+            float marginFit = 1 / (1 - mMaxScale / currentScale);
+            // The (negative) relative maximum distance from an image edge such that when scaled
+            // this far from the edge, all of the image off-screen in that direction is pulled in
+            float relativeDistance = 1 - marginFit;
+            float centerX = getWidth() / 2;
+            float centerY = getHeight() / 2;
+            // This center will pull all of the margin from the lesser side, over will expose trim
+            float maxX = mTranslateRect.left * relativeDistance;
+            float maxY = mTranslateRect.top * relativeDistance;
+            // This center will pull all of the margin from the greater side, over will expose trim
+            float minX = getWidth() * marginFit + mTranslateRect.right * relativeDistance;
+            float minY = getHeight() * marginFit + mTranslateRect.bottom * relativeDistance;
+            // Adjust center according to bounds to avoid bad crop
+            if (minX > maxX) {
+                // Border is inevitable due to small image size, so we split the crop difference
+                centerX = (minX + maxX) / 2;
+            } else {
+                centerX = Math.min(Math.max(minX, centerX), maxX);
+            }
+            if (minY > maxY) {
+                // Border is inevitable due to small image size, so we split the crop difference
+                centerY = (minY + maxY) / 2;
+            } else {
+                centerY = Math.min(Math.max(minY, centerY), maxY);
+            }
+            mScaleRunnable.start(currentScale, mMaxScale, centerX, centerY);
+        }
         if (mTransformsEnabled && mIsDoubleTouch) {
             mDoubleTapDebounce = true;
             resetTransformations();
@@ -874,7 +907,7 @@ public class PhotoView extends View implements OnGestureListener,
         } else {
             mMinScale = getScale();
         }
-        mMaxScale = Math.max(mMinScale * 8, 8);
+        mMaxScale = Math.max(mMinScale * 4, 4);
     }
 
     /**
@@ -910,9 +943,9 @@ public class PhotoView extends View implements OnGestureListener,
         // rotate back to the original orientation
         mMatrix.postRotate(-mRotation, getWidth() / 2, getHeight() / 2);
 
-        // ensure that mMixScale <= newScale <= mMaxScale
+        // ensure that mMinScale <= newScale <= mMaxScale
         newScale = Math.max(newScale, mMinScale);
-        newScale = Math.min(newScale, mMaxScale);
+        newScale = Math.min(newScale, mMaxScale * SCALE_OVERZOOM_FACTOR);
 
         float currentScale = getScale();
         float factor = newScale / currentScale;

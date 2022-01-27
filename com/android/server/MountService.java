@@ -63,7 +63,6 @@ import android.util.AttributeSet;
 import android.util.Slog;
 import android.util.Xml;
 
-import android.view.AccessibilityManagerInternal;
 import com.android.internal.annotations.GuardedBy;
 import com.android.internal.annotations.VisibleForTesting;
 import com.android.internal.app.IMediaContainerService;
@@ -84,6 +83,7 @@ import org.xmlpull.v1.XmlPullParserException;
 
 import java.io.File;
 import java.io.FileDescriptor;
+import java.io.FileOutputStream;
 import java.io.IOException;
 import java.io.PrintWriter;
 import java.math.BigInteger;
@@ -91,7 +91,9 @@ import java.nio.charset.StandardCharsets;
 import java.security.NoSuchAlgorithmException;
 import java.security.spec.InvalidKeySpecException;
 import java.security.spec.KeySpec;
+import java.text.SimpleDateFormat;
 import java.util.ArrayList;
+import java.util.Date;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.Iterator;
@@ -360,6 +362,11 @@ class MountService extends IMountService.Stub
     // Used in the ObbActionHandler
     private IMediaContainerService mContainerService = null;
 
+    // Last fstrim operation tracking
+    private static final String LAST_FSTRIM_FILE = "last-fstrim";
+    private final File mLastMaintenanceFile;
+    private long mLastMaintenance;
+
     // Handler messages
     private static final int H_UNMOUNT_PM_UPDATE = 1;
     private static final int H_UNMOUNT_PM_DONE = 2;
@@ -537,6 +544,15 @@ class MountService extends IMountService.Stub
                 case H_FSTRIM: {
                     waitForReady();
                     Slog.i(TAG, "Running fstrim idle maintenance");
+
+                    // Remember when we kicked it off
+                    try {
+                        mLastMaintenance = System.currentTimeMillis();
+                        mLastMaintenanceFile.setLastModified(mLastMaintenance);
+                    } catch (Exception e) {
+                        Slog.e(TAG, "Unable to record last fstrim!");
+                    }
+
                     try {
                         // This method must be run on the main (handler) thread,
                         // so it is safe to directly call into vold.
@@ -545,6 +561,7 @@ class MountService extends IMountService.Stub
                     } catch (NativeDaemonConnectorException ndce) {
                         Slog.e(TAG, "Failed to run fstrim!");
                     }
+
                     // invoke the completion callback, if any
                     Runnable callback = (Runnable) msg.obj;
                     if (callback != null) {
@@ -557,8 +574,6 @@ class MountService extends IMountService.Stub
     };
 
     private final Handler mHandler;
-
-    private final AccessibilityManagerInternal mAccessibilityManagerInternal;
 
     void waitForAsecScan() {
         waitForLatch(mAsecsScanned);
@@ -702,6 +717,18 @@ class MountService extends IMountService.Stub
         mHandler.sendMessage(mHandler.obtainMessage(H_FSTRIM, callback));
     }
 
+    // Binder entry point for kicking off an immediate fstrim
+    @Override
+    public void runMaintenance() {
+        validatePermission(android.Manifest.permission.MOUNT_UNMOUNT_FILESYSTEMS);
+        runIdleMaintenance(null);
+    }
+
+    @Override
+    public long lastMaintenance() {
+        return mLastMaintenance;
+    }
+
     private void doShareUnshareVolume(String path, String method, boolean enable) {
         // TODO: Add support for multiple share methods
         if (!method.equals("ums")) {
@@ -829,7 +856,9 @@ class MountService extends IMountService.Stub
 
                 // On an encrypted device we can't see system properties yet, so pull
                 // the system locale out of the mount service.
-                copyLocaleFromMountService();
+                if ("".equals(SystemProperties.get("vold.encrypt_progress"))) {
+                    copyLocaleFromMountService();
+                }
 
                 // Let package manager load internal ASECs.
                 mPms.scanAvailableAsecs();
@@ -1462,9 +1491,6 @@ class MountService extends IMountService.Stub
         hthread.start();
         mHandler = new MountServiceHandler(hthread.getLooper());
 
-        mAccessibilityManagerInternal = LocalServices.getService(
-                AccessibilityManagerInternal.class);
-
         // Watch for user changes
         final IntentFilter userFilter = new IntentFilter();
         userFilter.addAction(Intent.ACTION_USER_ADDED);
@@ -1480,6 +1506,22 @@ class MountService extends IMountService.Stub
 
         // Add OBB Action Handler to MountService thread.
         mObbActionHandler = new ObbActionHandler(IoThread.get().getLooper());
+
+        // Initialize the last-fstrim tracking if necessary
+        File dataDir = Environment.getDataDirectory();
+        File systemDir = new File(dataDir, "system");
+        mLastMaintenanceFile = new File(systemDir, LAST_FSTRIM_FILE);
+        if (!mLastMaintenanceFile.exists()) {
+            // Not setting mLastMaintenance here means that we will force an
+            // fstrim during reboot following the OTA that installs this code.
+            try {
+                (new FileOutputStream(mLastMaintenanceFile)).close();
+            } catch (IOException e) {
+                Slog.e(TAG, "Unable to create fstrim record " + mLastMaintenanceFile.getPath());
+            }
+        } else {
+            mLastMaintenance = mLastMaintenanceFile.lastModified();
+        }
 
         /*
          * Create the connection to vold with a maximum queue of twice the
@@ -2263,16 +2305,8 @@ class MountService extends IMountService.Stub
             Slog.i(TAG, "changing encryption password...");
         }
 
-        final NativeDaemonEvent event;
         try {
-            // The accessibility layer may veto having a non-default encryption
-            // password because if there are enabled accessibility services the
-            // user cannot authenticate as the latter need access to the data.
-            if (!TextUtils.isEmpty(password)
-                    && !mAccessibilityManagerInternal.isNonDefaultEncryptionPasswordAllowed()) {
-                return getEncryptionState();
-            }
-            event = mConnector.execute("cryptfs", "changepw", CRYPTO_TYPES[type],
+            NativeDaemonEvent event = mConnector.execute("cryptfs", "changepw", CRYPTO_TYPES[type],
                         new SensitiveArg(toHex(password)));
             return Integer.parseInt(event.getMessage());
         } catch (NativeDaemonConnectorException e) {
@@ -3087,6 +3121,12 @@ class MountService extends IMountService.Stub
         pw.increaseIndent();
         mConnector.dump(fd, pw, args);
         pw.decreaseIndent();
+
+        SimpleDateFormat sdf = new SimpleDateFormat("yyyy-MM-dd HH:mm:ss");
+
+        pw.println();
+        pw.print("Last maintenance: ");
+        pw.println(sdf.format(new Date(mLastMaintenance)));
     }
 
     /** {@inheritDoc} */

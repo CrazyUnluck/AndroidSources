@@ -31,7 +31,6 @@ import android.support.v4.view.ViewPropertyAnimatorListenerAdapter;
 import android.support.v4.widget.ScrollerCompat;
 import android.support.v7.appcompat.R;
 import android.support.v7.internal.VersionUtils;
-import android.support.v7.internal.app.WindowCallback;
 import android.support.v7.internal.view.menu.MenuPresenter;
 import android.support.v7.widget.Toolbar;
 import android.util.AttributeSet;
@@ -319,12 +318,10 @@ public class ActionBarOverlayLayout extends ViewGroup implements DecorContentPar
         final boolean stable = (vis & SYSTEM_UI_FLAG_LAYOUT_STABLE) != 0;
         final Rect systemInsets = insets;
 
-        // The top and bottom action bars are always within the content area.
-        boolean changed = applyInsets(mActionBarTop, systemInsets, true, true, false, true);
-        if (mActionBarBottom != null) {
-            changed |= applyInsets(mActionBarBottom, systemInsets, true, false, true, true);
-        }
+        // Since we're not the top level view in the window decor, we do not need to
+        // inset the Action Bars
 
+        boolean changed = false;
         mBaseInnerInsets.set(systemInsets);
         ViewUtils.computeFitSystemWindows(this, mBaseInnerInsets, mBaseContentInsets);
         if (!mLastBaseContentInsets.equals(mBaseContentInsets)) {
@@ -668,7 +665,7 @@ public class ActionBarOverlayLayout extends ViewGroup implements DecorContentPar
     }
 
     @Override
-    public void setWindowCallback(WindowCallback cb) {
+    public void setWindowCallback(Window.Callback cb) {
         pullChildren();
         mDecorToolbar.setWindowCallback(cb);
     }

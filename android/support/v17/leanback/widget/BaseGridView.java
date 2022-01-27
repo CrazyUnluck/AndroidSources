@@ -55,6 +55,10 @@ abstract class BaseGridView extends RecyclerView {
      * navigating away from the first item, the focus maintains a middle
      * location.
      * <p>
+     * For HorizontalGridView, low edge refers to left edge when RTL is false or
+     * right edge when RTL is true.
+     * For VerticalGridView, low edge refers to top edge.
+     * <p>
      * The middle location is calculated by "windowAlignOffset" and
      * "windowAlignOffsetPercent"; if neither of these two is defined, the
      * default value is 1/2 of the size.
@@ -65,6 +69,10 @@ abstract class BaseGridView extends RecyclerView {
      * The last item is aligned with the high edge of the viewport when
      * navigating to the end of list. When navigating away from the end, the
      * focus maintains a middle location.
+     * <p>
+     * For HorizontalGridView, high edge refers to right edge when RTL is false or
+     * left edge when RTL is true.
+     * For VerticalGridView, high edge refers to bottom edge.
      * <p>
      * The middle location is calculated by "windowAlignOffset" and
      * "windowAlignOffsetPercent"; if neither of these two is defined, the
@@ -169,6 +177,7 @@ abstract class BaseGridView extends RecyclerView {
     private OnTouchInterceptListener mOnTouchInterceptListener;
     private OnMotionInterceptListener mOnMotionInterceptListener;
     private OnKeyInterceptListener mOnKeyInterceptListener;
+    private RecyclerView.RecyclerListener mChainedRecyclerListener;
 
     public BaseGridView(Context context, AttributeSet attrs, int defStyle) {
         super(context, attrs, defStyle);
@@ -179,6 +188,19 @@ abstract class BaseGridView extends RecyclerView {
         setChildrenDrawingOrderEnabled(true);
         setWillNotDraw(true);
         setOverScrollMode(View.OVER_SCROLL_NEVER);
+        // Disable change animation by default on leanback.
+        // Change animation will create a new view and cause undesired
+        // focus animation between the old view and new view.
+        getItemAnimator().setSupportsChangeAnimations(false);
+        super.setRecyclerListener(new RecyclerView.RecyclerListener() {
+            @Override
+            public void onViewRecycled(RecyclerView.ViewHolder holder) {
+                mLayoutManager.onChildRecycled(holder);
+                if (mChainedRecyclerListener != null) {
+                    mChainedRecyclerListener.onViewRecycled(holder);
+                }
+            }
+        });
     }
 
     protected void initBaseGridViewAttributes(Context context, AttributeSet attrs) {
@@ -248,11 +270,13 @@ abstract class BaseGridView extends RecyclerView {
     }
 
     /**
-     * Set the absolute offset in pixels for window alignment.
+     * Set the offset in pixels for window alignment.
      *
-     * @param offset The number of pixels to offset. Can be negative for
-     *        alignment from the high edge, or positive for alignment from the
-     *        low edge.
+     * @param offset The number of pixels to offset.  If the offset is positive,
+     *        it is distance from low edge (see {@link #WINDOW_ALIGN_LOW_EDGE});
+     *        if the offset is negative, the absolute value is distance from high
+     *        edge (see {@link #WINDOW_ALIGN_HIGH_EDGE}).
+     *        Default value is 0.
      */
     public void setWindowAlignmentOffset(int offset) {
         mLayoutManager.setWindowAlignmentOffset(offset);
@@ -260,11 +284,13 @@ abstract class BaseGridView extends RecyclerView {
     }
 
     /**
-     * Get the absolute offset in pixels for window alignment.
+     * Get the offset in pixels for window alignment.
      *
-     * @return The number of pixels to offset. Will be negative for alignment
-     *         from the high edge, or positive for alignment from the low edge.
-     *         Default value is 0.
+     * @return The number of pixels to offset.  If the offset is positive,
+     *        it is distance from low edge (see {@link #WINDOW_ALIGN_LOW_EDGE});
+     *        if the offset is negative, the absolute value is distance from high
+     *        edge (see {@link #WINDOW_ALIGN_HIGH_EDGE}).
+     *        Default value is 0.
      */
     public int getWindowAlignmentOffset() {
         return mLayoutManager.getWindowAlignmentOffset();
@@ -277,6 +303,7 @@ abstract class BaseGridView extends RecyclerView {
      * @param offsetPercent Percentage to offset. E.g., 40 means 40% of the
      *        width from low edge. Use
      *        {@link #WINDOW_ALIGN_OFFSET_PERCENT_DISABLED} to disable.
+     *         Default value is 50.
      */
     public void setWindowAlignmentOffsetPercent(float offsetPercent) {
         mLayoutManager.setWindowAlignmentOffsetPercent(offsetPercent);
@@ -416,6 +443,16 @@ abstract class BaseGridView extends RecyclerView {
 
     /**
      * Register a callback to be invoked when an item in BaseGridView has
+     * been laid out.
+     *
+     * @param listener The listener to be invoked.
+     */
+    public void setOnChildLaidOutListener(OnChildLaidOutListener listener) {
+        mLayoutManager.setOnChildLaidOutListener(listener);
+    }
+
+    /**
+     * Register a callback to be invoked when an item in BaseGridView has
      * been selected.  Note that the listener may be invoked when there is a
      * layout pending on the view, affording the listener an opportunity to
      * adjust the upcoming layout based on the selection state.
@@ -476,7 +513,7 @@ abstract class BaseGridView extends RecyclerView {
 
     /**
      * Describes how the child views are positioned. Defaults to
-     * GRAVITY_TOP|GRAVITY_LEFT.
+     * GRAVITY_TOP|GRAVITY_START.
      *
      * @param gravity See {@link android.view.Gravity}
      */
@@ -516,6 +553,9 @@ abstract class BaseGridView extends RecyclerView {
      * Disable or enable focus search.
      */
     public final void setFocusSearchDisabled(boolean disabled) {
+        // LayoutManager may detachView and attachView in fastRelayout, it causes RowsFragment
+        // re-gain focus after a BACK key pressed, so block children focus during transition.
+        setDescendantFocusability(disabled ? FOCUS_BLOCK_DESCENDANTS: FOCUS_AFTER_DESCENDANTS);
         mLayoutManager.setFocusSearchDisabled(disabled);
     }
 
@@ -564,7 +604,9 @@ abstract class BaseGridView extends RecyclerView {
 
     /**
      * Returns true if the view at the given position has a same row sibling
-     * in front of it.
+     * in front of it.  This will return true if first item view is not created.
+     * So application should check in both {@link OnChildSelectedListener} and {@link
+     * OnChildLaidOutListener}.
      *
      * @param position Position in adapter.
      */
@@ -669,16 +711,6 @@ abstract class BaseGridView extends RecyclerView {
         mLayoutManager.mChildrenStates.setLimitNumber(limitNumber);
     }
 
-    /**
-     * Set the factor by which children should be laid out beyond the view bounds
-     * in the direction of orientation.  1.0 disables over reach.
-     *
-     * @param fraction fraction of over reach
-     */
-    public final void setPrimaryOverReach(float fraction) {
-        mLayoutManager.setPrimaryOverReach(fraction);
-    }
-
     @Override
     public boolean hasOverlappingRendering() {
         return mHasOverlappingRendering;
@@ -686,5 +718,18 @@ abstract class BaseGridView extends RecyclerView {
 
     public void setHasOverlappingRendering(boolean hasOverlapping) {
         mHasOverlappingRendering = hasOverlapping;
+    }
+
+    /**
+     * Notify layout manager that layout directionality has been updated
+     */
+    @Override
+    public void onRtlPropertiesChanged(int layoutDirection) {
+        mLayoutManager.onRtlPropertiesChanged(layoutDirection);
+    }
+
+    @Override
+    public void setRecyclerListener(RecyclerView.RecyclerListener listener) {
+        mChainedRecyclerListener = listener;
     }
 }

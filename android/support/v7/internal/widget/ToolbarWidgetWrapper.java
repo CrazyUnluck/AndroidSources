@@ -24,7 +24,6 @@ import android.os.Parcelable;
 import android.support.v4.view.ViewCompat;
 import android.support.v4.view.ViewPropertyAnimatorListenerAdapter;
 import android.support.v7.appcompat.R;
-import android.support.v7.internal.app.WindowCallback;
 import android.support.v7.internal.view.menu.ActionMenuItem;
 import android.support.v7.internal.view.menu.MenuBuilder;
 import android.support.v7.internal.view.menu.MenuPresenter;
@@ -74,7 +73,7 @@ public class ToolbarWidgetWrapper implements DecorToolbar {
     private CharSequence mSubtitle;
     private CharSequence mHomeDescription;
 
-    private WindowCallback mWindowCallback;
+    private Window.Callback mWindowCallback;
     private boolean mMenuPrepared;
     private ActionMenuPresenter mActionMenuPresenter;
 
@@ -95,6 +94,7 @@ public class ToolbarWidgetWrapper implements DecorToolbar {
         mTitle = toolbar.getTitle();
         mSubtitle = toolbar.getSubtitle();
         mTitleSet = mTitle != null;
+        mNavIcon = toolbar.getNavigationIcon();
 
         if (style) {
             final TintTypedArray a = TintTypedArray.obtainStyledAttributes(toolbar.getContext(),
@@ -116,7 +116,7 @@ public class ToolbarWidgetWrapper implements DecorToolbar {
             }
 
             final Drawable icon = a.getDrawable(R.styleable.ActionBar_icon);
-            if (icon != null) {
+            if (mNavIcon == null && icon != null) {
                 setIcon(icon);
             }
 
@@ -256,7 +256,7 @@ public class ToolbarWidgetWrapper implements DecorToolbar {
     }
 
     @Override
-    public void setWindowCallback(WindowCallback cb) {
+    public void setWindowCallback(Window.Callback cb) {
         mWindowCallback = cb;
     }
 
@@ -674,6 +674,43 @@ public class ToolbarWidgetWrapper implements DecorToolbar {
     @Override
     public void restoreHierarchyState(SparseArray<Parcelable> toolbarStates) {
         mToolbar.restoreHierarchyState(toolbarStates);
+    }
+
+    @Override
+    public void setBackgroundDrawable(Drawable d) {
+        //noinspection deprecation
+        mToolbar.setBackgroundDrawable(d);
+    }
+
+    @Override
+    public int getHeight() {
+        return mToolbar.getHeight();
+    }
+
+    @Override
+    public void setVisibility(int visible) {
+        mToolbar.setVisibility(visible);
+    }
+
+    @Override
+    public int getVisibility() {
+        return mToolbar.getVisibility();
+    }
+
+    @Override
+    public void setMenuCallbacks(MenuPresenter.Callback actionMenuPresenterCallback,
+            MenuBuilder.Callback menuBuilderCallback) {
+        mToolbar.setMenuCallbacks(actionMenuPresenterCallback, menuBuilderCallback);
+    }
+
+    @Override
+    public Menu getMenu() {
+        return mToolbar.getMenu();
+    }
+
+    @Override
+    public int getPopupTheme() {
+        return mToolbar.getPopupTheme();
     }
 
 }

@@ -34,6 +34,6 @@ public class MultiDexUpdateTest extends ActivityInstrumentationTestCase2<MainAct
      */
     public void testAllClassAvailable()
     {
-        assertEquals(3, getActivity().getVersion());
+        assertEquals(1, getActivity().getVersion());
     }
 }

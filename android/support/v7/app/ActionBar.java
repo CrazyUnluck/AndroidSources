@@ -1059,6 +1059,11 @@ public abstract class ActionBar {
         return false;
     }
 
+    /** @hide **/
+    public boolean onKeyShortcut(int keyCode, KeyEvent ev) {
+        return false;
+    }
+
     /** @hide */
     public boolean collapseActionView() {
         return false;
@@ -1349,13 +1354,5 @@ public abstract class ActionBar {
         public LayoutParams(ViewGroup.LayoutParams source) {
             super(source);
         }
-    }
-
-    /**
-     * Interface implemented by entities such as Activities that host action bars.
-     */
-    interface Callback {
-
-        FragmentManager getSupportFragmentManager();
     }
 }

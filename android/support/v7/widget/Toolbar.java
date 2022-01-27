@@ -69,7 +69,7 @@ import java.util.List;
  * {@link android.app.Activity Activity's} opaque window decor controlled by the framework,
  * a Toolbar may be placed at any arbitrary level of nesting within a view hierarchy.
  * An application may choose to designate a Toolbar as the action bar for an Activity
- * using the {@link android.support.v7.app.ActionBarActivity#setSupportActionBar(Toolbar)
+ * using the {@link android.support.v7.app.AppCompatActivity#setSupportActionBar(Toolbar)
  * setSupportActionBar()} method.</p>
  *
  * <p>Toolbar supports a more focused feature set than ActionBar. From start to end, a toolbar
@@ -114,6 +114,7 @@ public class Toolbar extends ViewGroup {
     private ImageView mLogoView;
 
     private Drawable mCollapseIcon;
+    private CharSequence mCollapseDescription;
     private ImageButton mCollapseButtonView;
     View mExpandedActionView;
 
@@ -146,6 +147,7 @@ public class Toolbar extends ViewGroup {
     private int mSubtitleTextColor;
 
     private boolean mEatingTouch;
+    private boolean mEatingHover;
 
     // Clear me after use.
     private final ArrayList<View> mTempViews = new ArrayList<View>();
@@ -191,7 +193,9 @@ public class Toolbar extends ViewGroup {
     }
 
     public Toolbar(Context context, AttributeSet attrs, int defStyleAttr) {
-        super(themifyContext(context, attrs, defStyleAttr), attrs, defStyleAttr);
+        // We manually themify the context here so that we don't break apps which only
+        // use app:theme when running on >= Lollipop
+        super(ViewUtils.themifyContext(context, attrs, false, true), attrs, defStyleAttr);
 
         // Need to use getContext() here so that we use the themed context
         final TintTypedArray a = TintTypedArray.obtainStyledAttributes(getContext(), attrs,
@@ -200,7 +204,7 @@ public class Toolbar extends ViewGroup {
         mTitleTextAppearance = a.getResourceId(R.styleable.Toolbar_titleTextAppearance, 0);
         mSubtitleTextAppearance = a.getResourceId(R.styleable.Toolbar_subtitleTextAppearance, 0);
         mGravity = a.getInteger(R.styleable.Toolbar_android_gravity, mGravity);
-        mButtonGravity = a.getInteger(R.styleable.Toolbar_buttonGravity, Gravity.TOP);
+        mButtonGravity = Gravity.TOP;
         mTitleMarginStart = mTitleMarginEnd = mTitleMarginTop = mTitleMarginBottom =
                 a.getDimensionPixelOffset(R.styleable.Toolbar_titleMargins, 0);
 
@@ -246,6 +250,7 @@ public class Toolbar extends ViewGroup {
         }
 
         mCollapseIcon = a.getDrawable(R.styleable.Toolbar_collapseIcon);
+        mCollapseDescription = a.getText(R.styleable.Toolbar_collapseContentDescription);
 
         final CharSequence title = a.getText(R.styleable.Toolbar_title);
         if (!TextUtils.isEmpty(title)) {
@@ -1001,6 +1006,7 @@ public class Toolbar extends ViewGroup {
             mCollapseButtonView = new ImageButton(getContext(), null,
                     R.attr.toolbarNavigationButtonStyle);
             mCollapseButtonView.setImageDrawable(mCollapseIcon);
+            mCollapseButtonView.setContentDescription(mCollapseDescription);
             final LayoutParams lp = generateDefaultLayoutParams();
             lp.gravity = GravityCompat.START | (mButtonGravity & Gravity.VERTICAL_GRAVITY_MASK);
             lp.mViewType = LayoutParams.EXPANDED;
@@ -1090,6 +1096,30 @@ public class Toolbar extends ViewGroup {
 
         if (action == MotionEvent.ACTION_UP || action == MotionEvent.ACTION_CANCEL) {
             mEatingTouch = false;
+        }
+
+        return true;
+    }
+
+    @Override
+    public boolean onHoverEvent(MotionEvent ev) {
+        // Same deal as onTouchEvent() above. Eat all hover events, but still
+        // respect the touch event dispatch contract.
+
+        final int action = MotionEventCompat.getActionMasked(ev);
+        if (action == MotionEvent.ACTION_HOVER_ENTER) {
+            mEatingHover = false;
+        }
+
+        if (!mEatingHover) {
+            final boolean handled = super.onHoverEvent(ev);
+            if (action == MotionEvent.ACTION_HOVER_ENTER && !handled) {
+                mEatingHover = true;
+            }
+        }
+
+        if (action == MotionEvent.ACTION_HOVER_EXIT || action == MotionEvent.ACTION_CANCEL) {
+            mEatingHover = false;
         }
 
         return true;
@@ -1780,7 +1810,7 @@ public class Toolbar extends ViewGroup {
      *
      * <p>Toolbar.LayoutParams extends ActionBar.LayoutParams for compatibility with existing
      * ActionBar API. See
-     * {@link android.support.v7.app.ActionBarActivity#setSupportActionBar(Toolbar)
+     * {@link android.support.v7.app.AppCompatActivity#setSupportActionBar(Toolbar)
      * ActionBarActivity.setActionBar}
      * for more info on how to use a Toolbar as your Activity's ActionBar.</p>
      */
@@ -1995,17 +2025,4 @@ public class Toolbar extends ViewGroup {
         }
     }
 
-    /**
-     * Allows us to emulate the {@code android:theme} attribute for devices before L.
-     */
-    private static Context themifyContext(Context context, AttributeSet attrs, int defStyleAttr) {
-        final TypedArray a = context.obtainStyledAttributes(attrs, R.styleable.Toolbar,
-                defStyleAttr, 0);
-        final int themeId = a.getResourceId(R.styleable.Toolbar_theme, 0);
-        if (themeId != 0) {
-            context = new ContextThemeWrapper(context, themeId);
-        }
-        a.recycle();
-        return context;
-    }
 }

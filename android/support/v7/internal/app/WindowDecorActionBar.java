@@ -16,6 +16,7 @@
 
 package android.support.v7.internal.app;
 
+import android.app.Activity;
 import android.app.Dialog;
 import android.content.Context;
 import android.content.res.Configuration;
@@ -31,7 +32,6 @@ import android.support.v4.view.ViewPropertyAnimatorListener;
 import android.support.v4.view.ViewPropertyAnimatorListenerAdapter;
 import android.support.v4.view.ViewPropertyAnimatorUpdateListener;
 import android.support.v7.app.ActionBar;
-import android.support.v7.app.ActionBarActivity;
 import android.support.v7.appcompat.R;
 import android.support.v7.internal.view.ActionBarPolicy;
 import android.support.v7.internal.view.ViewPropertyAnimatorCompatSet;
@@ -83,7 +83,7 @@ public class WindowDecorActionBar extends ActionBar implements
 
     private Context mContext;
     private Context mThemedContext;
-    private FragmentActivity mActivity;
+    private Activity mActivity;
     private Dialog mDialog;
 
     private ActionBarOverlayLayout mOverlayLayout;
@@ -169,7 +169,7 @@ public class WindowDecorActionBar extends ActionBar implements
                 }
             };
 
-    public WindowDecorActionBar(ActionBarActivity activity, boolean overlayMode) {
+    public WindowDecorActionBar(Activity activity, boolean overlayMode) {
         mActivity = activity;
         Window window = activity.getWindow();
         View decor = window.getDecorView();
@@ -506,7 +506,7 @@ public class WindowDecorActionBar extends ActionBar implements
 
         mOverlayLayout.setHideOnContentScrollEnabled(false);
         mContextView.killMode();
-        ActionModeImpl mode = new ActionModeImpl(callback);
+        ActionModeImpl mode = new ActionModeImpl(mContextView.getContext(), callback);
         if (mode.dispatchOnCreate()) {
             mode.invalidate();
             mContextView.initForMode(mode);
@@ -616,8 +616,14 @@ public class WindowDecorActionBar extends ActionBar implements
             return;
         }
 
-        final FragmentTransaction trans = mDecorToolbar.getViewGroup().isInEditMode() ? null :
-                mActivity.getSupportFragmentManager().beginTransaction().disallowAddToBackStack();
+        final FragmentTransaction trans;
+        if (mActivity instanceof FragmentActivity && !mDecorToolbar.getViewGroup().isInEditMode()) {
+            // If we're not in edit mode and our Activity is a FragmentActivity, start a tx
+            trans = ((FragmentActivity) mActivity).getSupportFragmentManager()
+                    .beginTransaction().disallowAddToBackStack();
+        } else {
+            trans = null;
+        }
 
         if (mSelectedTab == tab) {
             if (mSelectedTab != null) {
@@ -944,20 +950,23 @@ public class WindowDecorActionBar extends ActionBar implements
      * @hide
      */
     public class ActionModeImpl extends ActionMode implements MenuBuilder.Callback {
+        private final Context mActionModeContext;
+        private final MenuBuilder mMenu;
+
         private ActionMode.Callback mCallback;
-        private MenuBuilder mMenu;
         private WeakReference<View> mCustomView;
 
-        public ActionModeImpl(ActionMode.Callback callback) {
+        public ActionModeImpl(Context context, ActionMode.Callback callback) {
+            mActionModeContext = context;
             mCallback = callback;
-            mMenu = new MenuBuilder(getThemedContext())
+            mMenu = new MenuBuilder(context)
                     .setDefaultShowAsAction(MenuItem.SHOW_AS_ACTION_IF_ROOM);
             mMenu.setCallback(this);
         }
 
         @Override
         public MenuInflater getMenuInflater() {
-            return new SupportMenuInflater(getThemedContext());
+            return new SupportMenuInflater(mActionModeContext);
         }
 
         @Override
@@ -998,6 +1007,13 @@ public class WindowDecorActionBar extends ActionBar implements
 
         @Override
         public void invalidate() {
+            if (mActionMode != this) {
+                // Not the active action mode - no-op. It's possible we are
+                // currently deferring onDestroy, so the app doesn't yet know we
+                // are going away and is trying to use us. That's also a no-op.
+                return;
+            }
+
             mMenu.stopDispatchingItemsChanged();
             try {
                 mCallback.onPrepareActionMode(this, mMenu);

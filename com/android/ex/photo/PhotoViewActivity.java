@@ -20,14 +20,14 @@ package com.android.ex.photo;
 import android.content.Context;
 import android.content.Intent;
 import android.os.Bundle;
-import android.support.v7.app.ActionBarActivity;
+import android.support.v4.app.FragmentActivity;
 import android.view.Menu;
 import android.view.MenuItem;
 
 /**
  * Activity to view the contents of an album.
  */
-public class PhotoViewActivity extends ActionBarActivity
+public class PhotoViewActivity extends FragmentActivity
         implements PhotoViewController.ActivityInterface {
 
     private PhotoViewController mController;
@@ -40,7 +40,7 @@ public class PhotoViewActivity extends ActionBarActivity
         mController.onCreate(savedInstanceState);
     }
 
-    protected PhotoViewController createController() {
+    public PhotoViewController createController() {
         return new PhotoViewController(this);
     }
 
@@ -121,7 +121,7 @@ public class PhotoViewActivity extends ActionBarActivity
     @Override
     public ActionBarInterface getActionBarInterface() {
         if (mActionBar == null) {
-            mActionBar = new ActionBarWrapper(getSupportActionBar());
+            mActionBar = new ActionBarWrapper(getActionBar());
         }
         return mActionBar;
     }
