@@ -19,9 +19,12 @@ package android.support.v4.widget;
 import android.content.Context;
 import android.database.Cursor;
 import android.net.Uri;
+import android.support.annotation.RestrictTo;
 import android.view.View;
 import android.widget.ImageView;
 import android.widget.TextView;
+
+import static android.support.annotation.RestrictTo.Scope.GROUP_ID;
 
 /**
  * Static library support version of the framework's {@link android.widget.SimpleCursorAdapter}.
@@ -36,12 +39,14 @@ public class SimpleCursorAdapter extends ResourceCursorAdapter {
      * This field should be made private, so it is hidden from the SDK.
      * {@hide}
      */
+    @RestrictTo(GROUP_ID)
     protected int[] mFrom;
     /**
      * A list of View ids representing the views to which the data must be bound.
      * This field should be made private, so it is hidden from the SDK.
      * {@hide}
      */
+    @RestrictTo(GROUP_ID)
     protected int[] mTo;
 
     private int mStringConversionColumn = -1;
@@ -68,14 +73,14 @@ public class SimpleCursorAdapter extends ResourceCursorAdapter {
 
     /**
      * Standard constructor.
-     * 
+     *
      * @param context The context where the ListView associated with this
      *            SimpleListItemFactory is running
      * @param layout resource identifier of a layout file that defines the views
      *            for this list item. The layout file should include at least
      *            those named views defined in "to"
      * @param c The database cursor.  Can be null if the cursor is not available yet.
-     * @param from A list of column names representing the data to bind to the UI.  Can be null 
+     * @param from A list of column names representing the data to bind to the UI.  Can be null
      *            if the cursor is not available yet.
      * @param to The views that should display column in the "from" parameter.
      *            These should all be TextViews. The first N views in this list
@@ -108,7 +113,7 @@ public class SimpleCursorAdapter extends ResourceCursorAdapter {
      * binding can be found, an {@link IllegalStateException} is thrown.
      *
      * @throws IllegalStateException if binding cannot occur
-     * 
+     *
      * @see android.widget.CursorAdapter#bindView(View, Context, Cursor)
      * @see #getViewBinder()
      * @see #setViewBinder(ViewBinder)
@@ -141,8 +146,8 @@ public class SimpleCursorAdapter extends ResourceCursorAdapter {
                     } else if (v instanceof ImageView) {
                         setViewImage((ImageView) v, text);
                     } else {
-                        throw new IllegalStateException(v.getClass().getName() + " is not a " +
-                                " view that can be bounds by this SimpleCursorAdapter");
+                        throw new IllegalStateException(v.getClass().getName() + " is not a "
+                                + " view that can be bounds by this SimpleCursorAdapter");
                     }
                 }
             }
@@ -204,10 +209,10 @@ public class SimpleCursorAdapter extends ResourceCursorAdapter {
      *
      * Intended to be overridden by Adapters that need to filter strings
      * retrieved from the database.
-     * 
+     *
      * @param v TextView to receive text
      * @param text the text to be set for the TextView
-     */    
+     */
     public void setViewText(TextView v, String text) {
         v.setText(text);
     }
@@ -219,7 +224,7 @@ public class SimpleCursorAdapter extends ResourceCursorAdapter {
      * @return a valid index in the current Cursor or -1
      *
      * @see android.widget.CursorAdapter#convertToString(android.database.Cursor)
-     * @see #setStringConversionColumn(int) 
+     * @see #setStringConversionColumn(int)
      * @see #setCursorToStringConverter(CursorToStringConverter)
      * @see #getCursorToStringConverter()
      */
@@ -334,7 +339,7 @@ public class SimpleCursorAdapter extends ResourceCursorAdapter {
      * Change the cursor and change the column-to-view mappings at the same time.
      *
      * @param c The database cursor.  Can be null if the cursor is not available yet.
-     * @param from A list of column names representing the data to bind to the UI.  Can be null 
+     * @param from A list of column names representing the data to bind to the UI.  Can be null
      *            if the cursor is not available yet.
      * @param to The views that should display column in the "from" parameter.
      *            These should all be TextViews. The first N views in this list
@@ -361,7 +366,7 @@ public class SimpleCursorAdapter extends ResourceCursorAdapter {
      * SimpleCursorAdapter.
      *
      * @see SimpleCursorAdapter#bindView(View, Context, Cursor)
-     * @see SimpleCursorAdapter#setViewImage(ImageView, String) 
+     * @see SimpleCursorAdapter#setViewImage(ImageView, String)
      * @see SimpleCursorAdapter#setViewText(TextView, String)
      */
     public interface ViewBinder {

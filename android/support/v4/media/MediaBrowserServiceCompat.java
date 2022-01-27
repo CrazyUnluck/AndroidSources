@@ -16,6 +16,7 @@
 
 package android.support.v4.media;
 
+import static android.support.annotation.RestrictTo.Scope.GROUP_ID;
 import static android.support.v4.media.MediaBrowserProtocol.CLIENT_MSG_ADD_SUBSCRIPTION;
 import static android.support.v4.media.MediaBrowserProtocol.CLIENT_MSG_CONNECT;
 import static android.support.v4.media.MediaBrowserProtocol.CLIENT_MSG_DISCONNECT;
@@ -55,6 +56,7 @@ import android.os.RemoteException;
 import android.support.annotation.IntDef;
 import android.support.annotation.NonNull;
 import android.support.annotation.Nullable;
+import android.support.annotation.RestrictTo;
 import android.support.v4.app.BundleCompat;
 import android.support.v4.media.session.MediaSessionCompat;
 import android.support.v4.os.BuildCompat;
@@ -71,6 +73,7 @@ import java.lang.annotation.RetentionPolicy;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.HashMap;
+import java.util.Iterator;
 import java.util.List;
 
 /**
@@ -95,8 +98,8 @@ import java.util.List;
  * </pre>
  */
 public abstract class MediaBrowserServiceCompat extends Service {
-    private static final String TAG = "MBServiceCompat";
-    private static final boolean DEBUG = Log.isLoggable(TAG, Log.DEBUG);
+    static final String TAG = "MBServiceCompat";
+    static final boolean DEBUG = Log.isLoggable(TAG, Log.DEBUG);
 
     private MediaBrowserServiceImpl mImpl;
 
@@ -110,18 +113,22 @@ public abstract class MediaBrowserServiceCompat extends Service {
      *
      * @hide
      */
+    @RestrictTo(GROUP_ID)
     public static final String KEY_MEDIA_ITEM = "media_item";
 
-    private static final int RESULT_FLAG_OPTION_NOT_HANDLED = 0x00000001;
+    static final int RESULT_FLAG_OPTION_NOT_HANDLED = 0x00000001;
+    static final int RESULT_FLAG_ON_LOAD_ITEM_NOT_IMPLEMENTED = 0x00000002;
 
     /** @hide */
+    @RestrictTo(GROUP_ID)
     @Retention(RetentionPolicy.SOURCE)
-    @IntDef(flag=true, value = { RESULT_FLAG_OPTION_NOT_HANDLED })
+    @IntDef(flag=true, value = { RESULT_FLAG_OPTION_NOT_HANDLED,
+            RESULT_FLAG_ON_LOAD_ITEM_NOT_IMPLEMENTED })
     private @interface ResultFlags { }
 
-    private final ArrayMap<IBinder, ConnectionRecord> mConnections = new ArrayMap<>();
-    private ConnectionRecord mCurConnection;
-    private final ServiceHandler mHandler = new ServiceHandler();
+    final ArrayMap<IBinder, ConnectionRecord> mConnections = new ArrayMap<>();
+    ConnectionRecord mCurConnection;
+    final ServiceHandler mHandler = new ServiceHandler();
     MediaSessionCompat.Token mSession;
 
     interface MediaBrowserServiceImpl {
@@ -153,14 +160,15 @@ public abstract class MediaBrowserServiceCompat extends Service {
             mHandler.post(new Runnable() {
                 @Override
                 public void run() {
-                    for (IBinder key : mConnections.keySet()) {
-                        ConnectionRecord connection = mConnections.get(key);
+                    Iterator<ConnectionRecord> iter = mConnections.values().iterator();
+                    while (iter.hasNext()){
+                        ConnectionRecord connection = iter.next();
                         try {
                             connection.callbacks.onConnect(connection.root.getRootId(), token,
                                     connection.root.getExtras());
                         } catch (RemoteException e) {
                             Log.w(TAG, "Connection for " + connection.pkg + " is no longer valid.");
-                            mConnections.remove(key);
+                            iter.remove();
                         }
                     }
                 }
@@ -329,9 +337,13 @@ public abstract class MediaBrowserServiceCompat extends Service {
                     = new Result<MediaBrowserCompat.MediaItem>(itemId) {
                 @Override
                 void onResultSent(MediaBrowserCompat.MediaItem item, @ResultFlags int flags) {
-                    Parcel parcelItem = Parcel.obtain();
-                    item.writeToParcel(parcelItem, 0);
-                    resultWrapper.sendResult(parcelItem);
+                    if (item == null) {
+                        resultWrapper.sendResult(null);
+                    } else {
+                        Parcel parcelItem = Parcel.obtain();
+                        item.writeToParcel(parcelItem, 0);
+                        resultWrapper.sendResult(parcelItem);
+                    }
                 }
 
                 @Override
@@ -397,6 +409,9 @@ public abstract class MediaBrowserServiceCompat extends Service {
 
     private final class ServiceHandler extends Handler {
         private final ServiceBinderImpl mServiceBinderImpl = new ServiceBinderImpl();
+
+        ServiceHandler() {
+        }
 
         @Override
         public void handleMessage(Message msg) {
@@ -468,6 +483,9 @@ public abstract class MediaBrowserServiceCompat extends Service {
         ServiceCallbacks callbacks;
         BrowserRoot root;
         HashMap<String, List<Pair<IBinder, Bundle>>> subscriptions = new HashMap();
+
+        ConnectionRecord() {
+        }
     }
 
     /**
@@ -537,6 +555,9 @@ public abstract class MediaBrowserServiceCompat extends Service {
     }
 
     private class ServiceBinderImpl {
+        ServiceBinderImpl() {
+        }
+
         public void connect(final String pkg, final int uid, final Bundle rootHints,
                 final ServiceCallbacks callbacks) {
 
@@ -711,10 +732,12 @@ public abstract class MediaBrowserServiceCompat extends Service {
             mCallbacks = callbacks;
         }
 
+        @Override
         public IBinder asBinder() {
             return mCallbacks.getBinder();
         }
 
+        @Override
         public void onConnect(String root, MediaSessionCompat.Token session, Bundle extras)
                 throws RemoteException {
             if (extras == null) {
@@ -728,10 +751,12 @@ public abstract class MediaBrowserServiceCompat extends Service {
             sendRequest(SERVICE_MSG_ON_CONNECT, data);
         }
 
+        @Override
         public void onConnectFailed() throws RemoteException {
             sendRequest(SERVICE_MSG_ON_CONNECT_FAILED, null);
         }
 
+        @Override
         public void onLoadChildren(String mediaId, List<MediaBrowserCompat.MediaItem> list,
                 Bundle options) throws RemoteException {
             Bundle data = new Bundle();
@@ -798,6 +823,7 @@ public abstract class MediaBrowserServiceCompat extends Service {
      * @see BrowserRoot#EXTRA_RECENT
      * @see BrowserRoot#EXTRA_OFFLINE
      * @see BrowserRoot#EXTRA_SUGGESTED
+     * @see BrowserRoot#EXTRA_SUGGESTION_KEYWORDS
      */
     public abstract @Nullable BrowserRoot onGetRoot(@NonNull String clientPackageName,
             int clientUid, @Nullable Bundle rootHints);
@@ -855,14 +881,18 @@ public abstract class MediaBrowserServiceCompat extends Service {
      * result.detach} may be called before returning from this function, and
      * then {@link Result#sendResult result.sendResult} called when the item has
      * been loaded.
-     * <p>
-     * The default implementation sends a null result.
+     * </p><p>
+     * When the given {@code itemId} is invalid, implementations must call
+     * {@link Result#sendResult result.sendResult} with {@code null}.
+     * </p><p>
+     * The default implementation will invoke {@link MediaBrowserCompat.ItemCallback#onError}.
      *
      * @param itemId The id for the specific {@link MediaBrowserCompat.MediaItem}.
      * @param result The Result to send the item to, or null if the id is
      *            invalid.
      */
     public void onLoadItem(String itemId, Result<MediaBrowserCompat.MediaItem> result) {
+        result.setFlags(RESULT_FLAG_ON_LOAD_ITEM_NOT_IMPLEMENTED);
         result.sendResult(null);
     }
 
@@ -907,6 +937,7 @@ public abstract class MediaBrowserServiceCompat extends Service {
      * @see MediaBrowserServiceCompat.BrowserRoot#EXTRA_RECENT
      * @see MediaBrowserServiceCompat.BrowserRoot#EXTRA_OFFLINE
      * @see MediaBrowserServiceCompat.BrowserRoot#EXTRA_SUGGESTED
+     * @see MediaBrowserServiceCompat.BrowserRoot#EXTRA_SUGGESTION_KEYWORDS
      */
     public final Bundle getBrowserRootHints() {
         return mImpl.getBrowserRootHints();
@@ -951,7 +982,7 @@ public abstract class MediaBrowserServiceCompat extends Service {
     /**
      * Return whether the given package is one of the ones that is owned by the uid.
      */
-    private boolean isValidPackage(String pkg, int uid) {
+    boolean isValidPackage(String pkg, int uid) {
         if (pkg == null) {
             return false;
         }
@@ -969,7 +1000,7 @@ public abstract class MediaBrowserServiceCompat extends Service {
     /**
      * Save the subscription and if it is a new subscription send the results.
      */
-    private void addSubscription(String id, ConnectionRecord connection, IBinder token,
+    void addSubscription(String id, ConnectionRecord connection, IBinder token,
             Bundle options) {
         // Save the subscription
         List<Pair<IBinder, Bundle>> callbackList = connection.subscriptions.get(id);
@@ -991,17 +1022,18 @@ public abstract class MediaBrowserServiceCompat extends Service {
     /**
      * Remove the subscription.
      */
-    private boolean removeSubscription(String id, ConnectionRecord connection, IBinder token) {
+    boolean removeSubscription(String id, ConnectionRecord connection, IBinder token) {
         if (token == null) {
             return connection.subscriptions.remove(id) != null;
         }
         boolean removed = false;
         List<Pair<IBinder, Bundle>> callbackList = connection.subscriptions.get(id);
         if (callbackList != null) {
-            for (Pair<IBinder, Bundle> callback : callbackList) {
-                if (token == callback.first) {
+            Iterator<Pair<IBinder, Bundle>> iter = callbackList.iterator();
+            while (iter.hasNext()){
+                if (token == iter.next().first) {
                     removed = true;
-                    callbackList.remove(callback);
+                    iter.remove();
                 }
             }
             if (callbackList.size() == 0) {
@@ -1016,7 +1048,7 @@ public abstract class MediaBrowserServiceCompat extends Service {
      * <p>
      * Callers must make sure that this connection is still connected.
      */
-    private void performLoadChildren(final String parentId, final ConnectionRecord connection,
+    void performLoadChildren(final String parentId, final ConnectionRecord connection,
             final Bundle options) {
         final Result<List<MediaBrowserCompat.MediaItem>> result
                 = new Result<List<MediaBrowserCompat.MediaItem>>(parentId) {
@@ -1057,7 +1089,7 @@ public abstract class MediaBrowserServiceCompat extends Service {
         }
     }
 
-    private List<MediaBrowserCompat.MediaItem> applyOptions(List<MediaBrowserCompat.MediaItem> list,
+    List<MediaBrowserCompat.MediaItem> applyOptions(List<MediaBrowserCompat.MediaItem> list,
             final Bundle options) {
         if (list == null) {
             return null;
@@ -1078,12 +1110,16 @@ public abstract class MediaBrowserServiceCompat extends Service {
         return list.subList(fromIndex, toIndex);
     }
 
-    private void performLoadItem(String itemId, ConnectionRecord connection,
+    void performLoadItem(String itemId, ConnectionRecord connection,
             final ResultReceiver receiver) {
         final Result<MediaBrowserCompat.MediaItem> result =
                 new Result<MediaBrowserCompat.MediaItem>(itemId) {
                     @Override
                     void onResultSent(MediaBrowserCompat.MediaItem item, @ResultFlags int flags) {
+                        if ((flags & RESULT_FLAG_ON_LOAD_ITEM_NOT_IMPLEMENTED) != 0) {
+                            receiver.send(-1, null);
+                            return;
+                        }
                         Bundle bundle = new Bundle();
                         bundle.putParcelable(KEY_MEDIA_ITEM, item);
                         receiver.send(0, bundle);
@@ -1118,6 +1154,7 @@ public abstract class MediaBrowserServiceCompat extends Service {
          *
          * @see #EXTRA_OFFLINE
          * @see #EXTRA_SUGGESTED
+         * @see #EXTRA_SUGGESTION_KEYWORDS
          */
         public static final String EXTRA_RECENT = "android.service.media.extra.RECENT";
 
@@ -1135,6 +1172,7 @@ public abstract class MediaBrowserServiceCompat extends Service {
          *
          * @see #EXTRA_RECENT
          * @see #EXTRA_SUGGESTED
+         * @see #EXTRA_SUGGESTION_KEYWORDS
          */
         public static final String EXTRA_OFFLINE = "android.service.media.extra.OFFLINE";
 
@@ -1153,8 +1191,30 @@ public abstract class MediaBrowserServiceCompat extends Service {
          *
          * @see #EXTRA_RECENT
          * @see #EXTRA_OFFLINE
+         * @see #EXTRA_SUGGESTION_KEYWORDS
          */
         public static final String EXTRA_SUGGESTED = "android.service.media.extra.SUGGESTED";
+
+        /**
+         * The lookup key for a string that indicates specific keywords which will be considered
+         * when the browser service suggests media items.
+         *
+         * <p>When creating a media browser for a given media browser service, this key can be
+         * supplied as a root hint together with {@link #EXTRA_SUGGESTED} for retrieving suggested
+         * media items related with the keywords. The list of media items passed in
+         * {@link android.media.browse.MediaBrowser.SubscriptionCallback#onChildrenLoaded(String, List)}
+         * is considered ordered by relevance, first being the top suggestion.
+         * If the media browser service can provide such media items, the implementation must return
+         * the key in the root hint when {@link #onGetRoot(String, int, Bundle)} is called back.
+         *
+         * <p>The root hint may contain multiple keys.
+         *
+         * @see #EXTRA_RECENT
+         * @see #EXTRA_OFFLINE
+         * @see #EXTRA_SUGGESTED
+         */
+        public static final String EXTRA_SUGGESTION_KEYWORDS
+                = "android.service.media.extra.SUGGESTION_KEYWORDS";
 
         final private String mRootId;
         final private Bundle mExtras;

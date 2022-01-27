@@ -20,10 +20,14 @@ import android.app.Notification;
 import android.app.PendingIntent;
 import android.content.Context;
 import android.os.Bundle;
+import android.support.annotation.RestrictTo;
+
+import static android.support.annotation.RestrictTo.Scope.GROUP_ID;
 
 /**
  * @hide
  */
+@RestrictTo(GROUP_ID)
 public class NotificationCompatBase {
 
     public static abstract class Action {
@@ -60,8 +64,10 @@ public class NotificationCompatBase {
     }
 
     public static Notification add(Notification notification, Context context,
-            CharSequence contentTitle, CharSequence contentText, PendingIntent contentIntent) {
+            CharSequence contentTitle, CharSequence contentText, PendingIntent contentIntent,
+            PendingIntent fullScreenIntent) {
         notification.setLatestEventInfo(context, contentTitle, contentText, contentIntent);
+        notification.fullScreenIntent = fullScreenIntent;
         return notification;
     }
 }

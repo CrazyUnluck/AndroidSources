@@ -16,6 +16,8 @@
 
 package android.support.v7.view.menu;
 
+import static android.support.annotation.RestrictTo.Scope.GROUP_ID;
+
 import android.content.ComponentName;
 import android.content.Context;
 import android.content.Intent;
@@ -27,6 +29,7 @@ import android.graphics.drawable.Drawable;
 import android.os.Bundle;
 import android.os.Parcelable;
 import android.support.annotation.NonNull;
+import android.support.annotation.RestrictTo;
 import android.support.v4.content.ContextCompat;
 import android.support.v4.internal.view.SupportMenu;
 import android.support.v4.internal.view.SupportMenuItem;
@@ -52,6 +55,7 @@ import java.util.concurrent.CopyOnWriteArrayList;
  *
  * @hide
  */
+@RestrictTo(GROUP_ID)
 public class MenuBuilder implements SupportMenu {
 
     private static final String TAG = "MenuBuilder";
@@ -161,6 +165,8 @@ public class MenuBuilder implements SupportMenu {
 
     private boolean mItemsChangedWhileDispatchPrevented = false;
 
+    private boolean mStructureChangedWhileDispatchPrevented = false;
+
     private boolean mOptionalIconsVisible = false;
 
     private boolean mIsClosing = false;
@@ -184,6 +190,8 @@ public class MenuBuilder implements SupportMenu {
      * Called by menu to notify of close and selection changes.
      * @hide
      */
+
+    @RestrictTo(GROUP_ID)
     public interface Callback {
 
         /**
@@ -193,22 +201,23 @@ public class MenuBuilder implements SupportMenu {
          * @param item The menu item that is selected
          * @return whether the menu item selection was handled
          */
-        public boolean onMenuItemSelected(MenuBuilder menu, MenuItem item);
+        boolean onMenuItemSelected(MenuBuilder menu, MenuItem item);
 
         /**
          * Called when the mode of the menu changes (for example, from icon to expanded).
          *
          * @param menu the menu that has changed modes
          */
-        public void onMenuModeChange(MenuBuilder menu);
+        void onMenuModeChange(MenuBuilder menu);
     }
 
     /**
      * Called by menu items to execute their associated action
      * @hide
      */
+    @RestrictTo(GROUP_ID)
     public interface ItemInvoker {
-        public boolean invokeItem(MenuItemImpl item);
+        boolean invokeItem(MenuItemImpl item);
     }
 
     public MenuBuilder(Context context) {
@@ -575,6 +584,7 @@ public class MenuBuilder implements SupportMenu {
         clearHeader();
         mPreventDispatchingItemsChanged = false;
         mItemsChangedWhileDispatchPrevented = false;
+        mStructureChangedWhileDispatchPrevented = false;
         onItemsChanged(true);
     }
 
@@ -592,6 +602,7 @@ public class MenuBuilder implements SupportMenu {
         final int group = item.getGroupId();
 
         final int N = mItems.size();
+        stopDispatchingItemsChanged();
         for (int i = 0; i < N; i++) {
             MenuItemImpl curItem = mItems.get(i);
             if (curItem.getGroupId() == group) {
@@ -602,6 +613,7 @@ public class MenuBuilder implements SupportMenu {
                 curItem.setCheckedInt(curItem == item);
             }
         }
+        startDispatchingItemsChanged();
     }
 
     @Override
@@ -964,6 +976,11 @@ public class MenuBuilder implements SupportMenu {
                 close(true /* closeAllMenus */);
             }
         } else if (itemImpl.hasSubMenu() || providerHasSubMenu) {
+            if ((flags & SupportMenu.FLAG_KEEP_OPEN_ON_SUBMENU_OPENED) == 0) {
+                // If we're not flagged to keep the menu open, close it
+                close(false);
+            }
+
             if (!itemImpl.hasSubMenu()) {
                 itemImpl.setSubMenu(new SubMenuBuilder(getContext(), this, itemImpl));
             }
@@ -1030,6 +1047,9 @@ public class MenuBuilder implements SupportMenu {
             dispatchPresenterUpdate(structureChanged);
         } else {
             mItemsChangedWhileDispatchPrevented = true;
+            if (structureChanged) {
+                mStructureChangedWhileDispatchPrevented = true;
+            }
         }
     }
 
@@ -1042,6 +1062,7 @@ public class MenuBuilder implements SupportMenu {
         if (!mPreventDispatchingItemsChanged) {
             mPreventDispatchingItemsChanged = true;
             mItemsChangedWhileDispatchPrevented = false;
+            mStructureChangedWhileDispatchPrevented = false;
         }
     }
 
@@ -1050,7 +1071,7 @@ public class MenuBuilder implements SupportMenu {
 
         if (mItemsChangedWhileDispatchPrevented) {
             mItemsChangedWhileDispatchPrevented = false;
-            onItemsChanged(true);
+            onItemsChanged(mStructureChangedWhileDispatchPrevented);
         }
     }
 

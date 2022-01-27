@@ -23,6 +23,8 @@ import android.view.InputEvent;
 import android.view.KeyEvent;
 import android.view.View;
 
+import java.lang.ref.WeakReference;
+
 
 /**
  * A helper class for managing a {@link android.support.v17.leanback.widget.PlaybackControlsRow} and
@@ -157,10 +159,10 @@ public abstract class PlaybackControlSupportGlue implements OnActionClickedListe
      */
     public static final int PLAYBACK_SPEED_FAST_L4 = 14;
 
-    private static final String TAG = "PlaybackControlSupportGlue";
-    private static final boolean DEBUG = false;
+    static final String TAG = "PlaybackControlSupportGlue";
+    static final boolean DEBUG = false;
 
-    private static final int MSG_UPDATE_PLAYBACK_STATE = 100;
+    static final int MSG_UPDATE_PLAYBACK_STATE = 100;
     private static final int UPDATE_PLAYBACK_STATE_DELAY_MS = 2000;
     private static final int NUMBER_OF_SEEK_SPEEDS = PLAYBACK_SPEED_FAST_L4 -
             PLAYBACK_SPEED_FAST_L0 + 1;
@@ -176,18 +178,25 @@ public abstract class PlaybackControlSupportGlue implements OnActionClickedListe
     private PlaybackControlsRow.SkipPreviousAction mSkipPreviousAction;
     private PlaybackControlsRow.FastForwardAction mFastForwardAction;
     private PlaybackControlsRow.RewindAction mRewindAction;
-    private OnItemViewClickedListener mExternalOnItemViewClickedListener;
+    OnItemViewClickedListener mExternalOnItemViewClickedListener;
     private int mPlaybackSpeed = PLAYBACK_SPEED_NORMAL;
     private boolean mFadeWhenPlaying = true;
 
-    private final Handler mHandler = new Handler() {
+    static class UpdatePlaybackStateHandler extends Handler {
         @Override
         public void handleMessage(Message msg) {
             if (msg.what == MSG_UPDATE_PLAYBACK_STATE) {
-                updatePlaybackState();
+                PlaybackControlSupportGlue glue = ((WeakReference<PlaybackControlSupportGlue>) msg.obj).get();
+                if (glue != null) {
+                    glue.updatePlaybackState();
+                }
             }
         }
-    };
+    }
+
+    final static Handler sHandler = new UpdatePlaybackStateHandler();
+
+    final WeakReference<PlaybackControlSupportGlue> mGlueWeakReference =  new WeakReference(this);
 
     private final OnItemViewClickedListener mOnItemViewClickedListener =
             new OnItemViewClickedListener() {
@@ -485,7 +494,7 @@ public abstract class PlaybackControlSupportGlue implements OnActionClickedListe
     /**
      * Called when the given action is invoked, either by click or keyevent.
      */
-    private boolean dispatchAction(Action action, KeyEvent keyEvent) {
+    boolean dispatchAction(Action action, KeyEvent keyEvent) {
         boolean handled = false;
         if (action == mPlayPauseAction) {
             boolean canPlay = keyEvent == null ||
@@ -494,14 +503,18 @@ public abstract class PlaybackControlSupportGlue implements OnActionClickedListe
             boolean canPause = keyEvent == null ||
                     keyEvent.getKeyCode() == KeyEvent.KEYCODE_MEDIA_PLAY_PAUSE ||
                     keyEvent.getKeyCode() == KeyEvent.KEYCODE_MEDIA_PAUSE;
-            if (mPlaybackSpeed != PLAYBACK_SPEED_NORMAL) {
-                if (canPlay) {
-                    mPlaybackSpeed = PLAYBACK_SPEED_NORMAL;
-                    startPlayback(mPlaybackSpeed);
-                }
-            } else if (canPause) {
+            //            PLAY_PAUSE    PLAY      PAUSE
+            // playing    paused                  paused
+            // paused     playing       playing
+            // ff/rw      playing       playing   paused
+            if (canPause &&
+                (canPlay ? mPlaybackSpeed == PLAYBACK_SPEED_NORMAL :
+                        mPlaybackSpeed != PLAYBACK_SPEED_PAUSED)) {
                 mPlaybackSpeed = PLAYBACK_SPEED_PAUSED;
                 pausePlayback();
+            } else if (canPlay && mPlaybackSpeed != PLAYBACK_SPEED_NORMAL) {
+                mPlaybackSpeed = PLAYBACK_SPEED_NORMAL;
+                startPlayback(mPlaybackSpeed);
             }
             updatePlaybackStatusAfterUserAction();
             handled = true;
@@ -559,16 +572,16 @@ public abstract class PlaybackControlSupportGlue implements OnActionClickedListe
 
     private void updateControlsRow() {
         updateRowMetadata();
-        mHandler.removeMessages(MSG_UPDATE_PLAYBACK_STATE);
+        sHandler.removeMessages(MSG_UPDATE_PLAYBACK_STATE, mGlueWeakReference);
         updatePlaybackState();
     }
 
     private void updatePlaybackStatusAfterUserAction() {
         updatePlaybackState(mPlaybackSpeed);
         // Sync playback state after a delay
-        mHandler.removeMessages(MSG_UPDATE_PLAYBACK_STATE);
-        mHandler.sendEmptyMessageDelayed(MSG_UPDATE_PLAYBACK_STATE,
-                UPDATE_PLAYBACK_STATE_DELAY_MS);
+        sHandler.removeMessages(MSG_UPDATE_PLAYBACK_STATE, mGlueWeakReference);
+        sHandler.sendMessageDelayed(sHandler.obtainMessage(MSG_UPDATE_PLAYBACK_STATE,
+                mGlueWeakReference), UPDATE_PLAYBACK_STATE_DELAY_MS);
     }
 
     private void updateRowMetadata() {
@@ -591,7 +604,7 @@ public abstract class PlaybackControlSupportGlue implements OnActionClickedListe
         onRowChanged(mControlsRow);
     }
 
-    private void updatePlaybackState() {
+    void updatePlaybackState() {
         if (hasValidMedia()) {
             mPlaybackSpeed = getCurrentSpeedId();
             updatePlaybackState(mPlaybackSpeed);
@@ -655,10 +668,7 @@ public abstract class PlaybackControlSupportGlue implements OnActionClickedListe
         if (mFastForwardAction != null) {
             int index = 0;
             if (playbackSpeed >= PLAYBACK_SPEED_FAST_L0) {
-                index = playbackSpeed - PLAYBACK_SPEED_FAST_L0;
-                if (playbackSpeed < getMaxForwardSpeedId()) {
-                    index++;
-                }
+                index = playbackSpeed - PLAYBACK_SPEED_FAST_L0 + 1;
             }
             if (mFastForwardAction.getIndex() != index) {
                 mFastForwardAction.setIndex(index);
@@ -668,10 +678,7 @@ public abstract class PlaybackControlSupportGlue implements OnActionClickedListe
         if (mRewindAction != null) {
             int index = 0;
             if (playbackSpeed <= -PLAYBACK_SPEED_FAST_L0) {
-                index = -playbackSpeed - PLAYBACK_SPEED_FAST_L0;
-                if (-playbackSpeed < getMaxRewindSpeedId()) {
-                    index++;
-                }
+                index = -playbackSpeed - PLAYBACK_SPEED_FAST_L0 + 1;
             }
             if (mRewindAction.getIndex() != index) {
                 mRewindAction.setIndex(index);
@@ -826,6 +833,7 @@ public abstract class PlaybackControlSupportGlue implements OnActionClickedListe
 
     /**
      * Must be called appropriately by a subclass when the playback state has changed.
+     * It updates the playback state displayed on the media player.
      */
     protected void onStateChanged() {
         if (DEBUG) Log.v(TAG, "onStateChanged");
@@ -834,12 +842,12 @@ public abstract class PlaybackControlSupportGlue implements OnActionClickedListe
         if (!hasValidMedia()) {
             return;
         }
-        if (mHandler.hasMessages(MSG_UPDATE_PLAYBACK_STATE)) {
-            mHandler.removeMessages(MSG_UPDATE_PLAYBACK_STATE);
+        if (sHandler.hasMessages(MSG_UPDATE_PLAYBACK_STATE, mGlueWeakReference)) {
+            sHandler.removeMessages(MSG_UPDATE_PLAYBACK_STATE, mGlueWeakReference);
             if (getCurrentSpeedId() != mPlaybackSpeed) {
                 if (DEBUG) Log.v(TAG, "Status expectation mismatch, delaying update");
-                mHandler.sendEmptyMessageDelayed(MSG_UPDATE_PLAYBACK_STATE,
-                        UPDATE_PLAYBACK_STATE_DELAY_MS);
+                sHandler.sendMessageDelayed(sHandler.obtainMessage(MSG_UPDATE_PLAYBACK_STATE,
+                        mGlueWeakReference), UPDATE_PLAYBACK_STATE_DELAY_MS);
             } else {
                 if (DEBUG) Log.v(TAG, "Update state matches expectation");
                 updatePlaybackState();

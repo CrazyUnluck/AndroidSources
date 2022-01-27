@@ -67,9 +67,9 @@ import java.util.concurrent.ArrayBlockingQueue;
 public final class AsyncLayoutInflater {
     private static final String TAG = "AsyncLayoutInflater";
 
-    private LayoutInflater mInflater;
-    private Handler mHandler;
-    private InflateThread mInflateThread;
+    LayoutInflater mInflater;
+    Handler mHandler;
+    InflateThread mInflateThread;
 
     public AsyncLayoutInflater(@NonNull Context context) {
         mInflater = new BasicInflater(context);
@@ -107,7 +107,7 @@ public final class AsyncLayoutInflater {
     };
 
     public interface OnInflateFinishedListener {
-        public void onInflateFinished(View view, int resid, ViewGroup parent);
+        void onInflateFinished(View view, int resid, ViewGroup parent);
     }
 
     private static class InflateRequest {
@@ -116,6 +116,9 @@ public final class AsyncLayoutInflater {
         int resid;
         View view;
         OnInflateFinishedListener callback;
+
+        InflateRequest() {
+        }
     }
 
     private static class BasicInflater extends LayoutInflater {
@@ -125,7 +128,7 @@ public final class AsyncLayoutInflater {
             "android.app."
         };
 
-        public BasicInflater(Context context) {
+        BasicInflater(Context context) {
             super(context);
         }
 
@@ -163,10 +166,8 @@ public final class AsyncLayoutInflater {
             return sInstance;
         }
 
-        private ArrayBlockingQueue<InflateRequest> mQueue
-                = new ArrayBlockingQueue<>(10);
-        private SynchronizedPool<InflateRequest> mRequestPool
-                = new SynchronizedPool<>(10);
+        private ArrayBlockingQueue<InflateRequest> mQueue = new ArrayBlockingQueue<>(10);
+        private SynchronizedPool<InflateRequest> mRequestPool = new SynchronizedPool<>(10);
 
         @Override
         public void run() {
@@ -185,8 +186,8 @@ public final class AsyncLayoutInflater {
                             request.resid, request.parent, false);
                 } catch (RuntimeException ex) {
                     // Probably a Looper failure, retry on the UI thread
-                    Log.w(TAG, "Failed to inflate resource in the background! Retrying on the UI thread",
-                            ex);
+                    Log.w(TAG, "Failed to inflate resource in the background! Retrying on the UI"
+                            + " thread", ex);
                 }
                 Message.obtain(request.inflater.mHandler, 0, request)
                         .sendToTarget();

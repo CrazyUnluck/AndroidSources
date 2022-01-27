@@ -36,7 +36,6 @@ import android.text.TextUtils;
 import android.util.Log;
 import android.view.KeyEvent;
 
-import java.util.ArrayList;
 import java.util.List;
 
 /**
@@ -53,7 +52,7 @@ import java.util.List;
  * introduced after API level 4 in a backwards compatible fashion.
  */
 public final class MediaControllerCompat {
-    private static final String TAG = "MediaControllerCompat";
+    static final String TAG = "MediaControllerCompat";
 
     private final MediaControllerImpl mImpl;
     private final MediaSessionCompat.Token mToken;
@@ -344,9 +343,9 @@ public final class MediaControllerCompat {
      */
     public static abstract class Callback implements IBinder.DeathRecipient {
         private final Object mCallbackObj;
-        private MessageHandler mHandler;
+        MessageHandler mHandler;
 
-        private boolean mRegistered = false;
+        boolean mRegistered = false;
 
         public Callback() {
             if (android.os.Build.VERSION.SDK_INT >= 21) {
@@ -386,7 +385,7 @@ public final class MediaControllerCompat {
          * Override to handle changes to the current metadata.
          *
          * @param metadata The current metadata for the session or null if none.
-         * @see MediaMetadata
+         * @see MediaMetadataCompat
          */
         public void onMetadataChanged(MediaMetadataCompat metadata) {
         }
@@ -442,6 +441,9 @@ public final class MediaControllerCompat {
         }
 
         private class StubApi21 implements MediaControllerCompatApi21.Callback {
+            StubApi21() {
+            }
+
             @Override
             public void onSessionDestroyed() {
                 Callback.this.onSessionDestroyed();
@@ -460,12 +462,36 @@ public final class MediaControllerCompat {
 
             @Override
             public void onMetadataChanged(Object metadataObj) {
-                Callback.this.onMetadataChanged(
-                        MediaMetadataCompat.fromMediaMetadata(metadataObj));
+                Callback.this.onMetadataChanged(MediaMetadataCompat.fromMediaMetadata(metadataObj));
+            }
+
+            @Override
+            public void onQueueChanged(List<?> queue) {
+                Callback.this.onQueueChanged(QueueItem.fromQueueItemList(queue));
+            }
+
+            @Override
+            public void onQueueTitleChanged(CharSequence title) {
+                Callback.this.onQueueTitleChanged(title);
+            }
+
+            @Override
+            public void onExtrasChanged(Bundle extras) {
+                Callback.this.onExtrasChanged(extras);
+            }
+
+            @Override
+            public void onAudioInfoChanged(
+                    int type, int stream, int control, int max, int current) {
+                Callback.this.onAudioInfoChanged(
+                        new PlaybackInfo(type, stream, control, max, current));
             }
         }
 
         private class StubCompat extends IMediaControllerCallback.Stub {
+
+            StubCompat() {
+            }
 
             @Override
             public void onEvent(String event, Bundle extras) throws RemoteException {
@@ -1285,15 +1311,8 @@ public final class MediaControllerCompat {
         @Override
         public List<MediaSessionCompat.QueueItem> getQueue() {
             List<Object> queueObjs = MediaControllerCompatApi21.getQueue(mControllerObj);
-            if (queueObjs == null) {
-                return null;
-            }
-            List<MediaSessionCompat.QueueItem> queue =
-                    new ArrayList<MediaSessionCompat.QueueItem>();
-            for (Object item : queueObjs) {
-                queue.add(MediaSessionCompat.QueueItem.obtain(item));
-            }
-            return queue;
+            return queueObjs != null ? MediaSessionCompat.QueueItem.fromQueueItemList(queueObjs)
+                    : null;
         }
 
         @Override

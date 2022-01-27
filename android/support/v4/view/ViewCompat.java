@@ -19,7 +19,6 @@ package android.support.v4.view;
 import android.content.res.ColorStateList;
 import android.graphics.Matrix;
 import android.graphics.Paint;
-import android.graphics.PixelFormat;
 import android.graphics.PorterDuff;
 import android.graphics.Rect;
 import android.graphics.drawable.Drawable;
@@ -29,10 +28,12 @@ import android.support.annotation.IdRes;
 import android.support.annotation.IntDef;
 import android.support.annotation.NonNull;
 import android.support.annotation.Nullable;
+import android.support.annotation.RestrictTo;
 import android.support.v4.os.BuildCompat;
 import android.support.v4.view.accessibility.AccessibilityNodeInfoCompat;
 import android.support.v4.view.accessibility.AccessibilityNodeProviderCompat;
 import android.util.Log;
+import android.view.Display;
 import android.view.MotionEvent;
 import android.view.VelocityTracker;
 import android.view.View;
@@ -44,8 +45,11 @@ import android.view.accessibility.AccessibilityEvent;
 import java.lang.annotation.Retention;
 import java.lang.annotation.RetentionPolicy;
 import java.lang.reflect.Field;
+import java.lang.reflect.InvocationTargetException;
 import java.lang.reflect.Method;
 import java.util.WeakHashMap;
+
+import static android.support.annotation.RestrictTo.Scope.GROUP_ID;
 
 /**
  * Helper for accessing features in {@link View} introduced after API
@@ -55,22 +59,24 @@ public class ViewCompat {
     private static final String TAG = "ViewCompat";
 
     /** @hide */
+    @RestrictTo(GROUP_ID)
     @IntDef({View.FOCUS_LEFT, View.FOCUS_UP, View.FOCUS_RIGHT, View.FOCUS_DOWN,
             View.FOCUS_FORWARD, View.FOCUS_BACKWARD})
     @Retention(RetentionPolicy.SOURCE)
     public @interface FocusDirection {}
 
     /** @hide */
+    @RestrictTo(GROUP_ID)
     @IntDef({View.FOCUS_LEFT, View.FOCUS_UP, View.FOCUS_RIGHT, View.FOCUS_DOWN})
     @Retention(RetentionPolicy.SOURCE)
     public @interface FocusRealDirection {}
 
     /** @hide */
+    @RestrictTo(GROUP_ID)
     @IntDef({View.FOCUS_FORWARD, View.FOCUS_BACKWARD})
     @Retention(RetentionPolicy.SOURCE)
     public @interface FocusRelativeDirection {}
 
-    /** @hide */
     @IntDef({OVER_SCROLL_ALWAYS, OVER_SCROLL_IF_CONTENT_SCROLLS, OVER_SCROLL_NEVER})
     @Retention(RetentionPolicy.SOURCE)
     private @interface OverScroll {}
@@ -78,23 +84,31 @@ public class ViewCompat {
     /**
      * Always allow a user to over-scroll this view, provided it is a
      * view that can scroll.
+     * @deprecated Use {@link View#OVER_SCROLL_ALWAYS} directly. This constant will be removed in
+     * a future release.
      */
+    @Deprecated
     public static final int OVER_SCROLL_ALWAYS = 0;
 
     /**
      * Allow a user to over-scroll this view only if the content is large
      * enough to meaningfully scroll, provided it is a view that can scroll.
+     * @deprecated Use {@link View#OVER_SCROLL_IF_CONTENT_SCROLLS} directly. This constant will be
+     * removed in a future release.
      */
+    @Deprecated
     public static final int OVER_SCROLL_IF_CONTENT_SCROLLS = 1;
 
     /**
      * Never allow a user to over-scroll this view.
+     * @deprecated Use {@link View#OVER_SCROLL_NEVER} directly. This constant will be removed in
+     * a future release.
      */
+    @Deprecated
     public static final int OVER_SCROLL_NEVER = 2;
 
     private static final long FAKE_FRAME_TIME = 10;
 
-    /** @hide */
     @IntDef({
             IMPORTANT_FOR_ACCESSIBILITY_AUTO,
             IMPORTANT_FOR_ACCESSIBILITY_YES,
@@ -125,7 +139,6 @@ public class ViewCompat {
      */
     public static final int IMPORTANT_FOR_ACCESSIBILITY_NO_HIDE_DESCENDANTS = 0x00000004;
 
-    /** @hide */
     @IntDef({
             ACCESSIBILITY_LIVE_REGION_NONE,
             ACCESSIBILITY_LIVE_REGION_POLITE,
@@ -159,7 +172,6 @@ public class ViewCompat {
      */
     public static final int ACCESSIBILITY_LIVE_REGION_ASSERTIVE = 0x00000002;
 
-    /** @hide */
     @IntDef({LAYER_TYPE_NONE, LAYER_TYPE_SOFTWARE, LAYER_TYPE_HARDWARE})
     @Retention(RetentionPolicy.SOURCE)
     private @interface LayerType {}
@@ -212,7 +224,6 @@ public class ViewCompat {
      */
     public static final int LAYER_TYPE_HARDWARE = 2;
 
-    /** @hide */
     @IntDef({
             LAYOUT_DIRECTION_LTR,
             LAYOUT_DIRECTION_RTL,
@@ -221,7 +232,6 @@ public class ViewCompat {
     @Retention(RetentionPolicy.SOURCE)
     private @interface LayoutDirectionMode {}
 
-    /** @hide */
     @IntDef({
             LAYOUT_DIRECTION_LTR,
             LAYOUT_DIRECTION_RTL
@@ -363,8 +373,6 @@ public class ViewCompat {
     interface ViewCompatImpl {
         boolean canScrollHorizontally(View v, int direction);
         boolean canScrollVertically(View v, int direction);
-        int getOverScrollMode(View v);
-        void setOverScrollMode(View v, int mode);
         void onInitializeAccessibilityEvent(View v, AccessibilityEvent event);
         void onPopulateAccessibilityEvent(View v, AccessibilityEvent event);
         void onInitializeAccessibilityNodeInfo(View v, AccessibilityNodeInfoCompat info);
@@ -390,7 +398,6 @@ public class ViewCompat {
         int getLayoutDirection(View view);
         void setLayoutDirection(View view, int layoutDirection);
         ViewParent getParentForAccessibility(View view);
-        boolean isOpaque(View view);
         int resolveSizeAndState(int size, int measureSpec, int childMeasuredState);
         int getMeasuredWidthAndState(View view);
         int getMeasuredHeightAndState(View view);
@@ -450,6 +457,7 @@ public class ViewCompat {
         void setSaveFromParentEnabled(View view, boolean enabled);
         void setActivated(View view, boolean activated);
         boolean isPaddingRelative(View view);
+        void setBackground(View view, Drawable background);
         ColorStateList getBackgroundTintList(View view);
         void setBackgroundTintList(View view, ColorStateList tintList);
         PorterDuff.Mode getBackgroundTintMode(View view);
@@ -479,6 +487,7 @@ public class ViewCompat {
         void offsetTopAndBottom(View view, int offset);
         void offsetLeftAndRight(View view, int offset);
         void setPointerIcon(View view, PointerIconCompat pointerIcon);
+        Display getDisplay(View view);
     }
 
     static class BaseViewCompatImpl implements ViewCompatImpl {
@@ -486,22 +495,20 @@ public class ViewCompat {
         private Method mDispatchFinishTemporaryDetach;
         private boolean mTempDetachBound;
         WeakHashMap<View, ViewPropertyAnimatorCompat> mViewPropertyAnimatorCompatMap = null;
+        private static Method sChildrenDrawingOrderMethod;
 
-
+        @Override
         public boolean canScrollHorizontally(View v, int direction) {
             return (v instanceof ScrollingView) &&
                 canScrollingViewScrollHorizontally((ScrollingView) v, direction);
         }
+        @Override
         public boolean canScrollVertically(View v, int direction) {
             return (v instanceof ScrollingView) &&
                     canScrollingViewScrollVertically((ScrollingView) v, direction);
         }
-        public int getOverScrollMode(View v) {
-            return OVER_SCROLL_NEVER;
-        }
-        public void setOverScrollMode(View v, int mode) {
-            // Do nothing; API doesn't exist
-        }
+
+        @Override
         public void setAccessibilityDelegate(View v, AccessibilityDelegateCompat delegate) {
             // Do nothing; API doesn't exist
         }
@@ -511,67 +518,87 @@ public class ViewCompat {
             return false;
         }
 
+        @Override
         public void onPopulateAccessibilityEvent(View v, AccessibilityEvent event) {
             // Do nothing; API doesn't exist
         }
+        @Override
         public void onInitializeAccessibilityEvent(View v, AccessibilityEvent event) {
          // Do nothing; API doesn't exist
         }
+        @Override
         public void onInitializeAccessibilityNodeInfo(View v, AccessibilityNodeInfoCompat info) {
             // Do nothing; API doesn't exist
         }
+        @Override
         public boolean hasTransientState(View view) {
             // A view can't have transient state if transient state wasn't supported.
             return false;
         }
+        @Override
         public void setHasTransientState(View view, boolean hasTransientState) {
             // Do nothing; API doesn't exist
         }
+        @Override
         public void postInvalidateOnAnimation(View view) {
             view.invalidate();
         }
+        @Override
         public void postInvalidateOnAnimation(View view, int left, int top, int right, int bottom) {
             view.invalidate(left, top, right, bottom);
         }
+        @Override
         public void postOnAnimation(View view, Runnable action) {
             view.postDelayed(action, getFrameTime());
         }
+        @Override
         public void postOnAnimationDelayed(View view, Runnable action, long delayMillis) {
             view.postDelayed(action, getFrameTime() + delayMillis);
         }
         long getFrameTime() {
             return FAKE_FRAME_TIME;
         }
+        @Override
         public int getImportantForAccessibility(View view) {
             return 0;
         }
+        @Override
         public void setImportantForAccessibility(View view, int mode) {
 
         }
+        @Override
         public boolean isImportantForAccessibility(View view) {
             return true;
         }
+        @Override
         public boolean performAccessibilityAction(View view, int action, Bundle arguments) {
             return false;
         }
+        @Override
         public AccessibilityNodeProviderCompat getAccessibilityNodeProvider(View view) {
             return null;
         }
+        @Override
         public float getAlpha(View view) {
             return 1.0f;
         }
+        @Override
         public void setLayerType(View view, int layerType, Paint paint) {
             // No-op until layers became available (HC)
         }
+        @Override
         public int getLayerType(View view) {
             return LAYER_TYPE_NONE;
         }
+        @Override
         public int getLabelFor(View view) {
             return 0;
         }
+        @Override
         public void setLabelFor(View view, int id) {
 
         }
+        @Override
         public void setLayerPaint(View view, Paint p) {
             // No-op until layers became available (HC)
         }
@@ -592,14 +619,6 @@ public class ViewCompat {
         }
 
         @Override
-        public boolean isOpaque(View view) {
-            final Drawable bg = view.getBackground();
-            if (bg != null) {
-                return bg.getOpacity() == PixelFormat.OPAQUE;
-            }
-            return false;
-        }
-
         public int resolveSizeAndState(int size, int measureSpec, int childMeasuredState) {
             return View.resolveSize(size, measureSpec);
         }
@@ -707,12 +726,12 @@ public class ViewCompat {
 
         @Override
         public float getX(View view) {
-            return 0;
+            return view.getLeft();
         }
 
         @Override
         public float getY(View view) {
-            return 0;
+            return view.getTop();
         }
 
         @Override
@@ -877,7 +896,24 @@ public class ViewCompat {
 
         @Override
         public void setChildrenDrawingOrderEnabled(ViewGroup viewGroup, boolean enabled) {
-            // noop
+            if (sChildrenDrawingOrderMethod == null) {
+                try {
+                    sChildrenDrawingOrderMethod = ViewGroup.class
+                            .getDeclaredMethod("setChildrenDrawingOrderEnabled", boolean.class);
+                } catch (NoSuchMethodException e) {
+                    Log.e(TAG, "Unable to find childrenDrawingOrderEnabled", e);
+                }
+                sChildrenDrawingOrderMethod.setAccessible(true);
+            }
+            try {
+                sChildrenDrawingOrderMethod.invoke(viewGroup, enabled);
+            } catch (IllegalAccessException e) {
+                Log.e(TAG, "Unable to invoke childrenDrawingOrderEnabled", e);
+            } catch (IllegalArgumentException e) {
+                Log.e(TAG, "Unable to invoke childrenDrawingOrderEnabled", e);
+            } catch (InvocationTargetException e) {
+                Log.e(TAG, "Unable to invoke childrenDrawingOrderEnabled", e);
+            }
         }
 
         @Override
@@ -926,6 +962,7 @@ public class ViewCompat {
             return false;
         }
 
+        @Override
         public void setNestedScrollingEnabled(View view, boolean enabled) {
             if (view instanceof NestedScrollingChild) {
                 ((NestedScrollingChild) view).setNestedScrollingEnabled(enabled);
@@ -938,6 +975,11 @@ public class ViewCompat {
                 return ((NestedScrollingChild) view).isNestedScrollingEnabled();
             }
             return false;
+        }
+
+        @Override
+        public void setBackground(View view, Drawable background) {
+            view.setBackgroundDrawable(background);
         }
 
         @Override
@@ -984,6 +1026,7 @@ public class ViewCompat {
             }
         }
 
+        @Override
         public boolean startNestedScroll(View view, int axes) {
             if (view instanceof NestedScrollingChild) {
                 return ((NestedScrollingChild) view).startNestedScroll(axes);
@@ -1069,6 +1112,7 @@ public class ViewCompat {
             return getTranslationZ(view) + getElevation(view);
         }
 
+        @Override
         public void setZ(View view, float z) {
             // no-op
         }
@@ -1112,32 +1156,14 @@ public class ViewCompat {
         public void setPointerIcon(View view, PointerIconCompat pointerIcon) {
             // no-op
         }
-    }
-
-    static class EclairMr1ViewCompatImpl extends BaseViewCompatImpl {
-        @Override
-        public boolean isOpaque(View view) {
-            return ViewCompatEclairMr1.isOpaque(view);
-        }
 
         @Override
-        public void setChildrenDrawingOrderEnabled(ViewGroup viewGroup, boolean enabled) {
-            ViewCompatEclairMr1.setChildrenDrawingOrderEnabled(viewGroup, enabled);
+        public Display getDisplay(View view) {
+            return ViewCompatBase.getDisplay(view);
         }
     }
 
-    static class GBViewCompatImpl extends EclairMr1ViewCompatImpl {
-        @Override
-        public int getOverScrollMode(View v) {
-            return ViewCompatGingerbread.getOverScrollMode(v);
-        }
-        @Override
-        public void setOverScrollMode(View v, int mode) {
-            ViewCompatGingerbread.setOverScrollMode(v, mode);
-        }
-    }
-
-    static class HCViewCompatImpl extends GBViewCompatImpl {
+    static class HCViewCompatImpl extends BaseViewCompatImpl {
         @Override
         long getFrameTime() {
             return ViewCompatHC.getFrameTime();
@@ -1474,6 +1500,11 @@ public class ViewCompat {
         public boolean hasOverlappingRendering(View view) {
             return ViewCompatJB.hasOverlappingRendering(view);
         }
+
+        @Override
+        public void setBackground(View view, Drawable background) {
+            ViewCompatJB.setBackground(view, background);
+        }
     }
 
     static class JbMr1ViewCompatImpl extends JBViewCompatImpl {
@@ -1526,6 +1557,11 @@ public class ViewCompat {
         @Override
         public boolean isPaddingRelative(View view) {
             return ViewCompatJellybeanMr1.isPaddingRelative(view);
+        }
+
+        @Override
+        public Display getDisplay(View view) {
+            return ViewCompatJellybeanMr1.getDisplay(view);
         }
     }
 
@@ -1615,8 +1651,23 @@ public class ViewCompat {
         }
 
         @Override
-        public void setOnApplyWindowInsetsListener(View view, OnApplyWindowInsetsListener listener) {
-            ViewCompatLollipop.setOnApplyWindowInsetsListener(view, listener);
+        public void setOnApplyWindowInsetsListener(View view,
+                final OnApplyWindowInsetsListener listener) {
+            if (listener == null) {
+                ViewCompatLollipop.setOnApplyWindowInsetsListener(view, null);
+                return;
+            }
+
+            ViewCompatLollipop.OnApplyWindowInsetsListenerBridge bridge =
+                    new ViewCompatLollipop.OnApplyWindowInsetsListenerBridge() {
+                        @Override
+                        public Object onApplyWindowInsets(View v, Object insets) {
+                            WindowInsetsCompat compatInsets = WindowInsetsCompat.wrap(insets);
+                            compatInsets = listener.onApplyWindowInsets(v, compatInsets);
+                            return WindowInsetsCompat.unwrap(compatInsets);
+                        }
+                    };
+            ViewCompatLollipop.setOnApplyWindowInsetsListener(view, bridge);
         }
 
         @Override
@@ -1696,12 +1747,15 @@ public class ViewCompat {
 
         @Override
         public WindowInsetsCompat onApplyWindowInsets(View v, WindowInsetsCompat insets) {
-            return ViewCompatLollipop.onApplyWindowInsets(v, insets);
+            return WindowInsetsCompat.wrap(
+                    ViewCompatLollipop.onApplyWindowInsets(v, WindowInsetsCompat.unwrap(insets)));
         }
 
         @Override
         public WindowInsetsCompat dispatchApplyWindowInsets(View v, WindowInsetsCompat insets) {
-            return ViewCompatLollipop.dispatchApplyWindowInsets(v, insets);
+            return WindowInsetsCompat.wrap(
+                    ViewCompatLollipop.dispatchApplyWindowInsets(
+                            v, WindowInsetsCompat.unwrap(insets)));
         }
 
         @Override
@@ -1783,10 +1837,6 @@ public class ViewCompat {
             IMPL = new ICSViewCompatImpl();
         } else if (version >= 11) {
             IMPL = new HCViewCompatImpl();
-        } else if (version >= 9) {
-            IMPL = new GBViewCompatImpl();
-        } else if (version >= 7) {
-            IMPL = new EclairMr1ViewCompatImpl();
         } else {
             IMPL = new BaseViewCompatImpl();
         }
@@ -1822,11 +1872,14 @@ public class ViewCompat {
      *
      * @param v The View against which to invoke the method.
      * @return This view's over-scroll mode.
+     * @deprecated Call {@link View#getOverScrollMode()} directly. This method will be
+     * removed in a future release.
      */
+    @Deprecated
     @OverScroll
     public static int getOverScrollMode(View v) {
         //noinspection ResourceType
-        return IMPL.getOverScrollMode(v);
+        return v.getOverScrollMode();
     }
 
     /**
@@ -1840,9 +1893,12 @@ public class ViewCompat {
      *
      * @param v The View against which to invoke the method.
      * @param overScrollMode The new over-scroll mode for this view.
+     * @deprecated Call {@link View#setOverScrollMode(int)} directly. This method will be
+     * removed in a future release.
      */
+    @Deprecated
     public static void setOverScrollMode(View v, @OverScroll int overScrollMode) {
-        IMPL.setOverScrollMode(v, overScrollMode);
+        v.setOverScrollMode(overScrollMode);
     }
 
     /**
@@ -2085,7 +2141,7 @@ public class ViewCompat {
      * which is if it fires accessibility events and if it is reported to
      * accessibility services that query the screen.
      * <p>
-     * <em>Note:</em> If the current paltform version does not support the
+     * <em>Note:</em> If the current platform version does not support the
      *  {@link #IMPORTANT_FOR_ACCESSIBILITY_NO_HIDE_DESCENDANTS} mode, then
      *  {@link #IMPORTANT_FOR_ACCESSIBILITY_NO} will be used as it is the
      *  closest terms of semantics.
@@ -2102,6 +2158,46 @@ public class ViewCompat {
     public static void setImportantForAccessibility(View view,
             @ImportantForAccessibility int mode) {
         IMPL.setImportantForAccessibility(view, mode);
+    }
+
+    /**
+     * Computes whether this view should be exposed for accessibility. In
+     * general, views that are interactive or provide information are exposed
+     * while views that serve only as containers are hidden.
+     * <p>
+     * If an ancestor of this view has importance
+     * {@link #IMPORTANT_FOR_ACCESSIBILITY_NO_HIDE_DESCENDANTS}, this method
+     * returns <code>false</code>.
+     * <p>
+     * Otherwise, the value is computed according to the view's
+     * {@link #getImportantForAccessibility(View)} value:
+     * <ol>
+     * <li>{@link #IMPORTANT_FOR_ACCESSIBILITY_NO} or
+     * {@link #IMPORTANT_FOR_ACCESSIBILITY_NO_HIDE_DESCENDANTS}, return <code>false
+     * </code>
+     * <li>{@link #IMPORTANT_FOR_ACCESSIBILITY_YES}, return <code>true</code>
+     * <li>{@link #IMPORTANT_FOR_ACCESSIBILITY_AUTO}, return <code>true</code> if
+     * view satisfies any of the following:
+     * <ul>
+     * <li>Is actionable, e.g. {@link View#isClickable()},
+     * {@link View#isLongClickable()}, or {@link View#isFocusable()}
+     * <li>Has an {@link AccessibilityDelegateCompat}
+     * <li>Has an interaction listener, e.g. {@link View.OnTouchListener},
+     * {@link View.OnKeyListener}, etc.
+     * <li>Is an accessibility live region, e.g.
+     * {@link #getAccessibilityLiveRegion(View)} is not
+     * {@link #ACCESSIBILITY_LIVE_REGION_NONE}.
+     * </ul>
+     * </ol>
+     * <p>
+     * <em>Note:</em> Prior to API 21, this method will always return {@code true}.
+     *
+     * @return Whether the view is exposed for accessibility.
+     * @see #setImportantForAccessibility(View, int)
+     * @see #getImportantForAccessibility(View)
+     */
+    public static boolean isImportantForAccessibility(View view) {
+        return IMPL.isImportantForAccessibility(view);
     }
 
     /**
@@ -2326,13 +2422,13 @@ public class ViewCompat {
      * Indicates whether this View is opaque. An opaque View guarantees that it will
      * draw all the pixels overlapping its bounds using a fully opaque color.
      *
-     * On API 7 and above this will call View's true isOpaque method. On previous platform
-     * versions it will check the opacity of the view's background drawable if present.
-     *
      * @return True if this View is guaranteed to be fully opaque, false otherwise.
+     * @deprecated Use {@link View#isOpaque()} directly. This method will be
+     * removed in a future release.
      */
+    @Deprecated
     public static boolean isOpaque(View view) {
-        return IMPL.isOpaque(view);
+        return view.isOpaque();
     }
 
     /**
@@ -3010,6 +3106,16 @@ public class ViewCompat {
     }
 
     /**
+     * Set the background of the {@code view} to a given Drawable, or remove the background. If the
+     * background has padding, {@code view}'s padding is set to the background's padding. However,
+     * when a background is removed, this View's padding isn't touched. If setting the padding is
+     * desired, please use{@code setPadding(int, int, int, int)}.
+     */
+    public static void setBackground(View view, Drawable background) {
+        IMPL.setBackground(view, background);
+    }
+
+    /**
      * Return the tint applied to the background drawable, if specified.
      * <p>
      * Only returns meaningful info when running on API v21 or newer, or if {@code view}
@@ -3270,7 +3376,7 @@ public class ViewCompat {
      * <p>
      * Compatibility:
      * <ul>
-     *     <li>API < 18: Always returns {@code false}</li>
+     *     <li>API &lt; 18: Always returns {@code false}</li>
      * </ul>
      *
      * @return whether the view hierarchy is currently undergoing a layout pass
@@ -3292,7 +3398,7 @@ public class ViewCompat {
      * <p>
      * Compatibility:
      * <ul>
-     *     <li>API < 19: Always returns {@code false}</li>
+     *     <li>API &lt; 19: Always returns {@code false}</li>
      * </ul>
      *
      * @return true if layout direction has been resolved.
@@ -3319,7 +3425,7 @@ public class ViewCompat {
      * <p>
      * Compatibility:
      * <ul>
-     *     <li>API < 21: No-op
+     *     <li>API &lt; 21: No-op
      * </ul>
      *
      * @param z The visual z position of this view, in pixels.
@@ -3458,6 +3564,20 @@ public class ViewCompat {
      */
     public static void setPointerIcon(@NonNull View view, PointerIconCompat pointerIcon) {
         IMPL.setPointerIcon(view, pointerIcon);
+    }
+
+    /**
+     * Gets the logical display to which the view's window has been attached.
+     * <p>
+     * Compatibility:
+     * <ul>
+     * <li>API &lt; 17: Returns the default display when the view is attached. Otherwise, null.
+     * </ul>
+     *
+     * @return The logical display, or null if the view is not currently attached to a window.
+     */
+    public static Display getDisplay(@NonNull View view) {
+        return IMPL.getDisplay(view);
     }
 
     protected ViewCompat() {}

@@ -55,6 +55,7 @@ public final class DrawableCompat {
         void applyTheme(Drawable drawable, Resources.Theme t);
         boolean canApplyTheme(Drawable drawable);
         ColorFilter getColorFilter(Drawable drawable);
+        void clearColorFilter(Drawable drawable);
         void inflate(Drawable drawable, Resources res, XmlPullParser parser, AttributeSet attrs,
                      Resources.Theme t) throws IOException, XmlPullParserException;
     }
@@ -135,6 +136,11 @@ public final class DrawableCompat {
         }
 
         @Override
+        public void clearColorFilter(Drawable drawable) {
+            drawable.clearColorFilter();
+        }
+
+        @Override
         public void inflate(Drawable drawable, Resources res, XmlPullParser parser,
                             AttributeSet attrs, Resources.Theme t)
                 throws IOException, XmlPullParserException {
@@ -143,19 +149,9 @@ public final class DrawableCompat {
     }
 
     /**
-     * Interface implementation for devices with at least v5 APIs.
-     */
-    static class EclairDrawableImpl extends BaseDrawableImpl {
-        @Override
-        public Drawable wrap(Drawable drawable) {
-            return DrawableCompatEclair.wrapForTinting(drawable);
-        }
-    }
-
-    /**
      * Interface implementation for devices with at least v11 APIs.
      */
-    static class HoneycombDrawableImpl extends EclairDrawableImpl {
+    static class HoneycombDrawableImpl extends BaseDrawableImpl {
         @Override
         public void jumpToCurrentState(Drawable drawable) {
             DrawableCompatHoneycomb.jumpToCurrentState(drawable);
@@ -255,6 +251,11 @@ public final class DrawableCompat {
         }
 
         @Override
+        public void clearColorFilter(Drawable drawable) {
+            DrawableCompatLollipop.clearColorFilter(drawable);
+        }
+
+        @Override
         public void inflate(Drawable drawable, Resources res, XmlPullParser parser,
                             AttributeSet attrs, Resources.Theme t)
                 throws IOException, XmlPullParserException {
@@ -281,6 +282,12 @@ public final class DrawableCompat {
             // No need to wrap on M+
             return drawable;
         }
+
+        @Override
+        public void clearColorFilter(Drawable drawable) {
+            // We can use clearColorFilter() safely on M+
+            drawable.clearColorFilter();
+        }
     }
 
     /**
@@ -299,8 +306,6 @@ public final class DrawableCompat {
             IMPL = new JellybeanMr1DrawableImpl();
         } else if (version >= 11) {
             IMPL = new HoneycombDrawableImpl();
-        } else if (version >= 5) {
-            IMPL = new EclairDrawableImpl();
         } else {
             IMPL = new BaseDrawableImpl();
         }
@@ -414,14 +419,14 @@ public final class DrawableCompat {
     /**
      * Applies the specified theme to this Drawable and its children.
      */
-    public static void applyTheme(Drawable drawable, Resources.Theme t) {
+    public static void applyTheme(@NonNull Drawable drawable, @NonNull Resources.Theme t) {
         IMPL.applyTheme(drawable, t);
     }
 
     /**
      * Whether a theme can be applied to this Drawable and its children.
      */
-    public static boolean canApplyTheme(Drawable drawable) {
+    public static boolean canApplyTheme(@NonNull Drawable drawable) {
         return IMPL.canApplyTheme(drawable);
     }
 
@@ -430,8 +435,15 @@ public final class DrawableCompat {
      *
      * @return the current color filter, or {@code null} if none set
      */
-    public static ColorFilter getColorFilter(Drawable drawable) {
+    public static ColorFilter getColorFilter(@NonNull Drawable drawable) {
         return IMPL.getColorFilter(drawable);
+    }
+
+    /**
+     * Removes the color filter from the given drawable.
+     */
+    public static void clearColorFilter(@NonNull Drawable drawable) {
+        IMPL.clearColorFilter(drawable);
     }
 
     /**
@@ -444,8 +456,9 @@ public final class DrawableCompat {
      * @throws XmlPullParserException
      * @throws IOException
      */
-    public static void inflate(Drawable drawable, Resources res, XmlPullParser parser,
-                               AttributeSet attrs, Resources.Theme theme)
+    public static void inflate(@NonNull Drawable drawable, @NonNull Resources res,
+            @NonNull XmlPullParser parser, @NonNull AttributeSet attrs,
+            @Nullable Resources.Theme theme)
             throws XmlPullParserException, IOException {
         IMPL.inflate(drawable, res, parser, attrs, theme);
     }
@@ -453,6 +466,9 @@ public final class DrawableCompat {
     /**
      * Potentially wrap {@code drawable} so that it may be used for tinting across the
      * different API levels, via the tinting methods in this class.
+     *
+     * <p>If the given drawable is wrapped, we will copy over certain state over to the wrapped
+     * drawable, such as its bounds, level, visibility and state.</p>
      *
      * <p>You must use the result of this call. If the given drawable is being used by a view
      * (as it's background for instance), you must replace the original drawable with

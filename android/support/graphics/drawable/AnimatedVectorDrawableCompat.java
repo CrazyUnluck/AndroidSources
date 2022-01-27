@@ -42,6 +42,7 @@ import android.support.v4.util.ArrayMap;
 import android.util.AttributeSet;
 import android.util.Log;
 import android.util.Xml;
+
 import org.xmlpull.v1.XmlPullParser;
 import org.xmlpull.v1.XmlPullParserException;
 
@@ -50,7 +51,7 @@ import java.util.ArrayList;
 import java.util.List;
 
 /**
- * For API 23 and above, this class is delegating to the framework's {@link AnimatedVectorDrawable}.
+ * For API 24 and above, this class is delegating to the framework's {@link AnimatedVectorDrawable}.
  * For older API version, this class uses {@link android.animation.ObjectAnimator} and
  * {@link android.animation.AnimatorSet} to animate the properties of a
  * {@link VectorDrawableCompat} to create an animated drawable.
@@ -78,7 +79,7 @@ public class AnimatedVectorDrawableCompat extends VectorDrawableCommon implement
 
     AnimatedVectorDrawableDelegateState mCachedConstantStateDelegate;
 
-    private AnimatedVectorDrawableCompat() {
+    AnimatedVectorDrawableCompat() {
         this(null, null, null);
     }
 
@@ -98,13 +99,18 @@ public class AnimatedVectorDrawableCompat extends VectorDrawableCommon implement
         }
     }
 
+    /**
+     * mutate() will be effective only if the getConstantState() is returning non-null.
+     * Otherwise, it just return the current object without modification.
+     */
     @Override
     public Drawable mutate() {
         if (mDelegateDrawable != null) {
             mDelegateDrawable.mutate();
-            return this;
         }
-        throw new IllegalStateException("Mutate() is not supported for older platform");
+        // For older platforms that there is no delegated drawable, we just return this without
+        // any modification here, and the getConstantState() will return null in this case.
+        return this;
     }
 
 
@@ -118,7 +124,7 @@ public class AnimatedVectorDrawableCompat extends VectorDrawableCommon implement
     @Nullable
     public static AnimatedVectorDrawableCompat create(@NonNull Context context,
                                                       @DrawableRes int resId) {
-        if (Build.VERSION.SDK_INT >= 23) {
+        if (Build.VERSION.SDK_INT >= 24) {
             final AnimatedVectorDrawableCompat drawable = new AnimatedVectorDrawableCompat(context);
             drawable.mDelegateDrawable = ResourcesCompat.getDrawable(context.getResources(), resId,
                     context.getTheme());
@@ -165,7 +171,7 @@ public class AnimatedVectorDrawableCompat extends VectorDrawableCommon implement
 
     /**
      * {@inheritDoc}
-     * <strong>Note</strong> that we don't support constant state when SDK < 23.
+     * <strong>Note</strong> that we don't support constant state when SDK < 24.
      * Make sure you check the return value before using it.
      */
     @Override
@@ -250,6 +256,7 @@ public class AnimatedVectorDrawableCompat extends VectorDrawableCommon implement
         mAnimatedVectorState.mVectorDrawable.setColorFilter(colorFilter);
     }
 
+    @Override
     public void setTint(int tint) {
         if (mDelegateDrawable != null) {
             DrawableCompat.setTint(mDelegateDrawable, tint);
@@ -259,6 +266,7 @@ public class AnimatedVectorDrawableCompat extends VectorDrawableCommon implement
         mAnimatedVectorState.mVectorDrawable.setTint(tint);
     }
 
+    @Override
     public void setTintList(ColorStateList tint) {
         if (mDelegateDrawable != null) {
             DrawableCompat.setTintList(mDelegateDrawable, tint);
@@ -268,6 +276,7 @@ public class AnimatedVectorDrawableCompat extends VectorDrawableCommon implement
         mAnimatedVectorState.mVectorDrawable.setTintList(tint);
     }
 
+    @Override
     public void setTintMode(PorterDuff.Mode tintMode) {
         if (mDelegateDrawable != null) {
             DrawableCompat.setTintMode(mDelegateDrawable, tintMode);
@@ -302,6 +311,7 @@ public class AnimatedVectorDrawableCompat extends VectorDrawableCommon implement
         return mAnimatedVectorState.mVectorDrawable.getOpacity();
     }
 
+    @Override
     public int getIntrinsicWidth() {
         if (mDelegateDrawable != null) {
             return mDelegateDrawable.getIntrinsicWidth();
@@ -309,11 +319,29 @@ public class AnimatedVectorDrawableCompat extends VectorDrawableCommon implement
         return mAnimatedVectorState.mVectorDrawable.getIntrinsicWidth();
     }
 
+    @Override
     public int getIntrinsicHeight() {
         if (mDelegateDrawable != null) {
             return mDelegateDrawable.getIntrinsicHeight();
         }
         return mAnimatedVectorState.mVectorDrawable.getIntrinsicHeight();
+    }
+
+    @Override
+    public boolean isAutoMirrored() {
+        if (mDelegateDrawable != null) {
+            return DrawableCompat.isAutoMirrored(mDelegateDrawable);
+        }
+        return mAnimatedVectorState.mVectorDrawable.isAutoMirrored();
+    }
+
+    @Override
+    public void setAutoMirrored(boolean mirrored) {
+        if (mDelegateDrawable != null) {
+            mDelegateDrawable.setAutoMirrored(mirrored);
+            return;
+        }
+        mAnimatedVectorState.mVectorDrawable.setAutoMirrored(mirrored);
     }
 
     /**
@@ -336,7 +364,11 @@ public class AnimatedVectorDrawableCompat extends VectorDrawableCommon implement
             return;
         }
         int eventType = parser.getEventType();
-        while (eventType != XmlPullParser.END_DOCUMENT) {
+        final int innerDepth = parser.getDepth() + 1;
+
+        // Parse everything until the end of the animated-vector element.
+        while (eventType != XmlPullParser.END_DOCUMENT
+                && (parser.getDepth() >= innerDepth || eventType != XmlPullParser.END_TAG)) {
             if (eventType == XmlPullParser.START_TAG) {
                 final String tagName = parser.getName();
                 if (DBG_ANIMATION_VECTOR_DRAWABLE) {
@@ -405,6 +437,7 @@ public class AnimatedVectorDrawableCompat extends VectorDrawableCommon implement
         return;
     }
 
+    @Override
     public boolean canApplyTheme() {
         if (mDelegateDrawable != null) {
             return DrawableCompat.canApplyTheme(mDelegateDrawable);
@@ -504,12 +537,12 @@ public class AnimatedVectorDrawableCompat extends VectorDrawableCommon implement
 
         @Override
         public Drawable newDrawable() {
-            throw new IllegalStateException("No constant state support for SDK < 23.");
+            throw new IllegalStateException("No constant state support for SDK < 24.");
         }
 
         @Override
         public Drawable newDrawable(Resources res) {
-            throw new IllegalStateException("No constant state support for SDK < 23.");
+            throw new IllegalStateException("No constant state support for SDK < 24.");
         }
 
         @Override
@@ -626,7 +659,7 @@ public class AnimatedVectorDrawableCompat extends VectorDrawableCommon implement
         }
     }
 
-    private final Callback mCallback = new Callback() {
+    final Callback mCallback = new Callback() {
         @Override
         public void invalidateDrawable(Drawable who) {
             invalidateSelf();

@@ -47,6 +47,7 @@ import android.view.MotionEvent;
 import android.view.View;
 import android.view.ViewGroup;
 
+import java.lang.ref.WeakReference;
 import java.util.ArrayList;
 
 /**
@@ -102,16 +103,16 @@ public class PlaybackOverlayFragment extends DetailsFragment {
         public boolean handleInputEvent(InputEvent event);
     }
 
-    private static final String TAG = "PlaybackOverlayFragment";
-    private static final boolean DEBUG = false;
+    static final String TAG = "PlaybackOverlayFragment";
+    static final boolean DEBUG = false;
     private static final int ANIMATION_MULTIPLIER = 1;
 
-    private static int START_FADE_OUT = 1;
+    static int START_FADE_OUT = 1;
 
     // Fading status
-    private static final int IDLE = 0;
+    static final int IDLE = 0;
     private static final int IN = 1;
-    private static final int OUT = 2;
+    static final int OUT = 2;
 
     private int mPaddingTop;
     private int mPaddingBottom;
@@ -121,19 +122,17 @@ public class PlaybackOverlayFragment extends DetailsFragment {
     private int mBgLightColor;
     private int mShowTimeMs;
     private int mMajorFadeTranslateY, mMinorFadeTranslateY;
-    private int mAnimationTranslateY;
-    private OnFadeCompleteListener mFadeCompleteListener;
+    int mAnimationTranslateY;
+    OnFadeCompleteListener mFadeCompleteListener;
     private InputEventHandler mInputEventHandler;
-    private boolean mFadingEnabled = true;
-    private int mFadingStatus = IDLE;
-    private int mBgAlpha;
+    boolean mFadingEnabled = true;
+    int mFadingStatus = IDLE;
+    int mBgAlpha;
     private ValueAnimator mBgFadeInAnimator, mBgFadeOutAnimator;
     private ValueAnimator mControlRowFadeInAnimator, mControlRowFadeOutAnimator;
     private ValueAnimator mDescriptionFadeInAnimator, mDescriptionFadeOutAnimator;
     private ValueAnimator mOtherRowFadeInAnimator, mOtherRowFadeOutAnimator;
-    private boolean mTranslateAnimationEnabled;
-    private boolean mResetControlsToPrimaryActionsPending;
-    private RecyclerView.ItemAnimator mItemAnimator;
+    boolean mResetControlsToPrimaryActionsPending;
 
     private final Animator.AnimatorListener mFadeListener =
             new Animator.AnimatorListener() {
@@ -170,17 +169,26 @@ public class PlaybackOverlayFragment extends DetailsFragment {
         }
     };
 
-    private final Handler mHandler = new Handler() {
+    static class FadeHandler extends Handler {
         @Override
         public void handleMessage(Message message) {
-            if (message.what == START_FADE_OUT && mFadingEnabled) {
-                fade(false);
+            PlaybackOverlayFragment fragment;
+            if (message.what == START_FADE_OUT) {
+                fragment = ((WeakReference<PlaybackOverlayFragment>) message.obj).get();
+                if (fragment != null && fragment.mFadingEnabled) {
+                    fragment.fade(false);
+                }
             }
         }
-    };
+    }
+
+    final static Handler sHandler = new FadeHandler();
+
+    final WeakReference<PlaybackOverlayFragment> mFragmentReference =  new WeakReference(this);
 
     private final VerticalGridView.OnTouchInterceptListener mOnTouchInterceptListener =
             new VerticalGridView.OnTouchInterceptListener() {
+        @Override
         public boolean onInterceptTouchEvent(MotionEvent event) {
             return onInterceptInputEvent(event);
         }
@@ -188,25 +196,26 @@ public class PlaybackOverlayFragment extends DetailsFragment {
 
     private final VerticalGridView.OnKeyInterceptListener mOnKeyInterceptListener =
             new VerticalGridView.OnKeyInterceptListener() {
+        @Override
         public boolean onInterceptKeyEvent(KeyEvent event) {
             return onInterceptInputEvent(event);
         }
     };
 
-    private void setBgAlpha(int alpha) {
+    void setBgAlpha(int alpha) {
         mBgAlpha = alpha;
         if (mRootView != null) {
             mRootView.getBackground().setAlpha(alpha);
         }
     }
 
-    private void enableVerticalGridAnimations(boolean enable) {
+    void enableVerticalGridAnimations(boolean enable) {
         if (getVerticalGridView() != null) {
             getVerticalGridView().setAnimateChildLayout(enable);
         }
     }
 
-    private void resetControlsToPrimaryActions(ItemBridgeAdapter.ViewHolder vh) {
+    void resetControlsToPrimaryActions(ItemBridgeAdapter.ViewHolder vh) {
         if (vh == null && getVerticalGridView() != null) {
             vh = (ItemBridgeAdapter.ViewHolder) getVerticalGridView().findViewHolderForPosition(0);
         }
@@ -232,12 +241,12 @@ public class PlaybackOverlayFragment extends DetailsFragment {
             mFadingEnabled = enabled;
             if (mFadingEnabled) {
                 if (isResumed() && mFadingStatus == IDLE
-                        && !mHandler.hasMessages(START_FADE_OUT)) {
+                        && !sHandler.hasMessages(START_FADE_OUT, mFragmentReference)) {
                     startFadeTimer();
                 }
             } else {
                 // Ensure fully opaque
-                mHandler.removeMessages(START_FADE_OUT);
+                sHandler.removeMessages(START_FADE_OUT, mFragmentReference);
                 fade(true);
             }
         }
@@ -288,7 +297,7 @@ public class PlaybackOverlayFragment extends DetailsFragment {
         if (!mFadingEnabled || !isResumed()) {
             return;
         }
-        if (mHandler.hasMessages(START_FADE_OUT)) {
+        if (sHandler.hasMessages(START_FADE_OUT, mFragmentReference)) {
             // Restart the timer
             startFadeTimer();
         } else {
@@ -300,7 +309,7 @@ public class PlaybackOverlayFragment extends DetailsFragment {
      * Fades out the playback overlay immediately.
      */
     public void fadeOut() {
-        mHandler.removeMessages(START_FADE_OUT);
+        sHandler.removeMessages(START_FADE_OUT, mFragmentReference);
         fade(false);
     }
 
@@ -308,7 +317,7 @@ public class PlaybackOverlayFragment extends DetailsFragment {
         return mFadingStatus == IDLE && mBgAlpha == 0;
     }
 
-    private boolean onInterceptInputEvent(InputEvent event) {
+    boolean onInterceptInputEvent(InputEvent event) {
         final boolean controlsHidden = areControlsHidden();
         if (DEBUG) Log.v(TAG, "onInterceptInputEvent hidden " + controlsHidden + " " + event);
         boolean consumeEvent = false;
@@ -340,7 +349,7 @@ public class PlaybackOverlayFragment extends DetailsFragment {
                 // them out (even if the key was consumed by the handler).
                 if (mFadingEnabled && !controlsHidden) {
                     consumeEvent = true;
-                    mHandler.removeMessages(START_FADE_OUT);
+                    sHandler.removeMessages(START_FADE_OUT, mFragmentReference);
                     fade(false);
                 } else if (consumeEvent) {
                     tickle();
@@ -365,11 +374,10 @@ public class PlaybackOverlayFragment extends DetailsFragment {
         getVerticalGridView().setOnKeyInterceptListener(mOnKeyInterceptListener);
     }
 
-    private void startFadeTimer() {
-        if (mHandler != null) {
-            mHandler.removeMessages(START_FADE_OUT);
-            mHandler.sendEmptyMessageDelayed(START_FADE_OUT, mShowTimeMs);
-        }
+    void startFadeTimer() {
+        sHandler.removeMessages(START_FADE_OUT, mFragmentReference);
+        sHandler.sendMessageDelayed(sHandler.obtainMessage(START_FADE_OUT, mFragmentReference),
+                mShowTimeMs);
     }
 
     private static ValueAnimator loadAnimator(Context context, int resId) {
@@ -398,7 +406,7 @@ public class PlaybackOverlayFragment extends DetailsFragment {
     private TimeInterpolator mLogDecelerateInterpolator = new LogDecelerateInterpolator(100,0);
     private TimeInterpolator mLogAccelerateInterpolator = new LogAccelerateInterpolator(100,0);
 
-    private View getControlRowView() {
+    View getControlRowView() {
         if (getVerticalGridView() == null) {
             return null;
         }
@@ -520,7 +528,7 @@ public class PlaybackOverlayFragment extends DetailsFragment {
         mDescriptionFadeOutAnimator.addUpdateListener(listener);
     }
 
-    private void fade(boolean fadeIn) {
+    void fade(boolean fadeIn) {
         if (DEBUG) Log.v(TAG, "fade " + fadeIn);
         if (getView() == null) {
             return;
@@ -677,7 +685,7 @@ public class PlaybackOverlayFragment extends DetailsFragment {
         }
     }
 
-    private void updateControlsBottomSpace(ItemBridgeAdapter.ViewHolder vh) {
+    void updateControlsBottomSpace(ItemBridgeAdapter.ViewHolder vh) {
         // Add extra space between rows 0 and 1
         if (vh == null && getVerticalGridView() != null) {
             vh = (ItemBridgeAdapter.ViewHolder)
@@ -742,7 +750,15 @@ public class PlaybackOverlayFragment extends DetailsFragment {
         super.onDestroyView();
     }
 
+    @Override
+    public void onStart() {
+        super.onStart();
+        // Workaround problem VideoView forcing itself to focused, let controls take focus.
+        getRowsFragment().getView().requestFocus();
+    }
+
     private final DataObserver mObserver = new DataObserver() {
+        @Override
         public void onChanged() {
             updateControlsBottomSpace(null);
         }
@@ -752,10 +768,13 @@ public class PlaybackOverlayFragment extends DetailsFragment {
         ArrayList<View> mViews = new ArrayList<View>();
         ArrayList<Integer> mLayerType = new ArrayList<Integer>();
 
+        @Override
         public void onAnimationCancel(Animator animation) {
         }
+        @Override
         public void onAnimationRepeat(Animator animation) {
         }
+        @Override
         public void onAnimationStart(Animator animation) {
             getViews(mViews);
             for (View view : mViews) {
@@ -763,6 +782,7 @@ public class PlaybackOverlayFragment extends DetailsFragment {
                 view.setLayerType(View.LAYER_TYPE_HARDWARE, null);
             }
         }
+        @Override
         public void onAnimationEnd(Animator animation) {
             for (int i = 0; i < mViews.size(); i++) {
                 mViews.get(i).setLayerType(mLayerType.get(i), null);

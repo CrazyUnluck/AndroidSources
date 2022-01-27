@@ -29,12 +29,12 @@ import android.os.Bundle;
 import android.os.Handler;
 import android.os.Looper;
 import android.os.Parcelable;
+import android.support.annotation.IntRange;
 import android.support.annotation.NonNull;
 import android.support.annotation.Nullable;
 import android.support.v4.content.ContextCompat;
 import android.view.View;
 
-import java.util.Arrays;
 import java.util.List;
 import java.util.Map;
 
@@ -68,8 +68,16 @@ public class ActivityCompat extends ContextCompat {
          *
          * @see #requestPermissions(android.app.Activity, String[], int)
          */
-        public void onRequestPermissionsResult(int requestCode, @NonNull String[] permissions,
+        void onRequestPermissionsResult(int requestCode, @NonNull String[] permissions,
                 @NonNull int[] grantResults);
+    }
+
+    /**
+     * This class should not be instantiated, but the constructor must be
+     * visible for the class to be extended (ex. in support-v13).
+     */
+    protected ActivityCompat() {
+        // Not publicly instantiable, but may be extended.
     }
 
     /**
@@ -110,31 +118,6 @@ public class ActivityCompat extends ContextCompat {
             return true;
         }
         return false;
-    }
-
-    /**
-     * Start an activity with additional launch information, if able.
-     *
-     * <p>In Android 4.1+ additional options were introduced to allow for more
-     * control on activity launch animations. Applications can use this method
-     * along with {@link ActivityOptionsCompat} to use these animations when
-     * available. When run on versions of the platform where this feature does
-     * not exist the activity will be launched normally.</p>
-     *
-     * @param activity Context to launch activity from.
-     * @param intent The description of the activity to start.
-     * @param options Additional options for how the Activity should be started.
-     *                May be null if there are no options. See
-     *                {@link ActivityOptionsCompat} for how to build the Bundle
-     *                supplied here; there are no supported definitions for
-     *                building it manually.
-     */
-    public static void startActivity(Activity activity, Intent intent, @Nullable Bundle options) {
-        if (Build.VERSION.SDK_INT >= 16) {
-            ActivityCompatJB.startActivity(activity, intent, options);
-        } else {
-            activity.startActivity(intent);
-        }
     }
 
     /**
@@ -198,9 +181,9 @@ public class ActivityCompat extends ContextCompat {
         if (Build.VERSION.SDK_INT >= 16) {
             ActivityCompatJB.startIntentSenderForResult(activity, intent, requestCode, fillInIntent,
                     flagsMask, flagsValues, extraFlags, options);
-        } else if (Build.VERSION.SDK_INT >= 5) {
-            ActivityCompatEclair.startIntentSenderForResult(activity, intent, requestCode,
-                    fillInIntent, flagsMask, flagsValues, extraFlags);
+        } else {
+            activity.startIntentSenderForResult(intent, requestCode, fillInIntent, flagsMask,
+                    flagsValues, extraFlags);
         }
     }
 
@@ -230,20 +213,32 @@ public class ActivityCompat extends ContextCompat {
      */
     public static void finishAfterTransition(Activity activity) {
         if (Build.VERSION.SDK_INT >= 21) {
-            ActivityCompat21.finishAfterTransition(activity);
+            ActivityCompatApi21.finishAfterTransition(activity);
         } else {
             activity.finish();
         }
     }
 
     /**
-     * Backwards compatible implementation of {@link android.app.Activity#getReferrer()
-     * Activity.getReferrer}.  Uses the platform's implementation if available, otherwise
-     * only falls back to digging any explicitly specified referrer from the activity's intent.
+     * Return information about who launched this activity.  If the launching Intent
+     * contains an {@link Intent#EXTRA_REFERRER Intent.EXTRA_REFERRER},
+     * that will be returned as-is; otherwise, if known, an
+     * {@link Intent#URI_ANDROID_APP_SCHEME android-app:} referrer URI containing the
+     * package name that started the Intent will be returned.  This may return null if no
+     * referrer can be identified -- it is neither explicitly specified, nor is it known which
+     * application package was involved.
+     *
+     * <p>If called while inside the handling of {@link Activity#onNewIntent}, this function will
+     * return the referrer that submitted that new intent to the activity.  Otherwise, it
+     * always returns the referrer of the original Intent.</p>
+     *
+     * <p>Note that this is <em>not</em> a security feature -- you can not trust the
+     * referrer information, applications can spoof it.</p>
      */
-    public Uri getReferrer(Activity activity) {
+    @Nullable
+    public static Uri getReferrer(Activity activity) {
         if (Build.VERSION.SDK_INT >= 22) {
-            return ActivityCompat22.getReferrer(activity);
+            return ActivityCompatApi22.getReferrer(activity);
         }
         Intent intent = activity.getIntent();
         Uri referrer = intent.getParcelableExtra("android.intent.extra.REFERRER");
@@ -267,8 +262,10 @@ public class ActivityCompat extends ContextCompat {
      */
     public static void setEnterSharedElementCallback(Activity activity,
             SharedElementCallback callback) {
-        if (Build.VERSION.SDK_INT >= 21) {
-            ActivityCompat21.setEnterSharedElementCallback(activity, createCallback(callback));
+        if (Build.VERSION.SDK_INT >= 23) {
+            ActivityCompatApi23.setEnterSharedElementCallback(activity, createCallback23(callback));
+        } else if (Build.VERSION.SDK_INT >= 21) {
+            ActivityCompatApi21.setEnterSharedElementCallback(activity, createCallback(callback));
         }
     }
 
@@ -283,20 +280,22 @@ public class ActivityCompat extends ContextCompat {
      */
     public static void setExitSharedElementCallback(Activity activity,
             SharedElementCallback callback) {
-        if (Build.VERSION.SDK_INT >= 21) {
-            ActivityCompat21.setExitSharedElementCallback(activity, createCallback(callback));
+        if (Build.VERSION.SDK_INT >= 23) {
+            ActivityCompatApi23.setExitSharedElementCallback(activity, createCallback23(callback));
+        } else if (Build.VERSION.SDK_INT >= 21) {
+            ActivityCompatApi21.setExitSharedElementCallback(activity, createCallback(callback));
         }
     }
 
     public static void postponeEnterTransition(Activity activity) {
         if (Build.VERSION.SDK_INT >= 21) {
-            ActivityCompat21.postponeEnterTransition(activity);
+            ActivityCompatApi21.postponeEnterTransition(activity);
         }
     }
 
     public static void startPostponedEnterTransition(Activity activity) {
         if (Build.VERSION.SDK_INT >= 21) {
-            ActivityCompat21.startPostponedEnterTransition(activity);
+            ActivityCompatApi21.startPostponedEnterTransition(activity);
         }
     }
 
@@ -332,8 +331,8 @@ public class ActivityCompat extends ContextCompat {
      * to grant and which to reject. Hence, you should be prepared that your activity
      * may be paused and resumed. Further, granting some permissions may require
      * a restart of you application. In such a case, the system will recreate the
-     * activity stack before delivering the result to your onRequestPermissionsResult(
-     * int, String[], int[]).
+     * activity stack before delivering the result to your
+     * {@link OnRequestPermissionsResultCallback#onRequestPermissionsResult(int, String[], int[])}.
      * </p>
      * <p>
      * When checking whether you have a permission you should use {@link
@@ -345,18 +344,30 @@ public class ActivityCompat extends ContextCompat {
      * can be useful if the way your app uses the data guarded by the permissions
      * changes significantly.
      * </p>
+     * <p>
+     * You cannot request a permission if your activity sets {@link
+     * android.R.attr#noHistory noHistory} to <code>true</code> in the manifest
+     * because in this case the activity would not receive result callbacks including
+     * {@link OnRequestPermissionsResultCallback#onRequestPermissionsResult(int, String[], int[])}.
+     * </p>
+     * <p>
+     * The <a href="http://developer.android.com/samples/RuntimePermissions/index.html">
+     * RuntimePermissions</a> sample app demonstrates how to use this method to
+     * request permissions at run time.
+     * </p>
      *
      * @param activity The target activity.
-     * @param permissions The requested permissions.
+     * @param permissions The requested permissions. Must me non-null and not empty.
      * @param requestCode Application specific request code to match with a result
-     *    reported to {@link OnRequestPermissionsResultCallback#onRequestPermissionsResult(
-     *    int, String[], int[])}.
+     *    reported to {@link OnRequestPermissionsResultCallback#onRequestPermissionsResult(int, String[], int[])}.
+     *    Should be >= 0.
      *
+     * @see OnRequestPermissionsResultCallback#onRequestPermissionsResult(int, String[], int[])
      * @see #checkSelfPermission(android.content.Context, String)
      * @see #shouldShowRequestPermissionRationale(android.app.Activity, String)
      */
     public static void requestPermissions(final @NonNull Activity activity,
-            final @NonNull String[] permissions, final int requestCode) {
+            final @NonNull String[] permissions, final @IntRange(from = 0) int requestCode) {
         if (Build.VERSION.SDK_INT >= 23) {
             ActivityCompatApi23.requestPermissions(activity, permissions, requestCode);
         } else if (activity instanceof OnRequestPermissionsResultCallback) {
@@ -410,17 +421,26 @@ public class ActivityCompat extends ContextCompat {
         return false;
     }
 
-    private static ActivityCompat21.SharedElementCallback21 createCallback(
+    private static ActivityCompatApi21.SharedElementCallback21 createCallback(
             SharedElementCallback callback) {
-        ActivityCompat21.SharedElementCallback21 newCallback = null;
+        ActivityCompatApi21.SharedElementCallback21 newCallback = null;
         if (callback != null) {
             newCallback = new ActivityCompat.SharedElementCallback21Impl(callback);
         }
         return newCallback;
     }
 
+    private static ActivityCompatApi23.SharedElementCallback23 createCallback23(
+            SharedElementCallback callback) {
+        ActivityCompatApi23.SharedElementCallback23 newCallback = null;
+        if (callback != null) {
+            newCallback = new ActivityCompat.SharedElementCallback23Impl(callback);
+        }
+        return newCallback;
+    }
+
     private static class SharedElementCallback21Impl
-            extends ActivityCompat21.SharedElementCallback21 {
+            extends ActivityCompatApi21.SharedElementCallback21 {
 
         private SharedElementCallback mCallback;
 
@@ -462,6 +482,65 @@ public class ActivityCompat extends ContextCompat {
         @Override
         public View onCreateSnapshotView(Context context, Parcelable snapshot) {
             return mCallback.onCreateSnapshotView(context, snapshot);
+        }
+    }
+
+    private static class SharedElementCallback23Impl
+            extends ActivityCompatApi23.SharedElementCallback23 {
+
+        private SharedElementCallback mCallback;
+
+        public SharedElementCallback23Impl(SharedElementCallback callback) {
+            mCallback = callback;
+        }
+
+        @Override
+        public void onSharedElementStart(List<String> sharedElementNames,
+                List<View> sharedElements, List<View> sharedElementSnapshots) {
+            mCallback.onSharedElementStart(sharedElementNames, sharedElements,
+                    sharedElementSnapshots);
+        }
+
+        @Override
+        public void onSharedElementEnd(List<String> sharedElementNames, List<View> sharedElements,
+                List<View> sharedElementSnapshots) {
+            mCallback.onSharedElementEnd(sharedElementNames, sharedElements,
+                    sharedElementSnapshots);
+        }
+
+        @Override
+        public void onRejectSharedElements(List<View> rejectedSharedElements) {
+            mCallback.onRejectSharedElements(rejectedSharedElements);
+        }
+
+        @Override
+        public void onMapSharedElements(List<String> names, Map<String, View> sharedElements) {
+            mCallback.onMapSharedElements(names, sharedElements);
+        }
+
+        @Override
+        public Parcelable onCaptureSharedElementSnapshot(View sharedElement,
+                Matrix viewToGlobalMatrix, RectF screenBounds) {
+            return mCallback.onCaptureSharedElementSnapshot(sharedElement, viewToGlobalMatrix,
+                    screenBounds);
+        }
+
+        @Override
+        public View onCreateSnapshotView(Context context, Parcelable snapshot) {
+            return mCallback.onCreateSnapshotView(context, snapshot);
+        }
+
+        @Override
+        public void onSharedElementsArrived(List<String> sharedElementNames,
+                List<View> sharedElements,
+                final ActivityCompatApi23.OnSharedElementsReadyListenerBridge listener) {
+            mCallback.onSharedElementsArrived(sharedElementNames, sharedElements,
+                    new SharedElementCallback.OnSharedElementsReadyListener() {
+                        @Override
+                        public void onSharedElementsReady() {
+                            listener.onSharedElementsReady();
+                        }
+                    });
         }
     }
 }

@@ -21,7 +21,10 @@ import android.os.Handler;
 import android.os.Parcel;
 import android.os.Parcelable;
 import android.os.RemoteException;
+import android.support.annotation.RestrictTo;
 import android.support.v4.os.IResultReceiver;
+
+import static android.support.annotation.RestrictTo.Scope.GROUP_ID;
 
 /**
  * Generic interface for receiving a callback result from someone.  Use this
@@ -37,6 +40,7 @@ import android.support.v4.os.IResultReceiver;
  * break if your process goes away for any reason, etc.</p>
  * @hide
  */
+@RestrictTo(GROUP_ID)
 public class ResultReceiver implements Parcelable {
     final boolean mLocal;
     final Handler mHandler;
@@ -52,12 +56,14 @@ public class ResultReceiver implements Parcelable {
             mResultData = resultData;
         }
         
+        @Override
         public void run() {
             onReceiveResult(mResultCode, mResultData);
         }
     }
     
     class MyResultReceiver extends IResultReceiver.Stub {
+        @Override
         public void send(int resultCode, Bundle resultData) {
             if (mHandler != null) {
                 mHandler.post(new MyRunnable(resultCode, resultData));
@@ -112,10 +118,12 @@ public class ResultReceiver implements Parcelable {
     protected void onReceiveResult(int resultCode, Bundle resultData) {
     }
     
+    @Override
     public int describeContents() {
         return 0;
     }
 
+    @Override
     public void writeToParcel(Parcel out, int flags) {
         synchronized (this) {
             if (mReceiver == null) {
@@ -131,11 +139,13 @@ public class ResultReceiver implements Parcelable {
         mReceiver = IResultReceiver.Stub.asInterface(in.readStrongBinder());
     }
     
-    public static final Parcelable.Creator<ResultReceiver> CREATOR
-            = new Parcelable.Creator<ResultReceiver>() {
+    public static final Creator<ResultReceiver> CREATOR
+            = new Creator<ResultReceiver>() {
+        @Override
         public ResultReceiver createFromParcel(Parcel in) {
             return new ResultReceiver(in);
         }
+        @Override
         public ResultReceiver[] newArray(int size) {
             return new ResultReceiver[size];
         }

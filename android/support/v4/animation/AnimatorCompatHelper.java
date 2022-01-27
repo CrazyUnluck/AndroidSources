@@ -17,11 +17,15 @@
 package android.support.v4.animation;
 
 import android.os.Build;
+import android.support.annotation.RestrictTo;
 import android.view.View;
+
+import static android.support.annotation.RestrictTo.Scope.GROUP_ID;
 
 /**
  * @hide
  */
+@RestrictTo(GROUP_ID)
 public final class AnimatorCompatHelper {
 
     private final static AnimatorProvider IMPL;
@@ -30,7 +34,7 @@ public final class AnimatorCompatHelper {
         if (Build.VERSION.SDK_INT >= 12) {
             IMPL = new HoneycombMr1AnimatorCompatProvider();
         } else {
-            IMPL = new DonutAnimatorCompatProvider();
+            IMPL = new GingerbreadAnimatorCompatProvider();
         }
     }
 

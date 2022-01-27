@@ -32,6 +32,7 @@ import android.os.RemoteException;
 import android.support.annotation.IntDef;
 import android.support.annotation.NonNull;
 import android.support.annotation.Nullable;
+import android.support.annotation.RestrictTo;
 import android.support.v4.app.BundleCompat;
 import android.support.v4.media.session.MediaControllerCompat;
 import android.support.v4.media.session.MediaSessionCompat;
@@ -49,6 +50,7 @@ import java.util.Collections;
 import java.util.List;
 import java.util.Map;
 
+import static android.support.annotation.RestrictTo.Scope.GROUP_ID;
 import static android.support.v4.media.MediaBrowserProtocol.*;
 
 /**
@@ -59,8 +61,8 @@ import static android.support.v4.media.MediaBrowserProtocol.*;
  * </p>
  */
 public final class MediaBrowserCompat {
-    private static final String TAG = "MediaBrowserCompat";
-    private static final boolean DEBUG = Log.isLoggable(TAG, Log.DEBUG);
+    static final String TAG = "MediaBrowserCompat";
+    static final boolean DEBUG = Log.isLoggable(TAG, Log.DEBUG);
 
     /**
      * Used as an int extra field to denote the page number to subscribe.
@@ -307,6 +309,7 @@ public final class MediaBrowserCompat {
         private final MediaDescriptionCompat mDescription;
 
         /** @hide */
+        @RestrictTo(GROUP_ID)
         @Retention(RetentionPolicy.SOURCE)
         @IntDef(flag=true, value = { FLAG_BROWSABLE, FLAG_PLAYABLE })
         public @interface Flags { }
@@ -325,6 +328,48 @@ public final class MediaBrowserCompat {
          * </p>
          */
         public static final int FLAG_PLAYABLE = 1 << 1;
+
+        /**
+         * Creates an instance from a framework {@link android.media.browse.MediaBrowser.MediaItem}
+         * object.
+         * <p>
+         * This method is only supported on API 21+. On API 20 and below, it returns null.
+         * </p>
+         *
+         * @param itemObj A {@link android.media.browse.MediaBrowser.MediaItem} object.
+         * @return An equivalent {@link MediaItem} object, or null if none.
+         */
+        public static MediaItem fromMediaItem(Object itemObj) {
+            if (itemObj == null || Build.VERSION.SDK_INT < 21) {
+                return null;
+            }
+            int flags = MediaBrowserCompatApi21.MediaItem.getFlags(itemObj);
+            MediaDescriptionCompat description =
+                    MediaDescriptionCompat.fromMediaDescription(
+                            MediaBrowserCompatApi21.MediaItem.getDescription(itemObj));
+            return new MediaItem(description, flags);
+        }
+
+        /**
+         * Creates a list of {@link MediaItem} objects from a framework
+         * {@link android.media.browse.MediaBrowser.MediaItem} object list.
+         * <p>
+         * This method is only supported on API 21+. On API 20 and below, it returns null.
+         * </p>
+         *
+         * @param itemList A list of {@link android.media.browse.MediaBrowser.MediaItem} objects.
+         * @return An equivalent list of {@link MediaItem} objects, or null if none.
+         */
+        public static List<MediaItem> fromMediaItemList(List<?> itemList) {
+            if (itemList == null || Build.VERSION.SDK_INT < 21) {
+                return null;
+            }
+            List<MediaItem> items = new ArrayList<>(itemList.size());
+            for (Object itemObj : itemList) {
+                items.add(fromMediaItem(itemObj));
+            }
+            return items;
+        }
 
         /**
          * Create a new MediaItem for use in browsing media.
@@ -346,7 +391,7 @@ public final class MediaBrowserCompat {
         /**
          * Private constructor.
          */
-        private MediaItem(Parcel in) {
+        MediaItem(Parcel in) {
             mFlags = in.readInt();
             mDescription = MediaDescriptionCompat.CREATOR.createFromParcel(in);
         }
@@ -415,7 +460,8 @@ public final class MediaBrowserCompat {
         }
 
         /**
-         * Returns the media id for this item.
+         * Returns the media id in the {@link MediaDescriptionCompat} for this item.
+         * @see MediaMetadataCompat#METADATA_KEY_MEDIA_ID
          */
         public @NonNull String getMediaId() {
             return mDescription.getMediaId();
@@ -427,7 +473,7 @@ public final class MediaBrowserCompat {
      */
     public static class ConnectionCallback {
         final Object mConnectionCallbackObj;
-        private ConnectionCallbackInternal mConnectionCallbackInternal;
+        ConnectionCallbackInternal mConnectionCallbackInternal;
 
         public ConnectionCallback() {
             if (Build.VERSION.SDK_INT >= 21) {
@@ -468,6 +514,9 @@ public final class MediaBrowserCompat {
         }
 
         private class StubApi21 implements MediaBrowserCompatApi21.ConnectionCallback {
+            StubApi21() {
+            }
+
             @Override
             public void onConnected() {
                 if (mConnectionCallbackInternal != null) {
@@ -500,7 +549,7 @@ public final class MediaBrowserCompat {
     public static abstract class SubscriptionCallback {
         private final Object mSubscriptionCallbackObj;
         private final IBinder mToken;
-        private WeakReference<Subscription> mSubscriptionRef;
+        WeakReference<Subscription> mSubscriptionRef;
 
         public SubscriptionCallback() {
             if (Build.VERSION.SDK_INT >= 24 || BuildCompat.isAtLeastN()) {
@@ -571,14 +620,18 @@ public final class MediaBrowserCompat {
         }
 
         private class StubApi21 implements MediaBrowserCompatApi21.SubscriptionCallback {
+            StubApi21() {
+            }
+
             @Override
-            public void onChildrenLoaded(@NonNull String parentId, List<Parcel> children) {
+            public void onChildrenLoaded(@NonNull String parentId, List<?> children) {
                 Subscription sub = mSubscriptionRef == null ? null : mSubscriptionRef.get();
                 if (sub == null) {
                     SubscriptionCallback.this.onChildrenLoaded(
-                            parentId, parcelListToItemList(children));
+                            parentId, MediaItem.fromMediaItemList(children));
                 } else {
-                    List<MediaBrowserCompat.MediaItem> itemList = parcelListToItemList(children);
+                    List<MediaBrowserCompat.MediaItem> itemList =
+                            MediaItem.fromMediaItemList(children);
                     final List<SubscriptionCallback> callbacks = sub.getCallbacks();
                     final List<Bundle> optionsList = sub.getOptionsList();
                     for (int i = 0; i < callbacks.size(); ++i) {
@@ -596,20 +649,6 @@ public final class MediaBrowserCompat {
             @Override
             public void onError(@NonNull String parentId) {
                 SubscriptionCallback.this.onError(parentId);
-            }
-
-            List<MediaBrowserCompat.MediaItem> parcelListToItemList(
-                    List<Parcel> parcelList) {
-                if (parcelList == null) {
-                    return null;
-                }
-                List<MediaBrowserCompat.MediaItem> items = new ArrayList<>();
-                for (Parcel parcel : parcelList) {
-                    parcel.setDataPosition(0);
-                    items.add(MediaBrowserCompat.MediaItem.CREATOR.createFromParcel(parcel));
-                    parcel.recycle();
-                }
-                return items;
             }
 
             List<MediaBrowserCompat.MediaItem> applyOptions(List<MediaBrowserCompat.MediaItem> list,
@@ -637,11 +676,14 @@ public final class MediaBrowserCompat {
 
         private class StubApi24 extends StubApi21
                 implements MediaBrowserCompatApi24.SubscriptionCallback {
+            StubApi24() {
+            }
+
             @Override
-            public void onChildrenLoaded(@NonNull String parentId, List<Parcel> children,
+            public void onChildrenLoaded(@NonNull String parentId, List<?> children,
                     @NonNull Bundle options) {
                 SubscriptionCallback.this.onChildrenLoaded(
-                        parentId, parcelListToItemList(children), options);
+                        parentId, MediaItem.fromMediaItemList(children), options);
             }
 
             @Override
@@ -682,6 +724,9 @@ public final class MediaBrowserCompat {
         }
 
         private class StubApi23 implements MediaBrowserCompatApi23.ItemCallback {
+            StubApi23() {
+            }
+
             @Override
             public void onItemLoaded(Parcel itemParcel) {
                 itemParcel.setDataPosition(0);
@@ -720,22 +765,22 @@ public final class MediaBrowserCompat {
 
     static class MediaBrowserImplBase
             implements MediaBrowserImpl, MediaBrowserServiceCallbackImpl {
-        private static final int CONNECT_STATE_DISCONNECTED = 0;
-        private static final int CONNECT_STATE_CONNECTING = 1;
+        static final int CONNECT_STATE_DISCONNECTED = 0;
+        static final int CONNECT_STATE_CONNECTING = 1;
         private static final int CONNECT_STATE_CONNECTED = 2;
-        private static final int CONNECT_STATE_SUSPENDED = 3;
+        static final int CONNECT_STATE_SUSPENDED = 3;
 
-        private final Context mContext;
-        private final ComponentName mServiceComponent;
-        private final ConnectionCallback mCallback;
-        private final Bundle mRootHints;
-        private final CallbackHandler mHandler = new CallbackHandler(this);
+        final Context mContext;
+        final ComponentName mServiceComponent;
+        final ConnectionCallback mCallback;
+        final Bundle mRootHints;
+        final CallbackHandler mHandler = new CallbackHandler(this);
         private final ArrayMap<String, Subscription> mSubscriptions = new ArrayMap<>();
 
-        private int mState = CONNECT_STATE_DISCONNECTED;
-        private MediaServiceConnection mServiceConnection;
-        private ServiceBinderWrapper mServiceBinderWrapper;
-        private Messenger mCallbacksMessenger;
+        int mState = CONNECT_STATE_DISCONNECTED;
+        MediaServiceConnection mServiceConnection;
+        ServiceBinderWrapper mServiceBinderWrapper;
+        Messenger mCallbacksMessenger;
         private String mRootId;
         private MediaSessionCompat.Token mMediaSessionToken;
         private Bundle mExtras;
@@ -850,7 +895,7 @@ public final class MediaBrowserCompat {
          * for a clean shutdown, but everywhere else is a dirty shutdown and should
          * notify the app.
          */
-        private void forceCloseConnection() {
+        void forceCloseConnection() {
             if (mServiceConnection != null) {
                 mContext.unbindService(mServiceConnection);
             }
@@ -1134,7 +1179,6 @@ public final class MediaBrowserCompat {
 
         /**
          * Log internal state.
-         * @hide
          */
         void dump() {
             Log.d(TAG, "MediaBrowserCompat...");
@@ -1153,6 +1197,9 @@ public final class MediaBrowserCompat {
          * ServiceConnection to the other app.
          */
         private class MediaServiceConnection implements ServiceConnection {
+            MediaServiceConnection() {
+            }
+
             @Override
             public void onServiceConnected(final ComponentName name, final IBinder binder) {
                 postOrRun(new Runnable() {
@@ -1244,7 +1291,7 @@ public final class MediaBrowserCompat {
             /**
              * Return true if this is the current ServiceConnection. Also logs if it's not.
              */
-            private boolean isCurrent(String funcName) {
+            boolean isCurrent(String funcName) {
                 if (mServiceConnection != this) {
                     if (mState != CONNECT_STATE_DISCONNECTED) {
                         // Check mState, because otherwise this log is noisy.
@@ -1270,9 +1317,9 @@ public final class MediaBrowserCompat {
 
         public MediaBrowserImplApi21(Context context, ComponentName serviceComponent,
                 ConnectionCallback callback, Bundle rootHints) {
-            // Do not send the client version for API 24 and higher, since we don't need to use
+            // Do not send the client version for API 25 and higher, since we don't need to use
             // EXTRA_MESSENGER_BINDER for API 24 and higher.
-            if (Build.VERSION.SDK_INT < 24 && !BuildCompat.isAtLeastN()) {
+            if (Build.VERSION.SDK_INT < 25) {
                 if (rootHints == null) {
                     rootHints = new Bundle();
                 }
@@ -1436,7 +1483,7 @@ public final class MediaBrowserCompat {
                     @Override
                     public void run() {
                         // Default framework implementation.
-                        cb.onItemLoaded(null);
+                        cb.onError(mediaId);
                     }
                 });
                 return;
@@ -1566,11 +1613,6 @@ public final class MediaBrowserCompat {
                 MediaBrowserCompatApi24.unsubscribe(mBrowserObj, parentId,
                         callback.mSubscriptionCallbackObj);
             }
-        }
-
-        @Override
-        public void getItem(@NonNull final String mediaId, @NonNull final ItemCallback cb) {
-            MediaBrowserCompatApi23.getItem(mBrowserObj, mediaId, cb.mItemCallbackObj);
         }
     }
 
@@ -1742,14 +1784,16 @@ public final class MediaBrowserCompat {
 
         @Override
         protected void onReceiveResult(int resultCode, Bundle resultData) {
-            resultData.setClassLoader(MediaBrowserCompat.class.getClassLoader());
+            if (resultData != null) {
+                resultData.setClassLoader(MediaBrowserCompat.class.getClassLoader());
+            }
             if (resultCode != 0 || resultData == null
                     || !resultData.containsKey(MediaBrowserServiceCompat.KEY_MEDIA_ITEM)) {
                 mCallback.onError(mMediaId);
                 return;
             }
             Parcelable item = resultData.getParcelable(MediaBrowserServiceCompat.KEY_MEDIA_ITEM);
-            if (item instanceof MediaItem) {
+            if (item == null || item instanceof MediaItem) {
                 mCallback.onItemLoaded((MediaItem) item);
             } else {
                 mCallback.onError(mMediaId);

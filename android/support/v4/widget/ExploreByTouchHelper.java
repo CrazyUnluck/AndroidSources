@@ -717,7 +717,7 @@ public abstract class ExploreByTouchHelper extends AccessibilityDelegateCompat {
      *         about the specified item
      */
     @NonNull
-    private AccessibilityNodeInfoCompat obtainAccessibilityNodeInfo(int virtualViewId) {
+    AccessibilityNodeInfoCompat obtainAccessibilityNodeInfo(int virtualViewId) {
         if (virtualViewId == HOST_ID) {
             return createNodeForHost();
         }
@@ -867,7 +867,7 @@ public abstract class ExploreByTouchHelper extends AccessibilityDelegateCompat {
         return node;
     }
 
-    private boolean performAction(int virtualViewId, int action, Bundle arguments) {
+    boolean performAction(int virtualViewId, int action, Bundle arguments) {
         switch (virtualViewId) {
             case HOST_ID:
                 return performActionForHost(action, arguments);
@@ -1221,6 +1221,9 @@ public abstract class ExploreByTouchHelper extends AccessibilityDelegateCompat {
      * Exposes a virtual view hierarchy to the accessibility framework.
      */
     private class MyNodeProvider extends AccessibilityNodeProviderCompat {
+        MyNodeProvider() {
+        }
+
         @Override
         public AccessibilityNodeInfoCompat createAccessibilityNodeInfo(int virtualViewId) {
             // The caller takes ownership of the node and is expected to
@@ -1233,6 +1236,16 @@ public abstract class ExploreByTouchHelper extends AccessibilityDelegateCompat {
         @Override
         public boolean performAction(int virtualViewId, int action, Bundle arguments) {
             return ExploreByTouchHelper.this.performAction(virtualViewId, action, arguments);
+        }
+
+        @Override
+        public AccessibilityNodeInfoCompat findFocus(int focusType) {
+            int focusedId = (focusType == AccessibilityNodeInfoCompat.FOCUS_ACCESSIBILITY) ?
+                    mAccessibilityFocusedVirtualViewId : mKeyboardFocusedVirtualViewId;
+            if (focusedId == INVALID_ID) {
+                return null;
+            }
+            return createAccessibilityNodeInfo(focusedId);
         }
     }
 }

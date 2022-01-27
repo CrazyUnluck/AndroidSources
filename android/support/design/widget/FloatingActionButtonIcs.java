@@ -23,14 +23,13 @@ import android.support.annotation.Nullable;
 import android.support.v4.view.ViewCompat;
 import android.view.View;
 
-class FloatingActionButtonIcs extends FloatingActionButtonEclairMr1 {
+class FloatingActionButtonIcs extends FloatingActionButtonGingerbread {
 
-    private boolean mIsHiding;
     private float mRotation;
 
     FloatingActionButtonIcs(VisibilityAwareImageButton view,
-            ShadowViewDelegate shadowViewDelegate) {
-        super(view, shadowViewDelegate);
+            ShadowViewDelegate shadowViewDelegate, ValueAnimatorCompat.Creator animatorCreator) {
+        super(view, shadowViewDelegate, animatorCreator);
         mRotation = mView.getRotation();
     }
 
@@ -50,22 +49,16 @@ class FloatingActionButtonIcs extends FloatingActionButtonEclairMr1 {
 
     @Override
     void hide(@Nullable final InternalVisibilityChangedListener listener, final boolean fromUser) {
-        if (mIsHiding || mView.getVisibility() != View.VISIBLE) {
-            // A hide animation is in progress, or we're already hidden. Skip the call
-            if (listener != null) {
-                listener.onHidden();
-            }
+        if (isOrWillBeHidden()) {
+            // We either are or will soon be hidden, skip the call
             return;
         }
 
-        if (!ViewCompat.isLaidOut(mView) || mView.isInEditMode()) {
-            // If the view isn't laid out, or we're in the editor, don't run the animation
-            mView.internalSetVisibility(View.GONE, fromUser);
-            if (listener != null) {
-                listener.onHidden();
-            }
-        } else {
-            mView.animate().cancel();
+        mView.animate().cancel();
+
+        if (shouldAnimateVisibilityChange()) {
+            mAnimState = ANIM_STATE_HIDING;
+
             mView.animate()
                     .scaleX(0f)
                     .scaleY(0f)
@@ -77,20 +70,19 @@ class FloatingActionButtonIcs extends FloatingActionButtonEclairMr1 {
 
                         @Override
                         public void onAnimationStart(Animator animation) {
-                            mIsHiding = true;
-                            mCancelled = false;
                             mView.internalSetVisibility(View.VISIBLE, fromUser);
+                            mCancelled = false;
                         }
 
                         @Override
                         public void onAnimationCancel(Animator animation) {
-                            mIsHiding = false;
                             mCancelled = true;
                         }
 
                         @Override
                         public void onAnimationEnd(Animator animation) {
-                            mIsHiding = false;
+                            mAnimState = ANIM_STATE_NONE;
+
                             if (!mCancelled) {
                                 mView.internalSetVisibility(View.GONE, fromUser);
                                 if (listener != null) {
@@ -99,49 +91,67 @@ class FloatingActionButtonIcs extends FloatingActionButtonEclairMr1 {
                             }
                         }
                     });
+        } else {
+            // If the view isn't laid out, or we're in the editor, don't run the animation
+            mView.internalSetVisibility(View.GONE, fromUser);
+            if (listener != null) {
+                listener.onHidden();
+            }
         }
     }
 
     @Override
     void show(@Nullable final InternalVisibilityChangedListener listener, final boolean fromUser) {
-        if (mIsHiding || mView.getVisibility() != View.VISIBLE) {
-            if (ViewCompat.isLaidOut(mView) && !mView.isInEditMode()) {
-                mView.animate().cancel();
-                if (mView.getVisibility() != View.VISIBLE) {
-                    // If the view isn't visible currently, we'll animate it from a single pixel
-                    mView.setAlpha(0f);
-                    mView.setScaleY(0f);
-                    mView.setScaleX(0f);
-                }
-                mView.animate()
-                        .scaleX(1f)
-                        .scaleY(1f)
-                        .alpha(1f)
-                        .setDuration(SHOW_HIDE_ANIM_DURATION)
-                        .setInterpolator(AnimationUtils.LINEAR_OUT_SLOW_IN_INTERPOLATOR)
-                        .setListener(new AnimatorListenerAdapter() {
-                            @Override
-                            public void onAnimationStart(Animator animation) {
-                                mView.internalSetVisibility(View.VISIBLE, fromUser);
-                            }
+        if (isOrWillBeShown()) {
+            // We either are or will soon be visible, skip the call
+            return;
+        }
 
-                            @Override
-                            public void onAnimationEnd(Animator animation) {
-                                if (listener != null) {
-                                    listener.onShown();
-                                }
+        mView.animate().cancel();
+
+        if (shouldAnimateVisibilityChange()) {
+            mAnimState = ANIM_STATE_SHOWING;
+
+            if (mView.getVisibility() != View.VISIBLE) {
+                // If the view isn't visible currently, we'll animate it from a single pixel
+                mView.setAlpha(0f);
+                mView.setScaleY(0f);
+                mView.setScaleX(0f);
+            }
+
+            mView.animate()
+                    .scaleX(1f)
+                    .scaleY(1f)
+                    .alpha(1f)
+                    .setDuration(SHOW_HIDE_ANIM_DURATION)
+                    .setInterpolator(AnimationUtils.LINEAR_OUT_SLOW_IN_INTERPOLATOR)
+                    .setListener(new AnimatorListenerAdapter() {
+                        @Override
+                        public void onAnimationStart(Animator animation) {
+                            mView.internalSetVisibility(View.VISIBLE, fromUser);
+                        }
+
+                        @Override
+                        public void onAnimationEnd(Animator animation) {
+                            mAnimState = ANIM_STATE_NONE;
+                            if (listener != null) {
+                                listener.onShown();
                             }
-                        });
-            } else {
-                mView.internalSetVisibility(View.VISIBLE, fromUser);
-                mView.setAlpha(1f);
-                mView.setScaleY(1f);
-                mView.setScaleX(1f);
-                if (listener != null) {
-                    listener.onShown();
-                }
+                        }
+                    });
+        } else {
+            mView.internalSetVisibility(View.VISIBLE, fromUser);
+            mView.setAlpha(1f);
+            mView.setScaleY(1f);
+            mView.setScaleX(1f);
+            if (listener != null) {
+                listener.onShown();
             }
         }
+    }
+
+    private boolean shouldAnimateVisibilityChange() {
+        return ViewCompat.isLaidOut(mView) && !mView.isInEditMode();
     }
 
     private void updateFromViewRotation() {

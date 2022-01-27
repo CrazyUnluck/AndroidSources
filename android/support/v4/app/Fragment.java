@@ -29,27 +29,30 @@ import android.os.Parcelable;
 import android.support.annotation.CallSuper;
 import android.support.annotation.NonNull;
 import android.support.annotation.Nullable;
+import android.support.annotation.RestrictTo;
 import android.support.annotation.StringRes;
-import android.support.v4.util.SimpleArrayMap;
 import android.support.v4.util.DebugUtils;
+import android.support.v4.util.SimpleArrayMap;
 import android.support.v4.view.LayoutInflaterCompat;
 import android.util.AttributeSet;
 import android.util.Log;
 import android.util.SparseArray;
 import android.view.ContextMenu;
+import android.view.ContextMenu.ContextMenuInfo;
 import android.view.LayoutInflater;
 import android.view.Menu;
 import android.view.MenuInflater;
 import android.view.MenuItem;
 import android.view.View;
-import android.view.ViewGroup;
-import android.view.ContextMenu.ContextMenuInfo;
 import android.view.View.OnCreateContextMenuListener;
+import android.view.ViewGroup;
 import android.view.animation.Animation;
 import android.widget.AdapterView;
 
 import java.io.FileDescriptor;
 import java.io.PrintWriter;
+
+import static android.support.annotation.RestrictTo.Scope.GROUP_ID;
 
 final class FragmentState implements Parcelable {
     final String mClassName;
@@ -126,10 +129,12 @@ final class FragmentState implements Parcelable {
         return mInstance;
     }
 
+    @Override
     public int describeContents() {
         return 0;
     }
 
+    @Override
     public void writeToParcel(Parcel dest, int flags) {
         dest.writeString(mClassName);
         dest.writeInt(mIndex);
@@ -146,10 +151,12 @@ final class FragmentState implements Parcelable {
     
     public static final Parcelable.Creator<FragmentState> CREATOR
             = new Parcelable.Creator<FragmentState>() {
+        @Override
         public FragmentState createFromParcel(Parcel in) {
             return new FragmentState(in);
         }
-        
+
+        @Override
         public FragmentState[] newArray(int size) {
             return new FragmentState[size];
         }
@@ -386,13 +393,11 @@ public class Fragment implements ComponentCallbacks, OnCreateContextMenuListener
      * arguments can be supplied by the caller with {@link #setArguments}
      * and later retrieved by the Fragment with {@link #getArguments}.
      * 
-     * <p>Applications should generally not implement a constructor.  The
-     * first place application code an run where the fragment is ready to
-     * be used is in {@link #onAttach(Activity)}, the point where the fragment
-     * is actually associated with its activity.  Some applications may also
-     * want to implement {@link #onInflate} to retrieve attributes from a
-     * layout resource, though should take care here because this happens for
-     * the fragment is attached to its activity.
+     * <p>Applications should generally not implement a constructor. Prefer
+     * {@link #onAttach(Context)} instead. It is the first place application code can run where
+     * the fragment is ready to be used - the point where the fragment is actually associated with
+     * its context. Some applications may also want to implement {@link #onInflate} to retrieve
+     * attributes from a layout resource, although note this happens when the fragment is attached.
      */
     public Fragment() {
     }
@@ -789,11 +794,13 @@ public class Fragment implements ComponentCallbacks, OnCreateContextMenuListener
     }
 
     /** @hide */
+    @RestrictTo(GROUP_ID)
     final public boolean hasOptionsMenu() {
         return mHasMenu;
     }
 
     /** @hide */
+    @RestrictTo(GROUP_ID)
     final public boolean isMenuVisible() {
         return mMenuVisible;
     }
@@ -802,8 +809,7 @@ public class Fragment implements ComponentCallbacks, OnCreateContextMenuListener
      * Called when the hidden state (as returned by {@link #isHidden()} of
      * the fragment has changed.  Fragments start out not hidden; this will
      * be called whenever the fragment changes state from that.
-     * @param hidden True if the fragment is now hidden, false if it is not
-     * visible.
+     * @param hidden True if the fragment is now hidden, false otherwise.
      */
     public void onHiddenChanged(boolean hidden) {
     }
@@ -873,6 +879,9 @@ public class Fragment implements ComponentCallbacks, OnCreateContextMenuListener
      * scrolled out of visibility or is otherwise not directly visible to the user.
      * This may be used by the system to prioritize operations such as fragment lifecycle updates
      * or loader ordering behavior.</p>
+     *
+     * <p><strong>Note:</strong> This method may be called outside of the fragment lifecycle.
+     * and thus has no ordering guarantees with regard to fragment lifecycle method calls.</p>
      *
      * @param isVisibleToUser true if this fragment's UI is currently visible to the user (default),
      *                        false if it is not.
@@ -1108,10 +1117,12 @@ public class Fragment implements ComponentCallbacks, OnCreateContextMenuListener
     }
 
     /**
-     * @hide Hack so that DialogFragment can make its Dialog before creating
+     * Hack so that DialogFragment can make its Dialog before creating
      * its views, and the view construction can use the dialog's context for
      * inflation.  Maybe this should become a public API. Note sure.
+     * @hide
      */
+    @RestrictTo(GROUP_ID)
     public LayoutInflater getLayoutInflater(Bundle savedInstanceState) {
         LayoutInflater result = mHost.onGetLayoutInflater();
         getChildFragmentManager(); // Init if needed; use raw implementation below.
@@ -1135,24 +1146,24 @@ public class Fragment implements ComponentCallbacks, OnCreateContextMenuListener
      * <p>Here is a typical implementation of a fragment that can take parameters
      * both through attributes supplied here as well from {@link #getArguments()}:</p>
      *
-     * {@sample development/samples/ApiDemos/src/com/example/android/apis/app/FragmentArguments.java
+     * {@sample frameworks/support/samples/Support4Demos/src/com/example/android/supportv4/app/FragmentArgumentsSupport.java
      *      fragment}
      *
      * <p>Note that parsing the XML attributes uses a "styleable" resource.  The
      * declaration for the styleable used here is:</p>
      *
-     * {@sample development/samples/ApiDemos/res/values/attrs.xml fragment_arguments}
+     * {@sample frameworks/support/samples/Support4Demos/res/values/attrs.xml fragment_arguments}
      * 
      * <p>The fragment can then be declared within its activity's content layout
      * through a tag like this:</p>
      *
-     * {@sample development/samples/ApiDemos/res/layout/fragment_arguments.xml from_attributes}
+     * {@sample frameworks/support/samples/Support4Demos/res/layout/fragment_arguments_support.xml from_attributes}
      *
      * <p>This fragment can also be created dynamically from arguments given
      * at runtime in the arguments Bundle; here is an example of doing so at
      * creation of the containing activity:</p>
      *
-     * {@sample development/samples/ApiDemos/src/com/example/android/apis/app/FragmentArguments.java
+     * {@sample frameworks/support/samples/Support4Demos/src/com/example/android/supportv4/app/FragmentArgumentsSupport.java
      *      create}
      *
      * @param context The Activity that is inflating this fragment.
@@ -1438,6 +1449,7 @@ public class Fragment implements ComponentCallbacks, OnCreateContextMenuListener
     public void onPictureInPictureModeChanged(boolean isInPictureInPictureMode) {
     }
 
+    @Override
     @CallSuper
     public void onConfigurationChanged(Configuration newConfig) {
         mCalled = true;
@@ -1463,6 +1475,7 @@ public class Fragment implements ComponentCallbacks, OnCreateContextMenuListener
         mCalled = true;
     }
 
+    @Override
     @CallSuper
     public void onLowMemory() {
         mCalled = true;

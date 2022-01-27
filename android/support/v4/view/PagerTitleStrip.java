@@ -22,6 +22,7 @@ import android.database.DataSetObserver;
 import android.graphics.drawable.Drawable;
 import android.support.annotation.ColorInt;
 import android.support.annotation.FloatRange;
+import android.support.v4.widget.TextViewCompat;
 import android.text.TextUtils.TruncateAt;
 import android.util.AttributeSet;
 import android.util.TypedValue;
@@ -54,7 +55,7 @@ public class PagerTitleStrip extends ViewGroup {
     TextView mNextText;
 
     private int mLastKnownCurrentPage = -1;
-    private float mLastKnownPositionOffset = -1;
+    float mLastKnownPositionOffset = -1;
     private int mScaledTextSpacing;
     private int mGravity;
 
@@ -87,12 +88,14 @@ public class PagerTitleStrip extends ViewGroup {
     }
 
     static class PagerTitleStripImplBase implements PagerTitleStripImpl {
+        @Override
         public void setSingleLineAllCaps(TextView text) {
             text.setSingleLine();
         }
     }
 
     static class PagerTitleStripImplIcs implements PagerTitleStripImpl {
+        @Override
         public void setSingleLineAllCaps(TextView text) {
             PagerTitleStripIcs.setSingleLineAllCaps(text);
         }
@@ -125,9 +128,9 @@ public class PagerTitleStrip extends ViewGroup {
         final TypedArray a = context.obtainStyledAttributes(attrs, ATTRS);
         final int textAppearance = a.getResourceId(0, 0);
         if (textAppearance != 0) {
-            mPrevText.setTextAppearance(context, textAppearance);
-            mCurrText.setTextAppearance(context, textAppearance);
-            mNextText.setTextAppearance(context, textAppearance);
+            TextViewCompat.setTextAppearance(mPrevText, textAppearance);
+            TextViewCompat.setTextAppearance(mCurrText, textAppearance);
+            TextViewCompat.setTextAppearance(mNextText, textAppearance);
         }
         final int textSize = a.getDimensionPixelSize(1, 0);
         if (textSize != 0) {
@@ -192,7 +195,7 @@ public class PagerTitleStrip extends ViewGroup {
      *
      * @param alpha Opacity value in the range 0-1f
      */
-    public void setNonPrimaryAlpha(@FloatRange(from=0.0, to=1.0) float alpha) {
+    public void setNonPrimaryAlpha(@FloatRange(from = 0.0, to = 1.0) float alpha) {
         mNonPrimaryAlpha = (int) (alpha * 255) & 0xFF;
         final int transparentColor = (mNonPrimaryAlpha << 24) | (mTextColor & 0xFFFFFF);
         mPrevText.setTextColor(transparentColor);
@@ -280,8 +283,8 @@ public class PagerTitleStrip extends ViewGroup {
         }
         mPrevText.setText(text);
 
-        mCurrText.setText(adapter != null && currentItem < itemCount ?
-                adapter.getPageTitle(currentItem) : null);
+        mCurrText.setText(adapter != null && currentItem < itemCount
+                ? adapter.getPageTitle(currentItem) : null);
 
         text = null;
         if (currentItem + 1 < itemCount && adapter != null) {
@@ -477,6 +480,9 @@ public class PagerTitleStrip extends ViewGroup {
     private class PageListener extends DataSetObserver implements ViewPager.OnPageChangeListener,
             ViewPager.OnAdapterChangeListener {
         private int mScrollState;
+
+        PageListener() {
+        }
 
         @Override
         public void onPageScrolled(int position, float positionOffset, int positionOffsetPixels) {

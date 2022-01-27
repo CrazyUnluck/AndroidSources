@@ -29,12 +29,12 @@ import android.os.Parcelable;
 import android.support.annotation.CallSuper;
 import android.support.annotation.NonNull;
 import android.support.annotation.Nullable;
+import android.support.annotation.RestrictTo;
 import android.support.v4.media.session.MediaControllerCompat;
 import android.support.v4.util.SimpleArrayMap;
 import android.support.v4.util.SparseArrayCompat;
 import android.util.AttributeSet;
 import android.util.Log;
-import android.view.KeyEvent;
 import android.view.LayoutInflater;
 import android.view.Menu;
 import android.view.MenuItem;
@@ -44,6 +44,8 @@ import android.view.Window;
 
 import java.io.FileDescriptor;
 import java.io.PrintWriter;
+
+import static android.support.annotation.RestrictTo.Scope.GROUP_ID;
 
 /**
  * Base class for activities that want to use the support-based
@@ -174,9 +176,10 @@ public class FragmentActivity extends BaseFragmentActivityJB implements
      * Take care of popping the fragment back stack or finishing the activity
      * as appropriate.
      */
+    @Override
     public void onBackPressed() {
         if (!mFragments.getSupportFragmentManager().popBackStackImmediate()) {
-            onBackPressedNotHandled();
+            super.onBackPressed();
         }
     }
 
@@ -193,12 +196,13 @@ public class FragmentActivity extends BaseFragmentActivityJB implements
      *
      * @param mediaController The controller for the session which should receive
      *     media keys and volume changes on API 21 and later.
+     * @see #getSupportMediaController()
      * @see #setMediaController(android.media.session.MediaController)
      */
     final public void setSupportMediaController(MediaControllerCompat mediaController) {
         mMediaController = mediaController;
         if (android.os.Build.VERSION.SDK_INT >= 21) {
-            ActivityCompat21.setMediaController(this, mediaController.getMediaController());
+            ActivityCompatApi21.setMediaController(this, mediaController.getMediaController());
         }
     }
 
@@ -206,7 +210,7 @@ public class FragmentActivity extends BaseFragmentActivityJB implements
      * Retrieves the current {@link MediaControllerCompat} for sending media key and volume events.
      *
      * @return The controller which should receive events.
-     * @see #setSupportMediaController(android.support.v4.media.session.MediaController)
+     * @see #setSupportMediaController(MediaControllerCompat)
      * @see #getMediaController()
      */
     final public MediaControllerCompat getSupportMediaController() {
@@ -388,23 +392,6 @@ public class FragmentActivity extends BaseFragmentActivityJB implements
     }
 
     /**
-     * Take care of calling onBackPressed() for pre-Eclair platforms.
-     */
-    @Override
-    public boolean onKeyDown(int keyCode, KeyEvent event) {
-        if (android.os.Build.VERSION.SDK_INT < 5 /* ECLAIR */
-                && keyCode == KeyEvent.KEYCODE_BACK
-                && event.getRepeatCount() == 0) {
-            // Take care of calling this method on earlier versions of
-            // the platform where it doesn't exist.
-            onBackPressed();
-            return true;
-        }
-
-        return super.onKeyDown(keyCode, event);
-    }
-
-    /**
      * Dispatch onLowMemory() to all fragments.
      */
     @Override
@@ -421,11 +408,11 @@ public class FragmentActivity extends BaseFragmentActivityJB implements
         if (super.onMenuItemSelected(featureId, item)) {
             return true;
         }
-        
+
         switch (featureId) {
             case Window.FEATURE_OPTIONS_PANEL:
                 return mFragments.dispatchOptionsItemSelected(item);
-                
+
             case Window.FEATURE_CONTEXT_MENU:
                 return mFragments.dispatchContextItemSelected(item);
 
@@ -446,7 +433,7 @@ public class FragmentActivity extends BaseFragmentActivityJB implements
         }
         super.onPanelClosed(featureId, menu);
     }
-    
+
     /**
      * Dispatch onPause() to fragments.
      */
@@ -543,6 +530,7 @@ public class FragmentActivity extends BaseFragmentActivityJB implements
     /**
      * @hide
      */
+    @RestrictTo(GROUP_ID)
     protected boolean onPrepareOptionsPanel(View view, Menu menu) {
         return super.onPreparePanel(Window.FEATURE_OPTIONS_PANEL, view, menu);
     }
@@ -903,6 +891,7 @@ public class FragmentActivity extends BaseFragmentActivityJB implements
      *
      * @see #requestPermissions(String[], int)
      */
+    @Override
     public void onRequestPermissionsResult(int requestCode, @NonNull String[] permissions,
             @NonNull int[] grantResults) {
         int index = (requestCode >> 16) & 0xffff;
@@ -999,7 +988,7 @@ public class FragmentActivity extends BaseFragmentActivityJB implements
     /**
      * Called by Fragment.requestPermissions() to implement its behavior.
      */
-    private void requestPermissionsFromFragment(Fragment fragment, String[] permissions,
+    void requestPermissionsFromFragment(Fragment fragment, String[] permissions,
             int requestCode) {
         if (requestCode == -1) {
             ActivityCompat.requestPermissions(this, permissions, requestCode);

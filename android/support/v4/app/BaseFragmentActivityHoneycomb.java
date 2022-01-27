@@ -26,7 +26,7 @@ import android.view.View;
  *
  * @hide
  */
-abstract class BaseFragmentActivityHoneycomb extends BaseFragmentActivityEclair {
+abstract class BaseFragmentActivityHoneycomb extends BaseFragmentActivityGingerbread {
 
     @Override
     public View onCreateView(View parent, String name, Context context, AttributeSet attrs) {

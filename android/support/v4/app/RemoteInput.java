@@ -19,7 +19,10 @@ package android.support.v4.app;
 import android.content.Intent;
 import android.os.Build;
 import android.os.Bundle;
+import android.support.annotation.RestrictTo;
 import android.util.Log;
+
+import static android.support.annotation.RestrictTo.Scope.GROUP_ID;
 
 /**
  * Helper for using the {@link android.app.RemoteInput} API
@@ -40,7 +43,7 @@ public final class RemoteInput extends RemoteInputCompatBase.RemoteInput {
     private final boolean mAllowFreeFormInput;
     private final Bundle mExtras;
 
-    private RemoteInput(String resultKey, CharSequence label, CharSequence[] choices,
+    RemoteInput(String resultKey, CharSequence label, CharSequence[] choices,
             boolean allowFreeFormInput, Bundle extras) {
         this.mResultKey = resultKey;
         this.mLabel = label;
@@ -53,6 +56,7 @@ public final class RemoteInput extends RemoteInputCompatBase.RemoteInput {
      * Get the key that the result of this input will be set in from the Bundle returned by
      * {@link #getResultsFromIntent} when the {@link android.app.PendingIntent} is sent.
      */
+    @Override
     public String getResultKey() {
         return mResultKey;
     }
@@ -60,6 +64,7 @@ public final class RemoteInput extends RemoteInputCompatBase.RemoteInput {
     /**
      * Get the label to display to users when collecting this input.
      */
+    @Override
     public CharSequence getLabel() {
         return mLabel;
     }
@@ -67,6 +72,7 @@ public final class RemoteInput extends RemoteInputCompatBase.RemoteInput {
     /**
      * Get possible input choices. This can be {@code null} if there are no choices to present.
      */
+    @Override
     public CharSequence[] getChoices() {
         return mChoices;
     }
@@ -77,6 +83,7 @@ public final class RemoteInput extends RemoteInputCompatBase.RemoteInput {
      * choices in {@link #getChoices}. An {@link IllegalArgumentException} is thrown
      * if you set this to false and {@link #getChoices} returns {@code null} or empty.
      */
+    @Override
     public boolean getAllowFreeFormInput() {
         return mAllowFreeFormInput;
     }
@@ -84,6 +91,7 @@ public final class RemoteInput extends RemoteInputCompatBase.RemoteInput {
     /**
      * Get additional metadata carried around with this remote input.
      */
+    @Override
     public Bundle getExtras() {
         return mExtras;
     }
@@ -260,6 +268,7 @@ public final class RemoteInput extends RemoteInputCompatBase.RemoteInput {
     }
 
     /** @hide */
+    @RestrictTo(GROUP_ID)
     public static final Factory FACTORY = new Factory() {
         @Override
         public RemoteInput build(String resultKey,

@@ -20,13 +20,17 @@ import android.content.Context;
 import android.content.Intent;
 import android.content.pm.ApplicationInfo;
 import android.content.res.ColorStateList;
-import android.content.res.TypedArray;
 import android.graphics.drawable.Drawable;
 import android.os.Build;
 import android.os.Bundle;
 import android.os.Environment;
 import android.os.Process;
+import android.support.annotation.ColorInt;
+import android.support.annotation.ColorRes;
+import android.support.annotation.DrawableRes;
 import android.support.annotation.NonNull;
+import android.support.annotation.Nullable;
+import android.support.v4.app.ActivityOptionsCompat;
 import android.support.v4.os.BuildCompat;
 import android.support.v4.os.EnvironmentCompat;
 import android.util.Log;
@@ -42,14 +46,19 @@ public class ContextCompat {
     private static final String TAG = "ContextCompat";
 
     private static final String DIR_ANDROID = "Android";
-    private static final String DIR_DATA = "data";
     private static final String DIR_OBB = "obb";
-    private static final String DIR_FILES = "files";
-    private static final String DIR_CACHE = "cache";
 
     private static final Object sLock = new Object();
 
     private static TypedValue sTempValue;
+
+    /**
+     * This class should not be instantiated, but the constructor must be
+     * visible for the class to be extended (ex. in ActivityCompat).
+     */
+    protected ContextCompat() {
+        // Not publicly instantiable, but may be extended.
+    }
 
     /**
      * Start a set of activities as a synthesized task stack, if able.
@@ -104,7 +113,7 @@ public class ContextCompat {
      * @param intents Array of intents defining the activities that will be started. The element
      *                length-1 will correspond to the top activity on the resulting task stack.
      * @param options Additional options for how the Activity should be started.
-     * See {@link android.content.Context#startActivity(Intent, android.os.Bundle)
+     * See {@link android.content.Context#startActivity(Intent, android.os.Bundle)}
      * @return true if the underlying API was available and the call was successful, false otherwise
      */
     public static boolean startActivities(Context context, Intent[] intents,
@@ -118,6 +127,31 @@ public class ContextCompat {
             return true;
         }
         return false;
+    }
+
+    /**
+     * Start an activity with additional launch information, if able.
+     *
+     * <p>In Android 4.1+ additional options were introduced to allow for more
+     * control on activity launch animations. Applications can use this method
+     * along with {@link ActivityOptionsCompat} to use these animations when
+     * available. When run on versions of the platform where this feature does
+     * not exist the activity will be launched normally.</p>
+     *
+     * @param context Context to launch activity from.
+     * @param intent The description of the activity to start.
+     * @param options Additional options for how the Activity should be started.
+     *                May be null if there are no options. See
+     *                {@link ActivityOptionsCompat} for how to build the Bundle
+     *                supplied here; there are no supported definitions for
+     *                building it manually.
+     */
+    public static void startActivity(Context context, Intent intent, @Nullable Bundle options) {
+        if (Build.VERSION.SDK_INT >= 16) {
+            ContextCompatJellybean.startActivity(context, intent, options);
+        } else {
+            context.startActivity(intent);
+        }
     }
 
     /**
@@ -252,14 +286,7 @@ public class ContextCompat {
         if (version >= 19) {
             return ContextCompatKitKat.getExternalFilesDirs(context, type);
         } else {
-            final File single;
-            if (version >= 8) {
-                single = ContextCompatFroyo.getExternalFilesDir(context, type);
-            } else {
-                single = buildPath(Environment.getExternalStorageDirectory(), DIR_ANDROID, DIR_DATA,
-                        context.getPackageName(), DIR_FILES, type);
-            }
-            return new File[] { single };
+            return new File[] { context.getExternalFilesDir(type) };
         }
     }
 
@@ -312,14 +339,7 @@ public class ContextCompat {
         if (version >= 19) {
             return ContextCompatKitKat.getExternalCacheDirs(context);
         } else {
-            final File single;
-            if (version >= 8) {
-                single = ContextCompatFroyo.getExternalCacheDir(context);
-            } else {
-                single = buildPath(Environment.getExternalStorageDirectory(), DIR_ANDROID, DIR_DATA,
-                        context.getPackageName(), DIR_CACHE);
-            }
-            return new File[] { single };
+            return new File[] { context.getExternalCacheDir() };
         }
     }
 
@@ -346,7 +366,7 @@ public class ContextCompat {
      *           The value 0 is an invalid identifier.
      * @return Drawable An object that can be used to draw this resource.
      */
-    public static final Drawable getDrawable(Context context, int id) {
+    public static final Drawable getDrawable(Context context, @DrawableRes int id) {
         final int version = Build.VERSION.SDK_INT;
         if (version >= 21) {
             return ContextCompatApi21.getDrawable(context, id);
@@ -383,7 +403,7 @@ public class ContextCompat {
      * @throws android.content.res.Resources.NotFoundException if the given ID
      *         does not exist.
      */
-    public static final ColorStateList getColorStateList(Context context, int id) {
+    public static final ColorStateList getColorStateList(Context context, @ColorRes int id) {
         final int version = Build.VERSION.SDK_INT;
         if (version >= 23) {
             return ContextCompatApi23.getColorStateList(context, id);
@@ -405,7 +425,8 @@ public class ContextCompat {
      * @throws android.content.res.Resources.NotFoundException if the given ID
      *         does not exist.
      */
-    public static final int getColor(Context context, int id) {
+    @ColorInt
+    public static final int getColor(Context context, @ColorRes int id) {
         final int version = Build.VERSION.SDK_INT;
         if (version >= 23) {
             return ContextCompatApi23.getColor(context, id);
@@ -436,9 +457,7 @@ public class ContextCompat {
      * Returns the absolute path to the directory on the filesystem similar to
      * {@link Context#getFilesDir()}.  The difference is that files placed under this
      * directory will be excluded from automatic backup to remote storage on
-     * devices running {@link android.os.Build.VERSION_CODES#LOLLIPOP} or later.  See
-     * {@link android.app.backup.BackupAgent BackupAgent} for a full discussion
-     * of the automatic backup mechanism in Android.
+     * devices running {@link android.os.Build.VERSION_CODES#LOLLIPOP} or later.
      *
      * <p>No permissions are required to read or write to the returned path, since this
      * path is internal storage.
@@ -446,7 +465,7 @@ public class ContextCompat {
      * @return The path of the directory holding application files that will not be
      *         automatically backed up to remote storage.
      *
-     * @see android.content.Context.getFilesDir
+     * @see android.content.Context#getFilesDir()
      */
     public static final File getNoBackupFilesDir(Context context) {
         final int version = Build.VERSION.SDK_INT;
@@ -537,15 +556,6 @@ public class ContextCompat {
     }
 
     /**
-     * @removed
-     * @deprecated Removed. Do not use.
-     */
-    @Deprecated
-    public static Context createDeviceEncryptedStorageContext(Context context) {
-        return createDeviceProtectedStorageContext(context);
-    }
-
-    /**
      * Indicates if the storage APIs of this Context are backed by
      * device-encrypted storage.
      *
@@ -557,14 +567,5 @@ public class ContextCompat {
         } else {
             return false;
         }
-    }
-
-    /**
-     * @removed
-     * @deprecated Removed. Do not use.
-     */
-    @Deprecated
-    public static boolean isDeviceEncryptedStorage(Context context) {
-        return isDeviceProtectedStorage(context);
     }
 }

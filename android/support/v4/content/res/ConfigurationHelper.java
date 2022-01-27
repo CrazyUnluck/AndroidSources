@@ -35,7 +35,7 @@ public final class ConfigurationHelper {
         } else if (sdk >= 13) {
             IMPL = new HoneycombMr2Impl();
         } else {
-            IMPL = new DonutImpl();
+            IMPL = new GingerbreadImpl();
         }
     }
 
@@ -48,29 +48,35 @@ public final class ConfigurationHelper {
         int getDensityDpi(@NonNull Resources resources);
     }
 
-    private static class DonutImpl implements ConfigurationHelperImpl {
+    private static class GingerbreadImpl implements ConfigurationHelperImpl {
+        GingerbreadImpl() {
+        }
+
         @Override
         public int getScreenHeightDp(@NonNull Resources resources) {
-            return ConfigurationHelperDonut.getScreenHeightDp(resources);
+            return ConfigurationHelperGingerbread.getScreenHeightDp(resources);
         }
 
         @Override
         public int getScreenWidthDp(@NonNull Resources resources) {
-            return ConfigurationHelperDonut.getScreenWidthDp(resources);
+            return ConfigurationHelperGingerbread.getScreenWidthDp(resources);
         }
 
         @Override
         public int getSmallestScreenWidthDp(@NonNull Resources resources) {
-            return ConfigurationHelperDonut.getSmallestScreenWidthDp(resources);
+            return ConfigurationHelperGingerbread.getSmallestScreenWidthDp(resources);
         }
 
         @Override
         public int getDensityDpi(@NonNull Resources resources) {
-            return ConfigurationHelperDonut.getDensityDpi(resources);
+            return ConfigurationHelperGingerbread.getDensityDpi(resources);
         }
     }
 
-    private static class HoneycombMr2Impl extends DonutImpl {
+    private static class HoneycombMr2Impl extends GingerbreadImpl {
+        HoneycombMr2Impl() {
+        }
+
         @Override
         public int getScreenHeightDp(@NonNull Resources resources) {
             return ConfigurationHelperHoneycombMr2.getScreenHeightDp(resources);
@@ -88,6 +94,9 @@ public final class ConfigurationHelper {
     }
 
     private static class JellybeanMr1Impl extends HoneycombMr2Impl {
+        JellybeanMr1Impl() {
+        }
+
         @Override
         public int getDensityDpi(@NonNull Resources resources) {
             return ConfigurationHelperJellybeanMr1.getDensityDpi(resources);
