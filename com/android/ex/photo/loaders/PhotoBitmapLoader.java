@@ -17,22 +17,22 @@
 
 package com.android.ex.photo.loaders;
 
-import android.content.AsyncTaskLoader;
 import android.content.ContentResolver;
 import android.content.Context;
 import android.graphics.Bitmap;
 import android.net.Uri;
+import android.support.v4.content.AsyncTaskLoader;
 import android.util.DisplayMetrics;
 
 import com.android.ex.photo.fragments.PhotoViewFragment;
+import com.android.ex.photo.loaders.PhotoBitmapLoader.BitmapResult;
 import com.android.ex.photo.util.ImageUtils;
 
 /**
  * Loader for the bitmap of a photo.
  */
-public class PhotoBitmapLoader extends AsyncTaskLoader<Bitmap> {
+public class PhotoBitmapLoader extends AsyncTaskLoader<BitmapResult> {
     private String mPhotoUri;
-
     private Bitmap mBitmap;
 
     public PhotoBitmapLoader(Context context, String photoUri) {
@@ -45,20 +45,24 @@ public class PhotoBitmapLoader extends AsyncTaskLoader<Bitmap> {
     }
 
     @Override
-    public Bitmap loadInBackground() {
+    public BitmapResult loadInBackground() {
+        BitmapResult result = new BitmapResult();
         Context context = getContext();
-
         if (context != null && mPhotoUri != null) {
             final ContentResolver resolver = context.getContentResolver();
-            Bitmap bitmap = ImageUtils.createLocalBitmap(resolver, Uri.parse(mPhotoUri),
-                    PhotoViewFragment.sPhotoSize);
-            if (bitmap != null) {
-                bitmap.setDensity(DisplayMetrics.DENSITY_MEDIUM);
+            try {
+                result = ImageUtils.createLocalBitmap(resolver, Uri.parse(mPhotoUri),
+                        PhotoViewFragment.sPhotoSize);
+                if (result.bitmap != null) {
+                    result.bitmap.setDensity(DisplayMetrics.DENSITY_MEDIUM);
+                }
+            } catch (UnsupportedOperationException ex) {
+                // We got image bytes, but unable to decode to a Bitmap
+                result.status = BitmapResult.STATUS_EXCEPTION;
             }
-            return bitmap;
         }
 
-        return null;
+        return result;
     }
 
     /**
@@ -67,7 +71,8 @@ public class PhotoBitmapLoader extends AsyncTaskLoader<Bitmap> {
      * here just adds a little more logic.
      */
     @Override
-    public void deliverResult(Bitmap bitmap) {
+    public void deliverResult(BitmapResult result) {
+        Bitmap bitmap = result != null ? result.bitmap : null;
         if (isReset()) {
             // An async query came in while the loader is stopped.  We
             // don't need the result.
@@ -81,7 +86,7 @@ public class PhotoBitmapLoader extends AsyncTaskLoader<Bitmap> {
         if (isStarted()) {
             // If the Loader is currently started, we can immediately
             // deliver its results.
-            super.deliverResult(bitmap);
+            super.deliverResult(result);
         }
 
         // At this point we can release the resources associated with
@@ -100,7 +105,10 @@ public class PhotoBitmapLoader extends AsyncTaskLoader<Bitmap> {
         if (mBitmap != null) {
             // If we currently have a result available, deliver it
             // immediately.
-            deliverResult(mBitmap);
+            BitmapResult result = new BitmapResult();
+            result.status = BitmapResult.STATUS_SUCCESS;
+            result.bitmap = mBitmap;
+            deliverResult(result);
         }
 
         if (takeContentChanged() || mBitmap == null) {
@@ -122,12 +130,14 @@ public class PhotoBitmapLoader extends AsyncTaskLoader<Bitmap> {
      * Handles a request to cancel a load.
      */
     @Override
-    public void onCanceled(Bitmap bitmap) {
-        super.onCanceled(bitmap);
+    public void onCanceled(BitmapResult result) {
+        super.onCanceled(result);
 
         // At this point we can release the resources associated with 'bitmap'
         // if needed.
-        onReleaseResources(bitmap);
+        if (result != null) {
+            onReleaseResources(result.bitmap);
+        }
     }
 
     /**
@@ -156,5 +166,13 @@ public class PhotoBitmapLoader extends AsyncTaskLoader<Bitmap> {
         if (bitmap != null && !bitmap.isRecycled()) {
             bitmap.recycle();
         }
+    }
+
+    public static class BitmapResult {
+        public static final int STATUS_SUCCESS = 0;
+        public static final int STATUS_EXCEPTION = 1;
+
+        public Bitmap bitmap;
+        public int status;
     }
 }

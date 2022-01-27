@@ -17,8 +17,8 @@
 package com.android.internal.telephony.cat;
 
 import com.android.internal.telephony.GsmAlphabet;
-import com.android.internal.telephony.IccUtils;
 import com.android.internal.telephony.cat.Duration.TimeUnit;
+import com.android.internal.telephony.uicc.IccUtils;
 
 import java.io.UnsupportedEncodingException;
 import java.util.ArrayList;
@@ -29,7 +29,7 @@ abstract class ValueParser {
     /**
      * Search for a Command Details object from a list.
      *
-     * @param ctlvs List of ComprehensionTlv objects used for search
+     * @param ctlv List of ComprehensionTlv objects used for search
      * @return An CtlvCommandDetails object found from the objects. If no
      *         Command Details object is found, ResultException is thrown.
      * @throws ResultException
@@ -54,7 +54,7 @@ abstract class ValueParser {
     /**
      * Search for a Device Identities object from a list.
      *
-     * @param ctlvs List of ComprehensionTlv objects used for search
+     * @param ctlv List of ComprehensionTlv objects used for search
      * @return An CtlvDeviceIdentities object found from the objects. If no
      *         Command Details object is found, ResultException is thrown.
      * @throws ResultException

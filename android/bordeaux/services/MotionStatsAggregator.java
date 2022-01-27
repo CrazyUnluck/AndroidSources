@@ -20,7 +20,7 @@ import android.util.Log;
 import java.util.HashMap;
 import java.util.Map;
 
-class MotionStatsAggregator extends Aggregator {
+public class MotionStatsAggregator extends Aggregator {
     final String TAG = "MotionStatsAggregator";
     public static final String CURRENT_MOTION = "Current Motion";
     public String[] getListOfFeatures(){

@@ -45,8 +45,19 @@ public class TestBase  {
     protected Allocation mInPixelsAllocation;
     protected Allocation mInPixelsAllocation2;
     protected Allocation mOutPixelsAllocation;
-
     protected ImageProcessingActivity act;
+
+    private class MessageProcessor extends RenderScript.RSMessageHandler {
+        ImageProcessingActivity mAct;
+
+        MessageProcessor(ImageProcessingActivity act) {
+            mAct = act;
+        }
+
+        public void run() {
+            mAct.updateDisplay();
+        }
+    }
 
     // Override to use UI elements
     public void onBar1Changed(int progress) {
@@ -93,28 +104,29 @@ public class TestBase  {
         return false;
     }
 
-    public final void createBaseTest(ImageProcessingActivity ipact, Bitmap b, Bitmap b2) {
+    public final void createBaseTest(ImageProcessingActivity ipact, Bitmap b, Bitmap b2, Bitmap outb) {
         act = ipact;
-        mRS = RenderScript.create(act);
-        mInPixelsAllocation = Allocation.createFromBitmap(mRS, b,
-                                                          Allocation.MipmapControl.MIPMAP_NONE,
-                                                          Allocation.USAGE_SCRIPT);
-        mInPixelsAllocation2 = Allocation.createFromBitmap(mRS, b2,
-                                                          Allocation.MipmapControl.MIPMAP_NONE,
-                                                          Allocation.USAGE_SCRIPT);
-        mOutPixelsAllocation = Allocation.createFromBitmap(mRS, b,
-                                                           Allocation.MipmapControl.MIPMAP_NONE,
-                                                           Allocation.USAGE_SCRIPT);
+        mRS = ipact.mRS;
+        mRS.setMessageHandler(new MessageProcessor(act));
+
+        mInPixelsAllocation = ipact.mInPixelsAllocation;
+        mInPixelsAllocation2 = ipact.mInPixelsAllocation2;
+        mOutPixelsAllocation = ipact.mOutPixelsAllocation;
+
         createTest(act.getResources());
     }
 
     // Must override
     public void createTest(android.content.res.Resources res) {
-        android.util.Log.e("img", "implement createTest");
     }
 
     // Must override
     public void runTest() {
+    }
+
+    final public void runTestSendMessage() {
+        runTest();
+        mRS.sendMessage(0, null);
     }
 
     public void finish() {
@@ -122,8 +134,7 @@ public class TestBase  {
     }
 
     public void destroy() {
-        mRS.destroy();
-        mRS = null;
+        mRS.setMessageHandler(null);
     }
 
     public void updateBitmap(Bitmap b) {

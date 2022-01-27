@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2006 The Android Open Source Project
+ * Copyright (C) 2011 The Android Open Source Project
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -16,29 +16,47 @@
 
 package android.os;
 
-import static junit.framework.Assert.assertEquals;
 import junit.framework.TestCase;
 
 import android.os.SystemProperties;
 import android.test.suitebuilder.annotation.SmallTest;
 
 public class SystemPropertiesTest extends TestCase {
-    private static final String KEY = "com.android.frameworks.coretests";
+    private static final String KEY = "sys.testkey";
+    private static final String PERSIST_KEY = "persist.sys.testkey";
+
+    @SmallTest
+    public void testStressPersistPropertyConsistency() throws Exception {
+        for (int i = 0; i < 100; ++i) {
+            SystemProperties.set(PERSIST_KEY, Long.toString(i));
+            long ret = SystemProperties.getLong(PERSIST_KEY, -1);
+            assertEquals(i, ret);
+        }
+    }
+
+    @SmallTest
+    public void testStressMemoryPropertyConsistency() throws Exception {
+        for (int i = 0; i < 100; ++i) {
+            SystemProperties.set(KEY, Long.toString(i));
+            long ret = SystemProperties.getLong(KEY, -1);
+            assertEquals(i, ret);
+        }
+    }
+
     @SmallTest
     public void testProperties() throws Exception {
-        if (false) {
         String value;
-       
+
         SystemProperties.set(KEY, "");
         value = SystemProperties.get(KEY, "default");
         assertEquals("default", value);
 
-        SystemProperties.set(KEY, "AAA");
+        SystemProperties.set(KEY, "SA");
         value = SystemProperties.get(KEY, "default");
-        assertEquals("AAA", value);
+        assertEquals("SA", value);
 
         value = SystemProperties.get(KEY);
-        assertEquals("AAA", value);
+        assertEquals("SA", value);
 
         SystemProperties.set(KEY, "");
         value = SystemProperties.get(KEY, "default");
@@ -46,6 +64,5 @@ public class SystemPropertiesTest extends TestCase {
 
         value = SystemProperties.get(KEY);
         assertEquals("", value);
-        }
     }
 }

@@ -39,7 +39,8 @@ public class PhotoViewPager extends ViewPager {
      * <p>
      * {@link ViewPager} intercepts all touch events and we need to be able to override this
      * behavior. Instead, we could perform a similar function by declaring a custom
-     * {@link ViewGroup} to contain the pager and intercept touch events at a higher level.
+     * {@link android.view.ViewGroup} to contain the pager and intercept touch events at a higher
+     * level.
      */
     public static interface OnInterceptTouchListener {
         /**

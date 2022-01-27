@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2012 The Android Open Source Project
+ * Copyright (C) 2013 The Android Open Source Project
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -29,7 +29,7 @@ import android.os.Process;
 import android.util.Log;
 import android.view.Surface;
 
-
+import android.os.SystemProperties;
 
 /**
  * Renderscript base master class.  An instance of this class creates native
@@ -40,7 +40,7 @@ import android.view.Surface;
  * <div class="special reference">
  * <h3>Developer Guides</h3>
  * <p>For more information about creating an application that uses Renderscript, read the
- * <a href="{@docRoot}guide/topics/graphics/renderscript.html">Renderscript</a> developer guide.</p>
+ * <a href="{@docRoot}guide/topics/renderscript/index.html">Renderscript</a> developer guide.</p>
  * </div>
  **/
 public class RenderScript {
@@ -50,16 +50,6 @@ public class RenderScript {
     static final boolean LOG_ENABLED = false;
 
     private Context mApplicationContext;
-    boolean mUseNativeRS;
-
-    static class NRS {
-        android.renderscript.RenderScript mRS;
-
-        android.renderscript.RenderScript getRS() {
-            return mRS;
-        }
-    }
-    NRS mNRS;
 
     /*
      * We use a class initializer to allow the native code to cache some
@@ -67,20 +57,8 @@ public class RenderScript {
      */
     @SuppressWarnings({"FieldCanBeLocal", "UnusedDeclaration"})
     static boolean sInitialized;
+    static Object lock = new Object();
     native static void _nInit();
-
-
-    static {
-        sInitialized = false;
-        try {
-            System.loadLibrary("rsjni");
-            _nInit();
-            sInitialized = true;
-        } catch (UnsatisfiedLinkError e) {
-            Log.e(LOG_TAG, "Error loading RS jni library: " + e);
-            throw new RSRuntimeException("Error loading RS jni library: " + e);
-        }
-    }
 
     // Non-threadsafe functions.
     native int  nDeviceCreate();
@@ -91,6 +69,8 @@ public class RenderScript {
     native int  nContextPeekMessage(int con, int[] subID);
     native void nContextInitToClient(int con);
     native void nContextDeinitToClient(int con);
+
+    static boolean isNative = false;
 
     /**
      * Name of the file that holds the object cache.
@@ -111,12 +91,22 @@ public class RenderScript {
         f.mkdirs();
     }
 
+    public enum ContextType {
+        NORMAL (0),
+        DEBUG (1),
+        PROFILE (2);
+
+        int mID;
+        ContextType(int id) {
+            mID = id;
+        }
+    }
 
     // Methods below are wrapped to protect the non-threadsafe
     // lockless fifo.
-    native int  rsnContextCreate(int dev, int ver, int sdkVer);
-    synchronized int nContextCreate(int dev, int ver, int sdkVer) {
-        return rsnContextCreate(dev, ver, sdkVer);
+    native int  rsnContextCreate(int dev, int ver, int sdkVer, int contextType);
+    synchronized int nContextCreate(int dev, int ver, int sdkVer, int contextType) {
+        return rsnContextCreate(dev, ver, sdkVer, contextType);
     }
     native void rsnContextDestroy(int con);
     synchronized void nContextDestroy() {
@@ -137,6 +127,12 @@ public class RenderScript {
     synchronized void nContextFinish() {
         validate();
         rsnContextFinish(mContext);
+    }
+
+    native void rsnContextSendMessage(int con, int id, int[] data);
+    synchronized void nContextSendMessage(int id, int[] data) {
+        validate();
+        rsnContextSendMessage(mContext, id, data);
     }
 
     native void rsnObjDestroy(int con, int id);
@@ -171,10 +167,10 @@ public class RenderScript {
         rsnElementGetSubElements(mContext, id, IDs, names, arraySizes);
     }
 
-    native int rsnTypeCreate(int con, int eid, int x, int y, int z, boolean mips, boolean faces);
-    synchronized int nTypeCreate(int eid, int x, int y, int z, boolean mips, boolean faces) {
+    native int rsnTypeCreate(int con, int eid, int x, int y, int z, boolean mips, boolean faces, int yuv);
+    synchronized int nTypeCreate(int eid, int x, int y, int z, boolean mips, boolean faces, int yuv) {
         validate();
-        return rsnTypeCreate(mContext, eid, x, y, z, mips, faces);
+        return rsnTypeCreate(mContext, eid, x, y, z, mips, faces, yuv);
     }
     native void rsnTypeGetNativeData(int con, int id, int[] typeData);
     synchronized void nTypeGetNativeData(int id, int[] typeData) {
@@ -192,6 +188,14 @@ public class RenderScript {
         validate();
         return rsnAllocationCreateFromBitmap(mContext, type, mip, bmp, usage);
     }
+
+    native int  rsnAllocationCreateBitmapBackedAllocation(int con, int type, int mip, Bitmap bmp, int usage);
+    synchronized int nAllocationCreateBitmapBackedAllocation(int type, int mip, Bitmap bmp, int usage) {
+        validate();
+        return rsnAllocationCreateBitmapBackedAllocation(mContext, type, mip, bmp, usage);
+    }
+
+
     native int  rsnAllocationCubeCreateFromBitmap(int con, int type, int mip, Bitmap bmp, int usage);
     synchronized int nAllocationCubeCreateFromBitmap(int type, int mip, Bitmap bmp, int usage) {
         validate();
@@ -219,6 +223,16 @@ public class RenderScript {
     synchronized void nAllocationSyncAll(int alloc, int src) {
         validate();
         rsnAllocationSyncAll(mContext, alloc, src);
+    }
+    native void rsnAllocationIoSend(int con, int alloc);
+    synchronized void nAllocationIoSend(int alloc) {
+        validate();
+        rsnAllocationIoSend(mContext, alloc);
+    }
+    native void rsnAllocationIoReceive(int con, int alloc);
+    synchronized void nAllocationIoReceive(int alloc) {
+        validate();
+        rsnAllocationIoReceive(mContext, alloc);
     }
 
 
@@ -307,6 +321,46 @@ public class RenderScript {
         rsnAllocationData2D(mContext, id, xoff, yoff, mip, face, b);
     }
 
+    native void rsnAllocationData3D(int con,
+                                    int dstAlloc, int dstXoff, int dstYoff, int dstZoff,
+                                    int dstMip,
+                                    int width, int height, int depth,
+                                    int srcAlloc, int srcXoff, int srcYoff, int srcZoff,
+                                    int srcMip);
+    synchronized void nAllocationData3D(int dstAlloc, int dstXoff, int dstYoff, int dstZoff,
+                                        int dstMip,
+                                        int width, int height, int depth,
+                                        int srcAlloc, int srcXoff, int srcYoff, int srcZoff,
+                                        int srcMip) {
+        validate();
+        rsnAllocationData3D(mContext,
+                            dstAlloc, dstXoff, dstYoff, dstZoff,
+                            dstMip, width, height, depth,
+                            srcAlloc, srcXoff, srcYoff, srcZoff, srcMip);
+    }
+
+    native void rsnAllocationData3D(int con, int id, int xoff, int yoff, int zoff, int mip, int w, int h, int depth, byte[] d, int sizeBytes);
+    synchronized void nAllocationData3D(int id, int xoff, int yoff, int zoff, int mip, int w, int h, int depth, byte[] d, int sizeBytes) {
+        validate();
+        rsnAllocationData3D(mContext, id, xoff, yoff, zoff, mip, w, h, depth, d, sizeBytes);
+    }
+    native void rsnAllocationData3D(int con, int id, int xoff, int yoff, int zoff, int mip, int w, int h, int depth, short[] d, int sizeBytes);
+    synchronized void nAllocationData3D(int id, int xoff, int yoff, int zoff, int mip, int w, int h, int depth, short[] d, int sizeBytes) {
+        validate();
+        rsnAllocationData3D(mContext, id, xoff, yoff, zoff, mip, w, h, depth, d, sizeBytes);
+    }
+    native void rsnAllocationData3D(int con, int id, int xoff, int yoff, int zoff, int mip, int w, int h, int depth, int[] d, int sizeBytes);
+    synchronized void nAllocationData3D(int id, int xoff, int yoff, int zoff, int mip, int w, int h, int depth, int[] d, int sizeBytes) {
+        validate();
+        rsnAllocationData3D(mContext, id, xoff, yoff, zoff, mip, w, h, depth, d, sizeBytes);
+    }
+    native void rsnAllocationData3D(int con, int id, int xoff, int yoff, int zoff, int mip, int w, int h, int depth, float[] d, int sizeBytes);
+    synchronized void nAllocationData3D(int id, int xoff, int yoff, int zoff, int mip, int w, int h, int depth, float[] d, int sizeBytes) {
+        validate();
+        rsnAllocationData3D(mContext, id, xoff, yoff, zoff, mip, w, h, depth, d, sizeBytes);
+    }
+
+
     native void rsnAllocationRead(int con, int id, byte[] d);
     synchronized void nAllocationRead(int id, byte[] d) {
         validate();
@@ -361,6 +415,10 @@ public class RenderScript {
     }
     native void rsnScriptForEach(int con, int id, int slot, int ain, int aout, byte[] params);
     native void rsnScriptForEach(int con, int id, int slot, int ain, int aout);
+    native void rsnScriptForEachClipped(int con, int id, int slot, int ain, int aout, byte[] params,
+                                        int xstart, int xend, int ystart, int yend, int zstart, int zend);
+    native void rsnScriptForEachClipped(int con, int id, int slot, int ain, int aout,
+                                        int xstart, int xend, int ystart, int yend, int zstart, int zend);
     synchronized void nScriptForEach(int id, int slot, int ain, int aout, byte[] params) {
         validate();
         if (params == null) {
@@ -369,6 +427,17 @@ public class RenderScript {
             rsnScriptForEach(mContext, id, slot, ain, aout, params);
         }
     }
+
+    synchronized void nScriptForEachClipped(int id, int slot, int ain, int aout, byte[] params,
+                                            int xstart, int xend, int ystart, int yend, int zstart, int zend) {
+        validate();
+        if (params == null) {
+            rsnScriptForEachClipped(mContext, id, slot, ain, aout, xstart, xend, ystart, yend, zstart, zend);
+        } else {
+            rsnScriptForEachClipped(mContext, id, slot, ain, aout, params, xstart, xend, ystart, yend, zstart, zend);
+        }
+    }
+
     native void rsnScriptInvokeV(int con, int id, int slot, byte[] params);
     synchronized void nScriptInvokeV(int id, int slot, byte[] params) {
         validate();
@@ -551,6 +620,10 @@ public class RenderScript {
     Sampler mSampler_WRAP_NEAREST;
     Sampler mSampler_WRAP_LINEAR;
     Sampler mSampler_WRAP_LINEAR_MIP_LINEAR;
+    Sampler mSampler_MIRRORED_REPEAT_NEAREST;
+    Sampler mSampler_MIRRORED_REPEAT_LINEAR;
+    Sampler mSampler_MIRRORED_REPEAT_LINEAR_MIP_LINEAR;
+
 
     ///////////////////////////////////////////////////////////////////////////////////
     //
@@ -580,9 +653,32 @@ public class RenderScript {
 
     public void setMessageHandler(RSMessageHandler msg) {
         mMessageCallback = msg;
+        if (isNative) {
+            RenderScriptThunker rst = (RenderScriptThunker) this;
+            android.renderscript.RenderScript.RSMessageHandler newmsg =
+                new android.renderscript.RenderScript.RSMessageHandler() {
+                    public void run()  {
+                        mMessageCallback.mData = mData;
+                        mMessageCallback.mID = mID;
+                        mMessageCallback.mLength = mLength;
+                        mMessageCallback.run();
+                    }
+                };
+            rst.mN.setMessageHandler(newmsg);
+        }
     }
     public RSMessageHandler getMessageHandler() {
         return mMessageCallback;
+    }
+
+    /**
+     * @hide
+     *
+     * @param id
+     * @param data
+     */
+    public void sendMessage(int id, int[] data) {
+        nContextSendMessage(id, data);
     }
 
     /**
@@ -609,6 +705,18 @@ public class RenderScript {
 
     public void setErrorHandler(RSErrorHandler msg) {
         mErrorCallback = msg;
+        if (isNative) {
+            RenderScriptThunker rst = (RenderScriptThunker) this;
+            android.renderscript.RenderScript.RSErrorHandler newmsg =
+                new android.renderscript.RenderScript.RSErrorHandler() {
+                    public void run()  {
+                        mErrorCallback.mErrorMessage = mErrorMessage;
+                        mErrorCallback.mErrorNum = mErrorNum;
+                        mErrorCallback.run();
+                    }
+                };
+            rst.mN.setErrorHandler(newmsg);
+        }
     }
     public RSErrorHandler getErrorHandler() {
         return mErrorCallback;
@@ -709,6 +817,7 @@ public class RenderScript {
                         mRS.mErrorCallback.mErrorNum = subID;
                         mRS.mErrorCallback.run();
                     } else {
+                        android.util.Log.e(LOG_TAG, "non fatal RS error, " + e);
                         // Do not throw here. In these cases, we do not have
                         // a fatal error.
                     }
@@ -724,7 +833,7 @@ public class RenderScript {
                 } catch(InterruptedException e) {
                 }
             }
-            Log.d(LOG_TAG, "MessageThread exiting.");
+            //Log.d(LOG_TAG, "MessageThread exiting.");
         }
     }
 
@@ -744,17 +853,45 @@ public class RenderScript {
     }
 
     /**
+     * @hide
+     */
+    public static RenderScript create(Context ctx, int sdkVersion) {
+        return create(ctx, sdkVersion, ContextType.NORMAL);
+    }
+
+    /**
      * Create a basic RenderScript context.
      *
      * @hide
      * @param ctx The context.
      * @return RenderScript
      */
-    public static RenderScript create(Context ctx, int sdkVersion) {
+    public static RenderScript create(Context ctx, int sdkVersion, ContextType ct) {
         RenderScript rs = new RenderScript(ctx);
 
+        if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.JELLY_BEAN_MR2 ||
+                SystemProperties.getInt("debug.rs.forcenative", 0) != 0) {
+
+            android.util.Log.v(LOG_TAG, "RS native mode");
+            return RenderScriptThunker.create(ctx, sdkVersion);
+        }
+        synchronized(lock) {
+            if (sInitialized == false) {
+                try {
+                    System.loadLibrary("RSSupport");
+                    System.loadLibrary("rsjni");
+                    _nInit();
+                    sInitialized = true;
+                } catch (UnsatisfiedLinkError e) {
+                    Log.e(LOG_TAG, "Error loading RS jni library: " + e);
+                    throw new RSRuntimeException("Error loading RS jni library: " + e);
+                }
+            }
+        }
+
+        android.util.Log.v(LOG_TAG, "RS compat mode");
         rs.mDev = rs.nDeviceCreate();
-        rs.mContext = rs.nContextCreate(rs.mDev, 0, sdkVersion);
+        rs.mContext = rs.nContextCreate(rs.mDev, 0, sdkVersion, ct.mID);
         if (rs.mContext == 0) {
             throw new RSDriverException("Failed to create RS context.");
         }
@@ -770,8 +907,20 @@ public class RenderScript {
      * @return RenderScript
      */
     public static RenderScript create(Context ctx) {
+        return create(ctx, ContextType.NORMAL);
+    }
+
+    /**
+     * Create a basic RenderScript context.
+     *
+     * @hide
+     *
+     * @param ctx The context.
+     * @return RenderScript
+     */
+    public static RenderScript create(Context ctx, ContextType ct) {
         int v = ctx.getApplicationInfo().targetSdkVersion;
-        return create(ctx, v);
+        return create(ctx, v, ct);
     }
 
     /**

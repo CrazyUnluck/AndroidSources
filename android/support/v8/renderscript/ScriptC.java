@@ -55,6 +55,14 @@ public class ScriptC extends Script {
      */
     protected ScriptC(RenderScript rs, Resources resources, int resourceID) {
         super(0, rs);
+
+        if (rs.isNative) {
+            RenderScriptThunker rst = (RenderScriptThunker)rs;
+            ScriptCThunker s = new ScriptCThunker(rst, resources, resourceID);
+            mT = s;
+            return;
+        }
+
         int id = internalCreate(rs, resources, resourceID);
         if (id == 0) {
             throw new RSRuntimeException("Loading of ScriptC script failed.");
@@ -95,8 +103,8 @@ public class ScriptC extends Script {
         String resName = resources.getResourceEntryName(resourceID);
         String cachePath = rs.getApplicationContext().getCacheDir().toString();
 
-        Log.v(TAG, "Create script for resource = " + resName + ", " + pgmLength + ", " + pgm);
-        Log.v(TAG, " path = " + cachePath);
+        //        Log.v(TAG, "Create script for resource = " + resName + ", " + pgmLength + ", " + pgm);
+        //Log.v(TAG, " path = " + cachePath);
         return rs.nScriptCCreate(resName, cachePath, pgm, pgmLength);
     }
 }

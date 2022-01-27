@@ -33,7 +33,6 @@ import java.util.Comparator;
 import java.util.SortedSet;
 import java.util.TreeSet;
 import libcore.io.ErrnoException;
-import libcore.io.IoUtils;
 import libcore.io.Libcore;
 import libcore.io.StructFlock;
 import libcore.util.MutableLong;
@@ -236,13 +235,19 @@ final class FileChannelImpl extends FileChannel {
             try {
                 Libcore.os.ftruncate(fd, position + size);
             } catch (ErrnoException errnoException) {
-                throw errnoException.rethrowAsIOException();
+                // EINVAL can be thrown if we're dealing with non-regular
+                // files, for example, character devices such as /dev/zero.
+                // In those cases, we ignore the failed truncation and
+                // continue on.
+                if (errnoException.errno != EINVAL) {
+                    throw errnoException.rethrowAsIOException();
+                }
             }
         }
         long alignment = position - position % Libcore.os.sysconf(_SC_PAGE_SIZE);
         int offset = (int) (position - alignment);
         MemoryBlock block = MemoryBlock.mmap(fd, alignment, size + offset, mapMode);
-        return new MappedByteBufferAdapter(block, (int) size, offset, mapMode);
+        return new DirectByteBuffer(block, (int) size, offset, (mapMode == MapMode.READ_ONLY), mapMode);
     }
 
     public long position() throws IOException {

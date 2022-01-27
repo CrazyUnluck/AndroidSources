@@ -227,7 +227,7 @@ public final class DNParser {
             case '+':
             case ',':
             case ';':
-                // separator char has beed found
+                // separator char has been found
                 return new String(chars, beg, end - beg);
             case '\\':
                 // escaped char
@@ -247,7 +247,7 @@ public final class DNParser {
                 }
                 if (pos == chars.length || chars[pos] == ',' || chars[pos] == '+'
                         || chars[pos] == ';') {
-                    // separator char or the end of DN has beed found
+                    // separator char or the end of DN has been found
                     return new String(chars, beg, cur - beg);
                 }
                 break;
@@ -380,7 +380,7 @@ public final class DNParser {
     /**
      * Parses DN
      *
-     * @return a list of Relative Distinguished Names(RND),
+     * @return a list of Relative Distinguished Names(RDN),
      *         each RDN is represented as a list of AttributeTypeAndValue objects
      */
     public List<List<AttributeTypeAndValue>> parse() throws IOException {

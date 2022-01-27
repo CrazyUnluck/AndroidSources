@@ -74,6 +74,15 @@ public class DisplayMetrics {
     public static final int DENSITY_XXHIGH = 480;
 
     /**
+     * Standard quantized DPI for extra-extra-extra-high-density screens.  Applications
+     * should not generally worry about this density; relying on XHIGH graphics
+     * being scaled up to it should be sufficient for almost all cases.  A typical
+     * use of this density would be 4K television screens -- 3840x2160, which
+     * is 2x a traditional HD 1920x1080 screen which runs at DENSITY_XHIGH.
+     */
+    public static final int DENSITY_XXXHIGH = 640;
+
+    /**
      * The reference density used throughout the system.
      */
     public static final int DENSITY_DEFAULT = DENSITY_MEDIUM;
@@ -232,19 +241,32 @@ public class DisplayMetrics {
      * @return True if the display metrics are equal.
      */
     public boolean equals(DisplayMetrics other) {
+        return equalsPhysical(other)
+                && scaledDensity == other.scaledDensity
+                && noncompatScaledDensity == other.noncompatScaledDensity;
+    }
+
+    /**
+     * Returns true if the physical aspects of the two display metrics
+     * are equal.  This ignores the scaled density, which is a logical
+     * attribute based on the current desired font size.
+     *
+     * @param other The display metrics with which to compare.
+     * @return True if the display metrics are equal.
+     * @hide
+     */
+    public boolean equalsPhysical(DisplayMetrics other) {
         return other != null
                 && widthPixels == other.widthPixels
                 && heightPixels == other.heightPixels
                 && density == other.density
                 && densityDpi == other.densityDpi
-                && scaledDensity == other.scaledDensity
                 && xdpi == other.xdpi
                 && ydpi == other.ydpi
                 && noncompatWidthPixels == other.noncompatWidthPixels
                 && noncompatHeightPixels == other.noncompatHeightPixels
                 && noncompatDensity == other.noncompatDensity
                 && noncompatDensityDpi == other.noncompatDensityDpi
-                && noncompatScaledDensity == other.noncompatScaledDensity
                 && noncompatXdpi == other.noncompatXdpi
                 && noncompatYdpi == other.noncompatYdpi;
     }

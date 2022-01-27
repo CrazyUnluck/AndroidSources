@@ -86,7 +86,7 @@ public abstract class PagedView extends ViewGroup implements ViewGroup.OnHierarc
     private static final int MIN_SNAP_VELOCITY = 1500;
     private static final int MIN_FLING_VELOCITY = 250;
 
-    // We are disabling touch interaction of the widget region for factory ROM. 
+    // We are disabling touch interaction of the widget region for factory ROM.
     private static final boolean DISABLE_TOUCH_INTERACTION = false;
     private static final boolean DISABLE_TOUCH_SIDE_PAGES = true;
     private static final boolean DISABLE_FLING_TO_DELETE = false;
@@ -756,6 +756,8 @@ public abstract class PagedView extends ViewGroup implements ViewGroup.OnHierarc
     @Override
     public void onChildViewRemoved(View parent, View child) {
         mForceScreenScrolled = true;
+        invalidate();
+        invalidateCachedOffsets();
     }
 
     protected void invalidateCachedOffsets() {
@@ -1019,15 +1021,22 @@ public abstract class PagedView extends ViewGroup implements ViewGroup.OnHierarc
         return  (x > (getViewportOffsetX() + getViewportWidth() - getRelativeChildOffset(mCurrentPage) + mPageSpacing));
     }
 
-    /** Returns whether x and y originated within the buffered/unbuffered viewport */
-    private boolean isTouchPointInViewport(int x, int y, boolean buffer) {
-        if (buffer) {
-            mTmpRect.set(mViewport.left - mViewport.width() / 2, mViewport.top,
-                    mViewport.right + mViewport.width() / 2, mViewport.bottom);
+    /** Returns whether x and y originated within the buffered viewport */
+    private boolean isTouchPointInViewportWithBuffer(int x, int y) {
+        mTmpRect.set(mViewport.left - mViewport.width() / 2, mViewport.top,
+                mViewport.right + mViewport.width() / 2, mViewport.bottom);
+        return mTmpRect.contains(x, y);
+    }
+
+    /** Returns whether x and y originated within the current page view bounds */
+    private boolean isTouchPointInCurrentPage(int x, int y) {
+        View v = getPageAt(getCurrentPage());
+        if (v != null) {
+            mTmpRect.set((v.getLeft() - getScrollX()), 0, (v.getRight() - getScrollX()),
+                    v.getBottom());
             return mTmpRect.contains(x, y);
-        } else {
-            return mViewport.contains(x, y);
         }
+        return false;
     }
 
     @Override
@@ -1108,7 +1117,7 @@ public abstract class PagedView extends ViewGroup implements ViewGroup.OnHierarc
                     mTouchState = TOUCH_STATE_REST;
                     mScroller.abortAnimation();
                 } else {
-                    if (isTouchPointInViewport((int) mDownMotionX, (int) mDownMotionY, true)) {
+                    if (isTouchPointInViewportWithBuffer((int) mDownMotionX, (int) mDownMotionY)) {
                         mTouchState = TOUCH_STATE_SCROLLING;
                     } else {
                         mTouchState = TOUCH_STATE_REST;
@@ -1135,7 +1144,7 @@ public abstract class PagedView extends ViewGroup implements ViewGroup.OnHierarc
             case MotionEvent.ACTION_CANCEL:
                 resetTouchState();
                 // Just intercept the touch event on up if we tap outside the strict viewport
-                if (!isTouchPointInViewport((int) mLastMotionX, (int) mLastMotionY, false)) {
+                if (!isTouchPointInCurrentPage((int) mLastMotionX, (int) mLastMotionY)) {
                     return true;
                 }
                 break;
@@ -1169,7 +1178,7 @@ public abstract class PagedView extends ViewGroup implements ViewGroup.OnHierarc
         // Disallow scrolling if we started the gesture from outside the viewport
         final float x = ev.getX(pointerIndex);
         final float y = ev.getY(pointerIndex);
-        if (!isTouchPointInViewport((int) x, (int) y, true)) return;
+        if (!isTouchPointInViewportWithBuffer((int) x, (int) y)) return;
 
         // If we're only allowing edge swipes, we break out early if the down event wasn't
         // at the edge.
@@ -1341,6 +1350,9 @@ public abstract class PagedView extends ViewGroup implements ViewGroup.OnHierarc
             if (mTouchState == TOUCH_STATE_SCROLLING) {
                 // Scroll to follow the motion event
                 final int pointerIndex = ev.findPointerIndex(mActivePointerId);
+
+                if (pointerIndex == -1) return true;
+
                 final float x = ev.getX(pointerIndex);
                 final float deltaX = mLastMotionX + mLastMotionXRemainder - x;
 
@@ -1457,7 +1469,7 @@ public abstract class PagedView extends ViewGroup implements ViewGroup.OnHierarc
                                 }
 
                                 removeView(mDragView);
-                                onRemoveView(mDragView);
+                                onRemoveView(mDragView, false);
                                 addView(mDragView, pageUnderPointIndex);
                                 onAddView(mDragView, pageUnderPointIndex);
                                 mSidePageHoverIndex = -1;
@@ -1587,7 +1599,8 @@ public abstract class PagedView extends ViewGroup implements ViewGroup.OnHierarc
     }
 
     //public abstract void onFlingToDelete(View v);
-    public abstract void onRemoveView(View v);
+    public abstract void onRemoveView(View v, boolean deletePermanently);
+    public abstract void onRemoveViewAnimationCompleted();
     public abstract void onAddView(View v, int index);
 
     private void resetTouchState() {
@@ -2383,6 +2396,7 @@ public abstract class PagedView extends ViewGroup implements ViewGroup.OnHierarc
                             public void run() {
                                 mDeferringForDelete = false;
                                 onEndReordering();
+                                onRemoveViewAnimationCompleted();
                             }
                         };
                         zoomIn(onCompleteRunnable);
@@ -2391,7 +2405,7 @@ public abstract class PagedView extends ViewGroup implements ViewGroup.OnHierarc
                 slideAnimations.start();
 
                 removeView(dragView);
-                onRemoveView(dragView);
+                onRemoveView(dragView, true);
             }
         };
     }

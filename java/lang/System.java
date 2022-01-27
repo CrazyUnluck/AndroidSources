@@ -135,6 +135,11 @@ public final class System {
      * starting at offset {@code srcPos}, into the array {@code dst},
      * starting at offset {@code dstPos}.
      *
+     * <p>The source and destination arrays can be the same array,
+     * in which case copying is performed as if the source elements
+     * are first copied into a temporary array and then into the
+     * destination array.
+     *
      * @param src
      *            the source array to copy the content.
      * @param srcPos
@@ -149,22 +154,27 @@ public final class System {
     public static native void arraycopy(Object src, int srcPos, Object dst, int dstPos, int length);
 
     /**
-     * Returns the current system time in milliseconds since January 1, 1970
-     * 00:00:00 UTC. This method shouldn't be used for measuring timeouts or
-     * other elapsed time measurements, as changing the system time can affect
-     * the results.
+     * Returns the current time in milliseconds since January 1, 1970 00:00:00.0 UTC.
      *
-     * @return the local system time in milliseconds.
+     * <p>This method always returns UTC times, regardless of the system's time zone.
+     * This is often called "Unix time" or "epoch time".
+     * Use a {@link java.text.DateFormat} instance to format this time for display to a human.
+     *
+     * <p>This method shouldn't be used for measuring timeouts or
+     * other elapsed time measurements, as changing the system time can affect
+     * the results. Use {@link #nanoTime} for that.
      */
     public static native long currentTimeMillis();
 
     /**
      * Returns the current timestamp of the most precise timer available on the
-     * local system. This timestamp can only be used to measure an elapsed
-     * period by comparing it against another timestamp. It cannot be used as a
-     * very exact system time expression.
+     * local system, in nanoseconds. Equivalent to Linux's {@code CLOCK_MONOTONIC}.
      *
-     * @return the current timestamp in nanoseconds.
+     * <p>This timestamp should only be used to measure a duration by comparing it
+     * against another timestamp from the same process on the same device.
+     * Values returned by this method do not have a defined correspondence to
+     * wall clock times; the zero value is typically whenever the device last booted.
+     * Use {@link #currentTimeMillis} if you want to know what time it is.
      */
     public static native long nanoTime();
 
@@ -210,13 +220,6 @@ public final class System {
         String value = Libcore.os.getenv(name);
         return (value != null) ? value : defaultValue;
     }
-
-    /*
-     * Returns an environment variable. No security checks are performed.
-     * @param var the name of the environment variable
-     * @return the value of the specified environment variable
-     */
-    private static native String getEnvByName(String name);
 
     /**
      * Returns an unmodifiable map of all available environment variables.
@@ -321,6 +324,7 @@ public final class System {
         // Undocumented Android-only properties.
         p.put("android.icu.library.version", ICU.getIcuVersion());
         p.put("android.icu.unicode.version", ICU.getUnicodeVersion());
+        p.put("android.icu.cldr.version", ICU.getCldrVersion());
         // TODO: it would be nice to have this but currently it causes circularity.
         // p.put("android.tzdata.version", ZoneInfoDB.getVersion());
         parsePropertyAssignments(p, specialProperties());
@@ -409,58 +413,44 @@ public final class System {
     /**
      * Returns the value of a particular system property. The {@code
      * defaultValue} will be returned if no such property has been found.
-     *
-     * @param prop
-     *            the name of the system property to look up.
-     * @param defaultValue
-     *            the return value if the system property with the given name
-     *            does not exist.
-     * @return the value of the specified system property or the {@code
-     *         defaultValue} if the property does not exist.
      */
-    public static String getProperty(String prop, String defaultValue) {
-        if (prop.isEmpty()) {
-            throw new IllegalArgumentException();
-        }
-        return getProperties().getProperty(prop, defaultValue);
+    public static String getProperty(String name, String defaultValue) {
+        checkPropertyName(name);
+        return getProperties().getProperty(name, defaultValue);
     }
 
     /**
      * Sets the value of a particular system property.
      *
-     * @param prop
-     *            the name of the system property to be changed.
-     * @param value
-     *            the value to associate with the given property {@code prop}.
      * @return the old value of the property or {@code null} if the property
      *         didn't exist.
      */
-    public static String setProperty(String prop, String value) {
-        if (prop.isEmpty()) {
-            throw new IllegalArgumentException();
-        }
-        return (String) getProperties().setProperty(prop, value);
+    public static String setProperty(String name, String value) {
+        checkPropertyName(name);
+        return (String) getProperties().setProperty(name, value);
     }
 
     /**
      * Removes a specific system property.
      *
-     * @param key
-     *            the name of the system property to be removed.
      * @return the property value or {@code null} if the property didn't exist.
      * @throws NullPointerException
-     *             if the argument {@code key} is {@code null}.
+     *             if the argument is {@code null}.
      * @throws IllegalArgumentException
-     *             if the argument {@code key} is empty.
+     *             if the argument is empty.
      */
-    public static String clearProperty(String key) {
-        if (key == null) {
-            throw new NullPointerException("key == null");
+    public static String clearProperty(String name) {
+        checkPropertyName(name);
+        return (String) getProperties().remove(name);
+    }
+
+    private static void checkPropertyName(String name) {
+        if (name == null) {
+            throw new NullPointerException("name == null");
         }
-        if (key.isEmpty()) {
-            throw new IllegalArgumentException();
+        if (name.isEmpty()) {
+            throw new IllegalArgumentException("name is empty");
         }
-        return (String) getProperties().remove(key);
     }
 
     /**

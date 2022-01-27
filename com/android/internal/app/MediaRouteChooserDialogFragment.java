@@ -70,7 +70,6 @@ public class MediaRouteChooserDialogFragment extends DialogFragment {
     };
 
     MediaRouter mRouter;
-    DisplayManager mDisplayService;
     private int mRouteTypes;
 
     private LayoutInflater mInflater;
@@ -98,7 +97,7 @@ public class MediaRouteChooserDialogFragment extends DialogFragment {
     public void onAttach(Activity activity) {
         super.onAttach(activity);
         mRouter = (MediaRouter) activity.getSystemService(Context.MEDIA_ROUTER_SERVICE);
-        mDisplayService = (DisplayManager) activity.getSystemService(Context.DISPLAY_SERVICE);
+        mRouter.addCallback(mRouteTypes, mCallback, MediaRouter.CALLBACK_FLAG_PERFORM_ACTIVE_SCAN);
     }
 
     @Override
@@ -121,28 +120,20 @@ public class MediaRouteChooserDialogFragment extends DialogFragment {
 
     public void setRouteTypes(int types) {
         mRouteTypes = types;
-        if ((mRouteTypes & MediaRouter.ROUTE_TYPE_LIVE_VIDEO) != 0 && mDisplayService == null) {
-            final Context activity = getActivity();
-            if (activity != null) {
-                mDisplayService = (DisplayManager) activity.getSystemService(
-                        Context.DISPLAY_SERVICE);
-            }
-        } else {
-            mDisplayService = null;
-        }
     }
 
     void updateVolume() {
         if (mRouter == null) return;
 
         final RouteInfo selectedRoute = mRouter.getSelectedRoute(mRouteTypes);
-        mVolumeIcon.setImageResource(
+        mVolumeIcon.setImageResource(selectedRoute == null ||
                 selectedRoute.getPlaybackType() == RouteInfo.PLAYBACK_TYPE_LOCAL ?
                 R.drawable.ic_audio_vol : R.drawable.ic_media_route_on_holo_dark);
 
         mIgnoreSliderVolumeChanges = true;
 
-        if (selectedRoute.getVolumeHandling() == RouteInfo.PLAYBACK_VOLUME_FIXED) {
+        if (selectedRoute == null ||
+                selectedRoute.getVolumeHandling() == RouteInfo.PLAYBACK_VOLUME_FIXED) {
             // Disable the slider and show it at max volume.
             mVolumeSlider.setMax(1);
             mVolumeSlider.setProgress(1);
@@ -160,7 +151,8 @@ public class MediaRouteChooserDialogFragment extends DialogFragment {
         if (mIgnoreSliderVolumeChanges) return;
 
         final RouteInfo selectedRoute = mRouter.getSelectedRoute(mRouteTypes);
-        if (selectedRoute.getVolumeHandling() == RouteInfo.PLAYBACK_VOLUME_VARIABLE) {
+        if (selectedRoute != null &&
+                selectedRoute.getVolumeHandling() == RouteInfo.PLAYBACK_VOLUME_VARIABLE) {
             final int maxVolume = selectedRoute.getVolumeMax();
             newValue = Math.max(0, Math.min(newValue, maxVolume));
             selectedRoute.requestSetVolume(newValue);
@@ -190,7 +182,6 @@ public class MediaRouteChooserDialogFragment extends DialogFragment {
         list.setOnItemClickListener(mAdapter);
 
         mListView = list;
-        mRouter.addCallback(mRouteTypes, mCallback);
 
         mAdapter.scrollToSelectedItem();
 
@@ -200,14 +191,6 @@ public class MediaRouteChooserDialogFragment extends DialogFragment {
     @Override
     public Dialog onCreateDialog(Bundle savedInstanceState) {
         return new RouteChooserDialog(getActivity(), getTheme());
-    }
-
-    @Override
-    public void onResume() {
-        super.onResume();
-        if (mDisplayService != null) {
-            mDisplayService.scanWifiDisplays();
-        }
     }
 
     private static class ViewHolder {
@@ -652,14 +635,19 @@ public class MediaRouteChooserDialogFragment extends DialogFragment {
         
         public boolean onKeyDown(int keyCode, KeyEvent event) {
             if (keyCode == KeyEvent.KEYCODE_VOLUME_DOWN && mVolumeSlider.isEnabled()) {
-                mRouter.getSelectedRoute(mRouteTypes).requestUpdateVolume(-1);
-                return true;
+                final RouteInfo selectedRoute = mRouter.getSelectedRoute(mRouteTypes);
+                if (selectedRoute != null) {
+                    selectedRoute.requestUpdateVolume(-1);
+                    return true;
+                }
             } else if (keyCode == KeyEvent.KEYCODE_VOLUME_UP && mVolumeSlider.isEnabled()) {
-                mRouter.getSelectedRoute(mRouteTypes).requestUpdateVolume(1);
-                return true;
-            } else {
-                return super.onKeyDown(keyCode, event);
+                final RouteInfo selectedRoute = mRouter.getSelectedRoute(mRouteTypes);
+                if (selectedRoute != null) {
+                    mRouter.getSelectedRoute(mRouteTypes).requestUpdateVolume(1);
+                    return true;
+                }
             }
+            return super.onKeyDown(keyCode, event);
         }
 
         public boolean onKeyUp(int keyCode, KeyEvent event) {

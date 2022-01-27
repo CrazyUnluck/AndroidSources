@@ -16,8 +16,10 @@
 
 package com.android.internal.telephony;
 
+import android.Manifest;
 import android.app.Activity;
 import android.app.AlertDialog;
+import android.app.AppOpsManager;
 import android.app.PendingIntent;
 import android.app.PendingIntent.CanceledException;
 import android.content.BroadcastReceiver;
@@ -51,7 +53,7 @@ import android.telephony.TelephonyManager;
 import android.text.Html;
 import android.text.Spanned;
 import android.util.EventLog;
-import android.util.Log;
+import android.telephony.Rlog;
 import android.view.LayoutInflater;
 import android.view.View;
 import android.view.ViewGroup;
@@ -59,7 +61,6 @@ import android.view.WindowManager;
 import android.widget.Button;
 import android.widget.CheckBox;
 import android.widget.CompoundButton;
-import android.widget.LinearLayout;
 import android.widget.TextView;
 
 import com.android.internal.R;
@@ -82,15 +83,17 @@ import static android.telephony.SmsManager.RESULT_ERROR_NULL_PDU;
 import static android.telephony.SmsManager.RESULT_ERROR_RADIO_OFF;
 
 public abstract class SMSDispatcher extends Handler {
-    static final String TAG = "SMS";    // accessed from inner class
+    static final String TAG = "SMSDispatcher";    // accessed from inner class
+    static final boolean DBG = false;
     private static final String SEND_NEXT_MSG_EXTRA = "SendNextMsg";
 
     /** Permission required to receive SMS and SMS-CB messages. */
-    public static final String RECEIVE_SMS_PERMISSION = "android.permission.RECEIVE_SMS";
+    public static final String RECEIVE_SMS_PERMISSION = Manifest.permission.RECEIVE_SMS;
 
-    /** Permission required to receive ETWS and CMAS emergency broadcasts. */
+    /** Permission required to receive ETWS and CMAS emergency broadcasts.
+     *  XXX this permission is declared in the Mms app...  wha?!? */
     public static final String RECEIVE_EMERGENCY_BROADCAST_PERMISSION =
-            "android.permission.RECEIVE_EMERGENCY_BROADCAST";
+            Manifest.permission.RECEIVE_EMERGENCY_BROADCAST;
 
     /** Permission required to send SMS to short codes without user confirmation. */
     private static final String SEND_SMS_NO_CONFIRMATION_PERMISSION =
@@ -145,7 +148,7 @@ public abstract class SMSDispatcher extends Handler {
     protected final Phone mPhone;
     protected final Context mContext;
     protected final ContentResolver mResolver;
-    protected final CommandsInterface mCm;
+    protected final CommandsInterface mCi;
     protected final SmsStorageMonitor mStorageMonitor;
     protected final TelephonyManager mTelephonyManager;
 
@@ -209,7 +212,7 @@ public abstract class SMSDispatcher extends Handler {
         mWapPush = new WapPushOverSms(phone, this);
         mContext = phone.getContext();
         mResolver = mContext.getContentResolver();
-        mCm = phone.mCM;
+        mCi = phone.mCi;
         mStorageMonitor = storageMonitor;
         mUsageMonitor = usageMonitor;
         mTelephonyManager = (TelephonyManager) mContext.getSystemService(Context.TELEPHONY_SERVICE);
@@ -225,7 +228,7 @@ public abstract class SMSDispatcher extends Handler {
                                 TelephonyProperties.PROPERTY_SMS_RECEIVE, mSmsCapable);
         mSmsSendDisabled = !SystemProperties.getBoolean(
                                 TelephonyProperties.PROPERTY_SMS_SEND, mSmsCapable);
-        Log.d(TAG, "SMSDispatcher: ctor mSmsCapable=" + mSmsCapable + " format=" + getFormat()
+        Rlog.d(TAG, "SMSDispatcher: ctor mSmsCapable=" + mSmsCapable + " format=" + getFormat()
                 + " mSmsReceiveDisabled=" + mSmsReceiveDisabled
                 + " mSmsSendDisabled=" + mSmsSendDisabled);
     }
@@ -271,7 +274,7 @@ public abstract class SMSDispatcher extends Handler {
 
     @Override
     protected void finalize() {
-        Log.d(TAG, "SMSDispatcher finalized");
+        Rlog.d(TAG, "SMSDispatcher finalized");
     }
 
 
@@ -295,16 +298,14 @@ public abstract class SMSDispatcher extends Handler {
         switch (msg.what) {
         case EVENT_NEW_SMS:
             // A new SMS has been received by the device
-            if (false) {
-                Log.d(TAG, "New SMS Message Received");
-            }
+            if (DBG) Rlog.d(TAG, "New SMS Message Received");
 
             SmsMessage sms;
 
             ar = (AsyncResult) msg.obj;
 
             if (ar.exception != null) {
-                Log.e(TAG, "Exception processing incoming SMS. Exception:" + ar.exception);
+                Rlog.e(TAG, "Exception processing incoming SMS. Exception:" + ar.exception);
                 return;
             }
 
@@ -318,7 +319,7 @@ public abstract class SMSDispatcher extends Handler {
                     notifyAndAcknowledgeLastIncomingSms(handled, result, null);
                 }
             } catch (RuntimeException ex) {
-                Log.e(TAG, "Exception dispatching message", ex);
+                Rlog.e(TAG, "Exception dispatching message", ex);
                 notifyAndAcknowledgeLastIncomingSms(false, Intents.RESULT_SMS_GENERIC_ERROR, null);
             }
 
@@ -364,7 +365,7 @@ public abstract class SMSDispatcher extends Handler {
                 try {
                     tracker.mSentIntent.send(RESULT_ERROR_LIMIT_EXCEEDED);
                 } catch (CanceledException ex) {
-                    Log.e(TAG, "failed to send RESULT_ERROR_LIMIT_EXCEEDED");
+                    Rlog.e(TAG, "failed to send RESULT_ERROR_LIMIT_EXCEEDED");
                 }
             }
             mPendingTrackerCount--;
@@ -386,12 +387,13 @@ public abstract class SMSDispatcher extends Handler {
      *
      * @param intent intent to broadcast
      * @param permission Receivers are required to have this permission
+     * @param appOp App op that is being performed when dispatching to a receiver
      */
-    public void dispatch(Intent intent, String permission) {
+    public void dispatch(Intent intent, String permission, int appOp) {
         // Hold a wake lock for WAKE_LOCK_TIMEOUT seconds, enough to give any
         // receivers time to take their own wake locks.
         mWakeLock.acquire(WAKE_LOCK_TIMEOUT);
-        mContext.sendOrderedBroadcast(intent, permission, mResultReceiver,
+        mContext.sendOrderedBroadcast(intent, permission, appOp, mResultReceiver,
                 this, Activity.RESULT_OK, null, null);
     }
 
@@ -401,13 +403,15 @@ public abstract class SMSDispatcher extends Handler {
      *
      * @param intent intent to broadcast
      * @param permission Receivers are required to have this permission
+     * @param appOp App op that is being performed when dispatching to a receiver
      * @param resultReceiver the result receiver to use
      */
-    public void dispatch(Intent intent, String permission, BroadcastReceiver resultReceiver) {
+    public void dispatch(Intent intent, String permission, int appOp,
+            BroadcastReceiver resultReceiver) {
         // Hold a wake lock for WAKE_LOCK_TIMEOUT seconds, enough to give any
         // receivers time to take their own wake locks.
         mWakeLock.acquire(WAKE_LOCK_TIMEOUT);
-        mContext.sendOrderedBroadcast(intent, permission, resultReceiver,
+        mContext.sendOrderedBroadcast(intent, permission, appOp, resultReceiver,
                 this, Activity.RESULT_OK, null, null);
     }
 
@@ -424,16 +428,17 @@ public abstract class SMSDispatcher extends Handler {
         SmsTracker tracker = (SmsTracker) ar.userObj;
         PendingIntent sentIntent = tracker.mSentIntent;
 
+        if (ar.result != null) {
+            tracker.mMessageRef = ((SmsResponse)ar.result).mMessageRef;
+        } else {
+            Rlog.d(TAG, "SmsResponse was null");
+        }
+
         if (ar.exception == null) {
-            if (false) {
-                Log.d(TAG, "SMS send complete. Broadcasting "
-                        + "intent: " + sentIntent);
-            }
+            if (DBG) Rlog.d(TAG, "SMS send complete. Broadcasting intent: " + sentIntent);
 
             if (tracker.mDeliveryIntent != null) {
                 // Expecting a status report.  Add it to the list.
-                int messageRef = ((SmsResponse)ar.result).messageRef;
-                tracker.mMessageRef = messageRef;
                 deliveryPendingList.add(tracker);
             }
 
@@ -453,9 +458,7 @@ public abstract class SMSDispatcher extends Handler {
                 } catch (CanceledException ex) {}
             }
         } else {
-            if (false) {
-                Log.d(TAG, "SMS send failed");
-            }
+            if (DBG) Rlog.d(TAG, "SMS send failed");
 
             int ss = mPhone.getServiceState().getState();
 
@@ -486,7 +489,7 @@ public abstract class SMSDispatcher extends Handler {
                 try {
                     Intent fillIn = new Intent();
                     if (ar.result != null) {
-                        fillIn.putExtra("errorCode", ((SmsResponse)ar.result).errorCode);
+                        fillIn.putExtra("errorCode", ((SmsResponse)ar.result).mErrorCode);
                     }
                     if (mRemainingMessages > -1) {
                         mRemainingMessages--;
@@ -527,7 +530,7 @@ public abstract class SMSDispatcher extends Handler {
      * Dispatches an incoming SMS messages.
      *
      * @param sms the incoming message from the phone
-     * @return a result code from {@link Telephony.Sms.Intents}, or
+     * @return a result code from {@link android.provider.Telephony.Sms.Intents}, or
      *         {@link Activity#RESULT_OK} if the message has been broadcast
      *         to applications
      */
@@ -538,7 +541,7 @@ public abstract class SMSDispatcher extends Handler {
      * {@link #dispatchMessage(SmsMessageBase)} if no format-specific handling is required.
      *
      * @param sms
-     * @return
+     * @return {@link Activity#RESULT_OK} on success
      */
     protected int dispatchNormalMessage(SmsMessageBase sms) {
         SmsHeader smsHeader = sms.getUserDataHeader();
@@ -576,7 +579,7 @@ public abstract class SMSDispatcher extends Handler {
      * If this is the last part send the parts out to the application, otherwise
      * the part is stored for later processing. Handles both 3GPP concatenated messages
      * as well as 3GPP2 format WAP push messages processed by
-     * {@link com.android.internal.telephony.cdma.CdmaSMSDispatcher#processCdmaWapPdu}.
+     * com.android.internal.telephony.cdma.CdmaSMSDispatcher#processCdmaWapPdu.
      *
      * @param pdu the message PDU, or the datagram portion of a CDMA WDP datagram segment
      * @param address the originating address
@@ -588,7 +591,7 @@ public abstract class SMSDispatcher extends Handler {
      * @param destPort the destination port for the message, or -1 for no destination port
      * @param isCdmaWapPush true if pdu is a CDMA WDP datagram segment and not an SM PDU
      *
-     * @return a result code from {@link Telephony.Sms.Intents}, or
+     * @return a result code from {@link android.provider.Telephony.Sms.Intents}, or
      *         {@link Activity#RESULT_OK} if the message has been broadcast
      *         to applications
      */
@@ -609,12 +612,12 @@ public abstract class SMSDispatcher extends Handler {
 
             // moveToNext() returns false if no duplicates were found
             if (cursor.moveToNext()) {
-                Log.w(TAG, "Discarding duplicate message segment from address=" + address
+                Rlog.w(TAG, "Discarding duplicate message segment from address=" + address
                         + " refNumber=" + refNumber + " seqNumber=" + seqNumber);
                 String oldPduString = cursor.getString(PDU_COLUMN);
                 byte[] oldPdu = HexDump.hexStringToByteArray(oldPduString);
                 if (!Arrays.equals(oldPdu, pdu)) {
-                    Log.e(TAG, "Warning: dup message segment PDU of length " + pdu.length
+                    Rlog.e(TAG, "Warning: dup message segment PDU of length " + pdu.length
                             + " is different from existing PDU of length " + oldPdu.length);
                 }
                 return Intents.RESULT_SMS_HANDLED;
@@ -672,7 +675,7 @@ public abstract class SMSDispatcher extends Handler {
             // Remove the parts from the database
             mResolver.delete(mRawUri, where, whereArgs);
         } catch (SQLException e) {
-            Log.e(TAG, "Can't access multipart SMS database", e);
+            Rlog.e(TAG, "Can't access multipart SMS database", e);
             return Intents.RESULT_SMS_GENERIC_ERROR;
         } finally {
             if (cursor != null) cursor.close();
@@ -733,7 +736,7 @@ public abstract class SMSDispatcher extends Handler {
         Intent intent = new Intent(Intents.SMS_RECEIVED_ACTION);
         intent.putExtra("pdus", pdus);
         intent.putExtra("format", getFormat());
-        dispatch(intent, RECEIVE_SMS_PERMISSION);
+        dispatch(intent, RECEIVE_SMS_PERMISSION, AppOpsManager.OP_RECEIVE_SMS);
     }
 
     /**
@@ -747,7 +750,7 @@ public abstract class SMSDispatcher extends Handler {
         Intent intent = new Intent(Intents.DATA_SMS_RECEIVED_ACTION, uri);
         intent.putExtra("pdus", pdus);
         intent.putExtra("format", getFormat());
-        dispatch(intent, RECEIVE_SMS_PERMISSION);
+        dispatch(intent, RECEIVE_SMS_PERMISSION, AppOpsManager.OP_RECEIVE_SMS);
     }
 
     /**
@@ -938,7 +941,7 @@ public abstract class SMSDispatcher extends Handler {
                     sentIntent.send(RESULT_ERROR_NO_SERVICE);
                 } catch (CanceledException ex) {}
             }
-            Log.d(TAG, "Device does not support sending sms.");
+            Rlog.d(TAG, "Device does not support sending sms.");
             return;
         }
 
@@ -961,12 +964,12 @@ public abstract class SMSDispatcher extends Handler {
 
         if (packageNames == null || packageNames.length == 0) {
             // Refuse to send SMS if we can't get the calling package name.
-            Log.e(TAG, "Can't get calling app package name: refusing to send SMS");
+            Rlog.e(TAG, "Can't get calling app package name: refusing to send SMS");
             if (sentIntent != null) {
                 try {
                     sentIntent.send(RESULT_ERROR_GENERIC_FAILURE);
                 } catch (CanceledException ex) {
-                    Log.e(TAG, "failed to send error result");
+                    Rlog.e(TAG, "failed to send error result");
                 }
             }
             return;
@@ -978,12 +981,12 @@ public abstract class SMSDispatcher extends Handler {
             // XXX this is lossy- apps can share a UID
             appInfo = pm.getPackageInfo(packageNames[0], PackageManager.GET_SIGNATURES);
         } catch (PackageManager.NameNotFoundException e) {
-            Log.e(TAG, "Can't get calling app package info: refusing to send SMS");
+            Rlog.e(TAG, "Can't get calling app package info: refusing to send SMS");
             if (sentIntent != null) {
                 try {
                     sentIntent.send(RESULT_ERROR_GENERIC_FAILURE);
                 } catch (CanceledException ex) {
-                    Log.e(TAG, "failed to send error result");
+                    Rlog.e(TAG, "failed to send error result");
                 }
             }
             return;
@@ -1031,7 +1034,7 @@ public abstract class SMSDispatcher extends Handler {
             if (rule == PREMIUM_RULE_USE_SIM || rule == PREMIUM_RULE_USE_BOTH) {
                 String simCountryIso = mTelephonyManager.getSimCountryIso();
                 if (simCountryIso == null || simCountryIso.length() != 2) {
-                    Log.e(TAG, "Can't get SIM country Iso: trying network country Iso");
+                    Rlog.e(TAG, "Can't get SIM country Iso: trying network country Iso");
                     simCountryIso = mTelephonyManager.getNetworkCountryIso();
                 }
 
@@ -1040,11 +1043,11 @@ public abstract class SMSDispatcher extends Handler {
             if (rule == PREMIUM_RULE_USE_NETWORK || rule == PREMIUM_RULE_USE_BOTH) {
                 String networkCountryIso = mTelephonyManager.getNetworkCountryIso();
                 if (networkCountryIso == null || networkCountryIso.length() != 2) {
-                    Log.e(TAG, "Can't get Network country Iso: trying SIM country Iso");
+                    Rlog.e(TAG, "Can't get Network country Iso: trying SIM country Iso");
                     networkCountryIso = mTelephonyManager.getSimCountryIso();
                 }
 
-                smsCategory = mUsageMonitor.mergeShortCodeCategories(smsCategory,
+                smsCategory = SmsUsageMonitor.mergeShortCodeCategories(smsCategory,
                         mUsageMonitor.checkDestination(tracker.mDestAddress, networkCountryIso));
             }
 
@@ -1064,11 +1067,11 @@ public abstract class SMSDispatcher extends Handler {
 
             switch (premiumSmsPermission) {
                 case SmsUsageMonitor.PREMIUM_SMS_PERMISSION_ALWAYS_ALLOW:
-                    Log.d(TAG, "User approved this app to send to premium SMS");
+                    Rlog.d(TAG, "User approved this app to send to premium SMS");
                     return true;
 
                 case SmsUsageMonitor.PREMIUM_SMS_PERMISSION_NEVER_ALLOW:
-                    Log.w(TAG, "User denied this app from sending to premium SMS");
+                    Rlog.w(TAG, "User denied this app from sending to premium SMS");
                     sendMessage(obtainMessage(EVENT_STOP_SENDING, tracker));
                     return false;   // reject this message
 
@@ -1096,9 +1099,11 @@ public abstract class SMSDispatcher extends Handler {
         if (mPendingTrackerCount >= MO_MSG_QUEUE_LIMIT) {
             // Deny sending message when the queue limit is reached.
             try {
-                tracker.mSentIntent.send(RESULT_ERROR_LIMIT_EXCEEDED);
+                if (tracker.mSentIntent != null) {
+                    tracker.mSentIntent.send(RESULT_ERROR_LIMIT_EXCEEDED);
+                }
             } catch (CanceledException ex) {
-                Log.e(TAG, "failed to send back RESULT_ERROR_LIMIT_EXCEEDED");
+                Rlog.e(TAG, "failed to send back RESULT_ERROR_LIMIT_EXCEEDED");
             }
             return true;
         }
@@ -1117,7 +1122,7 @@ public abstract class SMSDispatcher extends Handler {
             ApplicationInfo appInfo = pm.getApplicationInfo(appPackage, 0);
             return appInfo.loadLabel(pm);
         } catch (PackageManager.NameNotFoundException e) {
-            Log.e(TAG, "PackageManager Name Not Found for package " + appPackage);
+            Rlog.e(TAG, "PackageManager Name Not Found for package " + appPackage);
             return appPackage;  // fall back to package name if we can't get app label
         }
     }
@@ -1298,7 +1303,7 @@ public abstract class SMSDispatcher extends Handler {
             Intent intent = new Intent(Intents.SMS_REJECTED_ACTION);
             intent.putExtra("result", result);
             mWakeLock.acquire(WAKE_LOCK_TIMEOUT);
-            mContext.sendBroadcast(intent, "android.permission.RECEIVE_SMS");
+            mContext.sendBroadcast(intent, Manifest.permission.RECEIVE_SMS);
         }
         acknowledgeLastIncomingSms(success, result, response);
     }
@@ -1335,7 +1340,7 @@ public abstract class SMSDispatcher extends Handler {
          * @return true if the tracker holds a multi-part SMS; false otherwise
          */
         protected boolean isMultipart() {
-            HashMap map = mData;
+            HashMap<String, Object> map = mData;
             return map.containsKey("parts");
         }
     }
@@ -1373,7 +1378,7 @@ public abstract class SMSDispatcher extends Handler {
             int newSmsPermission = SmsUsageMonitor.PREMIUM_SMS_PERMISSION_ASK_USER;
 
             if (which == DialogInterface.BUTTON_POSITIVE) {
-                Log.d(TAG, "CONFIRM sending SMS");
+                Rlog.d(TAG, "CONFIRM sending SMS");
                 // XXX this is lossy- apps can have more than one signature
                 EventLog.writeEvent(EventLogTags.SMS_SENT_BY_USER,
                                     mTracker.mAppInfo.signatures[0].toCharsString());
@@ -1382,7 +1387,7 @@ public abstract class SMSDispatcher extends Handler {
                     newSmsPermission = SmsUsageMonitor.PREMIUM_SMS_PERMISSION_ALWAYS_ALLOW;
                 }
             } else if (which == DialogInterface.BUTTON_NEGATIVE) {
-                Log.d(TAG, "DENY sending SMS");
+                Rlog.d(TAG, "DENY sending SMS");
                 // XXX this is lossy- apps can have more than one signature
                 EventLog.writeEvent(EventLogTags.SMS_DENIED_BY_USER,
                                     mTracker.mAppInfo.signatures[0].toCharsString());
@@ -1396,13 +1401,13 @@ public abstract class SMSDispatcher extends Handler {
 
         @Override
         public void onCancel(DialogInterface dialog) {
-            Log.d(TAG, "dialog dismissed: don't send SMS");
+            Rlog.d(TAG, "dialog dismissed: don't send SMS");
             sendMessage(obtainMessage(EVENT_STOP_SENDING, mTracker));
         }
 
         @Override
         public void onCheckedChanged(CompoundButton buttonView, boolean isChecked) {
-            Log.d(TAG, "remember this choice: " + isChecked);
+            Rlog.d(TAG, "remember this choice: " + isChecked);
             mRememberChoice = isChecked;
             if (isChecked) {
                 mPositiveButton.setText(R.string.sms_short_code_confirm_always_allow);
@@ -1426,15 +1431,20 @@ public abstract class SMSDispatcher extends Handler {
     private final BroadcastReceiver mResultReceiver = new BroadcastReceiver() {
         @Override
         public void onReceive(Context context, Intent intent) {
-            // Assume the intent is one of the SMS receive intents that
-            // was sent as an ordered broadcast.  Check result and ACK.
-            int rc = getResultCode();
-            boolean success = (rc == Activity.RESULT_OK)
-                    || (rc == Intents.RESULT_SMS_HANDLED);
+            if (intent.getAction().equals(Intents.SMS_CB_RECEIVED_ACTION) ||
+                    intent.getAction().equals(Intents.SMS_EMERGENCY_CB_RECEIVED_ACTION)) {
+                // Ignore this intent. Apps will process it.
+            } else {
+                // Assume the intent is one of the SMS receive intents that
+                // was sent as an ordered broadcast. Check result and ACK.
+                int rc = getResultCode();
+                boolean success = (rc == Activity.RESULT_OK)
+                        || (rc == Intents.RESULT_SMS_HANDLED);
 
-            // For a multi-part message, this only ACKs the last part.
-            // Previous parts were ACK'd as they were received.
-            acknowledgeLastIncomingSms(success, rc, null);
+                // For a multi-part message, this only ACKs the last part.
+                // Previous parts were ACK'd as they were received.
+                acknowledgeLastIncomingSms(success, rc, null);
+            }
         }
     };
 
@@ -1442,13 +1452,14 @@ public abstract class SMSDispatcher extends Handler {
         if (message.isEmergencyMessage()) {
             Intent intent = new Intent(Intents.SMS_EMERGENCY_CB_RECEIVED_ACTION);
             intent.putExtra("message", message);
-            Log.d(TAG, "Dispatching emergency SMS CB");
-            dispatch(intent, RECEIVE_EMERGENCY_BROADCAST_PERMISSION);
+            Rlog.d(TAG, "Dispatching emergency SMS CB");
+            dispatch(intent, RECEIVE_EMERGENCY_BROADCAST_PERMISSION,
+                    AppOpsManager.OP_RECEIVE_EMERGECY_SMS);
         } else {
             Intent intent = new Intent(Intents.SMS_CB_RECEIVED_ACTION);
             intent.putExtra("message", message);
-            Log.d(TAG, "Dispatching SMS CB");
-            dispatch(intent, RECEIVE_SMS_PERMISSION);
+            Rlog.d(TAG, "Dispatching SMS CB");
+            dispatch(intent, RECEIVE_SMS_PERMISSION, AppOpsManager.OP_RECEIVE_SMS);
         }
     }
 }

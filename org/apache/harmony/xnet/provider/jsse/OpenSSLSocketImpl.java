@@ -38,6 +38,7 @@ import javax.net.ssl.HandshakeCompletedEvent;
 import javax.net.ssl.HandshakeCompletedListener;
 import javax.net.ssl.SSLException;
 import javax.net.ssl.SSLHandshakeException;
+import javax.net.ssl.SSLPeerUnverifiedException;
 import javax.net.ssl.SSLProtocolException;
 import javax.net.ssl.SSLSession;
 import javax.net.ssl.X509TrustManager;
@@ -63,7 +64,7 @@ public class OpenSSLSocketImpl
         extends javax.net.ssl.SSLSocket
         implements NativeCrypto.SSLHandshakeCallbacks {
 
-    private int sslNativePointer;
+    private long sslNativePointer;
     private InputStream is;
     private OutputStream os;
     private final Object handshakeLock = new Object();
@@ -75,6 +76,10 @@ public class OpenSSLSocketImpl
     private String[] enabledCipherSuites;
     private boolean useSessionTickets;
     private String hostname;
+    /** Whether the TLS Channel ID extension is enabled. This field is server-side only. */
+    private boolean channelIdEnabled;
+    /** Private key for the TLS Channel ID extension. This field is client-side only. */
+    private PrivateKey channelIdPrivateKey;
     private OpenSSLSessionImpl sslSession;
     private final Socket socket;
     private boolean autoClose;
@@ -261,7 +266,7 @@ public class OpenSSLSocketImpl
 
         final boolean client = sslParameters.getUseClientMode();
 
-        final int sslCtxNativePointer = (client) ?
+        final long sslCtxNativePointer = (client) ?
             sslParameters.getClientSessionContext().sslCtxNativePointer :
             sslParameters.getServerSessionContext().sslCtxNativePointer;
 
@@ -315,17 +320,19 @@ public class OpenSSLSocketImpl
             }
 
             AbstractSessionContext sessionContext;
+            OpenSSLSessionImpl sessionToReuse;
             if (client) {
                 // look for client session to reuse
                 ClientSessionContext clientSessionContext = sslParameters.getClientSessionContext();
                 sessionContext = clientSessionContext;
-                OpenSSLSessionImpl session = getCachedClientSession(clientSessionContext);
-                if (session != null) {
+                sessionToReuse = getCachedClientSession(clientSessionContext);
+                if (sessionToReuse != null) {
                     NativeCrypto.SSL_set_session(sslNativePointer,
-                                                 session.sslSessionNativePointer);
+                                                 sessionToReuse.sslSessionNativePointer);
                 }
             } else {
                 sessionContext = sslParameters.getServerSessionContext();
+                sessionToReuse = null;
             }
 
             // setup peer certificate verification
@@ -373,6 +380,19 @@ public class OpenSSLSocketImpl
                 setSoWriteTimeout(handshakeTimeoutMilliseconds);
             }
 
+            // TLS Channel ID
+            if (client) {
+                // Client-side TLS Channel ID
+                if (channelIdPrivateKey != null) {
+                    NativeCrypto.SSL_set1_tls_channel_id(sslNativePointer, channelIdPrivateKey);
+                }
+            } else {
+                // Server-side TLS Channel ID
+                if (channelIdEnabled) {
+                    NativeCrypto.SSL_enable_tls_channel_id(sslNativePointer);
+                }
+            }
+
             int sslSessionNativePointer;
             try {
                 sslSessionNativePointer = NativeCrypto.SSL_do_handshake(sslNativePointer,
@@ -383,8 +403,8 @@ public class OpenSSLSocketImpl
                 throw wrapper;
             }
             byte[] sessionId = NativeCrypto.SSL_SESSION_session_id(sslSessionNativePointer);
-            sslSession = (OpenSSLSessionImpl) sessionContext.getSession(sessionId);
-            if (sslSession != null) {
+            if (sessionToReuse != null && Arrays.equals(sessionToReuse.getId(), sessionId)) {
+                this.sslSession = sessionToReuse;
                 sslSession.lastAccessedTime = System.currentTimeMillis();
                 NativeCrypto.SSL_SESSION_free(sslSessionNativePointer);
             } else {
@@ -396,7 +416,7 @@ public class OpenSSLSocketImpl
                         = createCertChain(NativeCrypto.SSL_get_certificate(sslNativePointer));
                 X509Certificate[] peerCertificates
                         = createCertChain(NativeCrypto.SSL_get_peer_cert_chain(sslNativePointer));
-                sslSession = new OpenSSLSessionImpl(sslSessionNativePointer, localCertificates,
+                this.sslSession = new OpenSSLSessionImpl(sslSessionNativePointer, localCertificates,
                         peerCertificates, getPeerHostName(), getPeerPort(), sessionContext);
                 // if not, putSession later in handshakeCompleted() callback
                 if (handshakeCompleted) {
@@ -445,17 +465,13 @@ public class OpenSSLSocketImpl
      * Return a possibly null array of X509Certificates given the
      * possibly null array of DER encoded bytes.
      */
-    private static X509Certificate[] createCertChain(byte[][] certificatesBytes) {
+    private static X509Certificate[] createCertChain(byte[][] certificatesBytes) throws IOException {
         if (certificatesBytes == null) {
             return null;
         }
         X509Certificate[] certificates = new X509Certificate[certificatesBytes.length];
         for (int i = 0; i < certificatesBytes.length; i++) {
-            try {
-                certificates[i] = new X509CertImpl(certificatesBytes[i]);
-            } catch (IOException e) {
-                return null;
-            }
+            certificates[i] = new X509CertImpl(certificatesBytes[i]);
         }
         return certificates;
     }
@@ -473,13 +489,8 @@ public class OpenSSLSocketImpl
             return;
         }
 
-        if (privateKey instanceof OpenSSLRSAPrivateKey) {
-            OpenSSLRSAPrivateKey rsaKey = (OpenSSLRSAPrivateKey) privateKey;
-            OpenSSLKey key = rsaKey.getOpenSSLKey();
-            NativeCrypto.SSL_use_OpenSSL_PrivateKey(sslNativePointer, key.getPkeyContext());
-        } else if (privateKey instanceof OpenSSLDSAPrivateKey) {
-            OpenSSLDSAPrivateKey dsaKey = (OpenSSLDSAPrivateKey) privateKey;
-            OpenSSLKey key = dsaKey.getOpenSSLKey();
+        if (privateKey instanceof OpenSSLKeyHolder) {
+            OpenSSLKey key = ((OpenSSLKeyHolder) privateKey).getOpenSSLKey();
             NativeCrypto.SSL_use_OpenSSL_PrivateKey(sslNativePointer, key.getPkeyContext());
         } else if ("PKCS#8".equals(privateKey.getFormat())) {
             byte[] privateKeyBytes = privateKey.getEncoded();
@@ -593,10 +604,8 @@ public class OpenSSLSocketImpl
 
         } catch (CertificateException e) {
             throw e;
-        } catch (RuntimeException e) {
-            throw e;
         } catch (Exception e) {
-            throw new RuntimeException(e);
+            throw new CertificateException(e);
         }
     }
 
@@ -797,6 +806,72 @@ public class OpenSSLSocketImpl
      */
     public void setHostname(String hostname) {
         this.hostname = hostname;
+    }
+
+    /**
+     * Enables/disables TLS Channel ID for this server socket.
+     *
+     * <p>This method needs to be invoked before the handshake starts.
+     *
+     * @throws IllegalStateException if this is a client socket or if the handshake has already
+     *         started.
+
+     */
+    public void setChannelIdEnabled(boolean enabled) {
+        if (getUseClientMode()) {
+            throw new IllegalStateException("Client mode");
+        }
+        if (handshakeStarted) {
+            throw new IllegalStateException(
+                    "Could not enable/disable Channel ID after the initial handshake has"
+                    + " begun.");
+        }
+        this.channelIdEnabled = enabled;
+    }
+
+    /**
+     * Gets the TLS Channel ID for this server socket. Channel ID is only available once the
+     * handshake completes.
+     *
+     * @return channel ID or {@code null} if not available.
+     *
+     * @throws IllegalStateException if this is a client socket or if the handshake has not yet
+     *         completed.
+     * @throws SSLException if channel ID is available but could not be obtained.
+     */
+    public byte[] getChannelId() throws SSLException {
+        if (getUseClientMode()) {
+            throw new IllegalStateException("Client mode");
+        }
+        if (!handshakeCompleted) {
+            throw new IllegalStateException(
+                    "Channel ID is only available after handshake completes");
+        }
+        return NativeCrypto.SSL_get_tls_channel_id(sslNativePointer);
+    }
+
+    /**
+     * Sets the {@link PrivateKey} to be used for TLS Channel ID by this client socket.
+     *
+     * <p>This method needs to be invoked before the handshake starts.
+     *
+     * @param privateKey private key (enables TLS Channel ID) or {@code null} for no key (disables
+     *        TLS Channel ID). The private key must be an Elliptic Curve (EC) key based on the NIST
+     *        P-256 curve (aka SECG secp256r1 or ANSI X9.62 prime256v1).
+     *
+     * @throws IllegalStateException if this is a server socket or if the handshake has already
+     *         started.
+     */
+    public void setChannelIdPrivateKey(PrivateKey privateKey) {
+        if (!getUseClientMode()) {
+            throw new IllegalStateException("Server mode");
+        }
+        if (handshakeStarted) {
+            throw new IllegalStateException(
+                    "Could not change Channel ID private key after the initial handshake has"
+                    + " begun.");
+        }
+        this.channelIdPrivateKey = privateKey;
     }
 
     @Override public boolean getUseClientMode() {

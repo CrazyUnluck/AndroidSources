@@ -24,6 +24,7 @@ import android.text.format.Time;
 import android.util.Log;
 import android.util.TimeFormatException;
 
+import java.util.ArrayList;
 import java.util.List;
 import java.util.regex.Pattern;
 
@@ -116,7 +117,17 @@ public class RecurrenceSet {
             }
 
             if (!TextUtils.isEmpty(exdateStr)) {
-                exdates = parseRecurrenceDates(exdateStr);
+                final List<Long> list = new ArrayList<Long>();
+                for (String exdate : exdateStr.split(RULE_SEPARATOR)) {
+                    final long[] dates = parseRecurrenceDates(exdate);
+                    for (long date : dates) {
+                        list.add(date);
+                    }
+                }
+                exdates = new long[list.size()];
+                for (int i = 0, n = list.size(); i < n; i++) {
+                    exdates[i] = list.get(i);
+                }
             }
         }
     }

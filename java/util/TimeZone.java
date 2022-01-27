@@ -21,7 +21,7 @@ import java.io.IOException;
 import java.io.Serializable;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
-import libcore.icu.TimeZones;
+import libcore.icu.TimeZoneNames;
 import libcore.util.ZoneInfoDB;
 
 /**
@@ -55,14 +55,11 @@ import libcore.util.ZoneInfoDB;
  *
  * <p>Note the type returned by the factory methods {@link #getDefault} and {@link #getTimeZone} is
  * implementation dependent. This may introduce serialization incompatibility issues between
- * different implementations. Android returns instances of {@link SimpleTimeZone} so that
- * the bytes serialized by Android can be deserialized successfully on other
- * implementations, but the reverse compatibility cannot be guaranteed.
+ * different implementations, or different versions of Android.
  *
  * @see Calendar
  * @see GregorianCalendar
  * @see SimpleDateFormat
- * @see SimpleTimeZone
  */
 public abstract class TimeZone implements Serializable, Cloneable {
     private static final long serialVersionUID = 3581463369166924961L;
@@ -171,21 +168,28 @@ public abstract class TimeZone implements Serializable, Cloneable {
      */
     public String getDisplayName(boolean daylightTime, int style, Locale locale) {
         if (style != SHORT && style != LONG) {
-            throw new IllegalArgumentException();
+            throw new IllegalArgumentException("Bad style: " + style);
         }
 
-        boolean useDaylight = daylightTime && useDaylightTime();
-
-        String[][] zoneStrings = TimeZones.getZoneStrings(locale);
-        String result = TimeZones.getDisplayName(zoneStrings, getID(), daylightTime, style);
+        String[][] zoneStrings = TimeZoneNames.getZoneStrings(locale);
+        String result = TimeZoneNames.getDisplayName(zoneStrings, getID(), daylightTime, style);
         if (result != null) {
             return result;
         }
 
-        // TODO: do we ever get here?
+        // If we get here, it's because icu4c has nothing for us. Most commonly, this is in the
+        // case of short names. For Pacific/Fiji, for example, icu4c has nothing better to offer
+        // than "GMT+12:00". Why do we re-do this work ourselves? Because we have up-to-date
+        // time zone transition data, which icu4c _doesn't_ use --- it uses its own baked-in copy,
+        // which only gets updated when we update icu4c. http://b/7955614 and http://b/8026776.
+
+        // TODO: should we generate these once, in TimeZoneNames.getDisplayName? Revisit when we
+        // upgrade to icu4c 50 and rewrite the underlying native code. See also the
+        // "element[j] != null" check in SimpleDateFormat.parseTimeZone, and the extra work in
+        // DateFormatSymbols.getZoneStrings.
 
         int offset = getRawOffset();
-        if (useDaylight && this instanceof SimpleTimeZone) {
+        if (daylightTime) {
             offset += getDSTSavings();
         }
         offset /= 60000;

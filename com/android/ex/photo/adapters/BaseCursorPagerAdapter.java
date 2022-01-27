@@ -17,10 +17,10 @@
 
 package com.android.ex.photo.adapters;
 
-import android.app.Fragment;
-import android.app.FragmentManager;
 import android.content.Context;
 import android.database.Cursor;
+import android.support.v4.app.Fragment;
+import android.support.v4.app.FragmentManager;
 import android.util.Log;
 import android.util.SparseIntArray;
 import android.view.View;
@@ -37,14 +37,13 @@ import java.util.HashMap;
 public abstract class BaseCursorPagerAdapter extends BaseFragmentPagerAdapter {
     private static final String TAG = "BaseCursorPagerAdapter";
 
-    Context mContext;
-    private boolean mDataValid;
-    private Cursor mCursor;
-    private int mRowIDColumn;
+    protected Context mContext;
+    protected Cursor mCursor;
+    protected int mRowIDColumn;
     /** Mapping of row ID to cursor position */
-    private SparseIntArray mItemPosition;
+    protected SparseIntArray mItemPosition;
     /** Mapping of instantiated object to row ID */
-    private HashMap<Object, Integer> mObjectRowMap = new HashMap<Object, Integer>();
+    protected final HashMap<Object, Integer> mObjectRowMap = new HashMap<Object, Integer>();
 
     /**
      * Constructor that always enables auto-requery.
@@ -67,9 +66,11 @@ public abstract class BaseCursorPagerAdapter extends BaseFragmentPagerAdapter {
      */
     public abstract Fragment getItem(Context context, Cursor cursor, int position);
 
+    // TODO: This shouldn't just return null - maybe it needs to wait for a cursor to be supplied?
+    //       See b/7103023
     @Override
     public Fragment getItem(int position) {
-        if (mDataValid && moveCursorTo(position)) {
+        if (mCursor != null && moveCursorTo(position)) {
             return getItem(mContext, mCursor, position);
         }
         return null;
@@ -77,7 +78,7 @@ public abstract class BaseCursorPagerAdapter extends BaseFragmentPagerAdapter {
 
     @Override
     public int getCount() {
-        if (mDataValid && mCursor != null) {
+        if (mCursor != null) {
             return mCursor.getCount();
         } else {
             return 0;
@@ -86,7 +87,7 @@ public abstract class BaseCursorPagerAdapter extends BaseFragmentPagerAdapter {
 
     @Override
     public Object instantiateItem(View container, int position) {
-        if (!mDataValid) {
+        if (mCursor == null) {
             throw new IllegalStateException("this should only be called when the cursor is valid");
         }
 
@@ -127,7 +128,7 @@ public abstract class BaseCursorPagerAdapter extends BaseFragmentPagerAdapter {
      * @return true if data is valid
      */
     public boolean isDataValid() {
-        return mDataValid;
+        return mCursor != null;
     }
 
     /**
@@ -141,7 +142,7 @@ public abstract class BaseCursorPagerAdapter extends BaseFragmentPagerAdapter {
      * Returns the data item associated with the specified position in the data set.
      */
     public Object getDataItem(int position) {
-        if (mDataValid && moveCursorTo(position)) {
+        if (mCursor != null && moveCursorTo(position)) {
             return mCursor;
         } else {
             return null;
@@ -152,7 +153,7 @@ public abstract class BaseCursorPagerAdapter extends BaseFragmentPagerAdapter {
      * Returns the row id associated with the specified position in the list.
      */
     public long getItemId(int position) {
-        if (mDataValid && moveCursorTo(position)) {
+        if (mCursor != null && moveCursorTo(position)) {
             return mCursor.getString(mRowIDColumn).hashCode();
         } else {
             return 0;
@@ -180,10 +181,8 @@ public abstract class BaseCursorPagerAdapter extends BaseFragmentPagerAdapter {
         mCursor = newCursor;
         if (newCursor != null) {
             mRowIDColumn = newCursor.getColumnIndex(PhotoContract.PhotoViewColumns.URI);
-            mDataValid = true;
         } else {
             mRowIDColumn = -1;
-            mDataValid = false;
         }
 
         setItemPosition();
@@ -231,7 +230,6 @@ public abstract class BaseCursorPagerAdapter extends BaseFragmentPagerAdapter {
     private void init(Context context, Cursor c) {
         boolean cursorPresent = c != null;
         mCursor = c;
-        mDataValid = cursorPresent;
         mContext = context;
         mRowIDColumn = cursorPresent
                 ? mCursor.getColumnIndex(PhotoContract.PhotoViewColumns.URI) : -1;
@@ -242,7 +240,7 @@ public abstract class BaseCursorPagerAdapter extends BaseFragmentPagerAdapter {
      * row id to cursor position.
      */
     private void setItemPosition() {
-        if (!mDataValid || mCursor == null || mCursor.isClosed()) {
+        if (mCursor == null || mCursor.isClosed()) {
             mItemPosition = null;
             return;
         }

@@ -48,6 +48,7 @@ import android.view.ViewGroup;
 import android.view.ViewTreeObserver;
 import android.view.Window;
 import android.view.WindowManager;
+import android.view.WindowManager.BadTokenException;
 import android.view.animation.AnimationUtils;
 import android.view.inputmethod.CompletionInfo;
 import android.view.inputmethod.EditorInfo;
@@ -421,7 +422,13 @@ public class InputMethodService extends AbstractInputMethodService {
             boolean wasVis = isInputViewShown();
             mShowInputFlags = 0;
             if (onShowInputRequested(flags, false)) {
-                showWindow(true);
+                try {
+                    showWindow(true);
+                } catch (BadTokenException e) {
+                    if (DEBUG) Log.v(TAG, "BadTokenException: IME is done.");
+                    mWindowVisible = false;
+                    mWindowAdded = false;
+                }
             }
             // If user uses hard keyboard, IME button should always be shown.
             boolean showing = onEvaluateInputViewShown();
@@ -930,11 +937,13 @@ public class InputMethodService extends AbstractInputMethodService {
      */
     public void onConfigureWindow(Window win, boolean isFullscreen,
             boolean isCandidatesOnly) {
-        if (isFullscreen) {
-            mWindow.getWindow().setLayout(MATCH_PARENT, MATCH_PARENT);
-        } else {
-            mWindow.getWindow().setLayout(MATCH_PARENT, WRAP_CONTENT);
+        final int currentHeight = mWindow.getWindow().getAttributes().height;
+        final int newHeight = isFullscreen ? MATCH_PARENT : WRAP_CONTENT;
+        if (mIsInputViewShown && currentHeight != newHeight) {
+            Log.w(TAG, "Window size has been changed. This may cause jankiness of resizing window: "
+                    + currentHeight + " -> " + newHeight);
         }
+        mWindow.getWindow().setLayout(MATCH_PARENT, newHeight);
     }
     
     /**
@@ -997,10 +1006,11 @@ public class InputMethodService extends AbstractInputMethodService {
     }
     
     void updateExtractFrameVisibility() {
-        int vis;
+        final int vis;
         if (isFullscreenMode()) {
             vis = mExtractViewHidden ? View.INVISIBLE : View.VISIBLE;
-            mExtractFrame.setVisibility(View.VISIBLE);
+            // "vis" should be applied for the extract frame as well in the fullscreen mode.
+            mExtractFrame.setVisibility(vis);
         } else {
             vis = View.VISIBLE;
             mExtractFrame.setVisibility(View.GONE);
@@ -1952,7 +1962,7 @@ public class InputMethodService extends AbstractInputMethodService {
         ic.sendKeyEvent(new KeyEvent(eventTime, eventTime,
                 KeyEvent.ACTION_DOWN, keyEventCode, 0, 0, KeyCharacterMap.VIRTUAL_KEYBOARD, 0,
                 KeyEvent.FLAG_SOFT_KEYBOARD|KeyEvent.FLAG_KEEP_TOUCH_MODE));
-        ic.sendKeyEvent(new KeyEvent(SystemClock.uptimeMillis(), eventTime,
+        ic.sendKeyEvent(new KeyEvent(eventTime, SystemClock.uptimeMillis(),
                 KeyEvent.ACTION_UP, keyEventCode, 0, 0, KeyCharacterMap.VIRTUAL_KEYBOARD, 0,
                 KeyEvent.FLAG_SOFT_KEYBOARD|KeyEvent.FLAG_KEEP_TOUCH_MODE));
     }

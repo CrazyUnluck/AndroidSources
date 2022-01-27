@@ -19,6 +19,8 @@ package com.android.uiautomator.core;
 import android.util.SparseArray;
 import android.view.accessibility.AccessibilityNodeInfo;
 
+import java.util.regex.Pattern;
+
 /**
  * This class provides the mechanism for tests to describe the UI elements they
  * intend to target. A UI element has many properties associated with it such as
@@ -26,6 +28,7 @@ import android.view.accessibility.AccessibilityNodeInfo;
  * selected, enabled, checked etc. Additionally UiSelector allows targeting of UI
  * elements within a specific display hierarchies to distinguish similar elements
  * based in the hierarchies they're in.
+ * @since API Level 16
  */
 public class UiSelector {
     static final int SELECTOR_NIL = 0;
@@ -57,9 +60,15 @@ public class UiSelector {
     static final int SELECTOR_CLASS_REGEX = 26;
     static final int SELECTOR_DESCRIPTION_REGEX = 27;
     static final int SELECTOR_PACKAGE_NAME_REGEX = 28;
+    static final int SELECTOR_RESOURCE_ID = 29;
+    static final int SELECTOR_CHECKABLE = 30;
+    static final int SELECTOR_RESOURCE_ID_REGEX = 31;
 
     private SparseArray<Object> mSelectorAttributes = new SparseArray<Object>();
 
+    /**
+     * @since API Level 16
+     */
     public UiSelector() {
     }
 
@@ -67,20 +76,23 @@ public class UiSelector {
         mSelectorAttributes = selector.cloneSelector().mSelectorAttributes;
     }
 
+    /**
+     * @since API Level 17
+     */
     protected UiSelector cloneSelector() {
         UiSelector ret = new UiSelector();
         ret.mSelectorAttributes = mSelectorAttributes.clone();
-        if(hasChildSelector())
+        if (hasChildSelector())
             ret.mSelectorAttributes.put(SELECTOR_CHILD, new UiSelector(getChildSelector()));
-        if(hasParentSelector())
+        if (hasParentSelector())
             ret.mSelectorAttributes.put(SELECTOR_PARENT, new UiSelector(getParentSelector()));
-        if(hasPatternSelector())
+        if (hasPatternSelector())
             ret.mSelectorAttributes.put(SELECTOR_PATTERN, new UiSelector(getPatternSelector()));
         return ret;
     }
 
     static UiSelector patternBuilder(UiSelector selector) {
-        if(!selector.hasPatternSelector()) {
+        if (!selector.hasPatternSelector()) {
             return new UiSelector().patternSelector(selector);
         }
         return selector;
@@ -101,6 +113,7 @@ public class UiSelector {
      *
      * @param text Value to match
      * @return UiSelector with the specified search criteria
+     * @since API Level 16
      */
     public UiSelector text(String text) {
         return buildSelector(SELECTOR_TEXT, text);
@@ -113,11 +126,12 @@ public class UiSelector {
      * The text for the widget must match exactly
      * with the string in your input argument.
      *
-     * @param regular expression
+     * @param regex a regular expression
      * @return UiSelector with the specified search criteria
+     * @since API Level 17
      */
     public UiSelector textMatches(String regex) {
-        return buildSelector(SELECTOR_TEXT_REGEX, regex);
+        return buildSelector(SELECTOR_TEXT_REGEX, Pattern.compile(regex));
     }
 
     /**
@@ -130,6 +144,7 @@ public class UiSelector {
      *
      * @param text
      * @return UiSelector with this added search criterion
+     * @since API Level 16
      */
     public UiSelector textStartsWith(String text) {
         return buildSelector(SELECTOR_START_TEXT, text);
@@ -144,6 +159,7 @@ public class UiSelector {
      *
      * @param text Value to match
      * @return UiSelector with the specified search criteria
+     * @since API Level 16
      */
     public UiSelector textContains(String text) {
         return buildSelector(SELECTOR_CONTAINS_TEXT, text);
@@ -155,6 +171,7 @@ public class UiSelector {
      *
      * @param className Value to match
      * @return UiSelector with the specified search criteria
+     * @since API Level 16
      */
     public UiSelector className(String className) {
         return buildSelector(SELECTOR_CLASS, className);
@@ -164,19 +181,21 @@ public class UiSelector {
      * Set the search criteria to match the class property
      * for a widget (for example, "android.widget.Button").
      *
-     * @param regular expression
+     * @param regex a regular expression
      * @return UiSelector with the specified search criteria
+     * @since API Level 17
      */
     public UiSelector classNameMatches(String regex) {
-        return buildSelector(SELECTOR_CLASS_REGEX, regex);
+        return buildSelector(SELECTOR_CLASS_REGEX, Pattern.compile(regex));
     }
 
     /**
      * Set the search criteria to match the class property
      * for a widget (for example, "android.widget.Button").
      *
-     * @param class type
+     * @param type type
      * @return UiSelector with the specified search criteria
+     * @since API Level 17
      */
     public <T> UiSelector className(Class<T> type) {
         return buildSelector(SELECTOR_CLASS, type.getName());
@@ -197,6 +216,7 @@ public class UiSelector {
      *
      * @param desc Value to match
      * @return UiSelector with the specified search criteria
+     * @since API Level 16
      */
     public UiSelector description(String desc) {
         return buildSelector(SELECTOR_DESCRIPTION, desc);
@@ -213,11 +233,12 @@ public class UiSelector {
      * for the widget must match exactly
      * with the string in your input argument.
      *
-     * @param regular expression
+     * @param regex a regular expression
      * @return UiSelector with the specified search criteria
+     * @since API Level 17
      */
     public UiSelector descriptionMatches(String regex) {
-        return buildSelector(SELECTOR_DESCRIPTION_REGEX, regex);
+        return buildSelector(SELECTOR_DESCRIPTION_REGEX, Pattern.compile(regex));
     }
 
     /**
@@ -235,6 +256,7 @@ public class UiSelector {
      *
      * @param desc Value to match
      * @return UiSelector with the specified search criteria
+     * @since API Level 16
      */
     public UiSelector descriptionStartsWith(String desc) {
         return buildSelector(SELECTOR_START_DESCRIPTION, desc);
@@ -255,9 +277,33 @@ public class UiSelector {
      *
      * @param desc Value to match
      * @return UiSelector with the specified search criteria
+     * @since API Level 16
      */
     public UiSelector descriptionContains(String desc) {
         return buildSelector(SELECTOR_CONTAINS_DESCRIPTION, desc);
+    }
+
+    /**
+     * Set the search criteria to match the given resource id.
+     *
+     * @param id value to match
+     * @return UiSelector with the specified search criteria
+     * @since API Level 18
+     */
+    public UiSelector resourceId(String id) {
+        return buildSelector(SELECTOR_RESOURCE_ID, id);
+    }
+
+    /**
+     * Set the search criteria to match the resourceId
+     * of the widget
+     *
+     * @param regex a regular expression
+     * @return UiSelector with the specified search criteria
+     * @since API Level 18
+     */
+    public UiSelector resourceIdMatches(String regex) {
+        return buildSelector(SELECTOR_RESOURCE_ID_REGEX, Pattern.compile(regex));
     }
 
     /**
@@ -272,6 +318,7 @@ public class UiSelector {
      *
      * @param index Value to match
      * @return UiSelector with the specified search criteria
+     * @since API Level 16
      */
     public UiSelector index(final int index) {
         return buildSelector(SELECTOR_INDEX, index);
@@ -297,6 +344,7 @@ public class UiSelector {
      *
      * @param instance Value to match
      * @return UiSelector with the specified search criteria
+     * @since API Level 16
      */
     public UiSelector instance(final int instance) {
         return buildSelector(SELECTOR_INSTANCE, instance);
@@ -315,6 +363,7 @@ public class UiSelector {
      *
      * @param val Value to match
      * @return UiSelector with the specified search criteria
+     * @since API Level 16
      */
     public UiSelector enabled(boolean val) {
         return buildSelector(SELECTOR_ENABLED, val);
@@ -333,6 +382,7 @@ public class UiSelector {
      *
      * @param val Value to match
      * @return UiSelector with the specified search criteria
+     * @since API Level 16
      */
     public UiSelector focused(boolean val) {
         return buildSelector(SELECTOR_FOCUSED, val);
@@ -351,6 +401,7 @@ public class UiSelector {
      *
      * @param val Value to match
      * @return UiSelector with the specified search criteria
+     * @since API Level 16
      */
     public UiSelector focusable(boolean val) {
         return buildSelector(SELECTOR_FOCUSABLE, val);
@@ -369,6 +420,7 @@ public class UiSelector {
      *
      * @param val Value to match
      * @return UiSelector with the specified search criteria
+     * @since API Level 16
      */
     public UiSelector scrollable(boolean val) {
         return buildSelector(SELECTOR_SCROLLABLE, val);
@@ -388,6 +440,7 @@ public class UiSelector {
      *
      * @param val Value to match
      * @return UiSelector with the specified search criteria
+     * @since API Level 16
      */
     public UiSelector selected(boolean val) {
         return buildSelector(SELECTOR_SELECTED, val);
@@ -407,6 +460,7 @@ public class UiSelector {
      *
      * @param val Value to match
      * @return UiSelector with the specified search criteria
+     * @since API Level 16
      */
     public UiSelector checked(boolean val) {
         return buildSelector(SELECTOR_CHECKED, val);
@@ -425,9 +479,29 @@ public class UiSelector {
      *
      * @param val Value to match
      * @return UiSelector with the specified search criteria
+     * @since API Level 16
      */
     public UiSelector clickable(boolean val) {
         return buildSelector(SELECTOR_CLICKABLE, val);
+    }
+
+    /**
+     * Set the search criteria to match widgets that are checkable.
+     *
+     * Typically, using this search criteria alone is not useful.
+     * You should also include additional criteria, such as text,
+     * content-description, or the class name for a widget.
+     *
+     * If no other search criteria is specified, and there is more
+     * than one matching widget, the first widget in the tree
+     * is selected.
+     *
+     * @param val Value to match
+     * @return UiSelector with the specified search criteria
+     * @since API Level 18
+     */
+    public UiSelector checkable(boolean val) {
+        return buildSelector(SELECTOR_CHECKABLE, val);
     }
 
     /**
@@ -443,6 +517,7 @@ public class UiSelector {
      *
      * @param val Value to match
      * @return UiSelector with the specified search criteria
+     * @since API Level 17
      */
     public UiSelector longClickable(boolean val) {
         return buildSelector(SELECTOR_LONG_CLICKABLE, val);
@@ -456,6 +531,7 @@ public class UiSelector {
      *
      * @param selector
      * @return UiSelector with this added search criterion
+     * @since API Level 16
      */
     public UiSelector childSelector(UiSelector selector) {
         return buildSelector(SELECTOR_CHILD, selector);
@@ -478,6 +554,7 @@ public class UiSelector {
      *
      * @param selector
      * @return UiSelector with this added search criterion
+     * @since API Level 16
      */
     public UiSelector fromParent(UiSelector selector) {
         return buildSelector(SELECTOR_PARENT, selector);
@@ -489,6 +566,7 @@ public class UiSelector {
      *
      * @param name Value to match
      * @return UiSelector with the specified search criteria
+     * @since API Level 16
      */
     public UiSelector packageName(String name) {
         return buildSelector(SELECTOR_PACKAGE_NAME, name);
@@ -498,11 +576,12 @@ public class UiSelector {
      * Set the search criteria to match the package name
      * of the application that contains the widget.
      *
-     * @param regular expression
+     * @param regex a regular expression
      * @return UiSelector with the specified search criteria
+     * @since API Level 17
      */
     public UiSelector packageNameMatches(String regex) {
-        return buildSelector(SELECTOR_PACKAGE_NAME_REGEX, regex);
+        return buildSelector(SELECTOR_PACKAGE_NAME_REGEX, Pattern.compile(regex));
     }
 
     /**
@@ -511,7 +590,7 @@ public class UiSelector {
      */
     private UiSelector buildSelector(int selectorId, Object selectorValue) {
         UiSelector selector = new UiSelector(this);
-        if(selectorId == SELECTOR_CHILD || selectorId == SELECTOR_PARENT)
+        if (selectorId == SELECTOR_CHILD || selectorId == SELECTOR_PARENT)
             selector.getLastSubSelector().mSelectorAttributes.put(selectorId, selectorValue);
         else
             selector.mSelectorAttributes.put(selectorId, selectorValue);
@@ -529,7 +608,7 @@ public class UiSelector {
      */
     UiSelector getChildSelector() {
         UiSelector selector = (UiSelector)mSelectorAttributes.get(UiSelector.SELECTOR_CHILD, null);
-        if(selector != null)
+        if (selector != null)
             return new UiSelector(selector);
         return null;
     }
@@ -537,7 +616,7 @@ public class UiSelector {
     UiSelector getPatternSelector() {
         UiSelector selector =
                 (UiSelector)mSelectorAttributes.get(UiSelector.SELECTOR_PATTERN, null);
-        if(selector != null)
+        if (selector != null)
             return new UiSelector(selector);
         return null;
     }
@@ -545,7 +624,7 @@ public class UiSelector {
     UiSelector getContainerSelector() {
         UiSelector selector =
                 (UiSelector)mSelectorAttributes.get(UiSelector.SELECTOR_CONTAINER, null);
-        if(selector != null)
+        if (selector != null)
             return new UiSelector(selector);
         return null;
     }
@@ -553,7 +632,7 @@ public class UiSelector {
     UiSelector getParentSelector() {
         UiSelector selector =
                 (UiSelector) mSelectorAttributes.get(UiSelector.SELECTOR_PARENT, null);
-        if(selector != null)
+        if (selector != null)
             return new UiSelector(selector);
         return null;
     }
@@ -574,6 +653,10 @@ public class UiSelector {
         return (Integer) mSelectorAttributes.get(criterion, 0);
     }
 
+    Pattern getPattern(int criterion) {
+        return (Pattern) mSelectorAttributes.get(criterion, null);
+    }
+
     boolean isMatchFor(AccessibilityNodeInfo node, int index) {
         int size = mSelectorAttributes.size();
         for(int x = 0; x < size; x++) {
@@ -581,7 +664,7 @@ public class UiSelector {
             int criterion = mSelectorAttributes.keyAt(x);
             switch(criterion) {
             case UiSelector.SELECTOR_INDEX:
-                if(index != this.getInt(criterion))
+                if (index != this.getInt(criterion))
                     return false;
                 break;
             case UiSelector.SELECTOR_CHECKED:
@@ -597,12 +680,17 @@ public class UiSelector {
                 break;
             case UiSelector.SELECTOR_CLASS_REGEX:
                 s = node.getClassName();
-                if (s == null || !s.toString().matches(getString(criterion))) {
+                if (s == null || !getPattern(criterion).matcher(s).matches()) {
                     return false;
                 }
                 break;
             case UiSelector.SELECTOR_CLICKABLE:
                 if (node.isClickable() != getBoolean(criterion)) {
+                    return false;
+                }
+                break;
+            case UiSelector.SELECTOR_CHECKABLE:
+                if (node.isCheckable() != getBoolean(criterion)) {
                     return false;
                 }
                 break;
@@ -613,68 +701,68 @@ public class UiSelector {
                 break;
             case UiSelector.SELECTOR_CONTAINS_DESCRIPTION:
                 s = node.getContentDescription();
-                if(s == null || !s.toString().toLowerCase()
+                if (s == null || !s.toString().toLowerCase()
                         .contains(getString(criterion).toLowerCase())) {
                     return false;
                 }
                 break;
             case UiSelector.SELECTOR_START_DESCRIPTION:
                 s = node.getContentDescription();
-                if(s == null || !s.toString().toLowerCase()
+                if (s == null || !s.toString().toLowerCase()
                         .startsWith(getString(criterion).toLowerCase())) {
                     return false;
                 }
                 break;
             case UiSelector.SELECTOR_DESCRIPTION:
                 s = node.getContentDescription();
-                if(s == null || !s.toString().contentEquals(getString(criterion))) {
+                if (s == null || !s.toString().contentEquals(getString(criterion))) {
                     return false;
                 }
                 break;
             case UiSelector.SELECTOR_DESCRIPTION_REGEX:
                 s = node.getContentDescription();
-                if(s == null || !s.toString().matches(getString(criterion))) {
+                if (s == null || !getPattern(criterion).matcher(s).matches()) {
                     return false;
                 }
                 break;
             case UiSelector.SELECTOR_CONTAINS_TEXT:
                 s = node.getText();
-                if(s == null || !s.toString().toLowerCase()
+                if (s == null || !s.toString().toLowerCase()
                         .contains(getString(criterion).toLowerCase())) {
                     return false;
                 }
                 break;
             case UiSelector.SELECTOR_START_TEXT:
                 s = node.getText();
-                if(s == null || !s.toString().toLowerCase()
+                if (s == null || !s.toString().toLowerCase()
                         .startsWith(getString(criterion).toLowerCase())) {
                     return false;
                 }
                 break;
             case UiSelector.SELECTOR_TEXT:
                 s = node.getText();
-                if(s == null || !s.toString().contentEquals(getString(criterion))) {
+                if (s == null || !s.toString().contentEquals(getString(criterion))) {
                     return false;
                 }
                 break;
             case UiSelector.SELECTOR_TEXT_REGEX:
                 s = node.getText();
-                if(s == null || !s.toString().matches(getString(criterion))) {
+                if (s == null || !getPattern(criterion).matcher(s).matches()) {
                     return false;
                 }
                 break;
             case UiSelector.SELECTOR_ENABLED:
-                if(node.isEnabled() != getBoolean(criterion)) {
+                if (node.isEnabled() != getBoolean(criterion)) {
                     return false;
                 }
                 break;
             case UiSelector.SELECTOR_FOCUSABLE:
-                if(node.isFocusable() != getBoolean(criterion)) {
+                if (node.isFocusable() != getBoolean(criterion)) {
                     return false;
                 }
                 break;
             case UiSelector.SELECTOR_FOCUSED:
-                if(node.isFocused() != getBoolean(criterion)) {
+                if (node.isFocused() != getBoolean(criterion)) {
                     return false;
                 }
                 break;
@@ -682,23 +770,35 @@ public class UiSelector {
                 break; //TODO: do we need this for AccessibilityNodeInfo.id?
             case UiSelector.SELECTOR_PACKAGE_NAME:
                 s = node.getPackageName();
-                if(s == null || !s.toString().contentEquals(getString(criterion))) {
+                if (s == null || !s.toString().contentEquals(getString(criterion))) {
                     return false;
                 }
                 break;
             case UiSelector.SELECTOR_PACKAGE_NAME_REGEX:
                 s = node.getPackageName();
-                if(s == null || !s.toString().matches(getString(criterion))) {
+                if (s == null || !getPattern(criterion).matcher(s).matches()) {
                     return false;
                 }
                 break;
             case UiSelector.SELECTOR_SCROLLABLE:
-                if(node.isScrollable() != getBoolean(criterion)) {
+                if (node.isScrollable() != getBoolean(criterion)) {
                     return false;
                 }
                 break;
             case UiSelector.SELECTOR_SELECTED:
-                if(node.isSelected() != getBoolean(criterion)) {
+                if (node.isSelected() != getBoolean(criterion)) {
+                    return false;
+                }
+                break;
+            case UiSelector.SELECTOR_RESOURCE_ID:
+                s = node.getViewIdResourceName();
+                if (s == null || !s.toString().contentEquals(getString(criterion))) {
+                    return false;
+                }
+                break;
+            case UiSelector.SELECTOR_RESOURCE_ID_REGEX:
+                s = node.getViewIdResourceName();
+                if (s == null || !getPattern(criterion).matcher(s).matches()) {
                     return false;
                 }
                 break;
@@ -712,13 +812,13 @@ public class UiSelector {
         int currentSelectorInstance = 0;
 
         // matched attributes - now check for matching instance number
-        if(mSelectorAttributes.indexOfKey(UiSelector.SELECTOR_INSTANCE) > 0) {
+        if (mSelectorAttributes.indexOfKey(UiSelector.SELECTOR_INSTANCE) >= 0) {
             currentSelectorInstance =
                     (Integer)mSelectorAttributes.get(UiSelector.SELECTOR_INSTANCE);
         }
 
         // instance is required. Add count if not already counting
-        if(mSelectorAttributes.indexOfKey(UiSelector.SELECTOR_COUNT) > 0) {
+        if (mSelectorAttributes.indexOfKey(UiSelector.SELECTOR_COUNT) >= 0) {
             currentSelectorCounter = (Integer)mSelectorAttributes.get(UiSelector.SELECTOR_COUNT);
         }
 
@@ -739,7 +839,7 @@ public class UiSelector {
      * @return true if is leaf.
      */
     boolean isLeaf() {
-        if(mSelectorAttributes.indexOfKey(UiSelector.SELECTOR_CHILD) < 0 &&
+        if (mSelectorAttributes.indexOfKey(UiSelector.SELECTOR_CHILD) < 0 &&
                 mSelectorAttributes.indexOfKey(UiSelector.SELECTOR_PARENT) < 0) {
             return true;
         }
@@ -747,28 +847,28 @@ public class UiSelector {
     }
 
     boolean hasChildSelector() {
-        if(mSelectorAttributes.indexOfKey(UiSelector.SELECTOR_CHILD) < 0) {
+        if (mSelectorAttributes.indexOfKey(UiSelector.SELECTOR_CHILD) < 0) {
             return false;
         }
         return true;
     }
 
     boolean hasPatternSelector() {
-        if(mSelectorAttributes.indexOfKey(UiSelector.SELECTOR_PATTERN) < 0) {
+        if (mSelectorAttributes.indexOfKey(UiSelector.SELECTOR_PATTERN) < 0) {
             return false;
         }
         return true;
     }
 
     boolean hasContainerSelector() {
-        if(mSelectorAttributes.indexOfKey(UiSelector.SELECTOR_CONTAINER) < 0) {
+        if (mSelectorAttributes.indexOfKey(UiSelector.SELECTOR_CONTAINER) < 0) {
             return false;
         }
         return true;
     }
 
     boolean hasParentSelector() {
-        if(mSelectorAttributes.indexOfKey(UiSelector.SELECTOR_PARENT) < 0) {
+        if (mSelectorAttributes.indexOfKey(UiSelector.SELECTOR_PARENT) < 0) {
             return false;
         }
         return true;
@@ -782,15 +882,15 @@ public class UiSelector {
      * @return last UiSelector in chain
      */
     private UiSelector getLastSubSelector() {
-        if(mSelectorAttributes.indexOfKey(UiSelector.SELECTOR_CHILD) >= 0) {
+        if (mSelectorAttributes.indexOfKey(UiSelector.SELECTOR_CHILD) >= 0) {
             UiSelector child = (UiSelector)mSelectorAttributes.get(UiSelector.SELECTOR_CHILD);
-            if(child.getLastSubSelector() == null) {
+            if (child.getLastSubSelector() == null) {
                 return child;
             }
             return child.getLastSubSelector();
-        } else if(mSelectorAttributes.indexOfKey(UiSelector.SELECTOR_PARENT) >= 0) {
+        } else if (mSelectorAttributes.indexOfKey(UiSelector.SELECTOR_PARENT) >= 0) {
             UiSelector parent = (UiSelector)mSelectorAttributes.get(UiSelector.SELECTOR_PARENT);
-            if(parent.getLastSubSelector() == null) {
+            if (parent.getLastSubSelector() == null) {
                 return parent;
             }
             return parent.getLastSubSelector();
@@ -864,6 +964,9 @@ public class UiSelector {
             case SELECTOR_CLICKABLE:
                 builder.append("CLICKABLE=").append(mSelectorAttributes.valueAt(i));
                 break;
+            case SELECTOR_CHECKABLE:
+                builder.append("CHECKABLE=").append(mSelectorAttributes.valueAt(i));
+                break;
             case SELECTOR_LONG_CLICKABLE:
                 builder.append("LONG_CLICKABLE=").append(mSelectorAttributes.valueAt(i));
                 break;
@@ -877,25 +980,25 @@ public class UiSelector {
                 builder.append("ID=").append(mSelectorAttributes.valueAt(i));
                 break;
             case SELECTOR_CHILD:
-                if(all)
+                if (all)
                     builder.append("CHILD=").append(mSelectorAttributes.valueAt(i));
                 else
                     builder.append("CHILD[..]");
                 break;
             case SELECTOR_PATTERN:
-                if(all)
+                if (all)
                     builder.append("PATTERN=").append(mSelectorAttributes.valueAt(i));
                 else
                     builder.append("PATTERN[..]");
                 break;
             case SELECTOR_CONTAINER:
-                if(all)
+                if (all)
                     builder.append("CONTAINER=").append(mSelectorAttributes.valueAt(i));
                 else
                     builder.append("CONTAINER[..]");
                 break;
             case SELECTOR_PARENT:
-                if(all)
+                if (all)
                     builder.append("PARENT=").append(mSelectorAttributes.valueAt(i));
                 else
                     builder.append("PARENT[..]");
@@ -908,6 +1011,12 @@ public class UiSelector {
                 break;
             case SELECTOR_PACKAGE_NAME_REGEX:
                 builder.append("PACKAGE_NAME_REGEX=").append(mSelectorAttributes.valueAt(i));
+                break;
+            case SELECTOR_RESOURCE_ID:
+                builder.append("RESOURCE_ID=").append(mSelectorAttributes.valueAt(i));
+                break;
+            case SELECTOR_RESOURCE_ID_REGEX:
+                builder.append("RESOURCE_ID_REGEX=").append(mSelectorAttributes.valueAt(i));
                 break;
             default:
                 builder.append("UNDEFINED="+criterion+" ").append(mSelectorAttributes.valueAt(i));

@@ -18,17 +18,12 @@ package com.android.rs.image;
 
 import android.app.Activity;
 import android.os.Bundle;
+import android.os.Handler;
+import android.os.Message;
 import android.graphics.BitmapFactory;
 import android.graphics.Bitmap;
 import android.graphics.Canvas;
-import android.renderscript.ScriptC;
-import android.renderscript.RenderScript;
-import android.renderscript.Type;
-import android.renderscript.Allocation;
-import android.renderscript.Element;
-import android.renderscript.Script;
 import android.view.SurfaceView;
-import android.view.SurfaceHolder;
 import android.widget.AdapterView;
 import android.widget.ArrayAdapter;
 import android.widget.ImageView;
@@ -37,13 +32,14 @@ import android.widget.Spinner;
 import android.widget.TextView;
 import android.view.View;
 import android.util.Log;
-import java.lang.Math;
+import android.renderscript.ScriptC;
+import android.renderscript.RenderScript;
+import android.renderscript.Type;
+import android.renderscript.Allocation;
+import android.renderscript.Element;
+import android.renderscript.Script;
 
 import android.os.Environment;
-import android.app.Instrumentation;
-import android.content.Context;
-import android.content.Intent;
-import android.net.Uri;
 import java.io.BufferedWriter;
 import java.io.File;
 import java.io.FileWriter;
@@ -52,12 +48,74 @@ import java.io.IOException;
 public class ImageProcessingActivity extends Activity
                                        implements SeekBar.OnSeekBarChangeListener {
     private final String TAG = "Img";
-    private final String RESULT_FILE = "image_processing_result.csv";
+    public final String RESULT_FILE = "image_processing_result.csv";
+
+    RenderScript mRS;
+    Allocation mInPixelsAllocation;
+    Allocation mInPixelsAllocation2;
+    Allocation mOutPixelsAllocation;
+
+    /**
+     * Define enum type for test names
+     */
+    public enum TestName {
+        // totally there are 38 test cases
+        LEVELS_VEC3_RELAXED ("Levels Vec3 Relaxed"),
+        LEVELS_VEC4_RELAXED ("Levels Vec4 Relaxed"),
+        LEVELS_VEC3_FULL ("Levels Vec3 Full"),
+        LEVELS_VEC4_FULL ("Levels Vec4 Full"),
+        BLUR_RADIUS_25 ("Blur radius 25"),
+        INTRINSIC_BLUE_RADIUS_25 ("Intrinsic Blur radius 25"),
+        GREYSCALE ("Greyscale"),
+        GRAIN ("Grain"),
+        FISHEYE_FULL ("Fisheye Full"),
+        FISHEYE_RELAXED ("Fisheye Relaxed"),
+        FISHEYE_APPROXIMATE_FULL ("Fisheye Approximate Full"),
+        FISHEYE_APPROXIMATE_RELAXED ("Fisheye Approximate Relaxed"),
+        VIGNETTE_FULL ("Vignette Full"),
+        VIGNETTE_RELAXED ("Vignette Relaxed"),
+        VIGNETTE_APPROXIMATE_FULL ("Vignette Approximate Full"),
+        VIGNETTE_APPROXIMATE_RELAXED ("Vignette Approximate Relaxed"),
+        GROUP_TEST_EMULATED ("Group Test (emulated)"),
+        GROUP_TEST_NATIVE ("Group Test (native)"),
+        CONVOLVE_3X3 ("Convolve 3x3"),
+        INTRINSICS_CONVOLVE_3X3 ("Intrinsics Convolve 3x3"),
+        COLOR_MATRIX ("ColorMatrix"),
+        INTRINSICS_COLOR_MATRIX ("Intrinsics ColorMatrix"),
+        INTRINSICS_COLOR_MATRIX_GREY ("Intrinsics ColorMatrix Grey"),
+        COPY ("Copy"),
+        CROSS_PROCESS_USING_LUT ("CrossProcess (using LUT)"),
+        CONVOLVE_5X5 ("Convolve 5x5"),
+        INTRINSICS_CONVOLVE_5X5 ("Intrinsics Convolve 5x5"),
+        MANDELBROT ("Mandelbrot"),
+        INTRINSICS_BLEND ("Intrinsics Blend"),
+        INTRINSICS_BLUR_25G ("Intrinsics Blur 25 uchar"),
+        VIBRANCE ("Vibrance"),
+        BW_FILTER ("BW Filter"),
+        SHADOWS ("Shadows"),
+        CONTRAST ("Contrast"),
+        EXPOSURE ("Exposure"),
+        WHITE_BALANCE ("White Balance"),
+        COLOR_CUBE ("Color Cube"),
+        COLOR_CUBE_3D_INTRINSIC ("Color Cube (3D LUT intrinsic)"),
+        USAGE_IO ("Usage io)");
+
+
+        private final String name;
+
+        private TestName(String s) {
+            name = s;
+        }
+
+        // return quoted string as displayed test name
+        public String toString() {
+            return name;
+        }
+    }
 
     Bitmap mBitmapIn;
     Bitmap mBitmapIn2;
     Bitmap mBitmapOut;
-    String mTestNames[];
 
     private Spinner mSpinner;
     private SeekBar mBar1;
@@ -82,11 +140,40 @@ public class ImageProcessingActivity extends Activity
     private boolean mDoingBenchmark;
 
     private TestBase mTest;
+    private int mRunCount;
 
     public void updateDisplay() {
-            mTest.updateBitmap(mBitmapOut);
-            mDisplayView.invalidate();
+        mHandler.sendMessage(Message.obtain());
     }
+
+    private Handler mHandler = new Handler() {
+        // Allow the filter to complete without blocking the UI
+        // thread.  When the message arrives that the op is complete
+        // we will either mark completion or start a new filter if
+        // more work is ready.  Either way, display the result.
+        @Override
+        public void handleMessage(Message msg) {
+            boolean doTest = false;
+            synchronized(this) {
+                if (mRS == null) {
+                    return;
+                }
+                mTest.updateBitmap(mBitmapOut);
+                mDisplayView.invalidate();
+                if (mRunCount > 0) {
+                    mRunCount--;
+                    if (mRunCount > 0) {
+                        doTest = true;
+                    }
+                }
+
+                if (doTest) {
+                    mTest.runTestSendMessage();
+                }
+            }
+        }
+
+    };
 
     public void onProgressChanged(SeekBar seekBar, int progress, boolean fromUser) {
         if (fromUser) {
@@ -103,8 +190,18 @@ public class ImageProcessingActivity extends Activity
                 mTest.onBar5Changed(progress);
             }
 
-            mTest.runTest();
-            updateDisplay();
+            boolean doTest = false;
+            synchronized(this) {
+                if (mRunCount == 0) {
+                    doTest = true;
+                    mRunCount = 1;
+                } else {
+                    mRunCount = 2;
+                }
+            }
+            if (doTest) {
+                mTest.runTestSendMessage();
+            }
         }
     }
 
@@ -140,101 +237,131 @@ public class ImageProcessingActivity extends Activity
     }
 
 
-    void changeTest(int testID) {
+    void changeTest(TestName testName) {
         if (mTest != null) {
             mTest.destroy();
         }
-        switch(testID) {
-        case 0:
+        switch(testName) {
+        case LEVELS_VEC3_RELAXED:
             mTest = new LevelsV4(false, false);
             break;
-        case 1:
+        case LEVELS_VEC4_RELAXED:
             mTest = new LevelsV4(false, true);
             break;
-        case 2:
+        case LEVELS_VEC3_FULL:
             mTest = new LevelsV4(true, false);
             break;
-        case 3:
+        case LEVELS_VEC4_FULL:
             mTest = new LevelsV4(true, true);
             break;
-        case 4:
+        case BLUR_RADIUS_25:
             mTest = new Blur25(false);
             break;
-        case 5:
+        case INTRINSIC_BLUE_RADIUS_25:
             mTest = new Blur25(true);
             break;
-        case 6:
+        case GREYSCALE:
             mTest = new Greyscale();
             break;
-        case 7:
+        case GRAIN:
             mTest = new Grain();
             break;
-        case 8:
+        case FISHEYE_FULL:
             mTest = new Fisheye(false, false);
             break;
-        case 9:
+        case FISHEYE_RELAXED:
             mTest = new Fisheye(false, true);
             break;
-        case 10:
+        case FISHEYE_APPROXIMATE_FULL:
             mTest = new Fisheye(true, false);
             break;
-        case 11:
+        case FISHEYE_APPROXIMATE_RELAXED:
             mTest = new Fisheye(true, true);
             break;
-        case 12:
+        case VIGNETTE_FULL:
             mTest = new Vignette(false, false);
             break;
-        case 13:
+        case VIGNETTE_RELAXED:
             mTest = new Vignette(false, true);
             break;
-        case 14:
+        case VIGNETTE_APPROXIMATE_FULL:
             mTest = new Vignette(true, false);
             break;
-        case 15:
+        case VIGNETTE_APPROXIMATE_RELAXED:
             mTest = new Vignette(true, true);
             break;
-        case 16:
+        case GROUP_TEST_EMULATED:
             mTest = new GroupTest(false);
             break;
-        case 17:
+        case GROUP_TEST_NATIVE:
             mTest = new GroupTest(true);
             break;
-        case 18:
+        case CONVOLVE_3X3:
             mTest = new Convolve3x3(false);
             break;
-        case 19:
+        case INTRINSICS_CONVOLVE_3X3:
             mTest = new Convolve3x3(true);
             break;
-        case 20:
+        case COLOR_MATRIX:
             mTest = new ColorMatrix(false, false);
             break;
-        case 21:
+        case INTRINSICS_COLOR_MATRIX:
             mTest = new ColorMatrix(true, false);
             break;
-        case 22:
+        case INTRINSICS_COLOR_MATRIX_GREY:
             mTest = new ColorMatrix(true, true);
             break;
-        case 23:
+        case COPY:
             mTest = new Copy();
             break;
-        case 24:
+        case CROSS_PROCESS_USING_LUT:
             mTest = new CrossProcess();
             break;
-        case 25:
+        case CONVOLVE_5X5:
             mTest = new Convolve5x5(false);
             break;
-        case 26:
+        case INTRINSICS_CONVOLVE_5X5:
             mTest = new Convolve5x5(true);
             break;
-        case 27:
+        case MANDELBROT:
             mTest = new Mandelbrot();
             break;
-        case 28:
+        case INTRINSICS_BLEND:
             mTest = new Blend();
+            break;
+        case INTRINSICS_BLUR_25G:
+            mTest = new Blur25G();
+            break;
+        case VIBRANCE:
+            mTest = new Vibrance();
+            break;
+        case BW_FILTER:
+            mTest = new BWFilter();
+            break;
+        case SHADOWS:
+            mTest = new Shadows();
+            break;
+        case CONTRAST:
+            mTest = new Contrast();
+            break;
+        case EXPOSURE:
+            mTest = new Exposure();
+            break;
+        case WHITE_BALANCE:
+            mTest = new WhiteBalance();
+            break;
+        case COLOR_CUBE:
+            mTest = new ColorCube(false);
+            break;
+        case COLOR_CUBE_3D_INTRINSIC:
+            mTest = new ColorCube(true);
+            break;
+        case USAGE_IO:
+            mTest = new UsageIO();
             break;
         }
 
-        mTest.createBaseTest(this, mBitmapIn, mBitmapIn2);
+        mTest.createBaseTest(this, mBitmapIn, mBitmapIn2, mBitmapOut);
         setupBars();
 
         mTest.runTest();
@@ -243,45 +370,14 @@ public class ImageProcessingActivity extends Activity
     }
 
     void setupTests() {
-        mTestNames = new String[29];
-        mTestNames[0] = "Levels Vec3 Relaxed";
-        mTestNames[1] = "Levels Vec4 Relaxed";
-        mTestNames[2] = "Levels Vec3 Full";
-        mTestNames[3] = "Levels Vec4 Full";
-        mTestNames[4] = "Blur radius 25";
-        mTestNames[5] = "Intrinsic Blur radius 25";
-        mTestNames[6] = "Greyscale";
-        mTestNames[7] = "Grain";
-        mTestNames[8] = "Fisheye Full";
-        mTestNames[9] = "Fisheye Relaxed";
-        mTestNames[10] = "Fisheye Approximate Full";
-        mTestNames[11] = "Fisheye Approximate Relaxed";
-        mTestNames[12] = "Vignette Full";
-        mTestNames[13] = "Vignette Relaxed";
-        mTestNames[14] = "Vignette Approximate Full";
-        mTestNames[15] = "Vignette Approximate Relaxed";
-        mTestNames[16] = "Group Test (emulated)";
-        mTestNames[17] = "Group Test (native)";
-        mTestNames[18] = "Convolve 3x3";
-        mTestNames[19] = "Intrinsics Convolve 3x3";
-        mTestNames[20] = "ColorMatrix";
-        mTestNames[21] = "Intrinsics ColorMatrix";
-        mTestNames[22] = "Intrinsics ColorMatrix Grey";
-        mTestNames[23] = "Copy";
-        mTestNames[24] = "CrossProcess (using LUT)";
-        mTestNames[25] = "Convolve 5x5";
-        mTestNames[26] = "Intrinsics Convolve 5x5";
-        mTestNames[27] = "Mandelbrot";
-        mTestNames[28] = "Intrinsics Blend";
-
-        mTestSpinner.setAdapter(new ArrayAdapter<String>(
-            this, R.layout.spinner_layout, mTestNames));
+        mTestSpinner.setAdapter(new ArrayAdapter<TestName>(
+            this, R.layout.spinner_layout, TestName.values()));
     }
 
     private AdapterView.OnItemSelectedListener mTestSpinnerListener =
             new AdapterView.OnItemSelectedListener() {
                 public void onItemSelected(AdapterView<?> parent, View view, int pos, long id) {
-                    changeTest(pos);
+                    changeTest(TestName.values()[pos]);
                 }
 
                 public void onNothingSelected(AdapterView parent) {
@@ -289,14 +385,11 @@ public class ImageProcessingActivity extends Activity
                 }
             };
 
-    @Override
-    protected void onCreate(Bundle savedInstanceState) {
-        super.onCreate(savedInstanceState);
-        setContentView(R.layout.main);
-
+    void init() {
         mBitmapIn = loadBitmap(R.drawable.img1600x1067);
         mBitmapIn2 = loadBitmap(R.drawable.img1600x1067b);
-        mBitmapOut = loadBitmap(R.drawable.img1600x1067);
+        mBitmapOut = Bitmap.createBitmap(mBitmapIn.getWidth(), mBitmapIn.getHeight(),
+                                         mBitmapIn.getConfig());
 
         mSurfaceView = (SurfaceView) findViewById(R.id.surface);
 
@@ -329,23 +422,74 @@ public class ImageProcessingActivity extends Activity
         mBenchmarkResult = (TextView) findViewById(R.id.benchmarkText);
         mBenchmarkResult.setText("Result: not run");
 
+
+        mRS = RenderScript.create(this);
+        mInPixelsAllocation = Allocation.createFromBitmap(mRS, mBitmapIn,
+                                                          Allocation.MipmapControl.MIPMAP_NONE,
+                                                          Allocation.USAGE_SHARED |
+                                                          Allocation.USAGE_GRAPHICS_TEXTURE |
+                                                          Allocation.USAGE_SCRIPT);
+        mInPixelsAllocation2 = Allocation.createFromBitmap(mRS, mBitmapIn2,
+                                                           Allocation.MipmapControl.MIPMAP_NONE,
+                                                           Allocation.USAGE_SHARED |
+                                                           Allocation.USAGE_GRAPHICS_TEXTURE |
+                                                           Allocation.USAGE_SCRIPT);
+        mOutPixelsAllocation = Allocation.createFromBitmap(mRS, mBitmapOut);
+
+
         setupTests();
-        changeTest(0);
+        changeTest(TestName.LEVELS_VEC3_RELAXED);
     }
 
+    void cleanup() {
+        synchronized(this) {
+            RenderScript rs = mRS;
+            mRS = null;
+            while(mDoingBenchmark) {
+                try {
+                    Thread.sleep(1, 0);
+                } catch(InterruptedException e) {
+                }
+
+            }
+            rs.destroy();
+        }
+
+        mInPixelsAllocation = null;
+        mInPixelsAllocation2 = null;
+        mOutPixelsAllocation = null;
+        mBitmapIn = null;
+        mBitmapIn2 = null;
+        mBitmapOut = null;
+    }
+
+    @Override
+    protected void onCreate(Bundle savedInstanceState) {
+        super.onCreate(savedInstanceState);
+        setContentView(R.layout.main);
+
+        init();
+    }
+
+    @Override
+    protected void onPause() {
+        super.onPause();
+
+        cleanup();
+    }
+
+
+    @Override
+    protected void onResume() {
+        super.onResume();
+
+        init();
+    }
 
     private Bitmap loadBitmap(int resource) {
         final BitmapFactory.Options options = new BitmapFactory.Options();
         options.inPreferredConfig = Bitmap.Config.ARGB_8888;
-        return copyBitmap(BitmapFactory.decodeResource(getResources(), resource, options));
-    }
-
-    private static Bitmap copyBitmap(Bitmap source) {
-        Bitmap b = Bitmap.createBitmap(source.getWidth(), source.getHeight(), source.getConfig());
-        Canvas c = new Canvas(b);
-        c.drawBitmap(source, 0, 0, null);
-        source.recycle();
-        return b;
+        return BitmapFactory.decodeResource(getResources(), resource, options);
     }
 
     // button hook
@@ -369,10 +513,10 @@ public class ImageProcessingActivity extends Activity
         try {
             BufferedWriter rsWriter = new BufferedWriter(new FileWriter(resultFile));
             Log.v(TAG, "Saved results in: " + resultFile.getAbsolutePath());
-            for (int i = 0; i < mTestNames.length; i++ ) {
-                changeTest(i);
+            for (TestName tn: TestName.values()) {
+                changeTest(tn);
                 float t = getBenchmark();
-                String s = new String("" + mTestNames[i] + ", " + t);
+                String s = new String("" + tn.toString() + ", " + t);
                 rsWriter.write(s + "\n");
                 Log.v(TAG, "Test " + s + "ms\n");
             }
@@ -380,11 +524,16 @@ public class ImageProcessingActivity extends Activity
         } catch (IOException e) {
             Log.v(TAG, "Unable to write result file " + e.getMessage());
         }
-        changeTest(0);
+        changeTest(TestName.LEVELS_VEC3_RELAXED);
     }
+
+
 
     // For benchmark test
     public float getBenchmark() {
+        if (mRS == null) {
+            return 0;
+        }
         mDoingBenchmark = true;
 
         mTest.setupBenchmark();
@@ -396,7 +545,6 @@ public class ImageProcessingActivity extends Activity
             mTest.runTest();
             mTest.finish();
         } while (t > java.lang.System.currentTimeMillis());
-
 
         //Log.v(TAG, "Benchmarking");
         int ct = 0;
@@ -412,7 +560,6 @@ public class ImageProcessingActivity extends Activity
 
         mTest.exitBenchmark();
         mDoingBenchmark = false;
-
         return ft;
     }
 }

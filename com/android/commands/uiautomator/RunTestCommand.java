@@ -17,11 +17,16 @@
 package com.android.commands.uiautomator;
 
 import android.os.Bundle;
+import android.util.Log;
 
 import com.android.commands.uiautomator.Launcher.Command;
 import com.android.uiautomator.testrunner.UiAutomatorTestRunner;
 
+import dalvik.system.DexFile;
+
+import java.io.IOException;
 import java.util.ArrayList;
+import java.util.Enumeration;
 import java.util.List;
 
 /**
@@ -29,11 +34,16 @@ import java.util.List;
  *
  */
 public class RunTestCommand extends Command {
+    private static final String LOGTAG = RunTestCommand.class.getSimpleName();
 
+    private static final String OUTPUT_SIMPLE = "simple";
+    private static final String OUTPUT_FORMAT_KEY = "outputFormat";
     private static final String CLASS_PARAM = "class";
+    private static final String JARS_PARAM = "jars";
     private static final String DEBUG_PARAM = "debug";
     private static final String RUNNER_PARAM = "runner";
     private static final String CLASS_SEPARATOR = ",";
+    private static final String JARS_SEPARATOR = ":";
     private static final int ARG_OK = 0;
     private static final int ARG_FAIL_INCOMPLETE_E = -1;
     private static final int ARG_FAIL_INCOMPLETE_C = -2;
@@ -41,10 +51,12 @@ public class RunTestCommand extends Command {
     private static final int ARG_FAIL_RUNNER = -4;
     private static final int ARG_FAIL_UNSUPPORTED = -99;
 
-    private Bundle mParams = new Bundle();
-    private List<String> mTestClasses = new ArrayList<String>();
+    private final Bundle mParams = new Bundle();
+    private final List<String> mTestClasses = new ArrayList<String>();
     private boolean mDebug;
-    private String mRunner;
+    private boolean mMonkey = false;
+    private String mRunnerClassName;
+    private UiAutomatorTestRunner mRunner;
 
     public RunTestCommand() {
         super("runtest");
@@ -70,10 +82,13 @@ public class RunTestCommand extends Command {
                 break;
         }
         if (mTestClasses.isEmpty()) {
-            System.err.println("Please specify at least one test class to run.");
-            System.exit(ARG_FAIL_NO_CLASS);
+            addTestClassesFromJars();
+            if (mTestClasses.isEmpty()) {
+                System.err.println("No test classes found.");
+                System.exit(ARG_FAIL_NO_CLASS);
+            }
         }
-        getRunner().run(mTestClasses, mParams, mDebug);
+        getRunner().run(mTestClasses, mParams, mDebug, mMonkey);
     }
 
     private int parseArgs(String[] args) {
@@ -85,6 +100,7 @@ public class RunTestCommand extends Command {
         // key is "debug", parameter will determine whether to wait for debugger
         // to attach
         // -c <class name>
+        // -s turns on the simple output format
         // equivalent to -e class <class name>, i.e. passed onto JUnit
         for (int i = 0; i < args.length; i++) {
             if (args[i].equals("-e")) {
@@ -96,7 +112,7 @@ public class RunTestCommand extends Command {
                     } else if (DEBUG_PARAM.equals(key)) {
                         mDebug = "true".equals(value) || "1".equals(value);
                     } else if (RUNNER_PARAM.equals(key)) {
-                        mRunner = value;
+                        mRunnerClassName = value;
                     } else {
                         mParams.putString(key, value);
                     }
@@ -109,6 +125,10 @@ public class RunTestCommand extends Command {
                 } else {
                     return ARG_FAIL_INCOMPLETE_C;
                 }
+            } else if (args[i].equals("--monkey")) {
+                mMonkey = true;
+            } else if (args[i].equals("-s")) {
+                mParams.putString(OUTPUT_FORMAT_KEY, OUTPUT_SIMPLE);
             } else {
                 return ARG_FAIL_UNSUPPORTED;
             }
@@ -117,26 +137,32 @@ public class RunTestCommand extends Command {
     }
 
     protected UiAutomatorTestRunner getRunner() {
-        if (mRunner == null) {
-            return new UiAutomatorTestRunner();
+        if (mRunner != null) {
+            return mRunner;
+        }
+
+        if (mRunnerClassName == null) {
+            mRunner = new UiAutomatorTestRunner();
+            return mRunner;
         }
         // use reflection to get the runner
         Object o = null;
         try {
-            Class<?> clazz = Class.forName(mRunner);
+            Class<?> clazz = Class.forName(mRunnerClassName);
             o = clazz.newInstance();
         } catch (ClassNotFoundException cnfe) {
-            System.err.println("Cannot find runner: " + mRunner);
+            System.err.println("Cannot find runner: " + mRunnerClassName);
             System.exit(ARG_FAIL_RUNNER);
         } catch (InstantiationException ie) {
-            System.err.println("Cannot instantiate runner: " + mRunner);
+            System.err.println("Cannot instantiate runner: " + mRunnerClassName);
             System.exit(ARG_FAIL_RUNNER);
         } catch (IllegalAccessException iae) {
-            System.err.println("Constructor of runner " + mRunner + " is not accessibile");
+            System.err.println("Constructor of runner " + mRunnerClassName + " is not accessibile");
             System.exit(ARG_FAIL_RUNNER);
         }
         try {
             UiAutomatorTestRunner runner = (UiAutomatorTestRunner)o;
+            mRunner = runner;
             return runner;
         } catch (ClassCastException cce) {
             System.err.println("Specified runner is not subclass of "
@@ -158,6 +184,49 @@ public class RunTestCommand extends Command {
         }
     }
 
+    /**
+     * Add test classes from jars passed on the command line. Use this if nothing was explicitly
+     * specified on the command line.
+     */
+    private void addTestClassesFromJars() {
+        String jars = mParams.getString(JARS_PARAM);
+        if (jars == null) return;
+
+        String[] jarFileNames = jars.split(JARS_SEPARATOR);
+        for (String fileName : jarFileNames) {
+            fileName = fileName.trim();
+            if (fileName.isEmpty()) continue;
+            try {
+                DexFile dexFile = new DexFile(fileName);
+                for(Enumeration<String> e = dexFile.entries(); e.hasMoreElements();) {
+                    String className = e.nextElement();
+                    if (isTestClass(className)) {
+                        mTestClasses.add(className);
+                    }
+                }
+                dexFile.close();
+            } catch (IOException e) {
+                Log.w(LOGTAG, String.format("Could not read %s: %s", fileName, e.getMessage()));
+            }
+        }
+    }
+
+    /**
+     * Tries to determine if a given class is a test class. A test class has to inherit from
+     * UiAutomator test case and it must be a top-level class.
+     * @param className
+     * @return
+     */
+    private boolean isTestClass(String className) {
+        try {
+            Class<?> clazz = this.getClass().getClassLoader().loadClass(className);
+            if (clazz.getEnclosingClass() != null) return false;
+            return getRunner().getTestCaseFilter().accept(clazz);
+        } catch (ClassNotFoundException e) {
+            return false;
+        }
+    }
+
     @Override
     public String detailedOptions() {
         return "    runtest <class spec> [options]\n"
@@ -168,7 +237,8 @@ public class RunTestCommand extends Command {
             + "        specified, separated by space.\n"
             + "      <CLASSES>: a list of test class names to run, separated by comma. To\n"
             + "        a single method, use TestClass#testMethod format. The -e or -c option\n"
-            + "        may be repeated.\n"
+            + "        may be repeated. This option is not required and if not provided then\n"
+            + "        all the tests in provided jars will be run automatically.\n"
             + "    options:\n"
             + "      --nohup: trap SIG_HUP, so test won't terminate even if parent process\n"
             + "               is terminated, e.g. USB is disconnected.\n"
@@ -176,7 +246,8 @@ public class RunTestCommand extends Command {
             + "      -e runner [CLASS]: use specified test runner class instead. If\n"
             + "        unspecified, framework default runner will be used.\n"
             + "      -e <NAME> <VALUE>: other name-value pairs to be passed to test classes.\n"
-            + "        May be repeated.\n";
+            + "        May be repeated.\n"
+            + "      -e outputFormat simple | -s: enabled less verbose JUnit style output.\n";
     }
 
     @Override

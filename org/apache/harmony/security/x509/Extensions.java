@@ -26,6 +26,7 @@ import java.io.IOException;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collection;
+import java.util.Collections;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.List;
@@ -222,14 +223,20 @@ public final class Extensions {
      * </pre>
      * (as specified in RFC 3280)
      *
-     * @return the value of pathLenConstraint field if extension presents,
-     * and Integer.MAX_VALUE if does not.
+     * @return-1 if the Basic Constraints Extension is not present or
+     * it is present but it indicates the certificate is not a
+     * certificate authority. If the certificate is a certificate
+     * authority, returns the path length constraint if present, or
+     * Integer.MAX_VALUE if it is not.
      */
-    public int valueOfBasicConstrains() {
+    public int valueOfBasicConstraints() {
         Extension extension = getExtensionByOID("2.5.29.19");
-        BasicConstraints bc;
-        if ((extension == null) || ((bc = extension.getBasicConstraintsValue()) == null)) {
-            return Integer.MAX_VALUE;
+        if (extension == null) {
+            return -1;
+        }
+        BasicConstraints bc = extension.getBasicConstraintsValue();
+        if (bc == null || !bc.getCa()) {
+            return -1;
         }
         return bc.getPathLenConstraint();
     }
@@ -250,11 +257,7 @@ public final class Extensions {
      * null if does not.
      */
     public Collection<List<?>> valueOfSubjectAlternativeName() throws IOException {
-        Extension extension = getExtensionByOID("2.5.29.17");
-        if (extension == null) {
-            return null;
-        }
-        return ((GeneralNames) GeneralNames.ASN1.decode(extension.getExtnValue())).getPairsList();
+        return decodeGeneralNames(getExtensionByOID("2.5.29.17"));
     }
 
     /**
@@ -273,11 +276,31 @@ public final class Extensions {
      * null if does not.
      */
     public Collection<List<?>> valueOfIssuerAlternativeName() throws IOException {
-        Extension extension = getExtensionByOID("2.5.29.18");
+        return decodeGeneralNames(getExtensionByOID("2.5.29.18"));
+    }
+
+    /**
+     * Given an X.509 extension that encodes GeneralNames, return it in the
+     * format expected by APIs.
+     */
+    private static Collection<List<?>> decodeGeneralNames(Extension extension)
+            throws IOException {
         if (extension == null) {
             return null;
         }
-        return ((GeneralNames) GeneralNames.ASN1.decode(extension.getExtnValue())).getPairsList();
+
+        Collection<List<?>> collection = ((GeneralNames) GeneralNames.ASN1.decode(extension
+                .getExtnValue())).getPairsList();
+
+        /*
+         * If the extension had any invalid entries, we may have an empty
+         * collection at this point, so just return null.
+         */
+        if (collection.size() == 0) {
+            return null;
+        }
+
+        return Collections.unmodifiableCollection(collection);
     }
 
     /**

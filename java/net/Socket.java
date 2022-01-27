@@ -482,7 +482,7 @@ public class Socket {
     }
 
     /**
-     * Sets this socket's {@link SocketOptions#SO_SNDBUF receive buffer size}.
+     * Sets this socket's {@link SocketOptions#SO_RCVBUF receive buffer size}.
      */
     public synchronized void setReceiveBufferSize(int size) throws SocketException {
         checkOpenAndCreate(true);
@@ -909,7 +909,7 @@ public class Socket {
     public void setTrafficClass(int value) throws SocketException {
         checkOpenAndCreate(true);
         if (value < 0 || value > 255) {
-            throw new IllegalArgumentException();
+            throw new IllegalArgumentException("Value doesn't fit in an unsigned byte: " + value);
         }
         impl.setOption(SocketOptions.IP_TOS, Integer.valueOf(value));
     }

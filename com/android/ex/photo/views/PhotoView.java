@@ -18,7 +18,6 @@
 package com.android.ex.photo.views;
 
 import android.content.Context;
-import android.content.pm.PackageManager;
 import android.content.res.Resources;
 import android.graphics.Bitmap;
 import android.graphics.Canvas;
@@ -73,9 +72,6 @@ public class PhotoView extends View implements OnGestureListener,
     /** Video icon */
     private static Bitmap sVideoNotReadyImage;
 
-    // Features
-    private static boolean sHasMultitouchDistinct;
-
     // Paints
     /** Paint to partially dim the photo during crop */
     private static Paint sCropDimPaint;
@@ -108,6 +104,8 @@ public class PhotoView extends View implements OnGestureListener,
     private Rect mCropRect = new Rect();
     /** Actual crop size; may differ from {@link #sCropSize} if the screen is smaller */
     private int mCropSize;
+    /** The maximum amount of scaling to apply to images */
+    private float mMaxInitialScaleFactor;
 
     /** Gesture detector */
     private GestureDetectorCompat mGestureDetector;
@@ -699,9 +697,13 @@ public class PhotoView extends View implements OnGestureListener,
             } else {
                 mTempDst.set(0, 0, vwidth, vheight);
             }
-
-            if (dwidth < vwidth && dheight < vheight && !mAllowCrop) {
-                mMatrix.setTranslate(vwidth / 2 - dwidth / 2, vheight / 2 - dheight / 2);
+            RectF scaledDestination = new RectF(
+                    (vwidth / 2) - (dwidth * mMaxInitialScaleFactor / 2),
+                    (vheight / 2) - (dheight * mMaxInitialScaleFactor / 2),
+                    (vwidth / 2) + (dwidth * mMaxInitialScaleFactor / 2),
+                    (vheight / 2) + (dheight * mMaxInitialScaleFactor / 2));
+            if(mTempDst.contains(scaledDestination)) {
+                mMatrix.setRectToRect(mTempSrc, scaledDestination, Matrix.ScaleToFit.CENTER);
             } else {
                 mMatrix.setRectToRect(mTempSrc, mTempDst, Matrix.ScaleToFit.CENTER);
             }
@@ -1284,5 +1286,9 @@ public class PhotoView extends View implements OnGestureListener,
             }
             mHeader.post(this);
         }
+    }
+
+    public void setMaxInitialScale(float f) {
+        mMaxInitialScaleFactor = f;
     }
 }

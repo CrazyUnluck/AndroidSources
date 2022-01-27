@@ -15,24 +15,23 @@
  */
 package com.android.uiautomator.core;
 
+import android.app.UiAutomation.OnAccessibilityEventListener;
 import android.os.SystemClock;
 import android.util.Log;
 import android.view.accessibility.AccessibilityEvent;
 import android.view.accessibility.AccessibilityNodeInfo;
 
-import com.android.uiautomator.core.UiAutomatorBridge.AccessibilityEventListener;
 
 /**
- * The QuertController main purpose is to translate a {@link UiSelector} selectors to
- * {@link AccessibilityNodeInfo}. This is all this controller does. It is typically
- * created in conjunction with a {@link InteractionController} by {@link UiAutomationContext}
- * which owns both. {@link UiAutomationContext} is used by {@link UiBase} classes.
+ * The QueryController main purpose is to translate a {@link UiSelector} selectors to
+ * {@link AccessibilityNodeInfo}. This is all this controller does.
  */
 class QueryController {
 
     private static final String LOG_TAG = QueryController.class.getSimpleName();
 
-    private static final boolean DEBUG = false;
+    private static final boolean DEBUG = Log.isLoggable(LOG_TAG, Log.DEBUG);
+    private static final boolean VERBOSE = Log.isLoggable(LOG_TAG, Log.VERBOSE);
 
     private final UiAutomatorBridge mUiAutomatorBridge;
 
@@ -56,7 +55,7 @@ class QueryController {
 
     public QueryController(UiAutomatorBridge bridge) {
         mUiAutomatorBridge = bridge;
-        bridge.addAccessibilityEventListener(new AccessibilityEventListener() {
+        bridge.setOnAccessibilityEventListener(new OnAccessibilityEventListener() {
             @Override
             public void onAccessibilityEvent(AccessibilityEvent event) {
                 synchronized (mLock) {
@@ -73,8 +72,8 @@ class QueryController {
                             if (event.getText() != null && event.getText().size() > 0)
                                 if(event.getText().get(0) != null)
                                     mLastTraversedText = event.getText().get(0).toString();
-                            if(DEBUG)
-                                Log.i(LOG_TAG, "Last text selection reported: " +
+                            if (DEBUG)
+                                Log.d(LOG_TAG, "Last text selection reported: " +
                                         mLastTraversedText);
                             break;
                     }
@@ -88,7 +87,6 @@ class QueryController {
      * Returns the last text selection reported by accessibility
      * event TYPE_VIEW_TEXT_TRAVERSED_AT_MOVEMENT_GRANULARITY. One way to cause
      * this event is using a DPad arrows to focus on UI elements.
-     * @return
      */
     public String getLastTraversedText() {
         mUiAutomatorBridge.waitForIdle();
@@ -115,7 +113,7 @@ class QueryController {
         mPatternCounter = 0;
         mPatternIndexer = 0;
         mLogIndent = 0;
-        mLogParentIndent = 0;;
+        mLogParentIndent = 0;
     }
 
     /**
@@ -134,7 +132,7 @@ class QueryController {
     /**
      * Main search method for translating By selectors to AccessibilityInfoNodes
      * @param selector
-     * @return
+     * @return AccessibilityNodeInfo
      */
     public AccessibilityNodeInfo findAccessibilityNodeInfo(UiSelector selector) {
         return findAccessibilityNodeInfo(selector, false);
@@ -145,8 +143,8 @@ class QueryController {
         mUiAutomatorBridge.waitForIdle();
         initializeNewSearch();
 
-        if(DEBUG)
-            Log.i(LOG_TAG, "Searching: " + selector);
+        if (DEBUG)
+            Log.d(LOG_TAG, "Searching: " + selector);
 
         synchronized (mLock) {
             AccessibilityNodeInfo rootNode = getRootNode();
@@ -171,7 +169,7 @@ class QueryController {
         final long waitInterval = 250;
         AccessibilityNodeInfo rootNode = null;
         for(int x = 0; x < maxRetry; x++) {
-            rootNode = mUiAutomatorBridge.getRootAccessibilityNodeInfoInActiveWindow();
+            rootNode = mUiAutomatorBridge.getRootInActiveWindow();
             if (rootNode != null) {
                 return rootNode;
             }
@@ -212,7 +210,7 @@ class QueryController {
      * @param selector
      * @param fromNode
      * @param isCounting
-     * @return
+     * @return AccessibilityNodeInfo
      */
     private AccessibilityNodeInfo translateCompoundSelector(UiSelector selector,
             AccessibilityNodeInfo fromNode, boolean isCounting) {
@@ -232,8 +230,8 @@ class QueryController {
             fromNode = translateReqularSelector(selector, fromNode);
 
         if(fromNode == null) {
-            if(DEBUG)
-                Log.i(LOG_TAG, "Container selector not found: " + selector.dumpToString(false));
+            if (DEBUG)
+                Log.d(LOG_TAG, "Container selector not found: " + selector.dumpToString(false));
             return null;
         }
 
@@ -247,8 +245,8 @@ class QueryController {
                 return null;
             } else {
                 if(fromNode == null) {
-                    if(DEBUG)
-                        Log.i(LOG_TAG, "Pattern selector not found: " +
+                    if (DEBUG)
+                        Log.d(LOG_TAG, "Pattern selector not found: " +
                                 selector.dumpToString(false));
                     return null;
                 }
@@ -263,8 +261,8 @@ class QueryController {
         }
 
         if(fromNode == null) {
-            if(DEBUG)
-                Log.i(LOG_TAG, "Object Not Found for selector " + selector);
+            if (DEBUG)
+                Log.d(LOG_TAG, "Object Not Found for selector " + selector);
             return null;
         }
         Log.i(LOG_TAG, String.format("Matched selector: %s <<==>> [%s]", selector, fromNode));
@@ -282,7 +280,6 @@ class QueryController {
      * <p/>
      * @param selector
      * @param fromNode
-     * @param index
      * @return AccessibilityNodeInfo if found else null
      */
     private AccessibilityNodeInfo translateReqularSelector(UiSelector selector,
@@ -338,9 +335,8 @@ class QueryController {
                 continue;
             }
             if (!childNode.isVisibleToUser()) {
-                // TODO: need to remove this or move it under if (DEBUG)
-                if(DEBUG)
-                    Log.d(LOG_TAG,
+                if (VERBOSE)
+                    Log.v(LOG_TAG,
                             String.format("Skipping invisible child: %s", childNode.toString()));
                 continue;
             }
@@ -369,7 +365,7 @@ class QueryController {
      * until the end of the tree.
      * @param subSelector
      * @param fromNode
-     * @param originalPattern
+     * @param isCounting
      * @return null of node is not found or if counting mode is true.
      * See {@link #translateCompoundSelector(UiSelector, AccessibilityNodeInfo, boolean)}
      */
@@ -415,7 +411,7 @@ class QueryController {
                                 String.format("%s", subSelector.dumpToString(false))));
                     return fromNode;
                 } else {
-                    if(DEBUG)
+                    if (DEBUG)
                         Log.d(LOG_TAG, formatLog(
                                 String.format("%s", subSelector.dumpToString(false))));
                     mPatternCounter++; //count the pattern matched
@@ -430,7 +426,7 @@ class QueryController {
                     mLogIndent = mLogParentIndent;
                 }
             } else {
-                if(DEBUG)
+                if (DEBUG)
                     Log.d(LOG_TAG, formatLog(
                             String.format("%s", subSelector.dumpToString(false))));
 
@@ -469,7 +465,7 @@ class QueryController {
                 continue;
             }
             if (!childNode.isVisibleToUser()) {
-                if(DEBUG)
+                if (DEBUG)
                     Log.d(LOG_TAG,
                         String.format("Skipping invisible child: %s", childNode.toString()));
                 continue;
@@ -484,7 +480,7 @@ class QueryController {
     }
 
     public AccessibilityNodeInfo getAccessibilityRootNode() {
-        return mUiAutomatorBridge.getRootAccessibilityNodeInfoInActiveWindow();
+        return mUiAutomatorBridge.getRootInActiveWindow();
     }
 
     /**

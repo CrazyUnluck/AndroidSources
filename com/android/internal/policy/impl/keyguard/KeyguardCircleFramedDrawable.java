@@ -100,6 +100,11 @@ class KeyguardCircleFramedDrawable extends Drawable {
         mFramePath = new Path();
     }
 
+    public void reset() {
+        mScale = 1f;
+        mPressed = false;
+    }
+
     @Override
     public void draw(Canvas canvas) {
         // clear background
@@ -134,7 +139,6 @@ class KeyguardCircleFramedDrawable extends Drawable {
     }
 
     public void setScale(float scale) {
-        Log.i("KFD", "scale: " + scale);
         mScale = scale;
     }
 
@@ -157,5 +161,15 @@ class KeyguardCircleFramedDrawable extends Drawable {
 
     @Override
     public void setColorFilter(ColorFilter cf) {
+    }
+
+    public boolean verifyParams(float iconSize, int frameColor, float stroke,
+            int frameShadowColor, float shadowRadius, int highlightColor) {
+        return mSize == iconSize
+                && mFrameColor == frameColor
+                && mStrokeWidth == stroke
+                && mFrameShadowColor == frameShadowColor
+                && mShadowRadius == shadowRadius
+                && mHighlightColor == highlightColor;
     }
 }

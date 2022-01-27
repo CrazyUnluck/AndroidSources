@@ -22,13 +22,13 @@ import java.util.ArrayList;
 
 import android.app.ActivityManager;
 import android.app.AppGlobals;
+import android.app.AppOpsManager;
 import android.content.ComponentName;
 import android.content.IIntentReceiver;
 import android.content.Intent;
 import android.content.pm.ActivityInfo;
 import android.content.pm.PackageManager;
 import android.content.pm.ResolveInfo;
-import android.content.pm.ServiceInfo;
 import android.os.Bundle;
 import android.os.Handler;
 import android.os.IBinder;
@@ -38,6 +38,7 @@ import android.os.RemoteException;
 import android.os.SystemClock;
 import android.os.UserHandle;
 import android.util.EventLog;
+import android.util.Log;
 import android.util.Slog;
 
 /**
@@ -408,6 +409,16 @@ public class BroadcastQueue {
                 skip = true;
             }
         }
+        if (r.appOp != AppOpsManager.OP_NONE) {
+            int mode = mService.mAppOpsService.checkOperation(r.appOp,
+                    filter.receiverList.uid, filter.packageName);
+            if (mode != AppOpsManager.MODE_ALLOWED) {
+                if (DEBUG_BROADCAST)  Slog.v(TAG,
+                        "App op " + r.appOp + " not allowed for broadcast to uid "
+                        + filter.receiverList.uid + " pkg " + filter.packageName);
+                skip = true;
+            }
+        }
 
         if (!skip) {
             // If this is not being sent as an ordered broadcast, then we
@@ -705,6 +716,17 @@ public class BroadcastQueue {
                     skip = true;
                 }
             }
+            if (r.appOp != AppOpsManager.OP_NONE) {
+                int mode = mService.mAppOpsService.checkOperation(r.appOp,
+                        info.activityInfo.applicationInfo.uid, info.activityInfo.packageName);
+                if (mode != AppOpsManager.MODE_ALLOWED) {
+                    if (DEBUG_BROADCAST)  Slog.v(TAG,
+                            "App op " + r.appOp + " not allowed for broadcast to uid "
+                            + info.activityInfo.applicationInfo.uid + " pkg "
+                            + info.activityInfo.packageName);
+                    skip = true;
+                }
+            }
             boolean isSingleton = false;
             try {
                 isSingleton = mService.isSingleton(info.activityInfo.processName,
@@ -779,6 +801,21 @@ public class BroadcastQueue {
                 } catch (RemoteException e) {
                     Slog.w(TAG, "Exception when sending broadcast to "
                           + r.curComponent, e);
+                } catch (RuntimeException e) {
+                    Log.wtf(TAG, "Failed sending broadcast to "
+                            + r.curComponent + " with " + r.intent, e);
+                    // If some unexpected exception happened, just skip
+                    // this broadcast.  At this point we are not in the call
+                    // from a client, so throwing an exception out from here
+                    // will crash the entire system instead of just whoever
+                    // sent the broadcast.
+                    logBroadcastReceiverDiscardLocked(r);
+                    finishReceiverLocked(r, r.resultCode, r.resultData,
+                            r.resultExtras, r.resultAbort, true);
+                    scheduleBroadcastsLocked();
+                    // We need to reset the state if we failed to start the receiver.
+                    r.state = BroadcastRecord.IDLE;
+                    return;
                 }
 
                 // If a dead object exception was thrown -- fall through to
@@ -1042,6 +1079,9 @@ public class BroadcastQueue {
                 pw.print("  #"); pw.print(i); pw.print(": "); pw.println(r);
                 pw.print("    ");
                 pw.println(r.intent.toShortString(false, true, true, false));
+                if (r.targetComp != null && r.targetComp != r.intent.getComponent()) {
+                    pw.print("    targetComp: "); pw.println(r.targetComp.toShortString());
+                }
                 Bundle bundle = r.intent.getExtras();
                 if (bundle != null) {
                     pw.print("    extras: "); pw.println(bundle.toString());

@@ -59,7 +59,7 @@ public class TestCaseCollector {
      *
      * The class name may be in "<class name>#<method name>" format
      *
-     * @param classNames classes must be subclass of {@link UiAutomatorTestCase}
+     * @param className classes must be subclass of {@link UiAutomatorTestCase}
      * @throws ClassNotFoundException
      */
     public void addTestClass(String className) throws ClassNotFoundException {
@@ -96,8 +96,7 @@ public class TestCaseCollector {
 
     /**
      * Gets the list of added test cases so far
-     *
-     * @return
+     * @return a list of {@link TestCase}
      */
     public List<TestCase> getTestCases() {
         return Collections.unmodifiableList(mTestCases);
@@ -112,12 +111,23 @@ public class TestCaseCollector {
             testCase.setName(method);
             mTestCases.add(testCase);
         } catch (InstantiationException e) {
-            throw new RuntimeException("Could not instantiate test class. Class: "
-                    + clazz.getName());
+            mTestCases.add(error(clazz, "InstantiationException: could not instantiate " +
+                    "test class. Class: " + clazz.getName()));
         } catch (IllegalAccessException e) {
-            throw new RuntimeException("Could not access test class. Class: " + clazz.getName());
+            mTestCases.add(error(clazz, "IllegalAccessException: could not instantiate " +
+                    "test class. Class: " + clazz.getName()));
         }
+    }
 
+    private UiAutomatorTestCase error(Class<?> clazz, final String message) {
+        UiAutomatorTestCase warning = new UiAutomatorTestCase() {
+            protected void runTest() {
+                fail(message);
+            }
+        };
+
+        warning.setName(clazz.getName());
+        return warning;
     }
 
     /**

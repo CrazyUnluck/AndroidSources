@@ -16,6 +16,7 @@
 package com.android.test.runner;
 
 import android.app.Instrumentation;
+import android.os.Bundle;
 import android.test.suitebuilder.annotation.LargeTest;
 import android.test.suitebuilder.annotation.MediumTest;
 import android.test.suitebuilder.annotation.SmallTest;
@@ -39,6 +40,7 @@ import java.lang.annotation.Annotation;
 import java.util.Arrays;
 import java.util.Collection;
 import java.util.Collections;
+import java.util.regex.Pattern;
 
 /**
  * Builds a {@link Request} from test classes in given apk paths, filtered on provided set of
@@ -47,6 +49,10 @@ import java.util.Collections;
 public class TestRequestBuilder {
 
     private static final String LOG_TAG = "TestRequestBuilder";
+
+    public static final String LARGE_SIZE = "large";
+    public static final String MEDIUM_SIZE = "medium";
+    public static final String SMALL_SIZE = "small";
 
     private String[] mApkPaths;
     private TestLoader mTestLoader;
@@ -74,9 +80,18 @@ public class TestRequestBuilder {
                 return description.getAnnotation(mAnnotationClass) != null ||
                         description.getTestClass().isAnnotationPresent(mAnnotationClass);
             } else {
-                // don't filter out any test classes/suites, because their methods may have correct
-                // annotation
-                return true;
+                // the entire test class/suite should be filtered out if all its methods are
+                // filtered
+                // TODO: This is not efficient since some children may end up being evaluated more
+                // than once. This logic seems to be only necessary for JUnit3 tests. Look into
+                // fixing in upstream
+                for (Description child : description.getChildren()) {
+                    if (shouldRun(child)) {
+                        return true;
+                    }
+                }
+                // no children to run, filter this out
+                return false;
             }
         }
 
@@ -105,7 +120,14 @@ public class TestRequestBuilder {
          */
         @Override
         public boolean shouldRun(Description description) {
-            if (description.getTestClass().isAnnotationPresent(mAnnotationClass) ||
+            final Class<?> testClass = description.getTestClass();
+
+            /* Parameterized tests have no test classes. */
+            if (testClass == null) {
+                return true;
+            }
+
+            if (testClass.isAnnotationPresent(mAnnotationClass) ||
                     description.getAnnotation(mAnnotationClass) != null) {
                 return false;
             } else {
@@ -144,9 +166,44 @@ public class TestRequestBuilder {
     public void addTestMethod(String testClassName, String testMethodName) {
         Class<?> clazz = mTestLoader.loadClass(testClassName);
         if (clazz != null) {
-            mFilter = mFilter.intersect(Filter.matchMethodDescription(
+            mFilter = mFilter.intersect(matchParameterizedMethod(
                     Description.createTestDescription(clazz, testMethodName)));
         }
+    }
+
+    /**
+     * A filter to get around the fact that parameterized tests append "[#]" at
+     * the end of the method names. For instance, "getFoo" would become
+     * "getFoo[0]".
+     */
+    private static Filter matchParameterizedMethod(final Description target) {
+        return new Filter() {
+            Pattern pat = Pattern.compile(target.getMethodName() + "(\\[[0-9]+\\])?");
+
+            @Override
+            public boolean shouldRun(Description desc) {
+                if (desc.isTest()) {
+                    return target.getClassName().equals(desc.getClassName())
+                            && isMatch(desc.getMethodName());
+                }
+
+                for (Description child : desc.getChildren()) {
+                    if (shouldRun(child)) {
+                        return true;
+                    }
+                }
+                return false;
+            }
+
+            private boolean isMatch(String first) {
+                return pat.matcher(first).matches();
+            }
+
+            @Override
+            public String describe() {
+                return String.format("Method %s", target.getDisplayName());
+            }
+        };
     }
 
     /**
@@ -154,11 +211,11 @@ public class TestRequestBuilder {
      * @param testSize
      */
     public void addTestSizeFilter(String testSize) {
-        if ("small".equals(testSize)) {
+        if (SMALL_SIZE.equals(testSize)) {
             mFilter = mFilter.intersect(new AnnotationInclusionFilter(SmallTest.class));
-        } else if ("medium".equals(testSize)) {
+        } else if (MEDIUM_SIZE.equals(testSize)) {
             mFilter = mFilter.intersect(new AnnotationInclusionFilter(MediumTest.class));
-        } else if ("large".equals(testSize)) {
+        } else if (LARGE_SIZE.equals(testSize)) {
             mFilter = mFilter.intersect(new AnnotationInclusionFilter(LargeTest.class));
         } else {
             Log.e(LOG_TAG, String.format("Unrecognized test size '%s'", testSize));
@@ -203,13 +260,13 @@ public class TestRequestBuilder {
      * If no classes have been explicitly added, will scan the classpath for all tests.
      *
      */
-    public TestRequest build(Instrumentation instr) {
+    public TestRequest build(Instrumentation instr, Bundle bundle) {
         if (mTestLoader.isEmpty()) {
             // no class restrictions have been specified. Load all classes
             loadClassesFromClassPath();
         }
 
-        Request request = classes(instr, mSkipExecution, new Computer(),
+        Request request = classes(instr, bundle, mSkipExecution, new Computer(),
                 mTestLoader.getLoadedClasses().toArray(new Class[0]));
         return new TestRequest(mTestLoader.getLoadFailures(), request.filterWith(mFilter));
     }
@@ -219,14 +276,17 @@ public class TestRequestBuilder {
      * in a set of classes.
      *
      * @param instr the {@link Instrumentation} to inject into any tests that require it
+     * @param bundle the {@link Bundle} of command line args to inject into any tests that require
+     *         it
      * @param computer Helps construct Runners from classes
      * @param classes the classes containing the tests
      * @return a <code>Request</code> that will cause all tests in the classes to be run
      */
-    private static Request classes(Instrumentation instr, boolean skipExecution,
+    private static Request classes(Instrumentation instr, Bundle bundle, boolean skipExecution,
             Computer computer, Class<?>... classes) {
         try {
-            AndroidRunnerBuilder builder = new AndroidRunnerBuilder(true, instr, skipExecution);
+            AndroidRunnerBuilder builder = new AndroidRunnerBuilder(true, instr, bundle,
+                    skipExecution);
             Runner suite = computer.getSuite(builder, classes);
             return Request.runner(suite);
         } catch (InitializationError e) {
@@ -252,6 +312,9 @@ public class TestRequestBuilder {
                     new ExcludePackageNameFilter("junit"),
                     new ExcludePackageNameFilter("org.junit"),
                     new ExcludePackageNameFilter("org.hamcrest"),
+                    new ExcludePackageNameFilter("org.mockito"),
+                    new ExcludePackageNameFilter("com.android.dx"),
+                    new ExcludePackageNameFilter("com.google.dexmaker"),
                     new ExternalClassNameFilter(),
                     new ExcludePackageNameFilter("com.android.test.runner.junit3")));
         } catch (IOException e) {

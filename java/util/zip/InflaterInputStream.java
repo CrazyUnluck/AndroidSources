@@ -98,24 +98,24 @@ public class InflaterInputStream extends FilterInputStream {
      *            the {@code InputStream} to read data from.
      * @param inflater
      *            the specific {@code Inflater} for decompressing data.
-     * @param bsize
+     * @param bufferSize
      *            the size to be used for the internal buffer.
      */
-    public InflaterInputStream(InputStream is, Inflater inflater, int bsize) {
+    public InflaterInputStream(InputStream is, Inflater inflater, int bufferSize) {
         super(is);
         if (is == null) {
             throw new NullPointerException("is == null");
         } else if (inflater == null) {
             throw new NullPointerException("inflater == null");
         }
-        if (bsize <= 0) {
-            throw new IllegalArgumentException();
+        if (bufferSize <= 0) {
+            throw new IllegalArgumentException("bufferSize <= 0: " + bufferSize);
         }
         this.inf = inflater;
         if (is instanceof ZipFile.RAFStream) {
-            nativeEndBufSize = bsize;
+            nativeEndBufSize = bufferSize;
         } else {
-            buf = new byte[bsize];
+            buf = new byte[bufferSize];
         }
     }
 
@@ -189,13 +189,8 @@ public class InflaterInputStream extends FilterInputStream {
     protected void fill() throws IOException {
         checkClosed();
         if (nativeEndBufSize > 0) {
-            ZipFile.RAFStream is = (ZipFile.RAFStream)in;
-            synchronized (is.mSharedRaf) {
-                long len = is.mLength - is.mOffset;
-                if (len > nativeEndBufSize) len = nativeEndBufSize;
-                int cnt = inf.setFileInput(is.mSharedRaf.getFD(), is.mOffset, nativeEndBufSize);
-                is.skip(cnt);
-            }
+            ZipFile.RAFStream is = (ZipFile.RAFStream) in;
+            len = is.fill(inf, nativeEndBufSize);
         } else {
             if ((len = in.read(buf)) > 0) {
                 inf.setInput(buf, 0, len);

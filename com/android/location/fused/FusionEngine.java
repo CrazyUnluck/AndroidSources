@@ -249,7 +249,11 @@ public class FusionEngine implements LocationListener {
             }
         }
 
-        mCallback.reportLocation(mFusedLocation);
+        if (mCallback != null) {
+          mCallback.reportLocation(mFusedLocation);
+        } else {
+          Log.w(TAG, "Location updates received while fusion engine not started");
+        }
     }
 
     /** Called on mLooper thread */
@@ -295,5 +299,13 @@ public class FusionEngine implements LocationListener {
         s.append(String.format("net %s\n", mNetworkLocation));
         s.append("    ").append(mStats.get(NETWORK)).append('\n');
         pw.append(s);
+    }
+
+    /** Called on mLooper thread */
+    public void switchUser() {
+        // reset state to prevent location data leakage
+        mFusedLocation = null;
+        mGpsLocation = null;
+        mNetworkLocation = null;
     }
 }

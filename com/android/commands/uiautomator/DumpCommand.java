@@ -16,14 +16,19 @@
 
 package com.android.commands.uiautomator;
 
-import android.accessibilityservice.UiTestAutomationBridge;
+import android.app.UiAutomation;
+import android.graphics.Point;
+import android.hardware.display.DisplayManagerGlobal;
 import android.os.Environment;
+import android.view.Display;
 import android.view.accessibility.AccessibilityNodeInfo;
 
 import com.android.commands.uiautomator.Launcher.Command;
 import com.android.uiautomator.core.AccessibilityNodeInfoDumper;
+import com.android.uiautomator.core.UiAutomationShellWrapper;
 
 import java.io.File;
+import java.util.concurrent.TimeoutException;
 
 /**
  * Implementation of the dump subcommand
@@ -46,7 +51,8 @@ public class DumpCommand extends Command {
 
     @Override
     public String detailedOptions() {
-        return "    dump [file]\n"
+        return "    dump [--verbose][file]\n"
+            + "      [--compressed]: dumps compressed layout information.\n"
             + "      [file]: the location where the dumped XML should be stored, default is\n      "
             + DEFAULT_DUMP_FILE.getAbsolutePath() + "\n";
     }
@@ -54,24 +60,50 @@ public class DumpCommand extends Command {
     @Override
     public void run(String[] args) {
         File dumpFile = DEFAULT_DUMP_FILE;
-        if (args.length > 0) {
-            dumpFile = new File(args[0]);
+        boolean verboseMode = true;
+
+        for (String arg : args) {
+            if (arg.equals("--compressed"))
+                verboseMode = false;
+            else if (!arg.startsWith("-")) {
+                dumpFile = new File(arg);
+            }
         }
-        UiTestAutomationBridge bridge = new UiTestAutomationBridge();
-        bridge.connect();
+
+        UiAutomationShellWrapper automationWrapper = new UiAutomationShellWrapper();
+        automationWrapper.connect();
+        if (verboseMode) {
+            // default
+            automationWrapper.setCompressedLayoutHierarchy(false);
+        } else {
+            automationWrapper.setCompressedLayoutHierarchy(true);
+        }
+
         // It appears that the bridge needs time to be ready. Making calls to the
         // bridge immediately after connecting seems to cause exceptions. So let's also
         // do a wait for idle in case the app is busy.
-        bridge.waitForIdle(1000, 1000 * 10);
-        AccessibilityNodeInfo info = bridge.getRootAccessibilityNodeInfoInActiveWindow();
-        if (info == null) {
-            System.err.println("ERROR: null root node returned by UiTestAutomationBridge.");
+        try {
+            UiAutomation uiAutomation = automationWrapper.getUiAutomation();
+            uiAutomation.waitForIdle(1000, 1000 * 10);
+            AccessibilityNodeInfo info = uiAutomation.getRootInActiveWindow();
+            if (info == null) {
+                System.err.println("ERROR: null root node returned by UiTestAutomationBridge.");
+                return;
+            }
+
+            Display display =
+                    DisplayManagerGlobal.getInstance().getRealDisplay(Display.DEFAULT_DISPLAY);
+            int rotation = display.getRotation();
+            Point size = new Point();
+            display.getSize(size);
+            AccessibilityNodeInfoDumper.dumpWindowToFile(info, dumpFile, rotation, size.x, size.y);
+        } catch (TimeoutException re) {
+            System.err.println("ERROR: could not get idle state.");
             return;
+        } finally {
+            automationWrapper.disconnect();
         }
-        AccessibilityNodeInfoDumper.dumpWindowToFile(info, dumpFile);
-        bridge.disconnect();
         System.out.println(
                 String.format("UI hierchary dumped to: %s", dumpFile.getAbsolutePath()));
     }
-
 }

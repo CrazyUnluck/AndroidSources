@@ -16,6 +16,10 @@
 
 package org.apache.harmony.xnet.provider.jsse;
 
+import java.io.IOException;
+import java.io.NotSerializableException;
+import java.io.ObjectInputStream;
+import java.io.ObjectOutputStream;
 import java.math.BigInteger;
 import java.security.InvalidKeyException;
 import java.security.interfaces.DSAParams;
@@ -23,18 +27,19 @@ import java.security.interfaces.DSAPrivateKey;
 import java.security.spec.DSAPrivateKeySpec;
 import java.security.spec.InvalidKeySpecException;
 
-public class OpenSSLDSAPrivateKey implements DSAPrivateKey {
+public class OpenSSLDSAPrivateKey implements DSAPrivateKey, OpenSSLKeyHolder {
     private static final long serialVersionUID = 6524734576187424628L;
 
-    private final OpenSSLKey key;
+    private transient OpenSSLKey key;
 
-    private OpenSSLDSAParams params;
+    private transient OpenSSLDSAParams params;
 
     OpenSSLDSAPrivateKey(OpenSSLKey key) {
         this.key = key;
     }
 
-    OpenSSLKey getOpenSSLKey() {
+    @Override
+    public OpenSSLKey getOpenSSLKey() {
         return key;
     }
 
@@ -112,16 +117,12 @@ public class OpenSSLDSAPrivateKey implements DSAPrivateKey {
 
     @Override
     public BigInteger getX() {
+        if (key.isEngineBased()) {
+            throw new UnsupportedOperationException("private key value X cannot be extracted");
+        }
+
         ensureReadParams();
         return params.getX();
-    }
-
-    public int getPkeyContext() {
-        return key.getPkeyContext();
-    }
-
-    public String getPkeyAlias() {
-        return key.getAlias();
     }
 
     @Override
@@ -199,5 +200,35 @@ public class OpenSSLDSAPrivateKey implements DSAPrivateKey {
         sb.append('}');
 
         return sb.toString();
+    }
+
+    private void readObject(ObjectInputStream stream) throws IOException, ClassNotFoundException {
+        stream.defaultReadObject();
+
+        final BigInteger g = (BigInteger) stream.readObject();
+        final BigInteger p = (BigInteger) stream.readObject();
+        final BigInteger q = (BigInteger) stream.readObject();
+        final BigInteger x = (BigInteger) stream.readObject();
+
+        key = new OpenSSLKey(NativeCrypto.EVP_PKEY_new_DSA(
+                p.toByteArray(),
+                q.toByteArray(),
+                g.toByteArray(),
+                null,
+                x.toByteArray()));
+    }
+
+    private void writeObject(ObjectOutputStream stream) throws IOException {
+        if (getOpenSSLKey().isEngineBased()) {
+            throw new NotSerializableException("engine-based keys can not be serialized");
+        }
+
+        stream.defaultWriteObject();
+
+        ensureReadParams();
+        stream.writeObject(params.getG());
+        stream.writeObject(params.getP());
+        stream.writeObject(params.getQ());
+        stream.writeObject(params.getX());
     }
 }

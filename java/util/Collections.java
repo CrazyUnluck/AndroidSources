@@ -63,7 +63,7 @@ public class Collections {
 
         CopiesList(int length, E object) {
             if (length < 0) {
-                throw new IllegalArgumentException();
+                throw new IllegalArgumentException("length < 0: " + length);
             }
             n = length;
             element = object;
@@ -2648,7 +2648,7 @@ public class Collections {
         if (map.isEmpty()) {
             return new SetFromMap<E>(map);
         }
-        throw new IllegalArgumentException();
+        throw new IllegalArgumentException("map not empty");
     }
 
     /**
@@ -2663,8 +2663,8 @@ public class Collections {
     private static class SetFromMap<E> extends AbstractSet<E> implements Serializable {
         private static final long serialVersionUID = 2454657854757543876L;
 
-        // must named as it, to pass serialization compatibility test.
-        private Map<E, Boolean> m;
+        // Must be named as is, to pass serialization compatibility test.
+        private final Map<E, Boolean> m;
 
         private transient Set<E> backingSet;
 
@@ -2741,7 +2741,7 @@ public class Collections {
     private static class AsLIFOQueue<E> extends AbstractQueue<E> implements Serializable {
         private static final long serialVersionUID = 1802017725587941708L;
 
-        // must named as it, to pass serialization compatibility test.
+        // Must be named as is, to pass serialization compatibility test.
         private final Deque<E> q;
 
         AsLIFOQueue(final Deque<E> deque) {
@@ -2829,9 +2829,9 @@ public class Collections {
 
         private static final long serialVersionUID = 1578914078182001775L;
 
-        Collection<E> c;
+        final Collection<E> c;
 
-        Class<E> type;
+        final Class<E> type;
 
         public CheckedCollection(Collection<E> c, Class<E> type) {
             if (c == null) {
@@ -2915,9 +2915,9 @@ public class Collections {
      */
     private static class CheckedListIterator<E> implements ListIterator<E> {
 
-        private ListIterator<E> i;
+        private final ListIterator<E> i;
 
-        private Class<E> type;
+        private final Class<E> type;
 
         /**
          * Constructs a dynamically typesafe view of the specified ListIterator.
@@ -2975,7 +2975,7 @@ public class Collections {
 
         private static final long serialVersionUID = 65247728283967356L;
 
-        List<E> l;
+        final List<E> l;
 
         public CheckedList(List<E> l, Class<E> type) {
             super(l, type);
@@ -3076,9 +3076,9 @@ public class Collections {
 
         private static final long serialVersionUID = 5742860141034234728L;
 
-        Map<K, V> m;
-        Class<K> keyType;
-        Class<V> valueType;
+        final Map<K, V> m;
+        final Class<K> keyType;
+        final Class<V> valueType;
 
         private CheckedMap(Map<K, V> m, Class<K> keyType, Class<V> valueType) {
             if (m == null) {
@@ -3173,8 +3173,8 @@ public class Collections {
          * A dynamically typesafe view of a Map.Entry.
          */
         private static class CheckedEntry<K, V> implements Map.Entry<K, V> {
-            Map.Entry<K, V> e;
-            Class<V> valueType;
+            final Map.Entry<K, V> e;
+            final Class<V> valueType;
 
             public CheckedEntry(Map.Entry<K, V> e, Class<V> valueType) {
                 if (e == null) {
@@ -3209,8 +3209,8 @@ public class Collections {
          * A dynamically typesafe view of an entry set.
          */
         private static class CheckedEntrySet<K, V> implements Set<Map.Entry<K, V>> {
-            Set<Map.Entry<K, V>> s;
-            Class<V> valueType;
+            final Set<Map.Entry<K, V>> s;
+            final Class<V> valueType;
 
             public CheckedEntrySet(Set<Map.Entry<K, V>> s, Class<V> valueType) {
                 this.s = s;
@@ -3329,7 +3329,7 @@ public class Collections {
      */
     private static class CheckedSortedSet<E> extends CheckedSet<E> implements SortedSet<E> {
         private static final long serialVersionUID = 1599911165492914959L;
-        private SortedSet<E> ss;
+        private final SortedSet<E> ss;
 
         public CheckedSortedSet(SortedSet<E> s, Class<E> type) {
             super(s, type);
@@ -3368,7 +3368,7 @@ public class Collections {
     private static class CheckedSortedMap<K, V> extends CheckedMap<K, V>
             implements SortedMap<K, V> {
         private static final long serialVersionUID = 1599671320688067438L;
-        SortedMap<K, V> sm;
+        final SortedMap<K, V> sm;
 
         CheckedSortedMap(SortedMap<K, V> m, Class<K> keyType, Class<V> valueType) {
             super(m, keyType, valueType);
@@ -3398,5 +3398,60 @@ public class Collections {
         @Override public K lastKey() {
             return sm.lastKey();
         }
+    }
+
+    /**
+     * Computes a hash code and applies a supplemental hash function to defend
+     * against poor quality hash functions. This is critical because HashMap
+     * uses power-of-two length hash tables, that otherwise encounter collisions
+     * for hash codes that do not differ in lower or upper bits.
+     * Routine taken from java.util.concurrent.ConcurrentHashMap.hash(int).
+     * @hide
+     */
+    public static int secondaryHash(Object key) {
+        return secondaryHash(key.hashCode());
+    }
+
+    /**
+     * Computes an identity hash code and applies a supplemental hash function to defend
+     * against poor quality hash functions. This is critical because identity hash codes
+     * are currently implemented as object addresses, which will have been aligned by the
+     * underlying memory allocator causing all hash codes to have the same bottom bits.
+     * @hide
+     */
+    public static int secondaryIdentityHash(Object key) {
+        return secondaryHash(System.identityHashCode(key));
+    }
+
+    private static int secondaryHash(int h) {
+        // Spread bits to regularize both segment and index locations,
+        // using variant of single-word Wang/Jenkins hash.
+        h += (h <<  15) ^ 0xffffcd7d;
+        h ^= (h >>> 10);
+        h += (h <<   3);
+        h ^= (h >>>  6);
+        h += (h <<   2) + (h << 14);
+        return h ^ (h >>> 16);
+    }
+
+    /**
+     * Returns the smallest power of two >= its argument, with several caveats:
+     * If the argument is negative but not Integer.MIN_VALUE, the method returns
+     * zero. If the argument is > 2^30 or equal to Integer.MIN_VALUE, the method
+     * returns Integer.MIN_VALUE. If the argument is zero, the method returns
+     * zero.
+     * @hide
+     */
+    public static int roundUpToPowerOfTwo(int i) {
+        i--; // If input is a power of two, shift its high-order bit right.
+
+        // "Smear" the high-order bit all the way to the right.
+        i |= i >>>  1;
+        i |= i >>>  2;
+        i |= i >>>  4;
+        i |= i >>>  8;
+        i |= i >>> 16;
+
+        return i + 1;
     }
 }

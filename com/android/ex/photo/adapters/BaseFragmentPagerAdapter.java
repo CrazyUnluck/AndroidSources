@@ -17,11 +17,10 @@
 
 package com.android.ex.photo.adapters;
 
-import android.app.Fragment;
-import android.app.FragmentManager;
-import android.app.FragmentTransaction;
 import android.os.Parcelable;
-import android.support.v4.app.FragmentPagerAdapter;
+import android.support.v4.app.Fragment;
+import android.support.v4.app.FragmentManager;
+import android.support.v4.app.FragmentTransaction;
 import android.support.v4.view.PagerAdapter;
 import android.util.Log;
 import android.util.LruCache;
@@ -55,7 +54,7 @@ public abstract class BaseFragmentPagerAdapter extends PagerAdapter {
     /** A cache to store detached fragments before they are removed  */
     private LruCache<String, Fragment> mFragmentCache = new FragmentCache(DEFAULT_CACHE_SIZE);
 
-    public BaseFragmentPagerAdapter(FragmentManager fm) {
+    public BaseFragmentPagerAdapter(android.support.v4.app.FragmentManager fm) {
         mFragmentManager = fm;
     }
 
@@ -86,6 +85,10 @@ public abstract class BaseFragmentPagerAdapter extends PagerAdapter {
             mCurTransaction.attach(fragment);
         } else {
             fragment = getItem(position);
+            if(fragment == null) {
+                if (DEBUG) Log.e(TAG, "NPE workaround for getItem(). See b/7103023");
+                return null;
+            }
             if (DEBUG) Log.v(TAG, "Adding item #" + position + ": f=" + fragment);
             mCurTransaction.add(container.getId(), fragment,
                     makeFragmentName(container.getId(), position));

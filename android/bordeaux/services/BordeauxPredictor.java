@@ -20,6 +20,7 @@ import android.bordeaux.services.IPredictor;
 import android.content.Context;
 import android.os.RemoteException;
 import android.util.Log;
+import android.util.Pair;
 
 import java.util.ArrayList;
 import java.util.List;
@@ -35,16 +36,6 @@ public class BordeauxPredictor {
     private String mName;
     private IPredictor mPredictor;
 
-    public boolean retrievePredictor() {
-        if (mPredictor == null)
-            mPredictor = BordeauxManagerService.getPredictor(mContext, mName);
-        if (mPredictor == null) {
-            Log.e(TAG, PREDICTOR_NOTAVAILABLE);
-            return false;
-        }
-        return true;
-    }
-
     public BordeauxPredictor(Context context) {
         mContext = context;
         mName = "defaultPredictor";
@@ -59,35 +50,56 @@ public class BordeauxPredictor {
 
     public boolean reset() {
         if (!retrievePredictor()){
-            Log.e(TAG, PREDICTOR_NOTAVAILABLE);
+            Log.e(TAG, "reset: " + PREDICTOR_NOTAVAILABLE);
             return false;
         }
         try {
-            mPredictor.ResetPredictor();
+            mPredictor.resetPredictor();
             return true;
         } catch (RemoteException e) {
         }
         return false;
     }
 
-    public void pushSample(String s) {
+    public boolean retrievePredictor() {
+        if (mPredictor == null) {
+            mPredictor = BordeauxManagerService.getPredictor(mContext, mName);
+        }
+        if (mPredictor == null) {
+            Log.e(TAG, "retrievePredictor: " + PREDICTOR_NOTAVAILABLE);
+            return false;
+        }
+        return true;
+    }
+
+    public void addSample(String sampleName) {
         if (!retrievePredictor())
             throw new RuntimeException(PREDICTOR_NOTAVAILABLE);
         try {
-            mPredictor.pushNewSample(s);
+            mPredictor.pushNewSample(sampleName);
         } catch (RemoteException e) {
             Log.e(TAG,"Exception: pushing a new example");
             throw new RuntimeException(PREDICTOR_NOTAVAILABLE);
         }
     }
 
-    public float getProbability(String s) {
-        if (!retrievePredictor())
-            throw new RuntimeException(PREDICTOR_NOTAVAILABLE);
+    public ArrayList<Pair<String, Float> > getTopSamples() {
+        return getTopSamples(0);
+    }
+
+    public ArrayList<Pair<String, Float> > getTopSamples(int topK) {
         try {
-            return mPredictor.getSampleProbability(s);
-        } catch (RemoteException e) {
-            Log.e(TAG,"Exception: getting sample probability");
+            ArrayList<StringFloat> topList =
+                    (ArrayList<StringFloat>) mPredictor.getTopCandidates(topK);
+
+            ArrayList<Pair<String, Float> > topSamples =
+                    new ArrayList<Pair<String, Float> >(topList.size());
+            for (int i = 0; i < topList.size(); ++i) {
+                topSamples.add(new Pair<String, Float>(topList.get(i).key, topList.get(i).value));
+            }
+            return topSamples;
+        } catch(RemoteException e) {
+            Log.e(TAG,"Exception: getTopSamples");
             throw new RuntimeException(PREDICTOR_NOTAVAILABLE);
         }
     }

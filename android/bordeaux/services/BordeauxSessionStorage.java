@@ -133,6 +133,7 @@ class BordeauxSessionStorage {
     void getAllSessions(ConcurrentHashMap<String, BordeauxSessionManager.Session> sessions) {
         Cursor cursor = mDbSessions.rawQuery("select * from ?;", new String[]{SESSION_TABLE});
         if (cursor == null) return;
+        cursor.moveToFirst();
         do {
             String key = cursor.getString(cursor.getColumnIndex(COLUMN_KEY));
             BordeauxSessionManager.Session session = getSessionFromCursor(cursor);

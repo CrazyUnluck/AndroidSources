@@ -21,6 +21,11 @@ public final class StringFloat implements Parcelable {
     public StringFloat() {
     }
 
+    public StringFloat(String newKey, float newValue) {
+        key = newKey;
+        value = newValue;
+    }
+
     private StringFloat(Parcel in) {
         readFromParcel(in);
     }

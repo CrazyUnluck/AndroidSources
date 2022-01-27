@@ -167,7 +167,7 @@ public class WifiStressTest
                     ssidAppearInScanResultsCount, i));
             long startTime = System.currentTimeMillis();
             mAct.scanResultAvailable = false;
-            assertTrue("start scan failed", mAct.mWifiManager.startScanActive());
+            assertTrue("start scan failed", mAct.mWifiManager.startScan());
             while (true) {
                 if ((System.currentTimeMillis() - startTime) >
                 ConnectivityManagerTestActivity.WIFI_SCAN_TIMEOUT) {
@@ -248,7 +248,7 @@ public class WifiStressTest
         assertTrue(mAct.waitForWifiState(WifiManager.WIFI_STATE_ENABLED,
                 ConnectivityManagerTestActivity.SHORT_TIMEOUT));
         assertTrue(mAct.waitForNetworkState(ConnectivityManager.TYPE_WIFI, State.CONNECTED,
-                ConnectivityManagerTestActivity.LONG_TIMEOUT));
+                ConnectivityManagerTestActivity.WIFI_CONNECTION_TIMEOUT));
         // Run ping test to verify the data connection
         assertTrue("Wi-Fi is connected, but no data connection.", mAct.pingTest(null));
 
@@ -302,7 +302,7 @@ public class WifiStressTest
                     ConnectivityManagerTestActivity.SHORT_TIMEOUT));
             assertTrue("Wait for Wi-Fi connection timeout after wake up",
                     mAct.waitForNetworkState(ConnectivityManager.TYPE_WIFI, State.CONNECTED,
-                    6 * ConnectivityManagerTestActivity.LONG_TIMEOUT));
+                    ConnectivityManagerTestActivity.WIFI_CONNECTION_TIMEOUT));
             long connectionTime = System.currentTimeMillis() - startTime;
             sum += connectionTime;
             log("average reconnection time is: " + sum/(i+1));

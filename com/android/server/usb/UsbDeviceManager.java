@@ -47,6 +47,8 @@ import android.provider.Settings;
 import android.util.Pair;
 import android.util.Slog;
 
+import com.android.internal.annotations.GuardedBy;
+
 import java.io.File;
 import java.io.FileDescriptor;
 import java.io.FileNotFoundException;
@@ -105,7 +107,7 @@ public class UsbDeviceManager {
 
     private final Context mContext;
     private final ContentResolver mContentResolver;
-    // @GuardedBy("mLock")
+    @GuardedBy("mLock")
     private UsbSettingsManager mCurrentSettings;
     private NotificationManager mNotificationManager;
     private final boolean mHasUsbAccessory;
@@ -167,7 +169,9 @@ public class UsbDeviceManager {
             startAccessoryMode();
         }
 
-        if ("1".equals(SystemProperties.get("ro.adb.secure"))) {
+        boolean secureAdbEnabled = SystemProperties.getBoolean("ro.adb.secure", false);
+        boolean dataEncrypted = "1".equals(SystemProperties.get("vold.decrypt"));
+        if (secureAdbEnabled && !dataEncrypted) {
             mDebuggingManager = new UsbDebuggingManager(context);
         }
     }
@@ -857,6 +861,15 @@ public class UsbDeviceManager {
     public void denyUsbDebugging() {
         if (mDebuggingManager != null) {
             mDebuggingManager.denyUsbDebugging();
+        }
+    }
+
+    public void clearUsbDebuggingKeys() {
+        if (mDebuggingManager != null) {
+            mDebuggingManager.clearUsbDebuggingKeys();
+        } else {
+            throw new RuntimeException("Cannot clear Usb Debugging keys, "
+                        + "UsbDebuggingManager not enabled");
         }
     }
 

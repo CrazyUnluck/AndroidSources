@@ -256,7 +256,7 @@ public class RecentsHorizontalScrollView extends HorizontalScrollView
             mPerformanceHelper.drawCallback(canvas,
                     left, right, top, bottom, mScrollX, mScrollY,
                     0, 0,
-                    getLeftFadingEdgeStrength(), getRightFadingEdgeStrength());
+                    getLeftFadingEdgeStrength(), getRightFadingEdgeStrength(), mPaddingTop);
         }
     }
 
@@ -334,19 +334,6 @@ public class RecentsHorizontalScrollView extends HorizontalScrollView
                 }
             }
         });
-    }
-
-    @Override
-    protected void onVisibilityChanged(View changedView, int visibility) {
-        super.onVisibilityChanged(changedView, visibility);
-        // scroll to bottom after reloading
-        if (visibility == View.VISIBLE && changedView == this) {
-            post(new Runnable() {
-                public void run() {
-                    update();
-                }
-            });
-        }
     }
 
     public void setAdapter(TaskDescriptionAdapter adapter) {

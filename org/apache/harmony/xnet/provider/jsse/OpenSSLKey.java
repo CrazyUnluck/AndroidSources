@@ -16,26 +16,40 @@
 
 package org.apache.harmony.xnet.provider.jsse;
 
-class OpenSSLKey {
-    private final int ctx;
+import java.security.NoSuchAlgorithmException;
+import java.security.PrivateKey;
+import java.security.PublicKey;
+import java.security.spec.InvalidKeySpecException;
+import java.security.spec.PKCS8EncodedKeySpec;
+import java.security.spec.X509EncodedKeySpec;
+
+import javax.crypto.SecretKey;
+
+public class OpenSSLKey {
+    private final long ctx;
 
     private final OpenSSLEngine engine;
 
     private final String alias;
 
-    OpenSSLKey(int ctx) {
+    public OpenSSLKey(long ctx) {
         this.ctx = ctx;
         engine = null;
         alias = null;
     }
 
-    OpenSSLKey(int ctx, OpenSSLEngine engine, String alias) {
+    public OpenSSLKey(long ctx, OpenSSLEngine engine, String alias) {
         this.ctx = ctx;
         this.engine = engine;
         this.alias = alias;
     }
 
-    int getPkeyContext() {
+    /**
+     * Returns the raw pointer to the EVP_PKEY context for use in JNI calls. The
+     * life cycle of this native pointer is managed by the {@code OpenSSLKey}
+     * instance and must not be destroyed or freed by users of this API.
+     */
+    public long getPkeyContext() {
         return ctx;
     }
 
@@ -47,8 +61,88 @@ class OpenSSLKey {
         return engine != null;
     }
 
-    String getAlias() {
+    public String getAlias() {
         return alias;
+    }
+
+    public PublicKey getPublicKey() throws NoSuchAlgorithmException {
+        switch (NativeCrypto.EVP_PKEY_type(ctx)) {
+            case NativeCrypto.EVP_PKEY_RSA:
+                return new OpenSSLRSAPublicKey(this);
+            case NativeCrypto.EVP_PKEY_DSA:
+                return new OpenSSLDSAPublicKey(this);
+            case NativeCrypto.EVP_PKEY_EC:
+                return new OpenSSLECPublicKey(this);
+            default:
+                throw new NoSuchAlgorithmException("unknown PKEY type");
+        }
+    }
+
+    static PublicKey getPublicKey(X509EncodedKeySpec keySpec, int type)
+            throws InvalidKeySpecException {
+        X509EncodedKeySpec x509KeySpec = (X509EncodedKeySpec) keySpec;
+
+        final OpenSSLKey key;
+        try {
+            key = new OpenSSLKey(NativeCrypto.d2i_PUBKEY(x509KeySpec.getEncoded()));
+        } catch (Exception e) {
+            throw new InvalidKeySpecException(e);
+        }
+
+        if (NativeCrypto.EVP_PKEY_type(key.getPkeyContext()) != type) {
+            throw new InvalidKeySpecException("Unexpected key type");
+        }
+
+        try {
+            return key.getPublicKey();
+        } catch (NoSuchAlgorithmException e) {
+            throw new InvalidKeySpecException(e);
+        }
+    }
+
+    public PrivateKey getPrivateKey() throws NoSuchAlgorithmException {
+        switch (NativeCrypto.EVP_PKEY_type(ctx)) {
+            case NativeCrypto.EVP_PKEY_RSA:
+                return new OpenSSLRSAPrivateKey(this);
+            case NativeCrypto.EVP_PKEY_DSA:
+                return new OpenSSLDSAPrivateKey(this);
+            case NativeCrypto.EVP_PKEY_EC:
+                return new OpenSSLECPrivateKey(this);
+            default:
+                throw new NoSuchAlgorithmException("unknown PKEY type");
+        }
+    }
+
+    static PrivateKey getPrivateKey(PKCS8EncodedKeySpec keySpec, int type)
+            throws InvalidKeySpecException {
+        PKCS8EncodedKeySpec pkcs8KeySpec = (PKCS8EncodedKeySpec) keySpec;
+
+        final OpenSSLKey key;
+        try {
+            key = new OpenSSLKey(NativeCrypto.d2i_PKCS8_PRIV_KEY_INFO(pkcs8KeySpec.getEncoded()));
+        } catch (Exception e) {
+            throw new InvalidKeySpecException(e);
+        }
+
+        if (NativeCrypto.EVP_PKEY_type(key.getPkeyContext()) != type) {
+            throw new InvalidKeySpecException("Unexpected key type");
+        }
+
+        try {
+            return key.getPrivateKey();
+        } catch (NoSuchAlgorithmException e) {
+            throw new InvalidKeySpecException(e);
+        }
+    }
+
+    public SecretKey getSecretKey(String algorithm) throws NoSuchAlgorithmException {
+        switch (NativeCrypto.EVP_PKEY_type(ctx)) {
+            case NativeCrypto.EVP_PKEY_HMAC:
+            case NativeCrypto.EVP_PKEY_CMAC:
+                return new OpenSSLSecretKey(algorithm, this);
+            default:
+                throw new NoSuchAlgorithmException("unknown PKEY type");
+        }
     }
 
     @Override
@@ -73,22 +167,35 @@ class OpenSSLKey {
         }
 
         OpenSSLKey other = (OpenSSLKey) o;
-        if (ctx != other.getPkeyContext()) {
-            return false;
+        if (ctx == other.getPkeyContext()) {
+            return true;
         }
 
+        /*
+         * ENGINE-based keys must be checked in a special way.
+         */
         if (engine == null) {
-            return other.getEngine() == null;
+            if (other.getEngine() != null) {
+                return false;
+            }
+        } else if (!engine.equals(other.getEngine())) {
+            return false;
         } else {
-            return engine.equals(other.getEngine());
+            if (alias != null) {
+                return alias.equals(other.getAlias());
+            } else if (other.getAlias() != null) {
+                return false;
+            }
         }
+
+        return NativeCrypto.EVP_PKEY_cmp(ctx, other.getPkeyContext()) == 1;
     }
 
     @Override
     public int hashCode() {
         int hash = 1;
-        hash = hash * 17 + ctx;
-        hash = hash * 31 + (engine == null ? 0 : engine.getEngineContext());
+        hash = hash * 17 + (int) ctx;
+        hash = hash * 31 + (int) (engine == null ? 0 : engine.getEngineContext());
         return hash;
     }
 }

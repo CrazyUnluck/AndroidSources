@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2012 The Android Open Source Project
+ * Copyright (C) 2013 The Android Open Source Project
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -18,6 +18,8 @@ package android.support.v8.renderscript;
 
 
 import java.lang.reflect.Field;
+
+import android.graphics.ImageFormat;
 import android.util.Log;
 
 /**
@@ -47,6 +49,7 @@ public class Type extends BaseObj {
     int mDimZ;
     boolean mDimMipmaps;
     boolean mDimFaces;
+    int mDimYuv;
     int mElementCount;
     Element mElement;
 
@@ -119,6 +122,13 @@ public class Type extends BaseObj {
     }
 
     /**
+     * @hide
+     */
+    public int getYuv() {
+        return mDimYuv;
+    }
+
+    /**
      * Return the total number of accessable cells in the Type.
      *
      * @return int
@@ -180,6 +190,7 @@ public class Type extends BaseObj {
         int mDimZ;
         boolean mDimMipmaps;
         boolean mDimFaces;
+        int mYuv;
 
         Element mElement;
 
@@ -217,6 +228,14 @@ public class Type extends BaseObj {
             return this;
         }
 
+        public Builder setZ(int value) {
+            if(value < 1) {
+                throw new RSIllegalArgumentException("Values of less than 1 for Dimension Z are not valid.");
+            }
+            mDimZ = value;
+            return this;
+        }
+
         public Builder setMipmaps(boolean value) {
             mDimMipmaps = value;
             return this;
@@ -224,6 +243,25 @@ public class Type extends BaseObj {
 
         public Builder setFaces(boolean value) {
             mDimFaces = value;
+            return this;
+        }
+
+        /**
+         * @hide
+         *
+         * only NV21, YV12.  Enums from ImageFormat
+         */
+        public Builder setYuvFormat(int yuvFormat) {
+            switch (yuvFormat) {
+            case android.graphics.ImageFormat.NV21:
+            case android.graphics.ImageFormat.YV12:
+                break;
+
+            default:
+                throw new RSIllegalArgumentException("Only NV21 and YV12 are supported..");
+            }
+
+            mYuv = yuvFormat;
             return this;
         }
 
@@ -253,15 +291,29 @@ public class Type extends BaseObj {
                 }
             }
 
-            int id = mRS.nTypeCreate(mElement.getID(mRS),
-                                     mDimX, mDimY, mDimZ, mDimMipmaps, mDimFaces);
-            Type t = new Type(id, mRS);
+            if (mYuv != 0) {
+                if ((mDimZ != 0) || mDimFaces || mDimMipmaps) {
+                    throw new RSInvalidStateException("YUV only supports basic 2D.");
+                }
+            }
+
+            Type t;
+            if (mRS.isNative) {
+                RenderScriptThunker rst = (RenderScriptThunker)mRS;
+                t = TypeThunker.create(rst, mElement, mDimX, mDimY, mDimZ,
+                                       mDimMipmaps, mDimFaces, mYuv);
+            } else {
+                int id = mRS.nTypeCreate(mElement.getID(mRS),
+                                         mDimX, mDimY, mDimZ, mDimMipmaps, mDimFaces, mYuv);
+                t = new Type(id, mRS);
+            }
             t.mElement = mElement;
             t.mDimX = mDimX;
             t.mDimY = mDimY;
             t.mDimZ = mDimZ;
             t.mDimMipmaps = mDimMipmaps;
             t.mDimFaces = mDimFaces;
+            t.mDimYuv = mYuv;
 
             t.calcElementCount();
             return t;

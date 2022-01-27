@@ -21,17 +21,21 @@ import android.content.res.Resources;
 import android.graphics.Canvas;
 import android.graphics.drawable.Drawable;
 import android.util.AttributeSet;
+import android.util.EventLog;
 import android.util.Slog;
 import android.view.MotionEvent;
 import android.view.View;
+import android.view.accessibility.AccessibilityEvent;
 
+import com.android.systemui.EventLogTags;
 import com.android.systemui.R;
 import com.android.systemui.statusbar.GestureRecorder;
 
 public class NotificationPanelView extends PanelView {
+    public static final boolean DEBUG_GESTURES = true;
 
     Drawable mHandleBar;
-    float mHandleBarHeight;
+    int mHandleBarHeight;
     View mHandleView;
     int mFingers;
     PhoneStatusBar mStatusBar;
@@ -51,10 +55,8 @@ public class NotificationPanelView extends PanelView {
 
         Resources resources = getContext().getResources();
         mHandleBar = resources.getDrawable(R.drawable.status_bar_close);
-        mHandleBarHeight = resources.getDimension(R.dimen.close_handle_height);
+        mHandleBarHeight = resources.getDimensionPixelSize(R.dimen.close_handle_height);
         mHandleView = findViewById(R.id.handle);
-
-        setContentDescription(resources.getString(R.string.accessibility_desc_notification_shade));
     }
 
     @Override
@@ -66,6 +68,17 @@ public class NotificationPanelView extends PanelView {
                 "notifications,v=" + vel);
         }
         super.fling(vel, always);
+    }
+
+    @Override
+    public boolean dispatchPopulateAccessibilityEvent(AccessibilityEvent event) {
+        if (event.getEventType() == AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED) {
+            event.getText()
+                    .add(getContext().getString(R.string.accessibility_desc_notification_shade));
+            return true;
+        }
+
+        return super.dispatchPopulateAccessibilityEvent(event);
     }
 
     // We draw the handle ourselves so that it's always glued to the bottom of the window.
@@ -91,6 +104,12 @@ public class NotificationPanelView extends PanelView {
 
     @Override
     public boolean onTouchEvent(MotionEvent event) {
+        if (DEBUG_GESTURES) {
+            if (event.getActionMasked() != MotionEvent.ACTION_MOVE) {
+                EventLog.writeEvent(EventLogTags.SYSUI_NOTIFICATIONPANEL_TOUCH,
+                       event.getActionMasked(), (int) event.getX(), (int) event.getY());
+            }
+        }
         if (PhoneStatusBar.SETTINGS_DRAG_SHORTCUT && mStatusBar.mHasFlipSettings) {
             switch (event.getActionMasked()) {
                 case MotionEvent.ACTION_DOWN:

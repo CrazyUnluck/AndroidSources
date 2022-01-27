@@ -17,7 +17,10 @@
 package org.apache.harmony.xnet.provider.jsse;
 
 import java.security.InvalidKeyException;
+import java.security.NoSuchAlgorithmException;
 import java.security.PrivateKey;
+
+import javax.crypto.SecretKey;
 
 public class OpenSSLEngine {
     static {
@@ -27,14 +30,14 @@ public class OpenSSLEngine {
     private static final Object mLoadingLock = new Object();
 
     /** The ENGINE's native handle. */
-    private final int ctx;
+    private final long ctx;
 
     public static OpenSSLEngine getInstance(String engine) throws IllegalArgumentException {
         if (engine == null) {
             throw new NullPointerException("engine == null");
         }
 
-        final int engineCtx;
+        final long engineCtx;
         synchronized (mLoadingLock) {
             engineCtx = NativeCrypto.ENGINE_by_id(engine);
             if (engineCtx == 0) {
@@ -47,7 +50,7 @@ public class OpenSSLEngine {
         return new OpenSSLEngine(engineCtx);
     }
 
-    private OpenSSLEngine(int engineCtx) {
+    private OpenSSLEngine(long engineCtx) {
         ctx = engineCtx;
 
         if (NativeCrypto.ENGINE_init(engineCtx) == 0) {
@@ -61,23 +64,38 @@ public class OpenSSLEngine {
             throw new NullPointerException("id == null");
         }
 
-        final int keyRef = NativeCrypto.ENGINE_load_private_key(ctx, id);
+        final long keyRef = NativeCrypto.ENGINE_load_private_key(ctx, id);
         if (keyRef == 0) {
             return null;
         }
 
-        final int keyType = NativeCrypto.EVP_PKEY_type(keyRef);
-        switch (keyType) {
-            case NativeCrypto.EVP_PKEY_RSA:
-                return OpenSSLRSAPrivateKey.getInstance(new OpenSSLKey(keyRef, this, id));
-            case NativeCrypto.EVP_PKEY_DSA:
-                return new OpenSSLDSAPrivateKey(new OpenSSLKey(keyRef, this, id));
-            default:
-                throw new InvalidKeyException("Unknown key type: " + keyType);
+        OpenSSLKey pkey = new OpenSSLKey(keyRef, this, id);
+        try {
+            return pkey.getPrivateKey();
+        } catch (NoSuchAlgorithmException e) {
+            throw new InvalidKeyException(e);
         }
     }
 
-    int getEngineContext() {
+    public SecretKey getSecretKeyById(String id, String algorithm) throws InvalidKeyException {
+        if (id == null) {
+            throw new NullPointerException("id == null");
+        }
+
+        final long keyRef = NativeCrypto.ENGINE_load_private_key(ctx, id);
+        if (keyRef == 0) {
+            return null;
+        }
+
+        OpenSSLKey pkey = new OpenSSLKey(keyRef, this, id);
+        try {
+            return pkey.getSecretKey(algorithm);
+        } catch (NoSuchAlgorithmException e) {
+            throw new InvalidKeyException(e);
+        }
+    }
+
+    long getEngineContext() {
         return ctx;
     }
 
@@ -103,11 +121,20 @@ public class OpenSSLEngine {
 
         OpenSSLEngine other = (OpenSSLEngine) o;
 
-        return other.getEngineContext() == ctx;
+        if (other.getEngineContext() == ctx) {
+            return true;
+        }
+
+        final String id = NativeCrypto.ENGINE_get_id(ctx);
+        if (id == null) {
+            return false;
+        }
+
+        return id.equals(NativeCrypto.ENGINE_get_id(other.getEngineContext()));
     }
 
     @Override
     public int hashCode() {
-        return ctx;
+      return (int) ctx;
     }
 }

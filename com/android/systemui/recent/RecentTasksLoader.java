@@ -138,6 +138,10 @@ public class RecentTasksLoader implements View.OnTouchListener {
         return mLoadedTasks;
     }
 
+    public void remove(TaskDescription td) {
+        mLoadedTasks.remove(td);
+    }
+
     public boolean isFirstScreenful() {
         return mFirstScreenful;
     }
@@ -282,6 +286,10 @@ public class RecentTasksLoader implements View.OnTouchListener {
 
 
     private void cancelLoadingThumbnailsAndIcons() {
+        if (mRecentsPanel != null && mRecentsPanel.isShowing()) {
+            return;
+        }
+
         if (mTaskLoader != null) {
             mTaskLoader.cancel(false);
             mTaskLoader = null;

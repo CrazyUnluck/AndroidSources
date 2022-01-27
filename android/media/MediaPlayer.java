@@ -328,8 +328,8 @@ import java.lang.ref.WeakReference;
  *         the state. Calling this method in an invalid state transfers the
  *         object to the <em>Error</em> state. </p></td></tr>
  * <tr><td>pause </p></td>
- *     <td>{Started, Paused}</p></td>
- *     <td>{Idle, Initialized, Prepared, Stopped, PlaybackCompleted, Error}</p></td>
+ *     <td>{Started, Paused, PlaybackCompleted}</p></td>
+ *     <td>{Idle, Initialized, Prepared, Stopped, Error}</p></td>
  *     <td>Successful invoke of this method in a valid state transfers the
  *         object to the <em>Paused</em> state. Calling this method in an
  *         invalid state transfers the object to the <em>Error</em> state.</p></td></tr>
@@ -948,7 +948,12 @@ public class MediaPlayer
 
     private void setDataSource(String path, String[] keys, String[] values)
             throws IOException, IllegalArgumentException, SecurityException, IllegalStateException {
-        File file = new File(path);
+        final Uri uri = Uri.parse(path);
+        if ("file".equals(uri.getScheme())) {
+            path = uri.getPath();
+        }
+
+        final File file = new File(path);
         if (file.exists()) {
             FileInputStream is = new FileInputStream(file);
             FileDescriptor fd = is.getFD();
@@ -1176,7 +1181,8 @@ public class MediaPlayer
     /**
      * Gets the duration of the file.
      *
-     * @return the duration in milliseconds
+     * @return the duration in milliseconds, if no duration is available
+     *         (for example, if streaming live content), -1 is returned.
      */
     public native int getDuration();
 
@@ -1361,13 +1367,26 @@ public class MediaPlayer
      * within an application. Unless you are writing an application to
      * control user settings, this API should be used in preference to
      * {@link AudioManager#setStreamVolume(int, int, int)} which sets the volume of ALL streams of
-     * a particular type. Note that the passed volume values are raw scalars.
+     * a particular type. Note that the passed volume values are raw scalars in range 0.0 to 1.0.
      * UI controls should be scaled logarithmically.
      *
      * @param leftVolume left volume scalar
      * @param rightVolume right volume scalar
      */
+    /*
+     * FIXME: Merge this into javadoc comment above when setVolume(float) is not @hide.
+     * The single parameter form below is preferred if the channel volumes don't need
+     * to be set independently.
+     */
     public native void setVolume(float leftVolume, float rightVolume);
+
+    /**
+     * Similar, excepts sets volume of all channels to same value.
+     * @hide
+     */
+    public void setVolume(float volume) {
+        setVolume(volume, volume);
+    }
 
     /**
      * Currently not implemented, returns null.

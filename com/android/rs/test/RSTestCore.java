@@ -82,8 +82,10 @@ public class RSTestCore {
         unitTests.add(new UT_rstime(this, mRes, mCtx));
         unitTests.add(new UT_rstypes(this, mRes, mCtx));
         unitTests.add(new UT_alloc(this, mRes, mCtx));
+        unitTests.add(new UT_static_globals(this, mRes, mCtx));
         unitTests.add(new UT_refcount(this, mRes, mCtx));
         unitTests.add(new UT_foreach(this, mRes, mCtx));
+        unitTests.add(new UT_foreach_bounds(this, mRes, mCtx));
         unitTests.add(new UT_noroot(this, mRes, mCtx));
         unitTests.add(new UT_atomic(this, mRes, mCtx));
         unitTests.add(new UT_struct(this, mRes, mCtx));

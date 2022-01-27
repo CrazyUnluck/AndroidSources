@@ -57,7 +57,6 @@ public class BordeauxManagerService {
         context.bindService(new Intent(IBordeauxService.class.getName()),
                mConnection, Context.BIND_AUTO_CREATE);
         mStarted = true;
-
     }
 
     // Call the release, before the Context gets destroyed.

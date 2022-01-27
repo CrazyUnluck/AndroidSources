@@ -16,8 +16,6 @@
 
 package android.renderscript;
 
-import android.content.Context;
-import android.content.res.Resources;
 import android.util.Log;
 
 /**
@@ -50,7 +48,7 @@ public final class ScriptIntrinsicConvolve3x3 extends ScriptIntrinsic {
      */
     public static ScriptIntrinsicConvolve3x3 create(RenderScript rs, Element e) {
         float f[] = { 0, 0, 0, 0, 1, 0, 0, 0, 0};
-        if (e != Element.U8_4(rs)) {
+        if (!e.isCompatible(Element.U8_4(rs))) {
             throw new RSIllegalArgumentException("Unsuported element type.");
         }
         int id = rs.nScriptIntrinsicCreate(1, e.getID(rs));

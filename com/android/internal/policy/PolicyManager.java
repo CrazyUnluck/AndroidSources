@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2012 The Android Open Source Project
+ * Copyright (C) 2008 The Android Open Source Project
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -16,57 +16,56 @@
 
 package com.android.internal.policy;
 
-import com.android.ide.common.rendering.api.LayoutLog;
-import com.android.layoutlib.bridge.Bridge;
-import com.android.layoutlib.bridge.impl.RenderAction;
-
 import android.content.Context;
-import android.view.BridgeInflater;
 import android.view.FallbackEventHandler;
-import android.view.KeyEvent;
 import android.view.LayoutInflater;
-import android.view.View;
 import android.view.Window;
 import android.view.WindowManagerPolicy;
 
 /**
- * Custom implementation of PolicyManager that does nothing to run in LayoutLib.
- *
+ * {@hide}
  */
-public class PolicyManager {
 
+public final class PolicyManager {
+    private static final String POLICY_IMPL_CLASS_NAME =
+        "com.android.internal.policy.impl.Policy";
+
+    private static final IPolicy sPolicy;
+
+    static {
+        // Pull in the actual implementation of the policy at run-time
+        try {
+            Class policyClass = Class.forName(POLICY_IMPL_CLASS_NAME);
+            sPolicy = (IPolicy)policyClass.newInstance();
+        } catch (ClassNotFoundException ex) {
+            throw new RuntimeException(
+                    POLICY_IMPL_CLASS_NAME + " could not be loaded", ex);
+        } catch (InstantiationException ex) {
+            throw new RuntimeException(
+                    POLICY_IMPL_CLASS_NAME + " could not be instantiated", ex);
+        } catch (IllegalAccessException ex) {
+            throw new RuntimeException(
+                    POLICY_IMPL_CLASS_NAME + " could not be instantiated", ex);
+        }
+    }
+
+    // Cannot instantiate this class
+    private PolicyManager() {}
+
+    // The static methods to spawn new policy-specific objects
     public static Window makeNewWindow(Context context) {
-        // this will likely crash somewhere beyond so we log it.
-        Bridge.getLog().error(LayoutLog.TAG_UNSUPPORTED,
-                "Call to PolicyManager.makeNewWindow is not supported", null);
-        return null;
+        return sPolicy.makeNewWindow(context);
     }
 
     public static LayoutInflater makeNewLayoutInflater(Context context) {
-        return new BridgeInflater(context, RenderAction.getCurrentContext().getProjectCallback());
+        return sPolicy.makeNewLayoutInflater(context);
     }
 
     public static WindowManagerPolicy makeNewWindowManager() {
-        // this will likely crash somewhere beyond so we log it.
-        Bridge.getLog().error(LayoutLog.TAG_UNSUPPORTED,
-                "Call to PolicyManager.makeNewWindowManager is not supported", null);
-        return null;
+        return sPolicy.makeNewWindowManager();
     }
 
     public static FallbackEventHandler makeNewFallbackEventHandler(Context context) {
-        return new FallbackEventHandler() {
-            @Override
-            public void setView(View v) {
-            }
-
-            @Override
-            public void preDispatchKeyEvent(KeyEvent event) {
-            }
-
-            @Override
-            public boolean dispatchKeyEvent(KeyEvent event) {
-                return false;
-            }
-        };
+        return sPolicy.makeNewFallbackEventHandler(context);
     }
 }

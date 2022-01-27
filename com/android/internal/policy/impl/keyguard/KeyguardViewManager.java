@@ -24,6 +24,7 @@ import android.content.pm.ActivityInfo;
 import android.content.res.Configuration;
 import android.content.res.Resources;
 import android.graphics.PixelFormat;
+import android.graphics.Rect;
 import android.os.Bundle;
 import android.os.IBinder;
 import android.os.Parcelable;
@@ -52,6 +53,7 @@ public class KeyguardViewManager {
     private final static boolean DEBUG = KeyguardViewMediator.DEBUG;
     private static String TAG = "KeyguardViewManager";
     public static boolean USE_UPPER_CASE = true;
+    public final static String IS_SWITCHING_USER = "is_switching_user";
 
     // Timeout used for keypresses
     static final int DIGIT_PRESS_WAKE_MILLIS = 5000;
@@ -127,6 +129,12 @@ public class KeyguardViewManager {
         }
 
         @Override
+        protected boolean fitSystemWindows(Rect insets) {
+            Log.v("TAG", "bug 7643792: fitSystemWindows(" + insets.toShortString() + ")");
+            return super.fitSystemWindows(insets);
+        }
+
+        @Override
         protected void onConfigurationChanged(Configuration newConfig) {
             super.onConfigurationChanged(newConfig);
             if (mKeyguardHost.getVisibility() == View.VISIBLE) {
@@ -139,11 +147,18 @@ public class KeyguardViewManager {
 
         @Override
         public boolean dispatchKeyEvent(KeyEvent event) {
-            if (event.getAction() == KeyEvent.ACTION_DOWN && mKeyguardView != null) {
-                int keyCode = event.getKeyCode();
-                if (keyCode == KeyEvent.KEYCODE_BACK && mKeyguardView.handleBackKey()) {
-                    return true;
-                } else if (keyCode == KeyEvent.KEYCODE_MENU && mKeyguardView.handleMenuKey()) {
+            if (mKeyguardView != null) {
+                // Always process back and menu keys, regardless of focus
+                if (event.getAction() == KeyEvent.ACTION_DOWN) {
+                    int keyCode = event.getKeyCode();
+                    if (keyCode == KeyEvent.KEYCODE_BACK && mKeyguardView.handleBackKey()) {
+                        return true;
+                    } else if (keyCode == KeyEvent.KEYCODE_MENU && mKeyguardView.handleMenuKey()) {
+                        return true;
+                    }
+                }
+                // Always process media keys, regardless of focus
+                if (mKeyguardView.dispatchKeyEvent(event)) {
                     return true;
                 }
             }
@@ -185,6 +200,9 @@ public class KeyguardViewManager {
                     stretch, stretch, type, flags, PixelFormat.TRANSLUCENT);
             lp.softInputMode = WindowManager.LayoutParams.SOFT_INPUT_ADJUST_RESIZE;
             lp.windowAnimations = com.android.internal.R.style.Animation_LockScreen;
+            lp.screenOrientation = enableScreenRotation ?
+                    ActivityInfo.SCREEN_ORIENTATION_USER : ActivityInfo.SCREEN_ORIENTATION_NOSENSOR;
+
             if (ActivityManager.isHighEndGfx()) {
                 lp.flags |= WindowManager.LayoutParams.FLAG_HARDWARE_ACCELERATED;
                 lp.privateFlags |=
@@ -202,6 +220,7 @@ public class KeyguardViewManager {
 
         if (force || mKeyguardView == null) {
             inflateKeyguardView(options);
+            mKeyguardView.requestFocus();
         }
         updateUserActivityTimeoutInWindowLayoutParams();
         mViewManager.updateViewLayout(mKeyguardHost, mWindowLayoutParams);
@@ -222,6 +241,8 @@ public class KeyguardViewManager {
         mKeyguardView = (KeyguardHostView) view.findViewById(R.id.keyguard_host_view);
         mKeyguardView.setLockPatternUtils(mLockPatternUtils);
         mKeyguardView.setViewMediatorCallback(mViewMediatorCallback);
+        mKeyguardView.initializeSwitchingUserState(options != null &&
+                options.getBoolean(IS_SWITCHING_USER));
 
         // HACK
         // The keyguard view will have set up window flags in onFinishInflate before we set
@@ -236,12 +257,6 @@ public class KeyguardViewManager {
         }
 
         if (options != null) {
-            if (options.getBoolean(LockPatternUtils.KEYGUARD_SHOW_USER_SWITCHER)) {
-                mKeyguardView.goToUserSwitcher();
-            }
-            if (options.getBoolean(LockPatternUtils.KEYGUARD_SHOW_SECURITY_CHALLENGE)) {
-                mKeyguardView.showNextSecurityScreenIfPresent();
-            }
             int widgetToShow = options.getInt(LockPatternUtils.KEYGUARD_SHOW_APPWIDGET,
                     AppWidgetManager.INVALID_APPWIDGET_ID);
             if (widgetToShow != AppWidgetManager.INVALID_APPWIDGET_ID) {

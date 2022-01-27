@@ -35,11 +35,12 @@ public class BordeauxAggregatorManager {
     private IAggregatorManager mAggregatorManager;
 
     public boolean retrieveAggregatorManager() {
-        if (mAggregatorManager == null)
-            mAggregatorManager = BordeauxManagerService.getAggregatorManager(mContext);
         if (mAggregatorManager == null) {
-            Log.e(TAG, AggregatorManager_NOTAVAILABLE);
-            return false;
+            mAggregatorManager = BordeauxManagerService.getAggregatorManager(mContext);
+            if (mAggregatorManager == null) {
+                Log.e(TAG, AggregatorManager_NOTAVAILABLE);
+                return false;
+            }
         }
         return true;
     }
@@ -60,10 +61,88 @@ public class BordeauxAggregatorManager {
         }
     }
 
+    public List<String> getLocationClusters() {
+        if (!retrieveAggregatorManager())
+            throw new RuntimeException(AggregatorManager_NOTAVAILABLE);
+        try {
+            return mAggregatorManager.getLocationClusters();
+        } catch (RemoteException e) {
+            Log.e(TAG,"Error getting location clusters");
+            throw new RuntimeException(AggregatorManager_NOTAVAILABLE);
+        }
+    }
+
+    public List<String> getTimeOfDayValues() {
+        if (!retrieveAggregatorManager())
+            throw new RuntimeException(AggregatorManager_NOTAVAILABLE);
+        try {
+            return mAggregatorManager.getTimeOfDayValues();
+        } catch (RemoteException e) {
+            Log.e(TAG,"Error getting time of day values");
+            throw new RuntimeException(AggregatorManager_NOTAVAILABLE);
+        }
+    }
+
+    public List<String> getDayOfWeekValues() {
+        if (!retrieveAggregatorManager())
+            throw new RuntimeException(AggregatorManager_NOTAVAILABLE);
+        try {
+            return mAggregatorManager.getDayOfWeekValues();
+        } catch (RemoteException e) {
+            Log.e(TAG,"Error getting day of week values");
+            throw new RuntimeException(AggregatorManager_NOTAVAILABLE);
+        }
+    }
+
+    public boolean setFakeLocation(final String name) {
+        if (!retrieveAggregatorManager())
+            throw new RuntimeException(AggregatorManager_NOTAVAILABLE);
+        try {
+            return mAggregatorManager.setFakeLocation(name);
+        } catch (RemoteException e) {
+            Log.e(TAG,"Error setting fake location:" + name);
+            throw new RuntimeException(AggregatorManager_NOTAVAILABLE);
+        }
+    }
+
+    public boolean setFakeTimeOfDay(final String time_of_day) {
+        if (!retrieveAggregatorManager())
+            throw new RuntimeException(AggregatorManager_NOTAVAILABLE);
+        try {
+            return mAggregatorManager.setFakeTimeOfDay(time_of_day);
+        } catch (RemoteException e) {
+            Log.e(TAG,"Error setting fake time of day:" + time_of_day);
+            throw new RuntimeException(AggregatorManager_NOTAVAILABLE);
+        }
+    }
+
+    public boolean setFakeDayOfWeek(final String day_of_week) {
+        if (!retrieveAggregatorManager())
+            throw new RuntimeException(AggregatorManager_NOTAVAILABLE);
+        try {
+            return mAggregatorManager.setFakeDayOfWeek(day_of_week);
+        } catch (RemoteException e) {
+            Log.e(TAG,"Error setting fake day of week:" + day_of_week);
+            throw new RuntimeException(AggregatorManager_NOTAVAILABLE);
+        }
+    }
+
+    public boolean getFakeMode() {
+        if (!retrieveAggregatorManager())
+            throw new RuntimeException(AggregatorManager_NOTAVAILABLE);
+        try {
+            return mAggregatorManager.getFakeMode();
+        } catch (RemoteException e) {
+            Log.e(TAG,"Error getting fake mode");
+            throw new RuntimeException(AggregatorManager_NOTAVAILABLE);
+        }
+    }
+
     private Map<String, String> getMap(final List<StringString> sample) {
-        HashMap<String, String> m = new HashMap<String, String>();
-        for (int i =0; i < sample.size(); i++)
-            m.put(sample.get(i).key, sample.get(i).value);
-        return (Map) m;
+        HashMap<String, String> map = new HashMap<String, String>();
+        for (int i =0; i < sample.size(); i++) {
+            map.put(sample.get(i).key, sample.get(i).value);
+        }
+        return (Map) map;
     }
 }

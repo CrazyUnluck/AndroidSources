@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2012 The Android Open Source Project
+ * Copyright (C) 2013 The Android Open Source Project
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -49,27 +49,11 @@ import android.util.Log;
  * </div>
  **/
 public class Element extends BaseObj {
-    static class NElement {
-        android.renderscript.Element mE;
-
-        NElement(android.renderscript.Element e) {
-            mE = e;
-        }
-/*
-        int getID() {
-            return mE.getID();
-        }
-        */
-    }
-    NElement mNE;
-
-
     int mSize;
     Element[] mElements;
     String[] mElementNames;
     int[] mArraySizes;
     int[] mOffsetInBytes;
-
     int[] mVisibleElementMap;
 
     DataType mType;
@@ -103,14 +87,18 @@ public class Element extends BaseObj {
     /**
     * @return element size in bytes
     */
-    public int getBytesSize() {return mSize;}
+    public int getBytesSize() {
+        return mSize;
+    }
 
     /**
     * Returns the number of vector components. 2 for float2, 4 for
     * float4, etc.
     * @return element vector size
     */
-    public int getVectorSize() {return mVectorSize;}
+    public int getVectorSize() {
+        return mVectorSize;
+    }
 
 
     /**
@@ -180,7 +168,9 @@ public class Element extends BaseObj {
         PIXEL_A (8),
         PIXEL_LA (9),
         PIXEL_RGB (10),
-        PIXEL_RGBA (11);
+        PIXEL_RGBA (11),
+        PIXEL_DEPTH (12),
+        PIXEL_YUV(13);
 
         int mID;
         DataKind(int id) {
@@ -746,7 +736,6 @@ public class Element extends BaseObj {
         super(id, rs);
     }
 
-
     /**
      * Create a custom Element of the specified DataType.  The DataKind will be
      * set to USER and the vector size to 1 indicating non-vector.
@@ -756,6 +745,10 @@ public class Element extends BaseObj {
      * @return Element
      */
     static Element createUser(RenderScript rs, DataType dt) {
+        if (rs.isNative) {
+            RenderScriptThunker rst = (RenderScriptThunker)rs;
+            return ElementThunker.create(rst, dt);
+        }
         DataKind dk = DataKind.USER;
         boolean norm = false;
         int vecSize = 1;
@@ -777,6 +770,10 @@ public class Element extends BaseObj {
      * @return Element
      */
     public static Element createVector(RenderScript rs, DataType dt, int size) {
+        if (rs.isNative) {
+            RenderScriptThunker rst = (RenderScriptThunker)rs;
+            return ElementThunker.createVector(rst, dt, size);
+        }
         if (size < 2 || size > 4) {
             throw new RSIllegalArgumentException("Vector size out of range 2-4.");
         }
@@ -820,11 +817,18 @@ public class Element extends BaseObj {
      * @return Element
      */
     public static Element createPixel(RenderScript rs, DataType dt, DataKind dk) {
+        if (rs.isNative) {
+            RenderScriptThunker rst = (RenderScriptThunker)rs;
+            return ElementThunker.createPixel(rst, dt, dk);
+        }
+
         if (!(dk == DataKind.PIXEL_L ||
               dk == DataKind.PIXEL_A ||
               dk == DataKind.PIXEL_LA ||
               dk == DataKind.PIXEL_RGB ||
-              dk == DataKind.PIXEL_RGBA)) {
+              dk == DataKind.PIXEL_RGBA ||
+              dk == DataKind.PIXEL_DEPTH ||
+              dk == DataKind.PIXEL_YUV)) {
             throw new RSIllegalArgumentException("Unsupported DataKind");
         }
         if (!(dt == DataType.UNSIGNED_8 ||
@@ -841,6 +845,10 @@ public class Element extends BaseObj {
             throw new RSIllegalArgumentException("Bad kind and type combo");
         }
         if (dt == DataType.UNSIGNED_4_4_4_4 && dk != DataKind.PIXEL_RGBA) {
+            throw new RSIllegalArgumentException("Bad kind and type combo");
+        }
+        if (dt == DataType.UNSIGNED_16 &&
+            dk != DataKind.PIXEL_DEPTH) {
             throw new RSIllegalArgumentException("Bad kind and type combo");
         }
 
@@ -889,22 +897,6 @@ public class Element extends BaseObj {
                 (mVectorSize == e.mVectorSize));
     }
 
-    static class NBuilder {
-        android.renderscript.Element.Builder mB;
-
-        NBuilder(RenderScript rs) {
-            mB = new android.renderscript.Element.Builder(rs.mNRS.getRS());
-        }
-
-        void add(Element element, String name, int arraySize) {
-            mB.add(element.mNE.mE, name, arraySize);
-        }
-
-        NElement create() {
-            return new NElement(mB.create());
-        }
-    }
-
     /**
      * Builder class for producing complex elements with matching field and name
      * pairs.  The builder starts empty.  The order in which elements are added
@@ -912,7 +904,7 @@ public class Element extends BaseObj {
      *
      */
     public static class Builder {
-        NBuilder mNB;
+        ElementThunker.BuilderThunker mT;
 
         RenderScript mRS;
         Element[] mElements;
@@ -927,6 +919,10 @@ public class Element extends BaseObj {
          * @param rs
          */
         public Builder(RenderScript rs) {
+            if (rs.isNative) {
+                RenderScriptThunker rst = (RenderScriptThunker)rs;
+                mT = new ElementThunker.BuilderThunker(rs);
+            }
             mRS = rs;
             mCount = 0;
             mElements = new Element[8];
@@ -942,6 +938,11 @@ public class Element extends BaseObj {
          * @param arraySize
          */
         public Builder add(Element element, String name, int arraySize) {
+            if (mT != null) {
+                mT.add(element, name, arraySize);
+                return this;
+            }
+
             if (arraySize < 1) {
                 throw new RSIllegalArgumentException("Array size cannot be less than 1.");
             }
@@ -976,9 +977,6 @@ public class Element extends BaseObj {
             mArraySizes[mCount] = arraySize;
             mCount++;
 
-            if (mRS.mUseNativeRS) {
-                mNB.add(element, name, arraySize);
-            }
             return this;
         }
 
@@ -999,6 +997,10 @@ public class Element extends BaseObj {
          * @return Element
          */
         public Element create() {
+            if (mT != null) {
+                return mT.create(mRS);
+            }
+
             mRS.validate();
             Element[] ein = new Element[mCount];
             String[] sin = new String[mCount];
@@ -1010,13 +1012,6 @@ public class Element extends BaseObj {
             int[] ids = new int[ein.length];
             for (int ct = 0; ct < ein.length; ct++ ) {
                 ids[ct] = ein[ct].getID(mRS);
-            }
-
-            if (mRS.mUseNativeRS) {
-                NElement ne = mNB.create();
-                Element e = new Element(-1, mRS, ein, sin, asin);
-                e.mNE = ne;
-                return e;
             }
 
             int id = mRS.nElementCreate2(ids, sin, asin);

@@ -88,24 +88,19 @@ public class TestBase  {
         return false;
     }
 
-    public final void createBaseTest(ImageProcessingActivity2 ipact, Bitmap b, Bitmap b2) {
+    public final void createBaseTest(ImageProcessingActivity2 ipact, Bitmap b, Bitmap b2, Bitmap outb) {
         act = ipact;
-        mRS = RenderScript.create(act);
-        mInPixelsAllocation = Allocation.createFromBitmap(mRS, b,
-                                                          Allocation.MipmapControl.MIPMAP_NONE,
-                                                          Allocation.USAGE_SCRIPT);
-        mInPixelsAllocation2 = Allocation.createFromBitmap(mRS, b2,
-                                                          Allocation.MipmapControl.MIPMAP_NONE,
-                                                          Allocation.USAGE_SCRIPT);
-        mOutPixelsAllocation = Allocation.createFromBitmap(mRS, b,
-                                                           Allocation.MipmapControl.MIPMAP_NONE,
-                                                           Allocation.USAGE_SCRIPT);
+        mRS = ipact.mRS;
+
+        mInPixelsAllocation = ipact.mInPixelsAllocation;
+        mInPixelsAllocation2 = ipact.mInPixelsAllocation2;
+        mOutPixelsAllocation = ipact.mOutPixelsAllocation;
+
         createTest(act.getResources());
     }
 
     // Must override
     public void createTest(android.content.res.Resources res) {
-        android.util.Log.e("img", "implement createTest");
     }
 
     // Must override
@@ -117,7 +112,6 @@ public class TestBase  {
     }
 
     public void destroy() {
-        mRS.destroy();
     }
 
     public void updateBitmap(Bitmap b) {

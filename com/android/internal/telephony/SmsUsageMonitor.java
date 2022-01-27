@@ -24,14 +24,13 @@ import android.content.res.XmlResourceParser;
 import android.database.ContentObserver;
 import android.os.Binder;
 import android.os.Handler;
-import android.os.Message;
 import android.os.Process;
 import android.os.RemoteException;
 import android.os.UserHandle;
 import android.provider.Settings;
 import android.telephony.PhoneNumberUtils;
 import android.util.AtomicFile;
-import android.util.Log;
+import android.telephony.Rlog;
 import android.util.Xml;
 
 import com.android.internal.util.FastXmlSerializer;
@@ -39,7 +38,6 @@ import com.android.internal.util.XmlUtils;
 
 import org.xmlpull.v1.XmlPullParser;
 import org.xmlpull.v1.XmlPullParserException;
-import org.xmlpull.v1.XmlPullParserFactory;
 import org.xmlpull.v1.XmlSerializer;
 
 import java.io.File;
@@ -48,7 +46,6 @@ import java.io.FileNotFoundException;
 import java.io.FileOutputStream;
 import java.io.FileReader;
 import java.io.IOException;
-import java.io.StringReader;
 import java.util.ArrayList;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.HashMap;
@@ -72,7 +69,7 @@ public class SmsUsageMonitor {
     private static final String SHORT_CODE_PATH = "/data/misc/sms/codes";
 
     /** Default checking period for SMS sent without user permission. */
-    private static final int DEFAULT_SMS_CHECK_PERIOD = 1800000;    // 30 minutes
+    private static final int DEFAULT_SMS_CHECK_PERIOD = 60000;      // 1 minute
 
     /** Default number of SMS sent in checking period without user permission. */
     private static final int DEFAULT_SMS_MAX_COUNT = 30;
@@ -127,9 +124,6 @@ public class SmsUsageMonitor {
 
     /** Notice when the enabled setting changes - can be changed through gservices */
     private final AtomicBoolean mCheckEnabled = new AtomicBoolean(true);
-
-    /** Cached short code regex patterns from secure settings for {@link #mCurrentCountry}. */
-    private String mSettingsShortCodePatterns;
 
     /** Handler for responding to content observer updates. */
     private final SettingsObserverHandler mSettingsObserverHandler;
@@ -290,9 +284,9 @@ public class SmsUsageMonitor {
             parser.setInput(patternReader);
             return getPatternMatcherFromXmlParser(parser, country);
         } catch (FileNotFoundException e) {
-            Log.e(TAG, "Short Code Pattern File not found");
+            Rlog.e(TAG, "Short Code Pattern File not found");
         } catch (XmlPullParserException e) {
-            Log.e(TAG, "XML parser exception reading short code pattern file", e);
+            Rlog.e(TAG, "XML parser exception reading short code pattern file", e);
         } finally {
             mPatternFileLastModified = mPatternFile.lastModified();
             if (patternReader != null) {
@@ -324,13 +318,13 @@ public class SmsUsageMonitor {
                 XmlUtils.nextElement(parser);
                 String element = parser.getName();
                 if (element == null) {
-                    Log.e(TAG, "Parsing pattern data found null");
+                    Rlog.e(TAG, "Parsing pattern data found null");
                     break;
                 }
 
                 if (element.equals(TAG_SHORTCODE)) {
                     String currentCountry = parser.getAttributeValue(null, ATTR_COUNTRY);
-                    if (VDBG) Log.d(TAG, "Found country " + currentCountry);
+                    if (VDBG) Rlog.d(TAG, "Found country " + currentCountry);
                     if (country.equals(currentCountry)) {
                         String pattern = parser.getAttributeValue(null, ATTR_PATTERN);
                         String premium = parser.getAttributeValue(null, ATTR_PREMIUM);
@@ -339,15 +333,15 @@ public class SmsUsageMonitor {
                         return new ShortCodePatternMatcher(pattern, premium, free, standard);
                     }
                 } else {
-                    Log.e(TAG, "Error: skipping unknown XML tag " + element);
+                    Rlog.e(TAG, "Error: skipping unknown XML tag " + element);
                 }
             }
         } catch (XmlPullParserException e) {
-            Log.e(TAG, "XML parser exception reading short code patterns", e);
+            Rlog.e(TAG, "XML parser exception reading short code patterns", e);
         } catch (IOException e) {
-            Log.e(TAG, "I/O exception reading short code patterns", e);
+            Rlog.e(TAG, "I/O exception reading short code patterns", e);
         }
-        if (DBG) Log.d(TAG, "Country (" + country + ") not found");
+        if (DBG) Rlog.d(TAG, "Country (" + country + ") not found");
         return null;    // country not found
     }
 
@@ -398,12 +392,12 @@ public class SmsUsageMonitor {
         synchronized (mSettingsObserverHandler) {
             // always allow emergency numbers
             if (PhoneNumberUtils.isEmergencyNumber(destAddress, countryIso)) {
-                if (DBG) Log.d(TAG, "isEmergencyNumber");
+                if (DBG) Rlog.d(TAG, "isEmergencyNumber");
                 return CATEGORY_NOT_SHORT_CODE;
             }
             // always allow if the feature is disabled
             if (!mCheckEnabled.get()) {
-                if (DBG) Log.e(TAG, "check disabled");
+                if (DBG) Rlog.e(TAG, "check disabled");
                 return CATEGORY_NOT_SHORT_CODE;
             }
 
@@ -411,10 +405,10 @@ public class SmsUsageMonitor {
                 if (mCurrentCountry == null || !countryIso.equals(mCurrentCountry) ||
                         mPatternFile.lastModified() != mPatternFileLastModified) {
                     if (mPatternFile.exists()) {
-                        if (DBG) Log.d(TAG, "Loading SMS Short Code patterns from file");
+                        if (DBG) Rlog.d(TAG, "Loading SMS Short Code patterns from file");
                         mCurrentPatternMatcher = getPatternMatcherFromFile(countryIso);
                     } else {
-                        if (DBG) Log.d(TAG, "Loading SMS Short Code patterns from resource");
+                        if (DBG) Rlog.d(TAG, "Loading SMS Short Code patterns from resource");
                         mCurrentPatternMatcher = getPatternMatcherFromResource(countryIso);
                     }
                     mCurrentCountry = countryIso;
@@ -425,7 +419,7 @@ public class SmsUsageMonitor {
                 return mCurrentPatternMatcher.getNumberCategory(destAddress);
             } else {
                 // Generic rule: numbers of 5 digits or less are considered potential short codes
-                Log.e(TAG, "No patterns for \"" + countryIso + "\": using generic short code rule");
+                Rlog.e(TAG, "No patterns for \"" + countryIso + "\": using generic short code rule");
                 if (destAddress.length() <= 5) {
                     return CATEGORY_POSSIBLE_PREMIUM_SHORT_CODE;
                 } else {
@@ -465,26 +459,26 @@ public class SmsUsageMonitor {
                             String packageName = parser.getAttributeValue(null, ATTR_PACKAGE_NAME);
                             String policy = parser.getAttributeValue(null, ATTR_PACKAGE_SMS_POLICY);
                             if (packageName == null) {
-                                Log.e(TAG, "Error: missing package name attribute");
+                                Rlog.e(TAG, "Error: missing package name attribute");
                             } else if (policy == null) {
-                                Log.e(TAG, "Error: missing package policy attribute");
+                                Rlog.e(TAG, "Error: missing package policy attribute");
                             } else try {
                                 mPremiumSmsPolicy.put(packageName, Integer.parseInt(policy));
                             } catch (NumberFormatException e) {
-                                Log.e(TAG, "Error: non-numeric policy type " + policy);
+                                Rlog.e(TAG, "Error: non-numeric policy type " + policy);
                             }
                         } else {
-                            Log.e(TAG, "Error: skipping unknown XML tag " + element);
+                            Rlog.e(TAG, "Error: skipping unknown XML tag " + element);
                         }
                     }
                 } catch (FileNotFoundException e) {
                     // No data yet
                 } catch (IOException e) {
-                    Log.e(TAG, "Unable to read premium SMS policy database", e);
+                    Rlog.e(TAG, "Unable to read premium SMS policy database", e);
                 } catch (NumberFormatException e) {
-                    Log.e(TAG, "Unable to parse premium SMS policy database", e);
+                    Rlog.e(TAG, "Unable to parse premium SMS policy database", e);
                 } catch (XmlPullParserException e) {
-                    Log.e(TAG, "Unable to parse premium SMS policy database", e);
+                    Rlog.e(TAG, "Unable to parse premium SMS policy database", e);
                 } finally {
                     if (infile != null) {
                         try {
@@ -526,7 +520,7 @@ public class SmsUsageMonitor {
 
                 mPolicyFile.finishWrite(outfile);
             } catch (IOException e) {
-                Log.e(TAG, "Unable to write premium SMS policy database", e);
+                Rlog.e(TAG, "Unable to write premium SMS policy database", e);
                 if (outfile != null) {
                     mPolicyFile.failWrite(outfile);
                 }
@@ -649,6 +643,6 @@ public class SmsUsageMonitor {
     }
 
     private static void log(String msg) {
-        Log.d(TAG, msg);
+        Rlog.d(TAG, msg);
     }
 }

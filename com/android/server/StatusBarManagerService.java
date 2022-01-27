@@ -17,6 +17,7 @@
 package com.android.server;
 
 import android.app.StatusBarManager;
+import android.service.notification.StatusBarNotification;
 import android.content.BroadcastReceiver;
 import android.content.Context;
 import android.content.Intent;
@@ -33,7 +34,6 @@ import com.android.internal.statusbar.IStatusBar;
 import com.android.internal.statusbar.IStatusBarService;
 import com.android.internal.statusbar.StatusBarIcon;
 import com.android.internal.statusbar.StatusBarIconList;
-import com.android.internal.statusbar.StatusBarNotification;
 import com.android.server.wm.WindowManagerService;
 
 import java.io.FileDescriptor;
@@ -170,7 +170,9 @@ public class StatusBarManagerService extends IStatusBarService.Stub
         // so they are paired correctly.  The messages on the handler will be
         // handled in the order they were enqueued, but will be outside the lock.
         manageDisableListLocked(userId, what, token, pkg);
-        final int net = gatherDisableActionsLocked(userId);
+
+        // Ensure state for the current user is applied, even if passed a non-current user.
+        final int net = gatherDisableActionsLocked(mCurrentUserId);
         if (net != mDisabled) {
             mDisabled = net;
             mHandler.post(new Runnable() {

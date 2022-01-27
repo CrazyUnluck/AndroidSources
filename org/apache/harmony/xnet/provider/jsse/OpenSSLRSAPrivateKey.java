@@ -16,22 +16,26 @@
 
 package org.apache.harmony.xnet.provider.jsse;
 
+import java.io.IOException;
+import java.io.NotSerializableException;
+import java.io.ObjectInputStream;
+import java.io.ObjectOutputStream;
 import java.math.BigInteger;
 import java.security.InvalidKeyException;
 import java.security.interfaces.RSAPrivateKey;
 import java.security.spec.InvalidKeySpecException;
 import java.security.spec.RSAPrivateKeySpec;
 
-public class OpenSSLRSAPrivateKey implements RSAPrivateKey {
+public class OpenSSLRSAPrivateKey implements RSAPrivateKey, OpenSSLKeyHolder {
     private static final long serialVersionUID = 4872170254439578735L;
 
-    private final OpenSSLKey key;
+    protected transient OpenSSLKey key;
 
-    private boolean fetchedParams;
+    protected transient boolean fetchedParams;
 
-    private BigInteger modulus;
+    protected BigInteger modulus;
 
-    private BigInteger privateExponent;
+    protected BigInteger privateExponent;
 
     OpenSSLRSAPrivateKey(OpenSSLKey key) {
         this.key = key;
@@ -43,7 +47,8 @@ public class OpenSSLRSAPrivateKey implements RSAPrivateKey {
         fetchedParams = true;
     }
 
-    final OpenSSLKey getOpenSSLKey() {
+    @Override
+    public OpenSSLKey getOpenSSLKey() {
         return key;
     }
 
@@ -134,6 +139,10 @@ public class OpenSSLRSAPrivateKey implements RSAPrivateKey {
 
     @Override
     public final BigInteger getPrivateExponent() {
+        if (key.isEngineBased()) {
+            throw new UnsupportedOperationException("private exponent cannot be extracted");
+        }
+
         ensureReadParams();
         return privateExponent;
     }
@@ -176,14 +185,6 @@ public class OpenSSLRSAPrivateKey implements RSAPrivateKey {
         return "RSA";
     }
 
-    public int getPkeyContext() {
-        return key.getPkeyContext();
-    }
-
-    public String getPkeyAlias() {
-        return key.getAlias();
-    }
-
     @Override
     public boolean equals(Object o) {
         if (o == this) {
@@ -192,16 +193,7 @@ public class OpenSSLRSAPrivateKey implements RSAPrivateKey {
 
         if (o instanceof OpenSSLRSAPrivateKey) {
             OpenSSLRSAPrivateKey other = (OpenSSLRSAPrivateKey) o;
-
-            /*
-             * We can shortcut the true case, but it still may be equivalent but
-             * different copies.
-             */
-            if (key.equals(other.getOpenSSLKey())) {
-                return true;
-            }
-
-            return NativeCrypto.EVP_PKEY_cmp(getPkeyContext(), other.getPkeyContext()) == 1;
+            return key.equals(other.getOpenSSLKey());
         }
 
         if (o instanceof RSAPrivateKey) {
@@ -251,5 +243,29 @@ public class OpenSSLRSAPrivateKey implements RSAPrivateKey {
         }
 
         return sb.toString();
+    }
+
+    private void readObject(ObjectInputStream stream) throws IOException, ClassNotFoundException {
+        stream.defaultReadObject();
+
+        key = new OpenSSLKey(NativeCrypto.EVP_PKEY_new_RSA(
+                modulus.toByteArray(),
+                null,
+                privateExponent.toByteArray(),
+                null,
+                null,
+                null,
+                null,
+                null));
+        fetchedParams = true;
+    }
+
+    private void writeObject(ObjectOutputStream stream) throws IOException {
+        if (getOpenSSLKey().isEngineBased()) {
+            throw new NotSerializableException("engine-based keys can not be serialized");
+        }
+
+        ensureReadParams();
+        stream.defaultWriteObject();
     }
 }

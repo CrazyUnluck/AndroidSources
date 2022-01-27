@@ -22,11 +22,23 @@ import android.app.Instrumentation;
 import android.content.ComponentName;
 import android.os.Bundle;
 import android.os.Debug;
+import android.os.HandlerThread;
 import android.os.IBinder;
+import android.os.SystemClock;
 import android.test.RepetitiveTest;
 import android.util.Log;
 
+import com.android.uiautomator.core.ShellUiAutomatorBridge;
+import com.android.uiautomator.core.Tracer;
+import com.android.uiautomator.core.UiAutomationShellWrapper;
 import com.android.uiautomator.core.UiDevice;
+
+import java.io.ByteArrayOutputStream;
+import java.io.PrintStream;
+import java.lang.Thread.UncaughtExceptionHandler;
+import java.lang.reflect.Method;
+import java.util.ArrayList;
+import java.util.List;
 
 import junit.framework.AssertionFailedError;
 import junit.framework.Test;
@@ -35,13 +47,6 @@ import junit.framework.TestListener;
 import junit.framework.TestResult;
 import junit.runner.BaseTestRunner;
 import junit.textui.ResultPrinter;
-
-import java.io.ByteArrayOutputStream;
-import java.io.PrintStream;
-import java.lang.Thread.UncaughtExceptionHandler;
-import java.lang.reflect.Method;
-import java.util.ArrayList;
-import java.util.List;
 
 /**
  * @hide
@@ -52,20 +57,25 @@ public class UiAutomatorTestRunner {
     private static final int EXIT_OK = 0;
     private static final int EXIT_EXCEPTION = -1;
 
+    private static final String HANDLER_THREAD_NAME = "UiAutomatorHandlerThread";
+
     private boolean mDebug;
+    private boolean mMonkey;
     private Bundle mParams = null;
     private UiDevice mUiDevice;
     private List<String> mTestClasses = null;
-    private FakeInstrumentationWatcher mWatcher = new FakeInstrumentationWatcher();
-    private IAutomationSupport mAutomationSupport = new IAutomationSupport() {
+    private final FakeInstrumentationWatcher mWatcher = new FakeInstrumentationWatcher();
+    private final IAutomationSupport mAutomationSupport = new IAutomationSupport() {
         @Override
         public void sendStatus(int resultCode, Bundle status) {
             mWatcher.instrumentationStatus(null, resultCode, status);
         }
     };
-    private List<TestListener> mTestListeners = new ArrayList<TestListener>();
+    private final List<TestListener> mTestListeners = new ArrayList<TestListener>();
 
-    public void run(List<String> testClasses, Bundle params, boolean debug) {
+    private HandlerThread mHandlerThread;
+
+    public void run(List<String> testClasses, Bundle params, boolean debug, boolean monkey) {
         Thread.setDefaultUncaughtExceptionHandler(new UncaughtExceptionHandler() {
             @Override
             public void uncaughtException(Thread thread, Throwable ex) {
@@ -82,6 +92,7 @@ public class UiAutomatorTestRunner {
         mTestClasses = testClasses;
         mParams = params;
         mDebug = debug;
+        mMonkey = monkey;
         start();
         System.exit(EXIT_OK);
     }
@@ -100,51 +111,70 @@ public class UiAutomatorTestRunner {
         if (mDebug) {
             Debug.waitForDebugger();
         }
-        mUiDevice = UiDevice.getInstance();
+        mHandlerThread = new HandlerThread(HANDLER_THREAD_NAME);
+        mHandlerThread.setDaemon(true);
+        mHandlerThread.start();
+        UiAutomationShellWrapper automationWrapper = new UiAutomationShellWrapper();
+        automationWrapper.connect();
+
+        long startTime = SystemClock.uptimeMillis();
+        TestResult testRunResult = new TestResult();
+        ResultReporter resultPrinter;
+        String outputFormat = mParams.getString("outputFormat");
         List<TestCase> testCases = collector.getTestCases();
         Bundle testRunOutput = new Bundle();
-        ByteArrayOutputStream byteArrayOutputStream = new ByteArrayOutputStream();
-        PrintStream writer = new PrintStream(byteArrayOutputStream);
+        if ("simple".equals(outputFormat)) {
+            resultPrinter = new SimpleResultPrinter(System.out, true);
+        } else {
+            resultPrinter = new WatcherResultPrinter(testCases.size());
+        }
         try {
-            StringResultPrinter resultPrinter = new StringResultPrinter(writer);
+            automationWrapper.setRunAsMonkey(mMonkey);
+            mUiDevice = UiDevice.getInstance();
+            mUiDevice.initialize(new ShellUiAutomatorBridge(automationWrapper.getUiAutomation()));
 
-            TestResult testRunResult = new TestResult();
+            String traceType = mParams.getString("traceOutputMode");
+            if(traceType != null) {
+                Tracer.Mode mode = Tracer.Mode.valueOf(Tracer.Mode.class, traceType);
+                if (mode == Tracer.Mode.FILE || mode == Tracer.Mode.ALL) {
+                    String filename = mParams.getString("traceLogFilename");
+                    if (filename == null) {
+                        throw new RuntimeException("Name of log file not specified. " +
+                                "Please specify it using traceLogFilename parameter");
+                    }
+                    Tracer.getInstance().setOutputFilename(filename);
+                }
+                Tracer.getInstance().setOutputMode(mode);
+            }
+
             // add test listeners
-            testRunResult.addListener(new WatcherResultPrinter(testCases.size()));
             testRunResult.addListener(resultPrinter);
             // add all custom listeners
             for (TestListener listener : mTestListeners) {
                 testRunResult.addListener(listener);
             }
-            long startTime = System.currentTimeMillis();
 
             // run tests for realz!
             for (TestCase testCase : testCases) {
                 prepareTestCase(testCase);
                 testCase.run(testRunResult);
             }
-            long runTime = System.currentTimeMillis() - startTime;
-
-            resultPrinter.print2(testRunResult, runTime);
         } catch (Throwable t) {
             // catch all exceptions so a more verbose error message can be outputted
-            writer.println(String.format("Test run aborted due to unexpected exception: %s",
-                            t.getMessage()));
-            t.printStackTrace(writer);
+            resultPrinter.printUnexpectedError(t);
         } finally {
-            testRunOutput.putString(Instrumentation.REPORT_KEY_STREAMRESULT,
-                    String.format("\nTest results for %s=%s",
-                    getClass().getSimpleName(),
-                    byteArrayOutputStream.toString()));
-            writer.close();
-            mAutomationSupport.sendStatus(Activity.RESULT_OK, testRunOutput);
+            long runTime = SystemClock.uptimeMillis() - startTime;
+            resultPrinter.print(testRunResult, runTime, testRunOutput);
+            automationWrapper.disconnect();
+            automationWrapper.setRunAsMonkey(false);
+            mHandlerThread.quit();
         }
     }
 
     // copy & pasted from com.android.commands.am.Am
     private class FakeInstrumentationWatcher implements IInstrumentationWatcher {
 
-        private boolean mRawMode = true;
+        private final boolean mRawMode = true;
 
         @Override
         public IBinder asBinder() {
@@ -198,8 +228,13 @@ public class UiAutomatorTestRunner {
         }
     }
 
+    private interface ResultReporter extends TestListener {
+        public void print(TestResult result, long runTime, Bundle testOutput);
+        public void printUnexpectedError(Throwable t);
+    }
+
     // Copy & pasted from InstrumentationTestRunner.WatcherResultPrinter
-    private class WatcherResultPrinter implements TestListener {
+    private class WatcherResultPrinter implements ResultReporter {
 
         private static final String REPORT_KEY_NUM_TOTAL = "numtests";
         private static final String REPORT_KEY_NAME_CLASS = "class";
@@ -219,10 +254,18 @@ public class UiAutomatorTestRunner {
         int mTestResultCode = 0;
         String mTestClass = null;
 
+        private final SimpleResultPrinter mPrinter;
+        private final ByteArrayOutputStream mStream;
+        private final PrintStream mWriter;
+
         public WatcherResultPrinter(int numTests) {
             mResultTemplate = new Bundle();
             mResultTemplate.putString(Instrumentation.REPORT_KEY_IDENTIFIER, REPORT_VALUE_ID);
             mResultTemplate.putInt(REPORT_KEY_NUM_TOTAL, numTests);
+
+            mStream = new ByteArrayOutputStream();
+            mWriter = new PrintStream(mStream);
+            mPrinter = new SimpleResultPrinter(mWriter, false);
         }
 
         /**
@@ -263,6 +306,8 @@ public class UiAutomatorTestRunner {
 
             mAutomationSupport.sendStatus(REPORT_VALUE_RESULT_START, mTestResult);
             mTestResultCode = 0;
+
+            mPrinter.startTest(test);
         }
 
         @Override
@@ -273,6 +318,8 @@ public class UiAutomatorTestRunner {
             mTestResult.putString(Instrumentation.REPORT_KEY_STREAMRESULT,
                 String.format("\nError in %s:\n%s",
                     ((TestCase)test).getName(), BaseTestRunner.getFilteredTrace(t)));
+
+            mPrinter.addError(test, t);
         }
 
         @Override
@@ -283,6 +330,8 @@ public class UiAutomatorTestRunner {
             mTestResult.putString(Instrumentation.REPORT_KEY_STREAMRESULT,
                 String.format("\nFailure in %s:\n%s",
                     ((TestCase)test).getName(), BaseTestRunner.getFilteredTrace(t)));
+
+            mPrinter.addFailure(test, t);
         }
 
         @Override
@@ -291,25 +340,71 @@ public class UiAutomatorTestRunner {
                 mTestResult.putString(Instrumentation.REPORT_KEY_STREAMRESULT, ".");
             }
             mAutomationSupport.sendStatus(mTestResultCode, mTestResult);
+
+            mPrinter.endTest(test);
         }
 
+        @Override
+        public void print(TestResult result, long runTime, Bundle testOutput) {
+            mPrinter.print(result, runTime, testOutput);
+            testOutput.putString(Instrumentation.REPORT_KEY_STREAMRESULT,
+                  String.format("\nTest results for %s=%s",
+                  getClass().getSimpleName(),
+                  mStream.toString()));
+            mWriter.close();
+            mAutomationSupport.sendStatus(Activity.RESULT_OK, testOutput);
+        }
+
+        @Override
+        public void printUnexpectedError(Throwable t) {
+            mWriter.println(String.format("Test run aborted due to unexpected exception: %s",
+                    t.getMessage()));
+            t.printStackTrace(mWriter);
+        }
     }
 
-    // copy pasted from InstrumentationTestRunner
-    private class StringResultPrinter extends ResultPrinter {
-
-        public StringResultPrinter(PrintStream writer) {
+    /**
+     * Class that produces the same output as JUnit when running from command line. Can be
+     * used when default UiAutomator output is too verbose.
+     */
+    private class SimpleResultPrinter extends ResultPrinter implements ResultReporter {
+        private final boolean mFullOutput;
+        public SimpleResultPrinter(PrintStream writer, boolean fullOutput) {
             super(writer);
+            mFullOutput = fullOutput;
         }
 
-        synchronized void print2(TestResult result, long runTime) {
+        @Override
+        public void print(TestResult result, long runTime, Bundle testOutput) {
             printHeader(runTime);
+            if (mFullOutput) {
+                printErrors(result);
+                printFailures(result);
+            }
             printFooter(result);
+        }
+
+        @Override
+        public void printUnexpectedError(Throwable t) {
+            if (mFullOutput) {
+                getWriter().printf("Test run aborted due to unexpected exeption: %s",
+                        t.getMessage());
+                t.printStackTrace(getWriter());
+            }
         }
     }
 
     protected TestCaseCollector getTestCaseCollector(ClassLoader classLoader) {
-        return new TestCaseCollector(classLoader, new UiAutomatorTestCaseFilter());
+        return new TestCaseCollector(classLoader, getTestCaseFilter());
+    }
+
+    /**
+     * Returns an object which determines if the class and its methods should be
+     * accepted into the test suite.
+     * @return
+     */
+    public UiAutomatorTestCaseFilter getTestCaseFilter() {
+        return new UiAutomatorTestCaseFilter();
     }
 
     protected void addTestListener(TestListener listener) {

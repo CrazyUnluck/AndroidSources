@@ -17,6 +17,7 @@
 
 package com.android.ex.photo;
 
+import android.app.Activity;
 import android.content.ContentProvider;
 import android.content.Context;
 import android.content.Intent;
@@ -29,11 +30,12 @@ import com.android.ex.photo.fragments.PhotoViewFragment;
 public class Intents {
     // Intent extras
     public static final String EXTRA_PHOTO_INDEX = "photo_index";
-    public static final String EXTRA_PHOTO_ID = "photo_id";
+    public static final String EXTRA_INITIAL_PHOTO_URI = "initial_photo_uri";
     public static final String EXTRA_PHOTOS_URI = "photos_uri";
     public static final String EXTRA_RESOLVED_PHOTO_URI = "resolved_photo_uri";
     public static final String EXTRA_PROJECTION = "projection";
     public static final String EXTRA_THUMBNAIL_URI = "thumbnail_uri";
+    public static final String EXTRA_MAX_INITIAL_SCALE = "max_scale";
 
     /**
      * Gets a photo view intent builder to display the photos from phone activity.
@@ -57,7 +59,7 @@ public class Intents {
 
     /** Gets a new photo view intent builder */
     public static PhotoViewIntentBuilder newPhotoViewIntentBuilder(
-            Context context, Class<? extends PhotoViewActivity> cls) {
+            Context context, Class<? extends Activity> cls) {
         return new PhotoViewIntentBuilder(context, cls);
     }
 
@@ -67,6 +69,8 @@ public class Intents {
 
         /** The index of the photo to show */
         private Integer mPhotoIndex;
+        /** The URI of the initial photo to show */
+        private String mInitialPhotoUri;
         /** The URI of the group of photos to display */
         private String mPhotosUri;
         /** The URL of the photo to display */
@@ -75,6 +79,8 @@ public class Intents {
         private String[] mProjection;
         /** The URI of a thumbnail of the photo to display */
         private String mThumbnailUri;
+        /** The maximum scale to display images at before  */
+        private Float mMaxInitialScale;
 
         private PhotoViewIntentBuilder(Context context, Class<?> cls) {
             mIntent = new Intent(context, cls);
@@ -83,6 +89,12 @@ public class Intents {
         /** Sets the photo index */
         public PhotoViewIntentBuilder setPhotoIndex(Integer photoIndex) {
             mPhotoIndex = photoIndex;
+            return this;
+        }
+
+        /** Sets the initial photo URI */
+        public PhotoViewIntentBuilder setInitialPhotoUri(String initialPhotoUri) {
+            mInitialPhotoUri = initialPhotoUri;
             return this;
         }
 
@@ -116,6 +128,14 @@ public class Intents {
             return this;
         }
 
+        /**
+         * Sets the maximum scale which an image is initially displayed at
+         */
+        public PhotoViewIntentBuilder setMaxInitialScale(float maxScale) {
+            mMaxInitialScale = maxScale;
+            return this;
+        }
+
         /** Build the intent */
         public Intent build() {
             mIntent.setAction(Intent.ACTION_VIEW);
@@ -124,6 +144,15 @@ public class Intents {
 
             if (mPhotoIndex != null) {
                 mIntent.putExtra(EXTRA_PHOTO_INDEX, (int) mPhotoIndex);
+            }
+
+            if (mInitialPhotoUri != null) {
+                mIntent.putExtra(EXTRA_INITIAL_PHOTO_URI, mInitialPhotoUri);
+            }
+
+            if (mInitialPhotoUri != null && mPhotoIndex != null) {
+                throw new IllegalStateException(
+                        "specified both photo index and photo uri");
             }
 
             if (mPhotosUri != null) {
@@ -140,6 +169,10 @@ public class Intents {
 
             if (mThumbnailUri != null) {
                 mIntent.putExtra(EXTRA_THUMBNAIL_URI, mThumbnailUri);
+            }
+
+            if (mMaxInitialScale != null) {
+                mIntent.putExtra(EXTRA_MAX_INITIAL_SCALE, mMaxInitialScale);
             }
 
             return mIntent;

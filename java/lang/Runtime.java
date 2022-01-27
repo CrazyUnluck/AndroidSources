@@ -32,6 +32,7 @@
 
 package java.lang;
 
+import dalvik.system.BaseDexClassLoader;
 import dalvik.system.VMDebug;
 import dalvik.system.VMStack;
 import java.io.File;
@@ -44,8 +45,9 @@ import java.lang.ref.FinalizerReference;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.StringTokenizer;
+import libcore.io.IoUtils;
 import libcore.io.Libcore;
-import static libcore.io.OsConstants._SC_NPROCESSORS_ONLN;
+import static libcore.io.OsConstants._SC_NPROCESSORS_CONF;
 
 /**
  * Allows Java applications to interface with the environment in which they are
@@ -90,7 +92,7 @@ public class Runtime {
     /**
      * Prevent this class from being instantiated.
      */
-    private Runtime(){
+    private Runtime() {
         String pathList = System.getProperty("java.library.path", ".");
         String pathSep = System.getProperty("path.separator", ":");
         String fileSep = System.getProperty("file.separator", "/");
@@ -242,14 +244,12 @@ public class Runtime {
     }
 
     /**
-     * Causes the VM to stop running and the program to exit. If
-     * {@link #runFinalizersOnExit(boolean)} has been previously invoked with a
+     * Causes the VM to stop running and the program to exit.
+     * If {@link #runFinalizersOnExit(boolean)} has been previously invoked with a
      * {@code true} argument, then all objects will be properly
      * garbage-collected and finalized first.
-     *
-     * @param code
-     *            the return code. By convention, non-zero return codes indicate
-     *            abnormal terminations.
+     * Use 0 to signal success to the calling process and 1 to signal failure.
+     * This method is unlikely to be useful to an Android application.
      */
     public void exit(int code) {
         // Make sure we don't try this several times
@@ -290,14 +290,6 @@ public class Runtime {
     }
 
     /**
-     * Returns the amount of free memory resources which are available to the
-     * running program.
-     *
-     * @return the approximate amount of free memory, measured in bytes.
-     */
-    public native long freeMemory();
-
-    /**
      * Indicates to the VM that it would be a good time to run the
      * garbage collector. Note that this is a hint only. There is no guarantee
      * that the garbage collector will actually be run.
@@ -305,9 +297,7 @@ public class Runtime {
     public native void gc();
 
     /**
-     * Returns the single {@code Runtime} instance.
-     *
-     * @return the {@code Runtime} object for the current application.
+     * Returns the single {@code Runtime} instance for the current application.
      */
     public static Runtime getRuntime() {
         return mRuntime;
@@ -329,13 +319,13 @@ public class Runtime {
     }
 
     /*
-     * Loads and links a library without security checks.
+     * Loads and links the given library without security checks.
      */
     void load(String pathName, ClassLoader loader) {
         if (pathName == null) {
             throw new NullPointerException("pathName == null");
         }
-        String error = nativeLoad(pathName, loader);
+        String error = doLoad(pathName, loader);
         if (error != null) {
             throw new UnsatisfiedLinkError(error);
         }
@@ -356,17 +346,17 @@ public class Runtime {
     }
 
     /*
-     * Loads and links a library without security checks.
+     * Searches for a library, then loads and links it without security checks.
      */
     void loadLibrary(String libraryName, ClassLoader loader) {
         if (loader != null) {
             String filename = loader.findLibrary(libraryName);
             if (filename == null) {
-                throw new UnsatisfiedLinkError("Couldn't load " + libraryName
-                                               + " from loader " + loader
-                                               + ": findLibrary returned null");
+                throw new UnsatisfiedLinkError("Couldn't load " + libraryName +
+                                               " from loader " + loader +
+                                               ": findLibrary returned null");
             }
-            String error = nativeLoad(filename, loader);
+            String error = doLoad(filename, loader);
             if (error != null) {
                 throw new UnsatisfiedLinkError(error);
             }
@@ -379,8 +369,9 @@ public class Runtime {
         for (String directory : mLibPaths) {
             String candidate = directory + filename;
             candidates.add(candidate);
-            if (new File(candidate).exists()) {
-                String error = nativeLoad(candidate, loader);
+
+            if (IoUtils.canOpenReadOnly(candidate)) {
+                String error = doLoad(candidate, loader);
                 if (error == null) {
                     return; // We successfully loaded the library. Job done.
                 }
@@ -396,7 +387,40 @@ public class Runtime {
 
     private static native void nativeExit(int code);
 
-    private static native String nativeLoad(String filename, ClassLoader loader);
+    private String doLoad(String name, ClassLoader loader) {
+        // Android apps are forked from the zygote, so they can't have a custom LD_LIBRARY_PATH,
+        // which means that by default an app's shared library directory isn't on LD_LIBRARY_PATH.
+
+        // The PathClassLoader set up by frameworks/base knows the appropriate path, so we can load
+        // libraries with no dependencies just fine, but an app that has multiple libraries that
+        // depend on each other needed to load them in most-dependent-first order.
+
+        // We added API to Android's dynamic linker so we can update the library path used for
+        // the currently-running process. We pull the desired path out of the ClassLoader here
+        // and pass it to nativeLoad so that it can call the private dynamic linker API.
+
+        // We didn't just change frameworks/base to update the LD_LIBRARY_PATH once at the
+        // beginning because multiple apks can run in the same process and third party code can
+        // use its own BaseDexClassLoader.
+
+        // We didn't just add a dlopen_with_custom_LD_LIBRARY_PATH call because we wanted any
+        // dlopen(3) calls made from a .so's JNI_OnLoad to work too.
+
+        // So, find out what the native library search path is for the ClassLoader in question...
+        String ldLibraryPath = null;
+        if (loader != null && loader instanceof BaseDexClassLoader) {
+            ldLibraryPath = ((BaseDexClassLoader) loader).getLdLibraryPath();
+        }
+        // nativeLoad should be synchronized so there's only one LD_LIBRARY_PATH in use regardless
+        // of how many ClassLoaders are in the system, but dalvik doesn't support synchronized
+        // internal natives.
+        synchronized (this) {
+            return nativeLoad(name, loader, ldLibraryPath);
+        }
+    }
+
+    // TODO: should be synchronized, but dalvik doesn't support synchronized internal natives.
+    private static native String nativeLoad(String filename, ClassLoader loader, String ldLibraryPath);
 
     /**
      * Provides a hint to the VM that it would be useful to attempt
@@ -427,30 +451,14 @@ public class Runtime {
     }
 
     /**
-     * Returns the total amount of memory which is available to the running
-     * program.
-     *
-     * @return the total amount of memory, measured in bytes.
-     */
-    public native long totalMemory();
-
-    /**
      * Switches the output of debug information for instructions on or off.
      * On Android, this method does nothing.
-     *
-     * @param enable
-     *            {@code true} to switch tracing on, {@code false} to switch it
-     *            off.
      */
     public void traceInstructions(boolean enable) {
     }
 
     /**
      * Switches the output of debug information for methods on or off.
-     *
-     * @param enable
-     *            {@code true} to switch tracing on, {@code false} to switch it
-     *            off.
      */
     public void traceMethodCalls(boolean enable) {
         if (enable != tracingMethods) {
@@ -584,15 +592,10 @@ public class Runtime {
     }
 
     /**
-     * Causes the VM to stop running, and the program to exit.
-     * Neither shutdown hooks nor finalizers are run before.
-     *
-     * @param code
-     *            the return code. By convention, non-zero return codes indicate
-     *            abnormal terminations.
-     * @see #addShutdownHook(Thread)
-     * @see #removeShutdownHook(Thread)
-     * @see #runFinalizersOnExit(boolean)
+     * Causes the VM to stop running, and the program to exit with the given return code.
+     * Use 0 to signal success to the calling process and 1 to signal failure.
+     * Neither shutdown hooks nor finalizers are run before exiting.
+     * This method is unlikely to be useful to an Android application.
      */
     public void halt(int code) {
         // Get out of here...
@@ -600,18 +603,36 @@ public class Runtime {
     }
 
     /**
-     * Returns the number of processors available to the VM, at least 1.
+     * Returns the number of processor cores available to the VM, at least 1.
+     * Traditionally this returned the number currently online,
+     * but many mobile devices are able to take unused cores offline to
+     * save power, so releases newer than Android 4.2 (Jelly Bean) return the maximum number of
+     * cores that could be made available if there were no power or heat
+     * constraints.
      */
     public int availableProcessors() {
-        return (int) Libcore.os.sysconf(_SC_NPROCESSORS_ONLN);
+        return (int) Libcore.os.sysconf(_SC_NPROCESSORS_CONF);
     }
 
     /**
-     * Returns the maximum amount of memory that may be used by the virtual
-     * machine, or {@code Long.MAX_VALUE} if there is no such limit.
-     *
-     * @return the maximum amount of memory that the VM will try to
-     *         allocate, measured in bytes.
+     * Returns the number of bytes currently available on the heap without expanding the heap. See
+     * {@link #totalMemory} for the heap's current size. When these bytes are exhausted, the heap
+     * may expand. See {@link #maxMemory} for that limit.
+     */
+    public native long freeMemory();
+
+    /**
+     * Returns the number of bytes taken by the heap at its current size. The heap may expand or
+     * contract over time, as the number of live objects increases or decreases. See
+     * {@link #maxMemory} for the maximum heap size, and {@link #freeMemory} for an idea of how much
+     * the heap could currently contract.
+     */
+    public native long totalMemory();
+
+    /**
+     * Returns the maximum number of bytes the heap can expand to. See {@link #totalMemory} for the
+     * current number of bytes taken by the heap, and {@link #freeMemory} for the current number of
+     * those bytes actually used by live objects.
      */
     public native long maxMemory();
 }

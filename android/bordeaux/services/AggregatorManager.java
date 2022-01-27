@@ -20,14 +20,22 @@ package android.bordeaux.services;
 import android.bordeaux.services.StringString;
 import android.content.Context;
 import android.util.Log;
-import java.util.HashMap;
-import java.util.Map;
 import java.util.ArrayList;
+import java.util.HashMap;
+import java.util.List;
+import java.util.Map;
 
 class AggregatorManager extends IAggregatorManager.Stub  {
     private final String TAG = "AggregatorMnager";
-    private static HashMap<String, Aggregator> sFeatureMap;
+    // this maps from the aggregator name to the registered aggregator instance
+    private static HashMap<String, Aggregator> mAggregators = new HashMap<String, Aggregator>();
+    // this maps from the feature names to the aggregator that generates the feature
+    private static HashMap<String, Aggregator> sFeatureMap = new HashMap<String, Aggregator>();
     private static AggregatorManager mManager = null;
+
+    private String mFakeLocation = null;
+    private String mFakeTimeOfDay = null;
+    private String mFakeDayOfWeek = null;
 
     private AggregatorManager() {
         sFeatureMap = new HashMap<String, Aggregator>();
@@ -50,15 +58,86 @@ class AggregatorManager extends IAggregatorManager.Stub  {
     }
 
     public void registerAggregator(Aggregator agg, AggregatorManager m) {
+        if (mAggregators.get(agg.getClass().getName()) != null) {
+            // only one instance
+            // throw new RuntimeException("Can't register more than one instance");
+        }
+        mAggregators.put(agg.getClass().getName(), agg);
         agg.setManager(m);
         String[] fl = agg.getListOfFeatures();
         for ( int i  = 0; i< fl.length; i ++)
             sFeatureMap.put(fl[i], agg);
     }
 
+    // Start of IAggregatorManager interface
     public ArrayList<StringString> getData(String dataName) {
         return getList(getDataMap(dataName));
     }
+
+    public List<String> getLocationClusters() {
+        LocationStatsAggregator agg = (LocationStatsAggregator)
+                mAggregators.get(LocationStatsAggregator.class.getName());
+        if (agg == null) return new ArrayList<String> ();
+        return agg.getClusterNames();
+    }
+
+    public List<String> getTimeOfDayValues() {
+        TimeStatsAggregator agg = (TimeStatsAggregator)
+                mAggregators.get(TimeStatsAggregator.class.getName());
+        if (agg == null) return new ArrayList<String>();
+        return agg.getTimeOfDayValues();
+    }
+
+    public List<String> getDayOfWeekValues() {
+        TimeStatsAggregator agg = (TimeStatsAggregator)
+                mAggregators.get(TimeStatsAggregator.class.getName());
+        if (agg == null) return new ArrayList<String>();
+        return agg.getDayOfWeekValues();
+    }
+
+    // Set an empty string "" to disable the fake location
+    public boolean setFakeLocation(String location) {
+        LocationStatsAggregator agg = (LocationStatsAggregator)
+                mAggregators.get(LocationStatsAggregator.class.getName());
+        if (agg == null) return false;
+        agg.setFakeLocation(location);
+        mFakeLocation = location;
+        return true;
+    }
+
+    // Set an empty string "" to disable the fake time of day
+    public boolean setFakeTimeOfDay(String time_of_day) {
+        TimeStatsAggregator agg = (TimeStatsAggregator)
+                mAggregators.get(TimeStatsAggregator.class.getName());
+        if (agg == null) return false;
+        agg.setFakeTimeOfDay(time_of_day);
+        mFakeTimeOfDay = time_of_day;
+        return true;
+    }
+
+    // Set an empty string "" to disable the fake day of week
+    public boolean setFakeDayOfWeek(String day_of_week) {
+        TimeStatsAggregator agg = (TimeStatsAggregator)
+                mAggregators.get(TimeStatsAggregator.class.getName());
+        if (agg == null) return false;
+        agg.setFakeDayOfWeek(day_of_week);
+        mFakeDayOfWeek = day_of_week;
+        return true;
+    }
+
+    // Get the current mode, if fake mode return true
+    public boolean getFakeMode() {
+        boolean fakeMode = false;
+        // checking any features that are in the fake mode
+        if (mFakeLocation != null && mFakeLocation.length() != 0)
+            fakeMode = true;
+        if (mFakeTimeOfDay != null && mFakeTimeOfDay.length() != 0)
+            fakeMode = true;
+        if (mFakeDayOfWeek != null && mFakeDayOfWeek.length() != 0)
+            fakeMode = true;
+        return fakeMode;
+    }
+    // End of IAggregatorManger interface
 
     public Map<String, String> getDataMap(String dataName) {
         if (sFeatureMap.get(dataName) != null)
