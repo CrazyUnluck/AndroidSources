@@ -28,6 +28,7 @@ import android.content.res.XmlResourceParser;
 import android.graphics.drawable.Drawable;
 import android.net.Uri;
 import android.os.Environment;
+import android.os.UserHandle;
 import android.util.AndroidException;
 import android.util.DisplayMetrics;
 
@@ -309,6 +310,23 @@ public abstract class PackageManager {
     public static final int INSTALL_FROM_ADB = 0x00000020;
 
     /**
+     * Flag parameter for {@link #installPackage} to indicate that this install
+     * should immediately be visible to all users.
+     *
+     * @hide
+     */
+    public static final int INSTALL_ALL_USERS = 0x00000040;
+
+    /**
+     * Flag parameter for {@link #installPackage} to indicate that it is okay
+     * to install an update to an app where the newly installed app has a lower
+     * version code than the currently installed app.
+     *
+     * @hide
+     */
+    public static final int INSTALL_ALLOW_DOWNGRADE = 0x00000080;
+
+    /**
      * Flag parameter for
      * {@link #setComponentEnabledSetting(android.content.ComponentName, int, int)} to indicate
      * that you don't want to kill the app containing the component.  Be careful when you set this
@@ -528,6 +546,14 @@ public abstract class PackageManager {
     public static final int INSTALL_FAILED_UID_CHANGED = -24;
 
     /**
+     * Installation return code: this is passed to the {@link IPackageInstallObserver} by
+     * {@link #installPackage(android.net.Uri, IPackageInstallObserver, int)} if
+     * the new package has an older version code than the currently installed package.
+     * @hide
+     */
+    public static final int INSTALL_FAILED_VERSION_DOWNGRADE = -25;
+
+    /**
      * Installation parse return code: this is passed to the {@link IPackageInstallObserver} by
      * {@link #installPackage(android.net.Uri, IPackageInstallObserver, int)}
      * if the parser was given a path that is not a file, or does not end with the expected
@@ -624,7 +650,15 @@ public abstract class PackageManager {
      *
      * @hide
      */
-    public static final int DONT_DELETE_DATA = 0x00000001;
+    public static final int DELETE_KEEP_DATA = 0x00000001;
+
+    /**
+     * Flag parameter for {@link #deletePackage} to indicate that you want the
+     * package deleted for all users.
+     *
+     * @hide
+     */
+    public static final int DELETE_ALL_USERS = 0x00000002;
 
     /**
      * Return code for when package deletion succeeds. This is passed to the
@@ -761,6 +795,14 @@ public abstract class PackageManager {
     public static final int VERIFICATION_REJECT = -1;
 
     /**
+     * Can be used as the {@code millisecondsToDelay} argument for
+     * {@link PackageManager#extendVerificationTimeout}. This is the
+     * maximum time {@code PackageManager} waits for the verification
+     * agent to return (in milliseconds).
+     */
+    public static final long MAXIMUM_VERIFICATION_TIMEOUT = 60*60*1000;
+
+    /**
      * Feature for {@link #getSystemAvailableFeatures} and {@link #hasSystemFeature}: The device's
      * audio pipeline is low-latency, more suitable for audio applications sensitive to delays or
      * lag in sound input or output.
@@ -790,6 +832,14 @@ public abstract class PackageManager {
      */
     @SdkConstant(SdkConstantType.FEATURE)
     public static final String FEATURE_CAMERA_AUTOFOCUS = "android.hardware.camera.autofocus";
+
+    /**
+     * Feature for {@link #getSystemAvailableFeatures} and
+     * {@link #hasSystemFeature}: The device has at least one camera pointing in
+     * some direction.
+     */
+    @SdkConstant(SdkConstantType.FEATURE)
+    public static final String FEATURE_CAMERA_ANY = "android.hardware.camera.any";
 
     /**
      * Feature for {@link #getSystemAvailableFeatures} and
@@ -1109,6 +1159,38 @@ public abstract class PackageManager {
             = "android.content.pm.extra.VERIFICATION_INSTALL_FLAGS";
 
     /**
+     * Extra field name for the uid of who is requesting to install
+     * the package.
+     *
+     * @hide
+     */
+    public static final String EXTRA_VERIFICATION_INSTALLER_UID
+            = "android.content.pm.extra.VERIFICATION_INSTALLER_UID";
+
+    /**
+     * Extra field name for the package name of a package pending verification.
+     *
+     * @hide
+     */
+    public static final String EXTRA_VERIFICATION_PACKAGE_NAME
+            = "android.content.pm.extra.VERIFICATION_PACKAGE_NAME";
+    /**
+     * Extra field name for the result of a verification, either
+     * {@link #VERIFICATION_ALLOW}, or {@link #VERIFICATION_REJECT}.
+     * Passed to package verifiers after a package is verified.
+     */
+    public static final String EXTRA_VERIFICATION_RESULT
+            = "android.content.pm.extra.VERIFICATION_RESULT";
+
+    /**
+     * Extra field name for the version code of a package pending verification.
+     *
+     * @hide
+     */
+    public static final String EXTRA_VERIFICATION_VERSION_CODE
+            = "android.content.pm.extra.VERIFICATION_VERSION_CODE";
+
+    /**
      * Retrieve overall information about an application package that is
      * installed on the system.
      * <p>
@@ -1419,6 +1501,45 @@ public abstract class PackageManager {
     public abstract List<PackageInfo> getInstalledPackages(int flags);
 
     /**
+     * Return a List of all packages that are installed on the device, for a specific user.
+     * Requesting a list of installed packages for another user
+     * will require the permission INTERACT_ACROSS_USERS_FULL.
+     * @param flags Additional option flags. Use any combination of
+     * {@link #GET_ACTIVITIES},
+     * {@link #GET_GIDS},
+     * {@link #GET_CONFIGURATIONS},
+     * {@link #GET_INSTRUMENTATION},
+     * {@link #GET_PERMISSIONS},
+     * {@link #GET_PROVIDERS},
+     * {@link #GET_RECEIVERS},
+     * {@link #GET_SERVICES},
+     * {@link #GET_SIGNATURES},
+     * {@link #GET_UNINSTALLED_PACKAGES} to modify the data returned.
+     * @param userId The user for whom the installed packages are to be listed
+     *
+     * @return A List of PackageInfo objects, one for each package that is
+     *         installed on the device.  In the unlikely case of there being no
+     *         installed packages, an empty list is returned.
+     *         If flag GET_UNINSTALLED_PACKAGES is set, a list of all
+     *         applications including those deleted with DONT_DELETE_DATA
+     *         (partially installed apps with data directory) will be returned.
+     *
+     * @see #GET_ACTIVITIES
+     * @see #GET_GIDS
+     * @see #GET_CONFIGURATIONS
+     * @see #GET_INSTRUMENTATION
+     * @see #GET_PERMISSIONS
+     * @see #GET_PROVIDERS
+     * @see #GET_RECEIVERS
+     * @see #GET_SERVICES
+     * @see #GET_SIGNATURES
+     * @see #GET_UNINSTALLED_PACKAGES
+     *
+     * @hide
+     */
+    public abstract List<PackageInfo> getInstalledPackages(int flags, int userId);
+
+    /**
      * Check whether a particular package has been granted a particular
      * permission.
      *
@@ -1610,7 +1731,7 @@ public abstract class PackageManager {
      *
      * @param flags Additional option flags. Use any combination of
      * {@link #GET_META_DATA}, {@link #GET_SHARED_LIBRARY_FILES},
-     * {link #GET_UNINSTALLED_PACKAGES} to modify the data returned.
+     * {@link #GET_UNINSTALLED_PACKAGES} to modify the data returned.
      *
      * @return A List of ApplicationInfo objects, one for each application that
      *         is installed on the device.  In the unlikely case of there being
@@ -1684,6 +1805,39 @@ public abstract class PackageManager {
     public abstract ResolveInfo resolveActivity(Intent intent, int flags);
 
     /**
+     * Determine the best action to perform for a given Intent for a given user. This
+     * is how {@link Intent#resolveActivity} finds an activity if a class has not
+     * been explicitly specified.
+     *
+     * <p><em>Note:</em> if using an implicit Intent (without an explicit ComponentName
+     * specified), be sure to consider whether to set the {@link #MATCH_DEFAULT_ONLY}
+     * only flag.  You need to do so to resolve the activity in the same way
+     * that {@link android.content.Context#startActivity(Intent)} and
+     * {@link android.content.Intent#resolveActivity(PackageManager)
+     * Intent.resolveActivity(PackageManager)} do.</p>
+     *
+     * @param intent An intent containing all of the desired specification
+     *               (action, data, type, category, and/or component).
+     * @param flags Additional option flags.  The most important is
+     * {@link #MATCH_DEFAULT_ONLY}, to limit the resolution to only
+     * those activities that support the {@link android.content.Intent#CATEGORY_DEFAULT}.
+     * @param userId The user id.
+     *
+     * @return Returns a ResolveInfo containing the final activity intent that
+     *         was determined to be the best action.  Returns null if no
+     *         matching activity was found. If multiple matching activities are
+     *         found and there is no default set, returns a ResolveInfo
+     *         containing something else, such as the activity resolver.
+     *
+     * @see #MATCH_DEFAULT_ONLY
+     * @see #GET_INTENT_FILTERS
+     * @see #GET_RESOLVED_FILTER
+     *
+     * @hide
+     */
+    public abstract ResolveInfo resolveActivityAsUser(Intent intent, int flags, int userId);
+
+    /**
      * Retrieve all activities that can be performed for the given intent.
      *
      * @param intent The desired intent as per resolveActivity().
@@ -1703,6 +1857,29 @@ public abstract class PackageManager {
      */
     public abstract List<ResolveInfo> queryIntentActivities(Intent intent,
             int flags);
+
+    /**
+     * Retrieve all activities that can be performed for the given intent, for a specific user.
+     *
+     * @param intent The desired intent as per resolveActivity().
+     * @param flags Additional option flags.  The most important is
+     * {@link #MATCH_DEFAULT_ONLY}, to limit the resolution to only
+     * those activities that support the {@link android.content.Intent#CATEGORY_DEFAULT}.
+     *
+     * @return A List&lt;ResolveInfo&gt; containing one entry for each matching
+     *         Activity. These are ordered from best to worst match -- that
+     *         is, the first item in the list is what is returned by
+     *         {@link #resolveActivity}.  If there are no matching activities, an empty
+     *         list is returned.
+     *
+     * @see #MATCH_DEFAULT_ONLY
+     * @see #GET_INTENT_FILTERS
+     * @see #GET_RESOLVED_FILTER
+     * @hide
+     */
+    public abstract List<ResolveInfo> queryIntentActivitiesAsUser(Intent intent,
+            int flags, int userId);
+
 
     /**
      * Retrieve a set of activities that should be presented to the user as
@@ -1754,6 +1931,26 @@ public abstract class PackageManager {
             int flags);
 
     /**
+     * Retrieve all receivers that can handle a broadcast of the given intent, for a specific
+     * user.
+     *
+     * @param intent The desired intent as per resolveActivity().
+     * @param flags Additional option flags.
+     * @param userId The userId of the user being queried.
+     *
+     * @return A List&lt;ResolveInfo&gt; containing one entry for each matching
+     *         Receiver. These are ordered from first to last in priority.  If
+     *         there are no matching receivers, an empty list is returned.
+     *
+     * @see #MATCH_DEFAULT_ONLY
+     * @see #GET_INTENT_FILTERS
+     * @see #GET_RESOLVED_FILTER
+     * @hide
+     */
+    public abstract List<ResolveInfo> queryBroadcastReceivers(Intent intent,
+            int flags, int userId);
+
+    /**
      * Determine the best service to handle for a given Intent.
      *
      * @param intent An intent containing all of the desired specification
@@ -1786,6 +1983,27 @@ public abstract class PackageManager {
      */
     public abstract List<ResolveInfo> queryIntentServices(Intent intent,
             int flags);
+
+    /**
+     * Retrieve all services that can match the given intent for a given user.
+     *
+     * @param intent The desired intent as per resolveService().
+     * @param flags Additional option flags.
+     * @param userId The user id.
+     *
+     * @return A List&lt;ResolveInfo&gt; containing one entry for each matching
+     *         ServiceInfo. These are ordered from best to worst match -- that
+     *         is, the first item in the list is what is returned by
+     *         resolveService().  If there are no matching services, an empty
+     *         list is returned.
+     *
+     * @see #GET_INTENT_FILTERS
+     * @see #GET_RESOLVED_FILTER
+     *
+     * @hide
+     */
+    public abstract List<ResolveInfo> queryIntentServicesAsUser(Intent intent,
+            int flags, int userId);
 
     /**
      * Find a single content provider by its base path name.
@@ -2123,6 +2341,10 @@ public abstract class PackageManager {
     public abstract Resources getResourcesForApplication(String appPackageName)
             throws NameNotFoundException;
 
+    /** @hide */
+    public abstract Resources getResourcesForApplicationAsUser(String appPackageName, int userId)
+            throws NameNotFoundException;
+
     /**
      * Retrieve overall information about an application package defined
      * in a package archive file
@@ -2166,8 +2388,8 @@ public abstract class PackageManager {
         if ((flags & GET_SIGNATURES) != 0) {
             packageParser.collectCertificates(pkg, 0);
         }
-        return PackageParser.generatePackageInfo(pkg, null, flags, 0, 0, null, false,
-                COMPONENT_ENABLED_STATE_DEFAULT);
+        PackageUserState state = new PackageUserState();
+        return PackageParser.generatePackageInfo(pkg, null, flags, 0, 0, null, state);
     }
 
     /**
@@ -2227,6 +2449,45 @@ public abstract class PackageManager {
             ContainerEncryptionParams encryptionParams);
 
     /**
+     * Similar to
+     * {@link #installPackage(Uri, IPackageInstallObserver, int, String)} but
+     * with an extra verification information provided.
+     *
+     * @param packageURI The location of the package file to install. This can
+     *            be a 'file:' or a 'content:' URI.
+     * @param observer An observer callback to get notified when the package
+     *            installation is complete.
+     *            {@link IPackageInstallObserver#packageInstalled(String, int)}
+     *            will be called when that happens. observer may be null to
+     *            indicate that no callback is desired.
+     * @param flags - possible values: {@link #INSTALL_FORWARD_LOCK},
+     *            {@link #INSTALL_REPLACE_EXISTING}, {@link #INSTALL_ALLOW_TEST}
+     *            .
+     * @param installerPackageName Optional package name of the application that
+     *            is performing the installation. This identifies which market
+     *            the package came from.
+     * @param verificationParams an object that holds signal information to
+     *            assist verification. May be {@code null}.
+     * @param encryptionParams if the package to be installed is encrypted,
+     *            these parameters describing the encryption and authentication
+     *            used. May be {@code null}.
+     *
+     * @hide
+     */
+    public abstract void installPackageWithVerificationAndEncryption(Uri packageURI,
+            IPackageInstallObserver observer, int flags, String installerPackageName,
+            VerificationParams verificationParams,
+            ContainerEncryptionParams encryptionParams);
+
+    /**
+     * If there is already an application with the given package name installed
+     * on the system for other users, also install it for the calling user.
+     * @hide
+     */
+    public abstract int installExistingPackage(String packageName)
+            throws NameNotFoundException;
+
+    /**
      * Allows a package listening to the
      * {@link Intent#ACTION_PACKAGE_NEEDS_VERIFICATION package verification
      * broadcast} to respond to the package manager. The response must include
@@ -2238,8 +2499,45 @@ public abstract class PackageManager {
      *            {@link PackageManager#EXTRA_VERIFICATION_ID} Intent extra
      * @param verificationCode either {@link PackageManager#VERIFICATION_ALLOW}
      *            or {@link PackageManager#VERIFICATION_REJECT}.
+     * @throws SecurityException if the caller does not have the
+     *            PACKAGE_VERIFICATION_AGENT permission.
      */
     public abstract void verifyPendingInstall(int id, int verificationCode);
+
+    /**
+     * Allows a package listening to the
+     * {@link Intent#ACTION_PACKAGE_NEEDS_VERIFICATION package verification
+     * broadcast} to extend the default timeout for a response and declare what
+     * action to perform after the timeout occurs. The response must include
+     * the {@code verificationCodeAtTimeout} which is one of
+     * {@link PackageManager#VERIFICATION_ALLOW} or
+     * {@link PackageManager#VERIFICATION_REJECT}.
+     *
+     * This method may only be called once per package id. Additional calls
+     * will have no effect.
+     *
+     * @param id pending package identifier as passed via the
+     *            {@link PackageManager#EXTRA_VERIFICATION_ID} Intent extra
+     * @param verificationCodeAtTimeout either
+     *            {@link PackageManager#VERIFICATION_ALLOW} or
+     *            {@link PackageManager#VERIFICATION_REJECT}. If
+     *            {@code verificationCodeAtTimeout} is neither
+     *            {@link PackageManager#VERIFICATION_ALLOW} or
+     *            {@link PackageManager#VERIFICATION_REJECT}, then
+     *            {@code verificationCodeAtTimeout} will default to
+     *            {@link PackageManager#VERIFICATION_REJECT}.
+     * @param millisecondsToDelay the amount of time requested for the timeout.
+     *            Must be positive and less than
+     *            {@link PackageManager#MAXIMUM_VERIFICATION_TIMEOUT}. If
+     *            {@code millisecondsToDelay} is out of bounds,
+     *            {@code millisecondsToDelay} will be set to the closest in
+     *            bounds value; namely, 0 or
+     *            {@link PackageManager#MAXIMUM_VERIFICATION_TIMEOUT}.
+     * @throws SecurityException if the caller does not have the
+     *            PACKAGE_VERIFICATION_AGENT permission.
+     */
+    public abstract void extendVerificationTimeout(int id,
+            int verificationCodeAtTimeout, long millisecondsToDelay);
 
     /**
      * Change the installer associated with a given package.  There are limitations
@@ -2270,7 +2568,8 @@ public abstract class PackageManager {
      * @param observer An observer callback to get notified when the package deletion is
      * complete. {@link android.content.pm.IPackageDeleteObserver#packageDeleted(boolean)} will be
      * called when that happens.  observer may be null to indicate that no callback is desired.
-     * @param flags - possible values: {@link #DONT_DELETE_DATA}
+     * @param flags - possible values: {@link #DELETE_KEEP_DATA},
+     * {@link #DELETE_ALL_USERS}.
      *
      * @hide
      */
@@ -2376,6 +2675,7 @@ public abstract class PackageManager {
      * should have the {@link android.Manifest.permission#GET_PACKAGE_SIZE} permission.
      *
      * @param packageName The name of the package whose size information is to be retrieved
+     * @param userHandle The user whose size information should be retrieved.
      * @param observer An observer callback to get notified when the operation
      * is complete.
      * {@link android.content.pm.IPackageStatsObserver#onGetStatsCompleted(PackageStats, boolean)}
@@ -2386,8 +2686,18 @@ public abstract class PackageManager {
      *
      * @hide
      */
-    public abstract void getPackageSizeInfo(String packageName,
+    public abstract void getPackageSizeInfo(String packageName, int userHandle,
             IPackageStatsObserver observer);
+
+    /**
+     * Like {@link #getPackageSizeInfo(String, int, IPackageStatsObserver)}, but
+     * returns the size for the calling user.
+     *
+     * @hide
+     */
+    public void getPackageSizeInfo(String packageName, IPackageStatsObserver observer) {
+        getPackageSizeInfo(packageName, UserHandle.myUserId(), observer);
+    }
 
     /**
      * @deprecated This function no longer does anything; it was an old
@@ -2458,6 +2768,17 @@ public abstract class PackageManager {
     @Deprecated
     public abstract void addPreferredActivity(IntentFilter filter, int match,
             ComponentName[] set, ComponentName activity);
+
+    /**
+     * Same as {@link #addPreferredActivity(IntentFilter, int,
+            ComponentName[], ComponentName)}, but with a specific userId to apply the preference
+            to.
+     * @hide
+     */
+    public void addPreferredActivity(IntentFilter filter, int match,
+            ComponentName[] set, ComponentName activity, int userId) {
+        throw new RuntimeException("Not implemented. Must override in a subclass.");
+    }
 
     /**
      * @deprecated This is a protected API that should not have been available
@@ -2614,56 +2935,6 @@ public abstract class PackageManager {
      */
     public abstract void movePackage(
             String packageName, IPackageMoveObserver observer, int flags);
-
-    /**
-     * Creates a user with the specified name and options.
-     *
-     * @param name the user's name
-     * @param flags flags that identify the type of user and other properties.
-     * @see UserInfo
-     *
-     * @return the UserInfo object for the created user, or null if the user could not be created.
-     * @hide
-     */
-    public abstract UserInfo createUser(String name, int flags);
-
-    /**
-     * @return the list of users that were created
-     * @hide
-     */
-    public abstract List<UserInfo> getUsers();
-
-    /**
-     * @param id the ID of the user, where 0 is the primary user.
-     * @hide
-     */
-    public abstract boolean removeUser(int id);
-
-    /**
-     * Updates the user's name.
-     *
-     * @param id the user's id
-     * @param name the new name for the user
-     * @hide
-     */
-    public abstract void updateUserName(int id, String name);
-
-    /**
-     * Changes the user's properties specified by the flags.
-     *
-     * @param id the user's id
-     * @param flags the new flags for the user
-     * @hide
-     */
-    public abstract void updateUserFlags(int id, int flags);
-
-    /**
-     * Returns the details for the user specified by userId.
-     * @param userId the user id of the user
-     * @return UserInfo for the specified user, or null if no such user exists.
-     * @hide
-     */
-    public abstract UserInfo getUser(int userId);
 
     /**
      * Returns the device identity that verifiers can use to associate their scheme to a particular

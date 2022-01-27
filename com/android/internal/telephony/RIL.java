@@ -43,6 +43,7 @@ import android.os.SystemProperties;
 import android.os.PowerManager.WakeLock;
 import android.telephony.NeighboringCellInfo;
 import android.telephony.PhoneNumberUtils;
+import android.telephony.SignalStrength;
 import android.telephony.SmsManager;
 import android.telephony.SmsMessage;
 import android.text.TextUtils;
@@ -50,6 +51,7 @@ import android.util.Log;
 
 import com.android.internal.telephony.gsm.SmsBroadcastConfigInfo;
 import com.android.internal.telephony.gsm.SuppServiceNotification;
+import com.android.internal.telephony.IccCardApplicationStatus;
 import com.android.internal.telephony.cdma.CdmaCallWaitingNotification;
 import com.android.internal.telephony.cdma.CdmaInformationRecords;
 import com.android.internal.telephony.IccRefreshResponse;
@@ -196,7 +198,6 @@ class RILRequest {
 
 /**
  * RIL implementation of the CommandsInterface.
- * FIXME public only for testing
  *
  * {@hide}
  */
@@ -1657,7 +1658,9 @@ public final class RIL extends BaseCommands implements CommandsInterface {
                             Message response) {
         RILRequest rr = RILRequest.obtain(RIL_REQUEST_QUERY_FACILITY_LOCK, response);
 
-        if (RILJ_LOGD) riljLog(rr.serialString() + "> " + requestToString(rr.mRequest));
+        if (RILJ_LOGD) riljLog(rr.serialString() + "> " + requestToString(rr.mRequest)
+                                                 + " [" + facility + " " + serviceClass
+                                                 + " " + appId + "]");
 
         // count strings
         rr.mp.writeInt(4);
@@ -1686,7 +1689,9 @@ public final class RIL extends BaseCommands implements CommandsInterface {
          RILRequest rr
                 = RILRequest.obtain(RIL_REQUEST_SET_FACILITY_LOCK, response);
 
-        if (RILJ_LOGD) riljLog(rr.serialString() + "> " + requestToString(rr.mRequest));
+        if (RILJ_LOGD) riljLog(rr.serialString() + "> " + requestToString(rr.mRequest)
+                                                        + " [" + facility + " " + lockState
+                                                        + " " + serviceClass + " " + appId + "]");
 
         // count strings
         rr.mp.writeInt(5);
@@ -2342,7 +2347,39 @@ public final class RIL extends BaseCommands implements CommandsInterface {
             }
         }
 
+        // Here and below fake RIL_UNSOL_RESPONSE_SIM_STATUS_CHANGED, see b/7255789.
+        // This is needed otherwise we don't automatically transition to the main lock
+        // screen when the pin or puk is entered incorrectly.
+        switch (rr.mRequest) {
+            case RIL_REQUEST_ENTER_SIM_PUK:
+            case RIL_REQUEST_ENTER_SIM_PUK2:
+                if (mIccStatusChangedRegistrants != null) {
+                    if (RILJ_LOGD) {
+                        riljLog("ON enter sim puk fakeSimStatusChanged: reg count="
+                                + mIccStatusChangedRegistrants.size());
+                    }
+                    mIccStatusChangedRegistrants.notifyRegistrants();
+                }
+                break;
+        }
+
         if (error != 0) {
+            switch (rr.mRequest) {
+                case RIL_REQUEST_ENTER_SIM_PIN:
+                case RIL_REQUEST_ENTER_SIM_PIN2:
+                case RIL_REQUEST_CHANGE_SIM_PIN:
+                case RIL_REQUEST_CHANGE_SIM_PIN2:
+                case RIL_REQUEST_SET_FACILITY_LOCK:
+                    if (mIccStatusChangedRegistrants != null) {
+                        if (RILJ_LOGD) {
+                            riljLog("ON some errors fakeSimStatusChanged: reg count="
+                                    + mIccStatusChangedRegistrants.size());
+                        }
+                        mIccStatusChangedRegistrants.notifyRegistrants();
+                    }
+                    break;
+            }
+
             rr.onError(error, ret);
             rr.release();
             return;
@@ -2985,35 +3022,34 @@ public final class RIL extends BaseCommands implements CommandsInterface {
 
     private Object
     responseIccCardStatus(Parcel p) {
-        IccCardApplication ca;
+        IccCardApplicationStatus appStatus;
 
-        IccCardStatus status = new IccCardStatus();
-        status.setCardState(p.readInt());
-        status.setUniversalPinState(p.readInt());
-        status.setGsmUmtsSubscriptionAppIndex(p.readInt());
-        status.setCdmaSubscriptionAppIndex(p.readInt());
-        status.setImsSubscriptionAppIndex(p.readInt());
+        IccCardStatus cardStatus = new IccCardStatus();
+        cardStatus.setCardState(p.readInt());
+        cardStatus.setUniversalPinState(p.readInt());
+        cardStatus.mGsmUmtsSubscriptionAppIndex = p.readInt();
+        cardStatus.mCdmaSubscriptionAppIndex = p.readInt();
+        cardStatus.mImsSubscriptionAppIndex = p.readInt();
         int numApplications = p.readInt();
 
         // limit to maximum allowed applications
         if (numApplications > IccCardStatus.CARD_MAX_APPS) {
             numApplications = IccCardStatus.CARD_MAX_APPS;
         }
-        status.setNumApplications(numApplications);
-
+        cardStatus.mApplications = new IccCardApplicationStatus[numApplications];
         for (int i = 0 ; i < numApplications ; i++) {
-            ca = new IccCardApplication();
-            ca.app_type       = ca.AppTypeFromRILInt(p.readInt());
-            ca.app_state      = ca.AppStateFromRILInt(p.readInt());
-            ca.perso_substate = ca.PersoSubstateFromRILInt(p.readInt());
-            ca.aid            = p.readString();
-            ca.app_label      = p.readString();
-            ca.pin1_replaced  = p.readInt();
-            ca.pin1           = ca.PinStateFromRILInt(p.readInt());
-            ca.pin2           = ca.PinStateFromRILInt(p.readInt());
-            status.addApplication(ca);
+            appStatus = new IccCardApplicationStatus();
+            appStatus.app_type       = appStatus.AppTypeFromRILInt(p.readInt());
+            appStatus.app_state      = appStatus.AppStateFromRILInt(p.readInt());
+            appStatus.perso_substate = appStatus.PersoSubstateFromRILInt(p.readInt());
+            appStatus.aid            = p.readString();
+            appStatus.app_label      = p.readString();
+            appStatus.pin1_replaced  = p.readInt();
+            appStatus.pin1           = appStatus.PinStateFromRILInt(p.readInt());
+            appStatus.pin2           = appStatus.PinStateFromRILInt(p.readInt());
+            cardStatus.mApplications[i] = appStatus;
         }
-        return status;
+        return cardStatus;
     }
 
     private Object
@@ -3347,16 +3383,8 @@ public final class RIL extends BaseCommands implements CommandsInterface {
 
     private Object
     responseSignalStrength(Parcel p) {
-        int numInts = 12;
-        int response[];
-
-        /* TODO: Add SignalStrength class to match RIL_SignalStrength */
-        response = new int[numInts];
-        for (int i = 0 ; i < numInts ; i++) {
-            response[i] = p.readInt();
-        }
-
-        return response;
+        SignalStrength signalStrength = new SignalStrength(p);
+        return signalStrength;
     }
 
     private ArrayList<CdmaInformationRecords>

@@ -112,7 +112,6 @@ public class Learning_StochasticLinearRanker extends ILearning_StochasticLinearR
             objStream.writeObject(model);
             //return byteStream.toByteArray();
             byte[] bytes = byteStream.toByteArray();
-            Log.i(TAG, "getModel: " + bytes);
             return bytes;
         } catch (IOException e) {
             throw new RuntimeException("Can't get model");
@@ -128,7 +127,6 @@ public class Learning_StochasticLinearRanker extends ILearning_StochasticLinearR
             if (mLearningSlRanker == null)
                 mLearningSlRanker = new StochasticLinearRankerWithPrior();
             boolean res = mLearningSlRanker.loadModel(model);
-            Log.i(TAG, "LoadModel: " + modelData);
             return res;
         } catch (IOException e) {
             throw new RuntimeException("Can't load model");

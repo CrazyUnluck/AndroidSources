@@ -20,6 +20,7 @@ import android.content.Context;
 import android.net.LocalServerSocket;
 import android.os.Looper;
 import android.provider.Settings;
+import android.telephony.TelephonyManager;
 import android.util.Log;
 import android.os.SystemProperties;
 
@@ -29,6 +30,7 @@ import com.android.internal.telephony.cdma.CdmaSubscriptionSourceManager;
 import com.android.internal.telephony.gsm.GSMPhone;
 import com.android.internal.telephony.sip.SipPhone;
 import com.android.internal.telephony.sip.SipPhoneFactory;
+import com.android.internal.telephony.uicc.UiccController;
 
 /**
  * {@hide}
@@ -101,11 +103,11 @@ public class PhoneFactory {
 
                 // Get preferred network mode
                 int preferredNetworkMode = RILConstants.PREFERRED_NETWORK_MODE;
-                if (BaseCommands.getLteOnCdmaModeStatic() == Phone.LTE_ON_CDMA_TRUE) {
+                if (TelephonyManager.getLteOnCdmaModeStatic() == PhoneConstants.LTE_ON_CDMA_TRUE) {
                     preferredNetworkMode = Phone.NT_MODE_GLOBAL;
                 }
-                int networkMode = Settings.Secure.getInt(context.getContentResolver(),
-                        Settings.Secure.PREFERRED_NETWORK_MODE, preferredNetworkMode);
+                int networkMode = Settings.Global.getInt(context.getContentResolver(),
+                        Settings.Global.PREFERRED_NETWORK_MODE, preferredNetworkMode);
                 Log.i(LOG_TAG, "Network Mode set to " + Integer.toString(networkMode));
 
                 // Get cdmaSubscription
@@ -113,21 +115,21 @@ public class PhoneFactory {
                 //       the configuration, bug 4202572. And the ril issues the
                 //       RIL_UNSOL_CDMA_SUBSCRIPTION_SOURCE_CHANGED, bug 4295439.
                 int cdmaSubscription;
-                int lteOnCdma = BaseCommands.getLteOnCdmaModeStatic();
+                int lteOnCdma = TelephonyManager.getLteOnCdmaModeStatic();
                 switch (lteOnCdma) {
-                    case Phone.LTE_ON_CDMA_FALSE:
+                    case PhoneConstants.LTE_ON_CDMA_FALSE:
                         cdmaSubscription = CdmaSubscriptionSourceManager.SUBSCRIPTION_FROM_NV;
                         Log.i(LOG_TAG, "lteOnCdma is 0 use SUBSCRIPTION_FROM_NV");
                         break;
-                    case Phone.LTE_ON_CDMA_TRUE:
+                    case PhoneConstants.LTE_ON_CDMA_TRUE:
                         cdmaSubscription = CdmaSubscriptionSourceManager.SUBSCRIPTION_FROM_RUIM;
                         Log.i(LOG_TAG, "lteOnCdma is 1 use SUBSCRIPTION_FROM_RUIM");
                         break;
-                    case Phone.LTE_ON_CDMA_UNKNOWN:
+                    case PhoneConstants.LTE_ON_CDMA_UNKNOWN:
                     default:
                         //Get cdmaSubscription mode from Settings.System
-                        cdmaSubscription = Settings.Secure.getInt(context.getContentResolver(),
-                                Settings.Secure.PREFERRED_CDMA_SUBSCRIPTION,
+                        cdmaSubscription = Settings.Global.getInt(context.getContentResolver(),
+                                Settings.Global.PREFERRED_CDMA_SUBSCRIPTION,
                                 preferredCdmaSubscription);
                         Log.i(LOG_TAG, "lteOnCdma not set, using PREFERRED_CDMA_SUBSCRIPTION");
                         break;
@@ -137,19 +139,22 @@ public class PhoneFactory {
                 //reads the system properties and makes commandsinterface
                 sCommandsInterface = new RIL(context, networkMode, cdmaSubscription);
 
-                int phoneType = getPhoneType(networkMode);
-                if (phoneType == Phone.PHONE_TYPE_GSM) {
+                // Instantiate UiccController so that all other classes can just call getInstance()
+                UiccController.make(context, sCommandsInterface);
+
+                int phoneType = TelephonyManager.getPhoneType(networkMode);
+                if (phoneType == PhoneConstants.PHONE_TYPE_GSM) {
                     Log.i(LOG_TAG, "Creating GSMPhone");
                     sProxyPhone = new PhoneProxy(new GSMPhone(context,
                             sCommandsInterface, sPhoneNotifier));
-                } else if (phoneType == Phone.PHONE_TYPE_CDMA) {
-                    switch (BaseCommands.getLteOnCdmaModeStatic()) {
-                        case Phone.LTE_ON_CDMA_TRUE:
+                } else if (phoneType == PhoneConstants.PHONE_TYPE_CDMA) {
+                    switch (TelephonyManager.getLteOnCdmaModeStatic()) {
+                        case PhoneConstants.LTE_ON_CDMA_TRUE:
                             Log.i(LOG_TAG, "Creating CDMALTEPhone");
                             sProxyPhone = new PhoneProxy(new CDMALTEPhone(context,
                                 sCommandsInterface, sPhoneNotifier));
                             break;
-                        case Phone.LTE_ON_CDMA_FALSE:
+                        case PhoneConstants.LTE_ON_CDMA_FALSE:
                         default:
                             Log.i(LOG_TAG, "Creating CDMAPhone");
                             sProxyPhone = new PhoneProxy(new CDMAPhone(context,
@@ -160,43 +165,6 @@ public class PhoneFactory {
 
                 sMadeDefaults = true;
             }
-        }
-    }
-
-    /*
-     * This function returns the type of the phone, depending
-     * on the network mode.
-     *
-     * @param network mode
-     * @return Phone Type
-     */
-    public static int getPhoneType(int networkMode) {
-        switch(networkMode) {
-        case RILConstants.NETWORK_MODE_CDMA:
-        case RILConstants.NETWORK_MODE_CDMA_NO_EVDO:
-        case RILConstants.NETWORK_MODE_EVDO_NO_CDMA:
-            return Phone.PHONE_TYPE_CDMA;
-
-        case RILConstants.NETWORK_MODE_WCDMA_PREF:
-        case RILConstants.NETWORK_MODE_GSM_ONLY:
-        case RILConstants.NETWORK_MODE_WCDMA_ONLY:
-        case RILConstants.NETWORK_MODE_GSM_UMTS:
-            return Phone.PHONE_TYPE_GSM;
-
-        // Use CDMA Phone for the global mode including CDMA
-        case RILConstants.NETWORK_MODE_GLOBAL:
-        case RILConstants.NETWORK_MODE_LTE_CDMA_EVDO:
-        case RILConstants.NETWORK_MODE_LTE_CMDA_EVDO_GSM_WCDMA:
-            return Phone.PHONE_TYPE_CDMA;
-
-        case RILConstants.NETWORK_MODE_LTE_ONLY:
-            if (BaseCommands.getLteOnCdmaModeStatic() == Phone.LTE_ON_CDMA_TRUE) {
-                return Phone.PHONE_TYPE_CDMA;
-            } else {
-                return Phone.PHONE_TYPE_GSM;
-            }
-        default:
-            return Phone.PHONE_TYPE_GSM;
         }
     }
 
@@ -215,13 +183,13 @@ public class PhoneFactory {
     public static Phone getCdmaPhone() {
         Phone phone;
         synchronized(PhoneProxy.lockForRadioTechnologyChange) {
-            switch (BaseCommands.getLteOnCdmaModeStatic()) {
-                case Phone.LTE_ON_CDMA_TRUE: {
+            switch (TelephonyManager.getLteOnCdmaModeStatic()) {
+                case PhoneConstants.LTE_ON_CDMA_TRUE: {
                     phone = new CDMALTEPhone(sContext, sCommandsInterface, sPhoneNotifier);
                     break;
                 }
-                case Phone.LTE_ON_CDMA_FALSE:
-                case Phone.LTE_ON_CDMA_UNKNOWN:
+                case PhoneConstants.LTE_ON_CDMA_FALSE:
+                case PhoneConstants.LTE_ON_CDMA_UNKNOWN:
                 default: {
                     phone = new CDMAPhone(sContext, sCommandsInterface, sPhoneNotifier);
                     break;

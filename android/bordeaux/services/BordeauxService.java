@@ -39,7 +39,7 @@ import android.widget.Button;
 import android.widget.TextView;
 import android.widget.Toast;
 
-import android.bordeaux.R;
+//import android.bordeaux.R;
 import android.util.Log;
 
 import java.io.*;
@@ -64,12 +64,24 @@ public class BordeauxService extends Service {
     NotificationManager mNotificationManager;
 
     BordeauxSessionManager mSessionManager;
+    AggregatorManager mAggregatorManager;
+    TimeStatsAggregator mTimeStatsAggregator;
+    LocationStatsAggregator mLocationStatsAggregator;
+    MotionStatsAggregator mMotionStatsAggregator;
 
     @Override
     public void onCreate() {
         Log.i(TAG, "Bordeaux service created.");
-        mNotificationManager = (NotificationManager)getSystemService(NOTIFICATION_SERVICE);
+        //mNotificationManager = (NotificationManager)getSystemService(NOTIFICATION_SERVICE);
         mSessionManager = new BordeauxSessionManager(this);
+        mMotionStatsAggregator = new MotionStatsAggregator();
+        mLocationStatsAggregator = new LocationStatsAggregator();
+        mTimeStatsAggregator = new TimeStatsAggregator();
+        mAggregatorManager = AggregatorManager.getInstance();
+        mAggregatorManager.registerAggregator(mMotionStatsAggregator, mAggregatorManager);
+        mAggregatorManager.registerAggregator(mLocationStatsAggregator, mAggregatorManager);
+        mAggregatorManager.registerAggregator(mTimeStatsAggregator, mAggregatorManager);
+        //Log.i(TAG, "Bordeaux aggregators were registered");
 
         // Display a notification about us starting.
         // TODO: don't display the notification after the service is
@@ -84,10 +96,10 @@ public class BordeauxService extends Service {
         mSessionManager.saveSessions();
 
         // Cancel the persistent notification.
-        mNotificationManager.cancel(R.string.remote_service_started);
+        //mNotificationManager.cancel(R.string.remote_service_started);
 
         // Tell the user we stopped.
-        Toast.makeText(this, R.string.remote_service_stopped, Toast.LENGTH_SHORT).show();
+        //Toast.makeText(this, R.string.remote_service_stopped, Toast.LENGTH_SHORT).show();
 
         // Unregister all callbacks.
         mCallbacks.kill();
@@ -131,6 +143,14 @@ public class BordeauxService extends Service {
             return getLearningSession(Learning_StochasticLinearRanker.class, name);
         }
 
+        public IBinder getPredictor(String name) {
+            return getLearningSession(Predictor.class, name);
+        }
+
+        public IBinder getAggregatorManager() {
+            return (IBinder) mAggregatorManager;
+        }
+
         public void registerCallback(IBordeauxServiceCallback cb) {
             if (cb != null) mCallbacks.register(cb);
         }
@@ -151,7 +171,7 @@ public class BordeauxService extends Service {
      * automatically by the system).
      */
     private void showNotification() {
-        // In this sample, we'll use the same text for the ticker and the expanded notification
+        /*// In this sample, we'll use the same text for the ticker and the expanded notification
         CharSequence text = getText(R.string.remote_service_started);
 
         // The PendingIntent to launch our activity if the user selects this notification
@@ -170,7 +190,7 @@ public class BordeauxService extends Service {
         Notification notification = builder.getNotification();
         // Send the notification.
         // We use a string id because it is a unique number.  We use it later to cancel.
-        mNotificationManager.notify(R.string.remote_service_started, notification);
+        mNotificationManager.notify(R.string.remote_service_started, notification); */
     }
 
 }

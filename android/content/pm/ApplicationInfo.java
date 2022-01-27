@@ -298,9 +298,21 @@ public class ApplicationInfo extends PackageItemInfo implements Parcelable {
      * activity's manifest.
      *
      * Default value is false (no support for RTL).
-     * @hide
      */
     public static final int FLAG_SUPPORTS_RTL = 1<<22;
+
+    /**
+     * Value for {@link #flags}: true if the application is currently
+     * installed for the calling user.
+     */
+    public static final int FLAG_INSTALLED = 1<<23;
+
+    /**
+     * Value for {@link #flags}: true if the application only has its
+     * data installed; the application package itself does not currently
+     * exist on the device.
+     */
+    public static final int FLAG_IS_DATA_ONLY = 1<<24;
 
     /**
      * Value for {@link #flags}: Set to true if the application has been
@@ -335,7 +347,8 @@ public class ApplicationInfo extends PackageItemInfo implements Parcelable {
      * {@link #FLAG_SUPPORTS_NORMAL_SCREENS},
      * {@link #FLAG_SUPPORTS_LARGE_SCREENS}, {@link #FLAG_SUPPORTS_XLARGE_SCREENS},
      * {@link #FLAG_RESIZEABLE_FOR_SCREENS},
-     * {@link #FLAG_SUPPORTS_SCREEN_DENSITIES}, {@link #FLAG_VM_SAFE_MODE}
+     * {@link #FLAG_SUPPORTS_SCREEN_DENSITIES}, {@link #FLAG_VM_SAFE_MODE},
+     * {@link #FLAG_INSTALLED}.
      */
     public int flags = 0;
     
@@ -541,6 +554,7 @@ public class ApplicationInfo extends PackageItemInfo implements Parcelable {
         manageSpaceActivityName = orig.manageSpaceActivityName;
         descriptionRes = orig.descriptionRes;
         uiOptions = orig.uiOptions;
+        backupAgentName = orig.backupAgentName;
     }
 
 

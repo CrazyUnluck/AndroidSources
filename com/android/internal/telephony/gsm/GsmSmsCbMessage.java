@@ -21,6 +21,7 @@ import android.telephony.SmsCbMessage;
 import android.util.Pair;
 
 import com.android.internal.telephony.GsmAlphabet;
+import com.android.internal.telephony.SmsConstants;
 
 import java.io.UnsupportedEncodingException;
 
@@ -116,42 +117,42 @@ public class GsmSmsCbMessage {
         // section 5.
         switch ((dataCodingScheme & 0xf0) >> 4) {
             case 0x00:
-                encoding = android.telephony.SmsMessage.ENCODING_7BIT;
+                encoding = SmsConstants.ENCODING_7BIT;
                 language = LANGUAGE_CODES_GROUP_0[dataCodingScheme & 0x0f];
                 break;
 
             case 0x01:
                 hasLanguageIndicator = true;
                 if ((dataCodingScheme & 0x0f) == 0x01) {
-                    encoding = android.telephony.SmsMessage.ENCODING_16BIT;
+                    encoding = SmsConstants.ENCODING_16BIT;
                 } else {
-                    encoding = android.telephony.SmsMessage.ENCODING_7BIT;
+                    encoding = SmsConstants.ENCODING_7BIT;
                 }
                 break;
 
             case 0x02:
-                encoding = android.telephony.SmsMessage.ENCODING_7BIT;
+                encoding = SmsConstants.ENCODING_7BIT;
                 language = LANGUAGE_CODES_GROUP_2[dataCodingScheme & 0x0f];
                 break;
 
             case 0x03:
-                encoding = android.telephony.SmsMessage.ENCODING_7BIT;
+                encoding = SmsConstants.ENCODING_7BIT;
                 break;
 
             case 0x04:
             case 0x05:
                 switch ((dataCodingScheme & 0x0c) >> 2) {
                     case 0x01:
-                        encoding = android.telephony.SmsMessage.ENCODING_8BIT;
+                        encoding = SmsConstants.ENCODING_8BIT;
                         break;
 
                     case 0x02:
-                        encoding = android.telephony.SmsMessage.ENCODING_16BIT;
+                        encoding = SmsConstants.ENCODING_16BIT;
                         break;
 
                     case 0x00:
                     default:
-                        encoding = android.telephony.SmsMessage.ENCODING_7BIT;
+                        encoding = SmsConstants.ENCODING_7BIT;
                         break;
                 }
                 break;
@@ -168,15 +169,15 @@ public class GsmSmsCbMessage {
 
             case 0x0f:
                 if (((dataCodingScheme & 0x04) >> 2) == 0x01) {
-                    encoding = android.telephony.SmsMessage.ENCODING_8BIT;
+                    encoding = SmsConstants.ENCODING_8BIT;
                 } else {
-                    encoding = android.telephony.SmsMessage.ENCODING_7BIT;
+                    encoding = SmsConstants.ENCODING_7BIT;
                 }
                 break;
 
             default:
                 // Reserved values are to be treated as 7-bit
-                encoding = android.telephony.SmsMessage.ENCODING_7BIT;
+                encoding = SmsConstants.ENCODING_7BIT;
                 break;
         }
 
@@ -237,7 +238,7 @@ public class GsmSmsCbMessage {
         String body = null;
 
         switch (encoding) {
-            case android.telephony.SmsMessage.ENCODING_7BIT:
+            case SmsConstants.ENCODING_7BIT:
                 body = GsmAlphabet.gsm7BitPackedToString(pdu, offset, length * 8 / 7);
 
                 if (hasLanguageIndicator && body != null && body.length() > 2) {
@@ -248,7 +249,7 @@ public class GsmSmsCbMessage {
                 }
                 break;
 
-            case android.telephony.SmsMessage.ENCODING_16BIT:
+            case SmsConstants.ENCODING_16BIT:
                 if (hasLanguageIndicator && pdu.length >= offset + 2) {
                     // Language is two GSM characters.
                     // The actual body text is offset by 2 bytes.

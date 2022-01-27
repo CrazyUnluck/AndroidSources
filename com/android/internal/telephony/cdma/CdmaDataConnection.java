@@ -22,6 +22,7 @@ import android.util.Log;
 import com.android.internal.telephony.DataConnection;
 import com.android.internal.telephony.DataConnectionTracker;
 import com.android.internal.telephony.Phone;
+import com.android.internal.telephony.PhoneConstants;
 import com.android.internal.telephony.RILConstants;
 import com.android.internal.telephony.RetryManager;
 
@@ -51,11 +52,8 @@ public class CdmaDataConnection extends DataConnection {
      */
     static CdmaDataConnection makeDataConnection(CDMAPhone phone, int id, RetryManager rm,
             DataConnectionTracker dct) {
-        synchronized (mCountLock) {
-            mCount += 1;
-        }
-        CdmaDataConnection cdmaDc = new CdmaDataConnection(phone, "CdmaDC-" + mCount,
-                id, rm, dct);
+        CdmaDataConnection cdmaDc = new CdmaDataConnection(phone,
+                "CdmaDC-" + mCount.incrementAndGet(), id, rm, dct);
         cdmaDc.start();
         if (DBG) cdmaDc.log("Made " + cdmaDc.getName());
         return cdmaDc;
@@ -78,7 +76,7 @@ public class CdmaDataConnection extends DataConnection {
         lastFailCause = FailCause.NONE;
         int dataProfile;
         if ((cp.apn != null) && (cp.apn.types.length > 0) && (cp.apn.types[0] != null) &&
-                (cp.apn.types[0].equals(Phone.APN_TYPE_DUN))) {
+                (cp.apn.types[0].equals(PhoneConstants.APN_TYPE_DUN))) {
             if (DBG) log("CdmaDataConnection using DUN");
             dataProfile = RILConstants.DATA_PROFILE_TETHERED;
         } else {

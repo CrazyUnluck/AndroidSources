@@ -22,6 +22,7 @@ import android.net.LinkProperties;
 import android.os.Handler;
 import android.os.Message;
 import android.os.SystemProperties;
+import android.telephony.CellInfo;
 import android.telephony.CellLocation;
 import android.telephony.PhoneStateListener;
 import android.telephony.ServiceState;
@@ -31,6 +32,8 @@ import com.android.internal.telephony.DataConnection;
 import com.android.internal.telephony.gsm.UsimServiceTable;
 import com.android.internal.telephony.ims.IsimRecords;
 import com.android.internal.telephony.test.SimulatedRadioControl;
+
+import com.android.internal.telephony.PhoneConstants.*; // ???? 
 
 import java.util.List;
 
@@ -45,37 +48,6 @@ public interface Phone {
 
     /** used to enable additional debug messages */
     static final boolean DEBUG_PHONE = true;
-
-
-    /**
-     * The phone state. One of the following:<p>
-     * <ul>
-     * <li>IDLE = no phone activity</li>
-     * <li>RINGING = a phone call is ringing or call waiting.
-     *  In the latter case, another call is active as well</li>
-     * <li>OFFHOOK = The phone is off hook. At least one call
-     * exists that is dialing, active or holding and no calls are
-     * ringing or waiting.</li>
-     * </ul>
-     */
-    enum State {
-        IDLE, RINGING, OFFHOOK;
-    };
-
-    /**
-     * The state of a data connection.
-     * <ul>
-     * <li>CONNECTED = IP traffic should be available</li>
-     * <li>CONNECTING = Currently setting up data connection</li>
-     * <li>DISCONNECTED = IP not available</li>
-     * <li>SUSPENDED = connection is created but IP traffic is
-     *                 temperately not available. i.e. voice call is in place
-     *                 in 2G network</li>
-     * </ul>
-     */
-    enum DataState {
-        CONNECTED, CONNECTING, DISCONNECTED, SUSPENDED;
-    };
 
     public enum DataActivityState {
         /**
@@ -96,46 +68,6 @@ public interface Phone {
       UNKNOWN, SWITCH, SEPARATE, TRANSFER, CONFERENCE, REJECT, HANGUP;
     };
 
-    static final String STATE_KEY = "state";
-    static final String PHONE_NAME_KEY = "phoneName";
-    static final String FAILURE_REASON_KEY = "reason";
-    static final String STATE_CHANGE_REASON_KEY = "reason";
-    static final String DATA_APN_TYPE_KEY = "apnType";
-    static final String DATA_APN_KEY = "apn";
-    static final String DATA_LINK_PROPERTIES_KEY = "linkProperties";
-    static final String DATA_LINK_CAPABILITIES_KEY = "linkCapabilities";
-
-    static final String DATA_IFACE_NAME_KEY = "iface";
-    static final String NETWORK_UNAVAILABLE_KEY = "networkUnvailable";
-    static final String DATA_NETWORK_ROAMING_KEY = "networkRoaming";
-    static final String PHONE_IN_ECM_STATE = "phoneinECMState";
-
-    /**
-     * APN types for data connections.  These are usage categories for an APN
-     * entry.  One APN entry may support multiple APN types, eg, a single APN
-     * may service regular internet traffic ("default") as well as MMS-specific
-     * connections.<br/>
-     * APN_TYPE_ALL is a special type to indicate that this APN entry can
-     * service all data connections.
-     */
-    static final String APN_TYPE_ALL = "*";
-    /** APN type for default data traffic */
-    static final String APN_TYPE_DEFAULT = "default";
-    /** APN type for MMS traffic */
-    static final String APN_TYPE_MMS = "mms";
-    /** APN type for SUPL assisted GPS */
-    static final String APN_TYPE_SUPL = "supl";
-    /** APN type for DUN traffic */
-    static final String APN_TYPE_DUN = "dun";
-    /** APN type for HiPri traffic */
-    static final String APN_TYPE_HIPRI = "hipri";
-    /** APN type for FOTA */
-    static final String APN_TYPE_FOTA = "fota";
-    /** APN type for IMS */
-    static final String APN_TYPE_IMS = "ims";
-    /** APN type for CBS */
-    static final String APN_TYPE_CBS = "cbs";
-
     // "Features" accessible through the connectivity manager
     static final String FEATURE_ENABLE_MMS = "enableMMS";
     static final String FEATURE_ENABLE_SUPL = "enableSUPL";
@@ -145,16 +77,6 @@ public interface Phone {
     static final String FEATURE_ENABLE_FOTA = "enableFOTA";
     static final String FEATURE_ENABLE_IMS = "enableIMS";
     static final String FEATURE_ENABLE_CBS = "enableCBS";
-
-    /**
-     * Return codes for <code>enableApnType()</code>
-     */
-    static final int APN_ALREADY_ACTIVE     = 0;
-    static final int APN_REQUEST_STARTED    = 1;
-    static final int APN_TYPE_NOT_AVAILABLE = 2;
-    static final int APN_REQUEST_FAILED     = 3;
-    static final int APN_ALREADY_INACTIVE   = 4;
-
 
     /**
      * Optional reasons for disconnect and connect
@@ -181,7 +103,6 @@ public interface Phone {
     static final String REASON_NW_TYPE_CHANGED = "nwTypeChanged";
     static final String REASON_DATA_DEPENDENCY_MET = "dependencyMet";
     static final String REASON_DATA_DEPENDENCY_UNMET = "dependencyUnmet";
-    static final String REASON_LINK_PROPERTIES_CHANGED = "linkPropertiesChanged";
 
     // Used for band mode selection methods
     static final int BM_UNSPECIFIED = 0; // selected by baseband automatically
@@ -191,17 +112,6 @@ public interface Phone {
     static final int BM_AUS_BAND    = 4; // GSM-900 / DCS-1800 / WCDMA-850 / WCDMA-IMT-2000
     static final int BM_AUS2_BAND   = 5; // GSM-900 / DCS-1800 / WCDMA-850
     static final int BM_BOUNDARY    = 6; // upper band boundary
-
-    // Radio Type
-    static final int PHONE_TYPE_NONE = RILConstants.NO_PHONE;
-    static final int PHONE_TYPE_GSM = RILConstants.GSM_PHONE;
-    static final int PHONE_TYPE_CDMA = RILConstants.CDMA_PHONE;
-    static final int PHONE_TYPE_SIP = RILConstants.SIP_PHONE;
-
-    // Modes for LTE_ON_CDMA
-    static final int LTE_ON_CDMA_UNKNOWN = RILConstants.LTE_ON_CDMA_UNKNOWN;
-    static final int LTE_ON_CDMA_FALSE = RILConstants.LTE_ON_CDMA_FALSE;
-    static final int LTE_ON_CDMA_TRUE = RILConstants.LTE_ON_CDMA_TRUE;
 
     // Used for preferred network type
     // Note NT_* substitute RILConstants.NETWORK_MODE_* above the Phone
@@ -226,6 +136,7 @@ public interface Phone {
     static final int CDMA_RM_ANY         = 2;  // Roaming on Any Network, as defined in PRL
 
     // Used for CDMA subscription mode
+    static final int CDMA_SUBSCRIPTION_UNKNOWN  =-1; // Unknown
     static final int CDMA_SUBSCRIPTION_RUIM_SIM = 0; // RUIM/SIM (default)
     static final int CDMA_SUBSCRIPTION_NV       = 1; // NV -> non-volatile memory
 
@@ -265,6 +176,11 @@ public interface Phone {
      * Get the current CellLocation.
      */
     CellLocation getCellLocation();
+
+    /**
+     * @return all available cell information or null if none.
+     */
+    public List<CellInfo> getAllCellInfo();
 
     /**
      * Get the current for the default apn DataState. No change notification

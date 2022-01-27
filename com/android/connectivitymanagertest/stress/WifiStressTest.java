@@ -28,6 +28,7 @@ import android.net.wifi.WifiManager;
 import android.os.Environment;
 import android.os.PowerManager;
 import android.provider.Settings;
+import android.view.KeyEvent;
 import android.test.ActivityInstrumentationTestCase2;
 import android.test.suitebuilder.annotation.LargeTest;
 import android.util.Log;
@@ -219,15 +220,16 @@ public class WifiStressTest
     // Stress Wifi reconnection to secure net after sleep
     @LargeTest
     public void testWifiReconnectionAfterSleep() {
-        int value = Settings.System.getInt(mRunner.getContext().getContentResolver(),
-                Settings.System.WIFI_SLEEP_POLICY, -1);
-        if (value < 0) {
-            Settings.System.putInt(mRunner.getContext().getContentResolver(),
-                    Settings.System.WIFI_SLEEP_POLICY, Settings.System.WIFI_SLEEP_POLICY_DEFAULT);
+        int value = Settings.Global.getInt(mRunner.getContext().getContentResolver(),
+                Settings.Global.WIFI_SLEEP_POLICY, -1);
+        log("wifi sleep policy is: " + value);
+        if (value != Settings.Global.WIFI_SLEEP_POLICY_DEFAULT) {
+            Settings.Global.putInt(mRunner.getContext().getContentResolver(),
+                    Settings.Global.WIFI_SLEEP_POLICY, Settings.Global.WIFI_SLEEP_POLICY_DEFAULT);
             log("set wifi sleep policy to default value");
         }
-        Settings.Secure.putLong(mRunner.getContext().getContentResolver(),
-                Settings.Secure.WIFI_IDLE_MS, WIFI_IDLE_MS);
+        Settings.Global.putLong(mRunner.getContext().getContentResolver(),
+                Settings.Global.WIFI_IDLE_MS, WIFI_IDLE_MS);
 
         // Connect to a Wi-Fi network
         WifiConfiguration config = new WifiConfiguration();
@@ -288,6 +290,11 @@ public class WifiStressTest
 
             // Turn screen on again
             mAct.turnScreenOn();
+            // Wait for 2 seconds for the lock screen
+            sleep(2 * 1000, "wait 2 seconds for lock screen");
+            // Disable lock screen by inject menu key event
+            mRunner.sendKeyDownUpSync(KeyEvent.KEYCODE_MENU);
+
             // Measure the time for Wi-Fi to get connected
             long startTime = System.currentTimeMillis();
             assertTrue("Wait for Wi-Fi enable timeout after wake up",

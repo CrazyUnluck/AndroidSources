@@ -26,6 +26,7 @@ import android.content.Context;
 import android.content.Intent;
 import android.content.IntentFilter;
 import android.location.LocationManager;
+import android.os.UserHandle;
 import android.provider.Settings;
 import android.util.Slog;
 import android.view.View;
@@ -36,6 +37,7 @@ import android.app.INotificationManager;
 import com.android.internal.statusbar.StatusBarNotification;
 
 import com.android.systemui.R;
+import com.android.systemui.statusbar.policy.BatteryController.BatteryStateChangeCallback;
 
 public class LocationController extends BroadcastReceiver {
     private static final String TAG = "StatusBar.LocationController";
@@ -45,6 +47,13 @@ public class LocationController extends BroadcastReceiver {
     private Context mContext;
 
     private INotificationManager mNotificationService;
+
+    private ArrayList<LocationGpsStateChangeCallback> mChangeCallbacks =
+            new ArrayList<LocationGpsStateChangeCallback>();
+
+    public interface LocationGpsStateChangeCallback {
+        public void onLocationGpsStateChanged(boolean inUse, String description);
+    }
 
     public LocationController(Context context) {
         mContext = context;
@@ -57,6 +66,10 @@ public class LocationController extends BroadcastReceiver {
         NotificationManager nm = (NotificationManager)context.getSystemService(
                 Context.NOTIFICATION_SERVICE);
         mNotificationService = nm.getService();
+    }
+
+    public void addStateChangedCallback(LocationGpsStateChangeCallback cb) {
+        mChangeCallbacks.add(cb);
     }
 
     @Override
@@ -87,11 +100,14 @@ public class LocationController extends BroadcastReceiver {
             if (visible) {
                 Intent gpsIntent = new Intent(Settings.ACTION_LOCATION_SOURCE_SETTINGS);
                 gpsIntent.setFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
-                PendingIntent pendingIntent = PendingIntent.getActivity(context, 0, gpsIntent, 0);
+
+                PendingIntent pendingIntent = PendingIntent.getActivityAsUser(context, 0,
+                        gpsIntent, 0, null, UserHandle.CURRENT);
+                String text = mContext.getText(textResId).toString();
 
                 Notification n = new Notification.Builder(mContext)
                     .setSmallIcon(iconId)
-                    .setContentTitle(mContext.getText(textResId))
+                    .setContentTitle(text)
                     .setOngoing(true)
                     .setContentIntent(pendingIntent)
                     .getNotification();
@@ -108,11 +124,20 @@ public class LocationController extends BroadcastReceiver {
                         null, 
                         GPS_NOTIFICATION_ID, 
                         n,
-                        idOut);
+                        idOut,
+                        UserHandle.USER_ALL);
+
+                for (LocationGpsStateChangeCallback cb : mChangeCallbacks) {
+                    cb.onLocationGpsStateChanged(true, text);
+                }
             } else {
-                mNotificationService.cancelNotification(
-                        mContext.getPackageName(),
-                        GPS_NOTIFICATION_ID);
+                mNotificationService.cancelNotificationWithTag(
+                        mContext.getPackageName(), null,
+                        GPS_NOTIFICATION_ID, UserHandle.USER_ALL);
+
+                for (LocationGpsStateChangeCallback cb : mChangeCallbacks) {
+                    cb.onLocationGpsStateChanged(false, null);
+                }
             }
         } catch (android.os.RemoteException ex) {
             // well, it was worth a shot

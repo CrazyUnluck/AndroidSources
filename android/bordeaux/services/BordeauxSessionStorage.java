@@ -116,13 +116,18 @@ class BordeauxSessionStorage {
         Cursor cursor = mDbSessions.query(true, SESSION_TABLE,
                 new String[]{COLUMN_KEY, COLUMN_CLASS, COLUMN_MODEL, COLUMN_TIME},
                 COLUMN_KEY + "=\"" + key + "\"", null, null, null, null, null);
-        if (cursor == null) return null;
-        if (cursor.getCount() == 0) return null;
+        if ((cursor == null) | (cursor.getCount() == 0)) {
+            cursor.close();
+            return null;
+        }
         if (cursor.getCount() > 1) {
+            cursor.close();
             throw new RuntimeException("Unexpected duplication in session table for key:" + key);
         }
         cursor.moveToFirst();
-        return getSessionFromCursor(cursor);
+        BordeauxSessionManager.Session s = getSessionFromCursor(cursor);
+        cursor.close();
+        return s;
     }
 
     void getAllSessions(ConcurrentHashMap<String, BordeauxSessionManager.Session> sessions) {

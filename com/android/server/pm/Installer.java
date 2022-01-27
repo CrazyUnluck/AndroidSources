@@ -25,7 +25,7 @@ import java.io.IOException;
 import java.io.InputStream;
 import java.io.OutputStream;
 
-class Installer {
+public final class Installer {
     private static final String TAG = "Installer";
 
     private static final boolean LOCAL_DEBUG = false;
@@ -254,10 +254,12 @@ class Installer {
         return execute(builder.toString());
     }
 
-    public int deleteCacheFiles(String name) {
+    public int deleteCacheFiles(String name, int userId) {
         StringBuilder builder = new StringBuilder("rmcache");
         builder.append(' ');
         builder.append(name);
+        builder.append(' ');
+        builder.append(userId);
         return execute(builder.toString());
     }
 
@@ -324,25 +326,13 @@ class Installer {
         return execute(builder.toString());
     }
 
-    /*
-     * @param packagePathSuffix The name of the path relative to install
-     * directory. Say if the path name is /data/app/com.test-1.apk, the package
-     * suffix path will be com.test-1
-     */
-    public int setForwardLockPerm(String packagePathSuffix, int gid) {
-        StringBuilder builder = new StringBuilder("protect");
-        builder.append(' ');
-        builder.append(packagePathSuffix);
-        builder.append(' ');
-        builder.append(gid);
-        return execute(builder.toString());
-    }
-
-    public int getSizeInfo(String pkgName, String apkPath, String fwdLockApkPath,
+    public int getSizeInfo(String pkgName, int persona, String apkPath, String fwdLockApkPath,
             String asecPath, PackageStats pStats) {
         StringBuilder builder = new StringBuilder("getsize");
         builder.append(' ');
         builder.append(pkgName);
+        builder.append(' ');
+        builder.append(persona);
         builder.append(' ');
         builder.append(apkPath);
         builder.append(' ');
@@ -371,12 +361,20 @@ class Installer {
         return execute("movefiles");
     }
 
-    public int linkNativeLibraryDirectory(String dataPath, String nativeLibPath) {
+    /**
+     * Links the native library directory in an application's directory to its
+     * real location.
+     *
+     * @param dataPath data directory where the application is
+     * @param nativeLibPath target native library path
+     * @return -1 on error
+     */
+    public int linkNativeLibraryDirectory(String dataPath, String nativeLibPath, int userId) {
         if (dataPath == null) {
-            Slog.e(TAG, "unlinkNativeLibraryDirectory dataPath is null");
+            Slog.e(TAG, "linkNativeLibraryDirectory dataPath is null");
             return -1;
         } else if (nativeLibPath == null) {
-            Slog.e(TAG, "unlinkNativeLibraryDirectory nativeLibPath is null");
+            Slog.e(TAG, "linkNativeLibraryDirectory nativeLibPath is null");
             return -1;
         }
 
@@ -384,18 +382,8 @@ class Installer {
         builder.append(dataPath);
         builder.append(' ');
         builder.append(nativeLibPath);
-
-        return execute(builder.toString());
-    }
-
-    public int unlinkNativeLibraryDirectory(String dataPath) {
-        if (dataPath == null) {
-            Slog.e(TAG, "unlinkNativeLibraryDirectory dataPath is null");
-            return -1;
-        }
-
-        StringBuilder builder = new StringBuilder("unlinklib ");
-        builder.append(dataPath);
+        builder.append(' ');
+        builder.append(userId);
 
         return execute(builder.toString());
     }

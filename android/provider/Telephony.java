@@ -176,7 +176,7 @@ public final class Telephony {
          * <P>Type: TEXT</P>
          */
         public static final String META_DATA = "meta_data";
-}
+    }
 
     /**
      * Contains all text based SMS messages.
@@ -744,6 +744,12 @@ public final class Telephony {
          * used to figure out whether we need to throw up a statusbar notification or not.
          */
         public static final String SEEN = "seen";
+
+        /**
+         * Indicates whether this message has only a text part (can also have a subject) and
+         * no picture, slideshow, or sound, etc., parts. The value is a boolean, 1 or 0.
+         */
+        public static final String TEXT_ONLY = "text_only";
 
         /**
          * The Message-ID of the message.
@@ -1989,49 +1995,5 @@ public final class Telephony {
                 CMAS_URGENCY,
                 CMAS_CERTAINTY
         };
-    }
-
-    public static final class Intents {
-        private Intents() {
-            // Not instantiable
-        }
-
-        /**
-         * Broadcast Action: A "secret code" has been entered in the dialer. Secret codes are
-         * of the form *#*#<code>#*#*. The intent will have the data URI:</p>
-         *
-         * <p><code>android_secret_code://&lt;code&gt;</code></p>
-         */
-        public static final String SECRET_CODE_ACTION =
-                "android.provider.Telephony.SECRET_CODE";
-
-        /**
-         * Broadcast Action: The Service Provider string(s) have been updated.  Activities or
-         * services that use these strings should update their display.
-         * The intent will have the following extra values:</p>
-         * <ul>
-         *   <li><em>showPlmn</em> - Boolean that indicates whether the PLMN should be shown.</li>
-         *   <li><em>plmn</em> - The operator name of the registered network, as a string.</li>
-         *   <li><em>showSpn</em> - Boolean that indicates whether the SPN should be shown.</li>
-         *   <li><em>spn</em> - The service provider name, as a string.</li>
-         * </ul>
-         * Note that <em>showPlmn</em> may indicate that <em>plmn</em> should be displayed, even
-         * though the value for <em>plmn</em> is null.  This can happen, for example, if the phone
-         * has not registered to a network yet.  In this case the receiver may substitute an
-         * appropriate placeholder string (eg, "No service").
-         *
-         * It is recommended to display <em>plmn</em> before / above <em>spn</em> if
-         * both are displayed.
-         *
-         * <p>Note this is a protected intent that can only be sent
-         * by the system.
-         */
-        public static final String SPN_STRINGS_UPDATED_ACTION =
-                "android.provider.Telephony.SPN_STRINGS_UPDATED";
-
-        public static final String EXTRA_SHOW_PLMN  = "showPlmn";
-        public static final String EXTRA_PLMN       = "plmn";
-        public static final String EXTRA_SHOW_SPN   = "showSpn";
-        public static final String EXTRA_SPN        = "spn";
     }
 }

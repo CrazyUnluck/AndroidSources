@@ -27,9 +27,11 @@ import android.content.Context;
 import android.content.DialogInterface;
 import android.content.Intent;
 import android.content.pm.ApplicationInfo;
+import android.content.pm.PackageInfo;
 import android.content.pm.PackageManager;
 import android.content.res.Resources;
 import android.database.Cursor;
+import android.database.ContentObserver;
 import android.database.SQLException;
 import android.net.Uri;
 import android.os.AsyncResult;
@@ -38,6 +40,7 @@ import android.os.Handler;
 import android.os.Message;
 import android.os.PowerManager;
 import android.os.SystemProperties;
+import android.provider.Settings;
 import android.provider.Telephony;
 import android.provider.Telephony.Sms.Intents;
 import android.telephony.PhoneNumberUtils;
@@ -47,16 +50,27 @@ import android.telephony.SmsMessage;
 import android.telephony.TelephonyManager;
 import android.text.Html;
 import android.text.Spanned;
+import android.util.EventLog;
 import android.util.Log;
+import android.view.LayoutInflater;
+import android.view.View;
+import android.view.ViewGroup;
 import android.view.WindowManager;
+import android.widget.Button;
+import android.widget.CheckBox;
+import android.widget.CompoundButton;
+import android.widget.LinearLayout;
+import android.widget.TextView;
 
 import com.android.internal.R;
-import com.android.internal.telephony.SmsMessageBase.TextEncodingDetails;
+import com.android.internal.telephony.EventLogTags;
+import com.android.internal.telephony.GsmAlphabet.TextEncodingDetails;
 import com.android.internal.util.HexDump;
 
 import java.io.ByteArrayOutputStream;
 import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.concurrent.atomic.AtomicInteger;
 import java.util.HashMap;
 import java.util.Random;
 
@@ -98,6 +112,12 @@ public abstract class SMSDispatcher extends Handler {
     private static final int SEQUENCE_COLUMN = 1;
     private static final int DESTINATION_PORT_COLUMN = 2;
 
+    private static final int PREMIUM_RULE_USE_SIM = 1;
+    private static final int PREMIUM_RULE_USE_NETWORK = 2;
+    private static final int PREMIUM_RULE_USE_BOTH = 3;
+    private final AtomicInteger mPremiumSmsRule = new AtomicInteger(PREMIUM_RULE_USE_SIM);
+    private final SettingsObserver mSettingsObserver;
+
     /** New SMS received. */
     protected static final int EVENT_NEW_SMS = 1;
 
@@ -115,6 +135,12 @@ public abstract class SMSDispatcher extends Handler {
 
     /** Don't send SMS (user did not confirm). */
     static final int EVENT_STOP_SENDING = 7;        // accessed from inner class
+
+    /** Confirmation required for third-party apps sending to an SMS short code. */
+    private static final int EVENT_CONFIRM_SEND_TO_POSSIBLE_PREMIUM_SHORT_CODE = 8;
+
+    /** Confirmation required for third-party apps sending to an SMS short code. */
+    private static final int EVENT_CONFIRM_SEND_TO_PREMIUM_SHORT_CODE = 9;
 
     protected final Phone mPhone;
     protected final Context mContext;
@@ -187,6 +213,9 @@ public abstract class SMSDispatcher extends Handler {
         mStorageMonitor = storageMonitor;
         mUsageMonitor = usageMonitor;
         mTelephonyManager = (TelephonyManager) mContext.getSystemService(Context.TELEPHONY_SERVICE);
+        mSettingsObserver = new SettingsObserver(this, mPremiumSmsRule, mContext);
+        mContext.getContentResolver().registerContentObserver(Settings.Global.getUriFor(
+                Settings.Global.SMS_SHORT_CODE_RULE), false, mSettingsObserver);
 
         createWakelock();
 
@@ -199,6 +228,26 @@ public abstract class SMSDispatcher extends Handler {
         Log.d(TAG, "SMSDispatcher: ctor mSmsCapable=" + mSmsCapable + " format=" + getFormat()
                 + " mSmsReceiveDisabled=" + mSmsReceiveDisabled
                 + " mSmsSendDisabled=" + mSmsSendDisabled);
+    }
+
+    /**
+     * Observe the secure setting for updated premium sms determination rules
+     */
+    private static class SettingsObserver extends ContentObserver {
+        private final AtomicInteger mPremiumSmsRule;
+        private final Context mContext;
+        SettingsObserver(Handler handler, AtomicInteger premiumSmsRule, Context context) {
+            super(handler);
+            mPremiumSmsRule = premiumSmsRule;
+            mContext = context;
+            onChange(false); // load initial value;
+        }
+
+        @Override
+        public void onChange(boolean selfChange) {
+            mPremiumSmsRule.set(Settings.Global.getInt(mContext.getContentResolver(),
+                    Settings.Global.SMS_SHORT_CODE_RULE, PREMIUM_RULE_USE_SIM));
+        }
     }
 
     /** Unregister for incoming SMS events. */
@@ -288,6 +337,14 @@ public abstract class SMSDispatcher extends Handler {
             handleReachSentLimit((SmsTracker)(msg.obj));
             break;
 
+        case EVENT_CONFIRM_SEND_TO_POSSIBLE_PREMIUM_SHORT_CODE:
+            handleConfirmShortCode(false, (SmsTracker)(msg.obj));
+            break;
+
+        case EVENT_CONFIRM_SEND_TO_PREMIUM_SHORT_CODE:
+            handleConfirmShortCode(true, (SmsTracker)(msg.obj));
+            break;
+
         case EVENT_SEND_CONFIRMED_SMS:
         {
             SmsTracker tracker = (SmsTracker) msg.obj;
@@ -335,6 +392,22 @@ public abstract class SMSDispatcher extends Handler {
         // receivers time to take their own wake locks.
         mWakeLock.acquire(WAKE_LOCK_TIMEOUT);
         mContext.sendOrderedBroadcast(intent, permission, mResultReceiver,
+                this, Activity.RESULT_OK, null, null);
+    }
+
+    /**
+     * Grabs a wake lock and sends intent as an ordered broadcast.
+     * Used for setting a custom result receiver for CDMA SCPD.
+     *
+     * @param intent intent to broadcast
+     * @param permission Receivers are required to have this permission
+     * @param resultReceiver the result receiver to use
+     */
+    public void dispatch(Intent intent, String permission, BroadcastReceiver resultReceiver) {
+        // Hold a wake lock for WAKE_LOCK_TIMEOUT seconds, enough to give any
+        // receivers time to take their own wake locks.
+        mWakeLock.acquire(WAKE_LOCK_TIMEOUT);
+        mContext.sendOrderedBroadcast(intent, permission, resultReceiver,
                 this, Activity.RESULT_OK, null, null);
     }
 
@@ -776,7 +849,7 @@ public abstract class SMSDispatcher extends Handler {
 
         int refNumber = getNextConcatenatedRef() & 0x00FF;
         int msgCount = parts.size();
-        int encoding = android.telephony.SmsMessage.ENCODING_UNKNOWN;
+        int encoding = SmsConstants.ENCODING_UNKNOWN;
 
         mRemainingMessages = msgCount;
 
@@ -784,8 +857,8 @@ public abstract class SMSDispatcher extends Handler {
         for (int i = 0; i < msgCount; i++) {
             TextEncodingDetails details = calculateLength(parts.get(i), false);
             if (encoding != details.codeUnitSize
-                    && (encoding == android.telephony.SmsMessage.ENCODING_UNKNOWN
-                            || encoding == android.telephony.SmsMessage.ENCODING_7BIT)) {
+                    && (encoding == SmsConstants.ENCODING_UNKNOWN
+                            || encoding == SmsConstants.ENCODING_7BIT)) {
                 encoding = details.codeUnitSize;
             }
             encodingForParts[i] = details;
@@ -807,7 +880,7 @@ public abstract class SMSDispatcher extends Handler {
             smsHeader.concatRef = concatRef;
 
             // Set the national language tables for 3GPP 7-bit encoding, if enabled.
-            if (encoding == android.telephony.SmsMessage.ENCODING_7BIT) {
+            if (encoding == SmsConstants.ENCODING_7BIT) {
                 smsHeader.languageTable = encodingForParts[i].languageTable;
                 smsHeader.languageShiftTable = encodingForParts[i].languageShiftTable;
             }
@@ -899,25 +972,117 @@ public abstract class SMSDispatcher extends Handler {
             return;
         }
 
-        String appPackage = packageNames[0];
-
-        // Strip non-digits from destination phone number before checking for short codes
-        // and before displaying the number to the user if confirmation is required.
-        SmsTracker tracker = new SmsTracker(map, sentIntent, deliveryIntent, appPackage,
-                PhoneNumberUtils.extractNetworkPortion(destAddr));
-
-        // check for excessive outgoing SMS usage by this app
-        if (!mUsageMonitor.check(appPackage, SINGLE_PART_SMS)) {
-            sendMessage(obtainMessage(EVENT_SEND_LIMIT_REACHED_CONFIRMATION, tracker));
+        // Get package info via packagemanager
+        PackageInfo appInfo = null;
+        try {
+            // XXX this is lossy- apps can share a UID
+            appInfo = pm.getPackageInfo(packageNames[0], PackageManager.GET_SIGNATURES);
+        } catch (PackageManager.NameNotFoundException e) {
+            Log.e(TAG, "Can't get calling app package info: refusing to send SMS");
+            if (sentIntent != null) {
+                try {
+                    sentIntent.send(RESULT_ERROR_GENERIC_FAILURE);
+                } catch (CanceledException ex) {
+                    Log.e(TAG, "failed to send error result");
+                }
+            }
             return;
         }
 
-        int ss = mPhone.getServiceState().getState();
+        // Strip non-digits from destination phone number before checking for short codes
+        // and before displaying the number to the user if confirmation is required.
+        SmsTracker tracker = new SmsTracker(map, sentIntent, deliveryIntent, appInfo,
+                PhoneNumberUtils.extractNetworkPortion(destAddr));
 
-        if (ss != ServiceState.STATE_IN_SERVICE) {
-            handleNotInService(ss, tracker.mSentIntent);
+        // checkDestination() returns true if the destination is not a premium short code or the
+        // sending app is approved to send to short codes. Otherwise, a message is sent to our
+        // handler with the SmsTracker to request user confirmation before sending.
+        if (checkDestination(tracker)) {
+            // check for excessive outgoing SMS usage by this app
+            if (!mUsageMonitor.check(appInfo.packageName, SINGLE_PART_SMS)) {
+                sendMessage(obtainMessage(EVENT_SEND_LIMIT_REACHED_CONFIRMATION, tracker));
+                return;
+            }
+
+            int ss = mPhone.getServiceState().getState();
+
+            if (ss != ServiceState.STATE_IN_SERVICE) {
+                handleNotInService(ss, tracker.mSentIntent);
+            } else {
+                sendSms(tracker);
+            }
+        }
+    }
+
+    /**
+     * Check if destination is a potential premium short code and sender is not pre-approved to
+     * send to short codes.
+     *
+     * @param tracker the tracker for the SMS to send
+     * @return true if the destination is approved; false if user confirmation event was sent
+     */
+    boolean checkDestination(SmsTracker tracker) {
+        if (mContext.checkCallingOrSelfPermission(SEND_SMS_NO_CONFIRMATION_PERMISSION)
+                == PackageManager.PERMISSION_GRANTED) {
+            return true;            // app is pre-approved to send to short codes
         } else {
-            sendSms(tracker);
+            int rule = mPremiumSmsRule.get();
+            int smsCategory = SmsUsageMonitor.CATEGORY_NOT_SHORT_CODE;
+            if (rule == PREMIUM_RULE_USE_SIM || rule == PREMIUM_RULE_USE_BOTH) {
+                String simCountryIso = mTelephonyManager.getSimCountryIso();
+                if (simCountryIso == null || simCountryIso.length() != 2) {
+                    Log.e(TAG, "Can't get SIM country Iso: trying network country Iso");
+                    simCountryIso = mTelephonyManager.getNetworkCountryIso();
+                }
+
+                smsCategory = mUsageMonitor.checkDestination(tracker.mDestAddress, simCountryIso);
+            }
+            if (rule == PREMIUM_RULE_USE_NETWORK || rule == PREMIUM_RULE_USE_BOTH) {
+                String networkCountryIso = mTelephonyManager.getNetworkCountryIso();
+                if (networkCountryIso == null || networkCountryIso.length() != 2) {
+                    Log.e(TAG, "Can't get Network country Iso: trying SIM country Iso");
+                    networkCountryIso = mTelephonyManager.getSimCountryIso();
+                }
+
+                smsCategory = mUsageMonitor.mergeShortCodeCategories(smsCategory,
+                        mUsageMonitor.checkDestination(tracker.mDestAddress, networkCountryIso));
+            }
+
+            if (smsCategory == SmsUsageMonitor.CATEGORY_NOT_SHORT_CODE
+                    || smsCategory == SmsUsageMonitor.CATEGORY_FREE_SHORT_CODE
+                    || smsCategory == SmsUsageMonitor.CATEGORY_STANDARD_SHORT_CODE) {
+                return true;    // not a premium short code
+            }
+
+            // Wait for user confirmation unless the user has set permission to always allow/deny
+            int premiumSmsPermission = mUsageMonitor.getPremiumSmsPermission(
+                    tracker.mAppInfo.packageName);
+            if (premiumSmsPermission == SmsUsageMonitor.PREMIUM_SMS_PERMISSION_UNKNOWN) {
+                // First time trying to send to premium SMS.
+                premiumSmsPermission = SmsUsageMonitor.PREMIUM_SMS_PERMISSION_ASK_USER;
+            }
+
+            switch (premiumSmsPermission) {
+                case SmsUsageMonitor.PREMIUM_SMS_PERMISSION_ALWAYS_ALLOW:
+                    Log.d(TAG, "User approved this app to send to premium SMS");
+                    return true;
+
+                case SmsUsageMonitor.PREMIUM_SMS_PERMISSION_NEVER_ALLOW:
+                    Log.w(TAG, "User denied this app from sending to premium SMS");
+                    sendMessage(obtainMessage(EVENT_STOP_SENDING, tracker));
+                    return false;   // reject this message
+
+                case SmsUsageMonitor.PREMIUM_SMS_PERMISSION_ASK_USER:
+                default:
+                    int event;
+                    if (smsCategory == SmsUsageMonitor.CATEGORY_POSSIBLE_PREMIUM_SHORT_CODE) {
+                        event = EVENT_CONFIRM_SEND_TO_POSSIBLE_PREMIUM_SHORT_CODE;
+                    } else {
+                        event = EVENT_CONFIRM_SEND_TO_PREMIUM_SHORT_CODE;
+                    }
+                    sendMessage(obtainMessage(event, tracker));
+                    return false;   // wait for user confirmation
+            }
         }
     }
 
@@ -966,11 +1131,11 @@ public abstract class SMSDispatcher extends Handler {
             return;     // queue limit reached; error was returned to caller
         }
 
-        CharSequence appLabel = getAppLabel(tracker.mAppPackage);
+        CharSequence appLabel = getAppLabel(tracker.mAppInfo.packageName);
         Resources r = Resources.getSystem();
         Spanned messageText = Html.fromHtml(r.getString(R.string.sms_control_message, appLabel));
 
-        ConfirmDialogListener listener = new ConfirmDialogListener(tracker);
+        ConfirmDialogListener listener = new ConfirmDialogListener(tracker, null);
 
         AlertDialog d = new AlertDialog.Builder(mContext)
                 .setTitle(R.string.sms_control_title)
@@ -983,6 +1148,89 @@ public abstract class SMSDispatcher extends Handler {
 
         d.getWindow().setType(WindowManager.LayoutParams.TYPE_SYSTEM_ALERT);
         d.show();
+    }
+
+    /**
+     * Post an alert for user confirmation when sending to a potential short code.
+     * @param isPremium true if the destination is known to be a premium short code
+     * @param tracker the SmsTracker for the current message.
+     */
+    protected void handleConfirmShortCode(boolean isPremium, SmsTracker tracker) {
+        if (denyIfQueueLimitReached(tracker)) {
+            return;     // queue limit reached; error was returned to caller
+        }
+
+        int detailsId;
+        if (isPremium) {
+            detailsId = R.string.sms_premium_short_code_details;
+        } else {
+            detailsId = R.string.sms_short_code_details;
+        }
+
+        CharSequence appLabel = getAppLabel(tracker.mAppInfo.packageName);
+        Resources r = Resources.getSystem();
+        Spanned messageText = Html.fromHtml(r.getString(R.string.sms_short_code_confirm_message,
+                appLabel, tracker.mDestAddress));
+
+        LayoutInflater inflater = (LayoutInflater) mContext.getSystemService(
+                Context.LAYOUT_INFLATER_SERVICE);
+        View layout = inflater.inflate(R.layout.sms_short_code_confirmation_dialog, null);
+
+        ConfirmDialogListener listener = new ConfirmDialogListener(tracker,
+                (TextView)layout.findViewById(R.id.sms_short_code_remember_undo_instruction));
+
+
+        TextView messageView = (TextView) layout.findViewById(R.id.sms_short_code_confirm_message);
+        messageView.setText(messageText);
+
+        ViewGroup detailsLayout = (ViewGroup) layout.findViewById(
+                R.id.sms_short_code_detail_layout);
+        TextView detailsView = (TextView) detailsLayout.findViewById(
+                R.id.sms_short_code_detail_message);
+        detailsView.setText(detailsId);
+
+        CheckBox rememberChoice = (CheckBox) layout.findViewById(
+                R.id.sms_short_code_remember_choice_checkbox);
+        rememberChoice.setOnCheckedChangeListener(listener);
+
+        AlertDialog d = new AlertDialog.Builder(mContext)
+                .setView(layout)
+                .setPositiveButton(r.getString(R.string.sms_short_code_confirm_allow), listener)
+                .setNegativeButton(r.getString(R.string.sms_short_code_confirm_deny), listener)
+                .setOnCancelListener(listener)
+                .create();
+
+        d.getWindow().setType(WindowManager.LayoutParams.TYPE_SYSTEM_ALERT);
+        d.show();
+
+        listener.setPositiveButton(d.getButton(DialogInterface.BUTTON_POSITIVE));
+        listener.setNegativeButton(d.getButton(DialogInterface.BUTTON_NEGATIVE));
+    }
+
+    /**
+     * Returns the premium SMS permission for the specified package. If the package has never
+     * been seen before, the default {@link SmsUsageMonitor#PREMIUM_SMS_PERMISSION_ASK_USER}
+     * will be returned.
+     * @param packageName the name of the package to query permission
+     * @return one of {@link SmsUsageMonitor#PREMIUM_SMS_PERMISSION_UNKNOWN},
+     *  {@link SmsUsageMonitor#PREMIUM_SMS_PERMISSION_ASK_USER},
+     *  {@link SmsUsageMonitor#PREMIUM_SMS_PERMISSION_NEVER_ALLOW}, or
+     *  {@link SmsUsageMonitor#PREMIUM_SMS_PERMISSION_ALWAYS_ALLOW}
+     */
+    public int getPremiumSmsPermission(String packageName) {
+        return mUsageMonitor.getPremiumSmsPermission(packageName);
+    }
+
+    /**
+     * Sets the premium SMS permission for the specified package and save the value asynchronously
+     * to persistent storage.
+     * @param packageName the name of the package to set permission
+     * @param permission one of {@link SmsUsageMonitor#PREMIUM_SMS_PERMISSION_ASK_USER},
+     *  {@link SmsUsageMonitor#PREMIUM_SMS_PERMISSION_NEVER_ALLOW}, or
+     *  {@link SmsUsageMonitor#PREMIUM_SMS_PERMISSION_ALWAYS_ALLOW}
+     */
+    public void setPremiumSmsPermission(String packageName, int permission) {
+        mUsageMonitor.setPremiumSmsPermission(packageName, permission);
     }
 
     /**
@@ -1069,16 +1317,16 @@ public abstract class SMSDispatcher extends Handler {
         public final PendingIntent mSentIntent;
         public final PendingIntent mDeliveryIntent;
 
-        public final String mAppPackage;
+        public final PackageInfo mAppInfo;
         public final String mDestAddress;
 
         public SmsTracker(HashMap<String, Object> data, PendingIntent sentIntent,
-                PendingIntent deliveryIntent, String appPackage, String destAddr) {
+                PendingIntent deliveryIntent, PackageInfo appInfo, String destAddr) {
             mData = data;
             mSentIntent = sentIntent;
             mDeliveryIntent = deliveryIntent;
             mRetryCount = 0;
-            mAppPackage = appPackage;
+            mAppInfo = appInfo;
             mDestAddress = destAddr;
         }
 
@@ -1096,29 +1344,82 @@ public abstract class SMSDispatcher extends Handler {
      * Dialog listener for SMS confirmation dialog.
      */
     private final class ConfirmDialogListener
-            implements DialogInterface.OnClickListener, DialogInterface.OnCancelListener {
+            implements DialogInterface.OnClickListener, DialogInterface.OnCancelListener,
+            CompoundButton.OnCheckedChangeListener {
 
         private final SmsTracker mTracker;
+        private Button mPositiveButton;
+        private Button mNegativeButton;
+        private boolean mRememberChoice;    // default is unchecked
+        private final TextView mRememberUndoInstruction;
 
-        ConfirmDialogListener(SmsTracker tracker) {
+        ConfirmDialogListener(SmsTracker tracker, TextView textView) {
             mTracker = tracker;
+            mRememberUndoInstruction = textView;
+        }
+
+        void setPositiveButton(Button button) {
+            mPositiveButton = button;
+        }
+
+        void setNegativeButton(Button button) {
+            mNegativeButton = button;
         }
 
         @Override
         public void onClick(DialogInterface dialog, int which) {
+            // Always set the SMS permission so that Settings will show a permission setting
+            // for the app (it won't be shown until after the app tries to send to a short code).
+            int newSmsPermission = SmsUsageMonitor.PREMIUM_SMS_PERMISSION_ASK_USER;
+
             if (which == DialogInterface.BUTTON_POSITIVE) {
                 Log.d(TAG, "CONFIRM sending SMS");
+                // XXX this is lossy- apps can have more than one signature
+                EventLog.writeEvent(EventLogTags.SMS_SENT_BY_USER,
+                                    mTracker.mAppInfo.signatures[0].toCharsString());
                 sendMessage(obtainMessage(EVENT_SEND_CONFIRMED_SMS, mTracker));
+                if (mRememberChoice) {
+                    newSmsPermission = SmsUsageMonitor.PREMIUM_SMS_PERMISSION_ALWAYS_ALLOW;
+                }
             } else if (which == DialogInterface.BUTTON_NEGATIVE) {
                 Log.d(TAG, "DENY sending SMS");
+                // XXX this is lossy- apps can have more than one signature
+                EventLog.writeEvent(EventLogTags.SMS_DENIED_BY_USER,
+                                    mTracker.mAppInfo.signatures[0].toCharsString());
                 sendMessage(obtainMessage(EVENT_STOP_SENDING, mTracker));
+                if (mRememberChoice) {
+                    newSmsPermission = SmsUsageMonitor.PREMIUM_SMS_PERMISSION_NEVER_ALLOW;
+                }
             }
+            setPremiumSmsPermission(mTracker.mAppInfo.packageName, newSmsPermission);
         }
 
         @Override
         public void onCancel(DialogInterface dialog) {
             Log.d(TAG, "dialog dismissed: don't send SMS");
             sendMessage(obtainMessage(EVENT_STOP_SENDING, mTracker));
+        }
+
+        @Override
+        public void onCheckedChanged(CompoundButton buttonView, boolean isChecked) {
+            Log.d(TAG, "remember this choice: " + isChecked);
+            mRememberChoice = isChecked;
+            if (isChecked) {
+                mPositiveButton.setText(R.string.sms_short_code_confirm_always_allow);
+                mNegativeButton.setText(R.string.sms_short_code_confirm_never_allow);
+                if (mRememberUndoInstruction != null) {
+                    mRememberUndoInstruction.
+                            setText(R.string.sms_short_code_remember_undo_instruction);
+                    mRememberUndoInstruction.setPadding(0,0,0,32);
+                }
+            } else {
+                mPositiveButton.setText(R.string.sms_short_code_confirm_allow);
+                mNegativeButton.setText(R.string.sms_short_code_confirm_deny);
+                if (mRememberUndoInstruction != null) {
+                    mRememberUndoInstruction.setText("");
+                    mRememberUndoInstruction.setPadding(0,0,0,0);
+                }
+            }
         }
     }
 

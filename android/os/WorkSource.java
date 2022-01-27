@@ -1,5 +1,9 @@
 package android.os;
 
+import com.android.internal.util.ArrayUtils;
+
+import java.util.Arrays;
+
 /**
  * Describes the source of some work that may be done by someone else.
  * Currently the public representation of what a work source is is not
@@ -74,6 +78,20 @@ public class WorkSource implements Parcelable {
      */
     public void clear() {
         mNum = 0;
+    }
+
+    @Override
+    public boolean equals(Object o) {
+        return o instanceof WorkSource && !diff((WorkSource)o);
+    }
+
+    @Override
+    public int hashCode() {
+        int result = 0;
+        for (int i = 0; i < mNum; i++) {
+            result = ((result << 4) | (result >>> 28)) ^ mUids[i];
+        }
+        return result;
     }
 
     /**
@@ -297,6 +315,20 @@ public class WorkSource implements Parcelable {
     public void writeToParcel(Parcel dest, int flags) {
         dest.writeInt(mNum);
         dest.writeIntArray(mUids);
+    }
+
+    @Override
+    public String toString() {
+        StringBuilder result = new StringBuilder();
+        result.append("{WorkSource: uids=[");
+        for (int i = 0; i < mNum; i++) {
+            if (i != 0) {
+                result.append(", ");
+            }
+            result.append(mUids[i]);
+        }
+        result.append("]}");
+        return result.toString();
     }
 
     public static final Parcelable.Creator<WorkSource> CREATOR

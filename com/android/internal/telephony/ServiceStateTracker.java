@@ -16,17 +16,25 @@
 
 package com.android.internal.telephony;
 
+import android.content.Context;
 import android.os.AsyncResult;
 import android.os.Handler;
+import android.os.Looper;
 import android.os.Message;
 import android.os.Registrant;
 import android.os.RegistrantList;
+import android.os.SystemClock;
+import android.telephony.CellInfo;
 import android.telephony.ServiceState;
 import android.telephony.SignalStrength;
 import android.util.TimeUtils;
 
 import java.io.FileDescriptor;
 import java.io.PrintWriter;
+import java.util.List;
+
+import com.android.internal.telephony.IccCardApplicationStatus.AppState;
+import com.android.internal.telephony.uicc.UiccController;
 
 /**
  * {@hide}
@@ -34,13 +42,24 @@ import java.io.PrintWriter;
 public abstract class ServiceStateTracker extends Handler {
 
     protected CommandsInterface cm;
+    protected UiccController mUiccController = null;
+    protected UiccCardApplication mUiccApplcation = null;
+    protected IccRecords mIccRecords = null;
 
-    public ServiceState ss;
-    protected ServiceState newSS;
+    protected PhoneBase mPhoneBase;
 
-    public SignalStrength mSignalStrength;
+    public ServiceState ss = new ServiceState();
+    protected ServiceState newSS = new ServiceState();
 
-    // TODO - this should not be public
+    protected CellInfo mLastCellInfo = null;
+
+    // This is final as subclasses alias to a more specific type
+    // so we don't want the reference to change.
+    protected final CellInfo mCellInfo;
+
+    protected SignalStrength mSignalStrength = new SignalStrength();
+
+    // TODO - this should not be public, right now used externally GsmConnetion.
     public RestrictedState mRestrictedState = new RestrictedState();
 
     /* The otaspMode passed to PhoneStateListener#onOtaspChanged */
@@ -121,7 +140,7 @@ public abstract class ServiceStateTracker extends Handler {
     protected static final int EVENT_GET_SIGNAL_STRENGTH_CDMA          = 29;
     protected static final int EVENT_NETWORK_STATE_CHANGED_CDMA        = 30;
     protected static final int EVENT_GET_LOC_DONE_CDMA                 = 31;
-    protected static final int EVENT_SIGNAL_STRENGTH_UPDATE_CDMA       = 32;
+    //protected static final int EVENT_UNUSED                            = 32;
     protected static final int EVENT_NV_LOADED                         = 33;
     protected static final int EVENT_POLL_STATE_CDMA_SUBSCRIPTION      = 34;
     protected static final int EVENT_NV_READY                          = 35;
@@ -131,7 +150,7 @@ public abstract class ServiceStateTracker extends Handler {
     protected static final int EVENT_CDMA_SUBSCRIPTION_SOURCE_CHANGED  = 39;
     protected static final int EVENT_CDMA_PRL_VERSION_CHANGED          = 40;
     protected static final int EVENT_RADIO_ON                          = 41;
-
+    protected static final int EVENT_ICC_CHANGED                       = 42;
 
     protected static final String TIMEZONE_PROPERTY = "persist.sys.timezone";
 
@@ -168,11 +187,38 @@ public abstract class ServiceStateTracker extends Handler {
     protected static final String REGISTRATION_DENIED_GEN  = "General";
     protected static final String REGISTRATION_DENIED_AUTH = "Authentication Failure";
 
-    public ServiceStateTracker() {
+    protected ServiceStateTracker(PhoneBase phoneBase, CommandsInterface ci, CellInfo cellInfo) {
+        mPhoneBase = phoneBase;
+        mCellInfo = cellInfo;
+        cm = ci;
+        mUiccController = UiccController.getInstance();
+        mUiccController.registerForIccChanged(this, EVENT_ICC_CHANGED, null);
+        cm.setOnSignalStrengthUpdate(this, EVENT_SIGNAL_STRENGTH_UPDATE, null);
+    }
+
+    public void dispose() {
+        cm.unSetOnSignalStrengthUpdate(this);
     }
 
     public boolean getDesiredPowerState() {
         return mDesiredPowerState;
+    }
+
+    private SignalStrength mLastSignalStrength = null;
+    protected boolean notifySignalStrength() {
+        boolean notified = false;
+        synchronized(mCellInfo) {
+            if (!mSignalStrength.equals(mLastSignalStrength)) {
+                try {
+                    mPhoneBase.notifySignalStrength();
+                    notified = true;
+                } catch (NullPointerException ex) {
+                    loge("updateSignalStrength() Phone already destroyed: " + ex
+                            + "SignalStrength not notified");
+                }
+            }
+        }
+        return notified;
     }
 
     /**
@@ -295,6 +341,10 @@ public abstract class ServiceStateTracker extends Handler {
                 }
                 break;
 
+            case EVENT_ICC_CHANGED:
+                onUpdateIccAvailability();
+                break;
+
             default:
                 log("Unhandled message with number: " + msg.what);
                 break;
@@ -305,6 +355,7 @@ public abstract class ServiceStateTracker extends Handler {
     protected abstract void handlePollStateResult(int what, AsyncResult ar);
     protected abstract void updateSpnDisplay();
     protected abstract void setPowerStateToDesired();
+    protected abstract void onUpdateIccAvailability();
     protected abstract void log(String s);
     protected abstract void loge(String s);
 
@@ -454,6 +505,30 @@ public abstract class ServiceStateTracker extends Handler {
     }
 
     /**
+     * send signal-strength-changed notification if changed Called both for
+     * solicited and unsolicited signal strength updates
+     *
+     * @return true if the signal strength changed and a notification was sent.
+     */
+    protected boolean onSignalStrengthResult(AsyncResult ar, boolean isGsm) {
+        SignalStrength oldSignalStrength = mSignalStrength;
+
+        // This signal is used for both voice and data radio signal so parse
+        // all fields
+
+        if ((ar.exception == null) && (ar.result != null)) {
+            mSignalStrength = (SignalStrength) ar.result;
+            mSignalStrength.validateInput();
+            mSignalStrength.setGsm(isGsm);
+        } else {
+            log("onSignalStrengthResult() Exception from RIL : " + ar.exception);
+            mSignalStrength = new SignalStrength(isGsm);
+        }
+
+        return notifySignalStrength();
+    }
+
+    /**
      * Hang up all voice call and turn off radio. Implemented by derived class.
      */
     protected abstract void hangupAndPowerOff();
@@ -502,16 +577,16 @@ public abstract class ServiceStateTracker extends Handler {
         }
 
         // Determine if the Icc card exists
-        IccCard iccCard = phoneBase.getIccCard();
-        boolean iccCardExist = (iccCard != null) && iccCard.getState().iccCardExist();
+        boolean iccCardExist = false;
+        if (mUiccApplcation != null) {
+            iccCardExist = mUiccApplcation.getState() != AppState.APPSTATE_UNKNOWN;
+        }
 
         // Determine retVal
         boolean retVal = ((iccCardExist && (mcc != prevMcc)) || needToFixTimeZone);
         if (DBG) {
             long ctm = System.currentTimeMillis();
             log("shouldFixTimeZoneNow: retVal=" + retVal +
-                    " iccCard=" + iccCard +
-                    " iccCard.state=" + (iccCard == null ? "null" : iccCard.getState().toString()) +
                     " iccCardExist=" + iccCardExist +
                     " operatorNumeric=" + operatorNumeric + " mcc=" + mcc +
                     " prevOperatorNumeric=" + prevOperatorNumeric + " prevMcc=" + prevMcc +
@@ -521,11 +596,27 @@ public abstract class ServiceStateTracker extends Handler {
         return retVal;
     }
 
+    /**
+     * @return all available cell information or null if none.
+     */
+    public List<CellInfo> getAllCellInfo() {
+        return null;
+    }
+
+    /**
+     * @return signal strength
+     */
+    public SignalStrength getSignalStrength() {
+        synchronized(mCellInfo) {
+            return mSignalStrength;
+        }
+    }
+
     public void dump(FileDescriptor fd, PrintWriter pw, String[] args) {
         pw.println("ServiceStateTracker:");
         pw.println(" ss=" + ss);
         pw.println(" newSS=" + newSS);
-        pw.println(" mSignalStrength=" + mSignalStrength);
+        pw.println(" mCellInfo=" + mCellInfo);
         pw.println(" mRestrictedState=" + mRestrictedState);
         pw.println(" pollingContext=" + pollingContext);
         pw.println(" mDesiredPowerState=" + mDesiredPowerState);
@@ -534,5 +625,20 @@ public abstract class ServiceStateTracker extends Handler {
         pw.println(" dontPollSignalStrength=" + dontPollSignalStrength);
         pw.println(" mPendingRadioPowerOffAfterDataOff=" + mPendingRadioPowerOffAfterDataOff);
         pw.println(" mPendingRadioPowerOffAfterDataOffTag=" + mPendingRadioPowerOffAfterDataOffTag);
+    }
+
+    /**
+     * Verifies the current thread is the same as the thread originally
+     * used in the initialization of this instance. Throws RuntimeException
+     * if not.
+     *
+     * @exception RuntimeException if the current thread is not
+     * the thread that originally obtained this PhoneBase instance.
+     */
+    protected void checkCorrectThread() {
+        if (Thread.currentThread() != getLooper().getThread()) {
+            throw new RuntimeException(
+                    "ServiceStateTracker must be used from within one thread");
+        }
     }
 }

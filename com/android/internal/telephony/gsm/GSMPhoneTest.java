@@ -28,6 +28,7 @@ import com.android.internal.telephony.CallStateException;
 import com.android.internal.telephony.Connection;
 import com.android.internal.telephony.MmiCode;
 import com.android.internal.telephony.Phone;
+import com.android.internal.telephony.PhoneConstants;
 import com.android.internal.telephony.gsm.CallFailCause;
 import com.android.internal.telephony.gsm.GSMPhone;
 import com.android.internal.telephony.gsm.GSMTestHandler;
@@ -138,7 +139,7 @@ public class GSMPhoneTest extends AndroidTestCase implements PerformanceTestCase
 
         // IDLE state
 
-        assertEquals(Phone.State.IDLE, mGSMPhone.getState());
+        assertEquals(PhoneConstants.State.IDLE, mGSMPhone.getState());
         assertEquals(0, mGSMPhone.getRingingCall().getConnections().size());
         assertEquals(0, mGSMPhone.getForegroundCall().getConnections().size());
         assertEquals(0, mGSMPhone.getBackgroundCall().getConnections().size());
@@ -157,12 +158,12 @@ public class GSMPhoneTest extends AndroidTestCase implements PerformanceTestCase
 
         mGSMPhone.dial("+13125551212");
 
-        assertEquals(Phone.State.OFFHOOK, mGSMPhone.getState());
+        assertEquals(PhoneConstants.State.OFFHOOK, mGSMPhone.getState());
 
         msg = mGSMTestHandler.waitForMessage(EVENT_PHONE_STATE_CHANGED);
         assertNotNull("Message Time Out", msg);
 
-        assertEquals(Phone.State.OFFHOOK, mGSMPhone.getState());
+        assertEquals(PhoneConstants.State.OFFHOOK, mGSMPhone.getState());
         assertEquals(Call.State.DIALING, mGSMPhone.getForegroundCall().getState());
         assertTrue(mGSMPhone.getForegroundCall().isDialingOrAlerting());
 
@@ -199,7 +200,7 @@ public class GSMPhoneTest extends AndroidTestCase implements PerformanceTestCase
         }
         while (mGSMPhone.getForegroundCall().getState() != Call.State.ALERTING);
 
-        assertEquals(Phone.State.OFFHOOK, mGSMPhone.getState());
+        assertEquals(PhoneConstants.State.OFFHOOK, mGSMPhone.getState());
         assertTrue(mGSMPhone.getForegroundCall().isDialingOrAlerting());
 
         assertEquals(0, mGSMPhone.getRingingCall().getConnections().size());
@@ -226,7 +227,7 @@ public class GSMPhoneTest extends AndroidTestCase implements PerformanceTestCase
             assertNotNull("Message Time Out", mGSMTestHandler.waitForMessage(ANY_MESSAGE));
         } while (mGSMPhone.getForegroundCall().getState() != Call.State.ACTIVE);
 
-        assertEquals(Phone.State.OFFHOOK, mGSMPhone.getState());
+        assertEquals(PhoneConstants.State.OFFHOOK, mGSMPhone.getState());
         assertFalse(mGSMPhone.getForegroundCall().isDialingOrAlerting());
 
         assertEquals(0, mGSMPhone.getRingingCall().getConnections().size());
@@ -251,7 +252,7 @@ public class GSMPhoneTest extends AndroidTestCase implements PerformanceTestCase
         msg = mGSMTestHandler.waitForMessage(EVENT_DISCONNECT);
         assertNotNull("Message Time Out", msg);
 
-        assertEquals(Phone.State.IDLE, mGSMPhone.getState());
+        assertEquals(PhoneConstants.State.IDLE, mGSMPhone.getState());
         assertFalse(mGSMPhone.getForegroundCall().isDialingOrAlerting());
 
         assertEquals(0, mGSMPhone.getRingingCall().getConnections().size());
@@ -275,7 +276,7 @@ public class GSMPhoneTest extends AndroidTestCase implements PerformanceTestCase
 
         mGSMPhone.clearDisconnected();
 
-        assertEquals(Phone.State.IDLE, mGSMPhone.getState());
+        assertEquals(PhoneConstants.State.IDLE, mGSMPhone.getState());
         assertFalse(mGSMPhone.getForegroundCall().isDialingOrAlerting());
 
         assertEquals(0, mGSMPhone.getRingingCall().getConnections().size());
@@ -302,7 +303,7 @@ public class GSMPhoneTest extends AndroidTestCase implements PerformanceTestCase
         msg = mGSMTestHandler.waitForMessage(EVENT_RINGING);
         assertNotNull("Message Time Out", msg);
 
-        assertEquals(Phone.State.RINGING, mGSMPhone.getState());
+        assertEquals(PhoneConstants.State.RINGING, mGSMPhone.getState());
         assertTrue(mGSMPhone.getRingingCall().isRinging());
 
         ar = (AsyncResult) msg.obj;
@@ -337,7 +338,7 @@ public class GSMPhoneTest extends AndroidTestCase implements PerformanceTestCase
             assertNotNull("Message Time Out", mGSMTestHandler.waitForMessage(ANY_MESSAGE));
         } while (mGSMPhone.getRingingCall().getConnections().size() == 1);
 
-        assertEquals(Phone.State.OFFHOOK, mGSMPhone.getState());
+        assertEquals(PhoneConstants.State.OFFHOOK, mGSMPhone.getState());
         assertFalse(mGSMPhone.getRingingCall().isRinging());
 
         assertEquals(0, mGSMPhone.getRingingCall().getConnections().size());
@@ -372,7 +373,7 @@ public class GSMPhoneTest extends AndroidTestCase implements PerformanceTestCase
         msg = mGSMTestHandler.waitForMessage(EVENT_DISCONNECT);
         assertNotNull("Message Time Out", msg);
 
-        assertEquals(Phone.State.IDLE, mGSMPhone.getState());
+        assertEquals(PhoneConstants.State.IDLE, mGSMPhone.getState());
         assertFalse(mGSMPhone.getForegroundCall().isDialingOrAlerting());
         assertFalse(mGSMPhone.getRingingCall().isRinging());
 
@@ -405,7 +406,7 @@ public class GSMPhoneTest extends AndroidTestCase implements PerformanceTestCase
 
         assertEquals(Connection.DisconnectCause.LOCAL, cn.getDisconnectCause());
         assertEquals(0, mGSMPhone.getForegroundCall().getConnections().size());
-        assertEquals(Phone.State.IDLE, mGSMPhone.getState());
+        assertEquals(PhoneConstants.State.IDLE, mGSMPhone.getState());
 
         assertEquals(0, mGSMPhone.getRingingCall().getConnections().size());
         assertEquals(0, mGSMPhone.getForegroundCall().getConnections().size());
@@ -432,7 +433,7 @@ public class GSMPhoneTest extends AndroidTestCase implements PerformanceTestCase
             assertNotNull("Message Time Out", mGSMTestHandler.waitForMessage(ANY_MESSAGE));
         } while (mGSMPhone.getRingingCall().getConnections().isEmpty());
 
-        assertEquals(Phone.State.RINGING, mGSMPhone.getState());
+        assertEquals(PhoneConstants.State.RINGING, mGSMPhone.getState());
         assertFalse(mGSMPhone.getForegroundCall().isDialingOrAlerting());
         assertTrue(mGSMPhone.getRingingCall().isRinging());
 
@@ -457,7 +458,7 @@ public class GSMPhoneTest extends AndroidTestCase implements PerformanceTestCase
 
         do {
             assertNotNull("Message Time Out", mGSMTestHandler.waitForMessage(ANY_MESSAGE));
-        } while (mGSMPhone.getState() != Phone.State.IDLE);
+        } while (mGSMPhone.getState() != PhoneConstants.State.IDLE);
 
         assertFalse(mGSMPhone.getForegroundCall().isDialingOrAlerting());
         assertFalse(mGSMPhone.getRingingCall().isRinging());
@@ -489,7 +490,7 @@ public class GSMPhoneTest extends AndroidTestCase implements PerformanceTestCase
 
         assertEquals(Connection.DisconnectCause.INCOMING_MISSED, cn.getDisconnectCause());
         assertEquals(0, mGSMPhone.getForegroundCall().getConnections().size());
-        assertEquals(Phone.State.IDLE, mGSMPhone.getState());
+        assertEquals(PhoneConstants.State.IDLE, mGSMPhone.getState());
 
         assertEquals(0, mGSMPhone.getRingingCall().getConnections().size());
         assertEquals(0, mGSMPhone.getForegroundCall().getConnections().size());
@@ -513,7 +514,7 @@ public class GSMPhoneTest extends AndroidTestCase implements PerformanceTestCase
             assertNotNull("Message Time Out", mGSMTestHandler.waitForMessage(ANY_MESSAGE));
         } while (mGSMPhone.getRingingCall().getConnections().isEmpty());
 
-        assertEquals(Phone.State.RINGING, mGSMPhone.getState());
+        assertEquals(PhoneConstants.State.RINGING, mGSMPhone.getState());
         assertFalse(mGSMPhone.getForegroundCall().isDialingOrAlerting());
         assertTrue(mGSMPhone.getRingingCall().isRinging());
 
@@ -525,7 +526,7 @@ public class GSMPhoneTest extends AndroidTestCase implements PerformanceTestCase
 
         do {
             assertNotNull("Message Time Out", mGSMTestHandler.waitForMessage(ANY_MESSAGE));
-        } while (mGSMPhone.getState() != Phone.State.IDLE);
+        } while (mGSMPhone.getState() != PhoneConstants.State.IDLE);
 
         assertEquals(Connection.DisconnectCause.INCOMING_MISSED, cn.getDisconnectCause());
 
@@ -535,7 +536,7 @@ public class GSMPhoneTest extends AndroidTestCase implements PerformanceTestCase
 
         do {
             assertNotNull("Message Time Out", mGSMTestHandler.waitForMessage(ANY_MESSAGE));
-        } while (mGSMPhone.getState() != Phone.State.RINGING);
+        } while (mGSMPhone.getState() != PhoneConstants.State.RINGING);
 
 
         cn = mGSMPhone.getRingingCall().getEarliestConnection();
@@ -545,7 +546,7 @@ public class GSMPhoneTest extends AndroidTestCase implements PerformanceTestCase
 
         do {
             assertNotNull("Message Time Out", mGSMTestHandler.waitForMessage(ANY_MESSAGE));
-        } while (mGSMPhone.getState() != Phone.State.OFFHOOK);
+        } while (mGSMPhone.getState() != PhoneConstants.State.OFFHOOK);
 
         assertEquals(Call.State.ACTIVE, mGSMPhone.getForegroundCall().getState());
         assertEquals(Call.State.IDLE, mGSMPhone.getBackgroundCall().getState());
@@ -578,7 +579,7 @@ public class GSMPhoneTest extends AndroidTestCase implements PerformanceTestCase
 
         do {
             assertNotNull("Message Time Out", mGSMTestHandler.waitForMessage(ANY_MESSAGE));
-        } while (mGSMPhone.getState() != Phone.State.IDLE);
+        } while (mGSMPhone.getState() != PhoneConstants.State.IDLE);
 
         assertEquals(Call.State.DISCONNECTED, mGSMPhone.getForegroundCall().getState());
         assertEquals(Connection.DisconnectCause.NORMAL, cn.getDisconnectCause());
@@ -589,7 +590,7 @@ public class GSMPhoneTest extends AndroidTestCase implements PerformanceTestCase
 
         do {
             assertNotNull("Message Time Out", mGSMTestHandler.waitForMessage(ANY_MESSAGE));
-        } while (mGSMPhone.getState() != Phone.State.RINGING);
+        } while (mGSMPhone.getState() != PhoneConstants.State.RINGING);
 
         mGSMPhone.rejectCall();
 
@@ -601,7 +602,7 @@ public class GSMPhoneTest extends AndroidTestCase implements PerformanceTestCase
         cn = (Connection) ar.result;
 
         assertEquals(Connection.DisconnectCause.INCOMING_MISSED, cn.getDisconnectCause());
-        assertEquals(Phone.State.IDLE, mGSMPhone.getState());
+        assertEquals(PhoneConstants.State.IDLE, mGSMPhone.getState());
         assertEquals(Call.State.DISCONNECTED, mGSMPhone.getRingingCall().getState());
 
         // Test incoming not missed calls
@@ -610,7 +611,7 @@ public class GSMPhoneTest extends AndroidTestCase implements PerformanceTestCase
 
         do {
             assertNotNull("Message Time Out", mGSMTestHandler.waitForMessage(ANY_MESSAGE));
-        } while (mGSMPhone.getState() != Phone.State.RINGING);
+        } while (mGSMPhone.getState() != PhoneConstants.State.RINGING);
 
         cn = mGSMPhone.getRingingCall().getEarliestConnection();
 
@@ -618,7 +619,7 @@ public class GSMPhoneTest extends AndroidTestCase implements PerformanceTestCase
 
         do {
             assertNotNull("Message Time Out", mGSMTestHandler.waitForMessage(ANY_MESSAGE));
-        } while (mGSMPhone.getState() != Phone.State.OFFHOOK);
+        } while (mGSMPhone.getState() != PhoneConstants.State.OFFHOOK);
 
         assertEquals(Connection.DisconnectCause.NOT_DISCONNECTED, cn.getDisconnectCause());
         assertEquals(Call.State.IDLE, mGSMPhone.getRingingCall().getState());
@@ -647,7 +648,7 @@ public class GSMPhoneTest extends AndroidTestCase implements PerformanceTestCase
 
         do {
             assertNotNull("Message Time Out", mGSMTestHandler.waitForMessage(ANY_MESSAGE));
-        } while (mGSMPhone.getState() != Phone.State.OFFHOOK);
+        } while (mGSMPhone.getState() != PhoneConstants.State.OFFHOOK);
 
         assertTrue(mGSMPhone.getForegroundCall().isDialingOrAlerting());
 
@@ -668,7 +669,7 @@ public class GSMPhoneTest extends AndroidTestCase implements PerformanceTestCase
 
         do {
             assertNotNull("Message Time Out", mGSMTestHandler.waitForMessage(ANY_MESSAGE));
-        } while (mGSMPhone.getState() != Phone.State.RINGING);
+        } while (mGSMPhone.getState() != PhoneConstants.State.RINGING);
 
         assertFalse(mGSMPhone.getForegroundCall().isDialingOrAlerting());
         assertTrue(mGSMPhone.getRingingCall().isRinging());
@@ -678,7 +679,7 @@ public class GSMPhoneTest extends AndroidTestCase implements PerformanceTestCase
 
         do {
             assertNotNull("Message Time Out", mGSMTestHandler.waitForMessage(ANY_MESSAGE));
-        } while (mGSMPhone.getState() != Phone.State.OFFHOOK);
+        } while (mGSMPhone.getState() != PhoneConstants.State.OFFHOOK);
 
         assertFalse(mGSMPhone.getForegroundCall().isDialingOrAlerting());
 
@@ -720,7 +721,7 @@ public class GSMPhoneTest extends AndroidTestCase implements PerformanceTestCase
 
         do {
             assertNotNull("Message Time Out", mGSMTestHandler.waitForMessage(ANY_MESSAGE));
-        } while (mGSMPhone.getState() != Phone.State.RINGING);
+        } while (mGSMPhone.getState() != PhoneConstants.State.RINGING);
 
         assertFalse(mGSMPhone.getForegroundCall().isDialingOrAlerting());
         assertTrue(mGSMPhone.getRingingCall().isRinging());
@@ -738,7 +739,7 @@ public class GSMPhoneTest extends AndroidTestCase implements PerformanceTestCase
             assertNotNull("Message Time Out", mGSMTestHandler.waitForMessage(ANY_MESSAGE));
         } while (mGSMPhone.getBackgroundCall().getState() != Call.State.DISCONNECTED);
 
-        assertEquals(Phone.State.RINGING, mGSMPhone.getState());
+        assertEquals(PhoneConstants.State.RINGING, mGSMPhone.getState());
         assertEquals(Call.State.DISCONNECTED, mGSMPhone.getBackgroundCall().getState());
 
         assertFalse(mGSMPhone.getForegroundCall().isDialingOrAlerting());
@@ -749,7 +750,7 @@ public class GSMPhoneTest extends AndroidTestCase implements PerformanceTestCase
 
         do {
             assertNotNull("Message Time Out", mGSMTestHandler.waitForMessage(ANY_MESSAGE));
-        } while (mGSMPhone.getState() != Phone.State.IDLE);
+        } while (mGSMPhone.getState() != PhoneConstants.State.IDLE);
 
         assertFalse(mGSMPhone.getForegroundCall().isDialingOrAlerting());
         assertFalse(mGSMPhone.getRingingCall().isRinging());
@@ -769,7 +770,7 @@ public class GSMPhoneTest extends AndroidTestCase implements PerformanceTestCase
 
         msg = mGSMTestHandler.waitForMessage(EVENT_DISCONNECT);
         assertNotNull("Message Time Out", msg);
-        assertEquals(Phone.State.IDLE, mGSMPhone.getState());
+        assertEquals(PhoneConstants.State.IDLE, mGSMPhone.getState());
 
         assertEquals(Connection.DisconnectCause.NORMAL, cn.getDisconnectCause());
 
@@ -805,7 +806,7 @@ public class GSMPhoneTest extends AndroidTestCase implements PerformanceTestCase
 
         msg = mGSMTestHandler.waitForMessage(EVENT_DISCONNECT);
         assertNotNull("Message Time Out", msg);
-        assertEquals(Phone.State.IDLE, mGSMPhone.getState());
+        assertEquals(PhoneConstants.State.IDLE, mGSMPhone.getState());
 
         assertEquals(Call.State.DISCONNECTED, mGSMPhone.getForegroundCall().getState());
         assertEquals(Connection.DisconnectCause.LOCAL, cn.getDisconnectCause());
@@ -815,7 +816,7 @@ public class GSMPhoneTest extends AndroidTestCase implements PerformanceTestCase
 
         do {
             assertNotNull("Message Time Out", mGSMTestHandler.waitForMessage(ANY_MESSAGE));
-        } while (mGSMPhone.getState() != Phone.State.OFFHOOK);
+        } while (mGSMPhone.getState() != PhoneConstants.State.OFFHOOK);
 
         mRadioControl.progressConnectingCallState();
 
@@ -831,7 +832,7 @@ public class GSMPhoneTest extends AndroidTestCase implements PerformanceTestCase
         msg = mGSMTestHandler.waitForMessage(EVENT_DISCONNECT);
         assertNotNull("Message Time Out", msg);
 
-        assertEquals(Phone.State.IDLE, mGSMPhone.getState());
+        assertEquals(PhoneConstants.State.IDLE, mGSMPhone.getState());
 
         assertEquals(Call.State.DISCONNECTED, mGSMPhone.getForegroundCall().getState());
         assertEquals(Connection.DisconnectCause.LOCAL, cn.getDisconnectCause());
@@ -849,7 +850,7 @@ public class GSMPhoneTest extends AndroidTestCase implements PerformanceTestCase
 
         msg = mGSMTestHandler.waitForMessage(EVENT_DISCONNECT);
         assertNotNull("Message Time Out", msg);
-        assertEquals(Phone.State.IDLE, mGSMPhone.getState());
+        assertEquals(PhoneConstants.State.IDLE, mGSMPhone.getState());
 
         assertEquals(Call.State.DISCONNECTED, mGSMPhone.getForegroundCall().getState());
 
@@ -893,7 +894,7 @@ public class GSMPhoneTest extends AndroidTestCase implements PerformanceTestCase
         msg = mGSMTestHandler.waitForMessage(EVENT_RINGING);
         assertNotNull("Message Time Out", msg);
 
-        assertEquals(Phone.State.RINGING, mGSMPhone.getState());
+        assertEquals(PhoneConstants.State.RINGING, mGSMPhone.getState());
         assertTrue(mGSMPhone.getRingingCall().isRinging());
         assertEquals(Call.State.WAITING, mGSMPhone.getRingingCall().getState());
         assertEquals(Call.State.ACTIVE, mGSMPhone.getForegroundCall().getState());
@@ -907,7 +908,7 @@ public class GSMPhoneTest extends AndroidTestCase implements PerformanceTestCase
             assertNotNull("Message Time Out", mGSMTestHandler.waitForMessage(ANY_MESSAGE));
         } while (mGSMPhone.getRingingCall().getState() == Call.State.WAITING);
 
-        assertEquals(Phone.State.OFFHOOK, mGSMPhone.getState());
+        assertEquals(PhoneConstants.State.OFFHOOK, mGSMPhone.getState());
         assertFalse(mGSMPhone.getRingingCall().isRinging());
         assertEquals(Call.State.DISCONNECTED, mGSMPhone.getRingingCall().getState());
         assertEquals(Call.State.ACTIVE, mGSMPhone.getForegroundCall().getState());
@@ -932,7 +933,7 @@ public class GSMPhoneTest extends AndroidTestCase implements PerformanceTestCase
             assertNotNull("Message Time Out", mGSMTestHandler.waitForMessage(ANY_MESSAGE));
         } while (mGSMPhone.getBackgroundCall().getState() == Call.State.HOLDING);
 
-        assertEquals(Phone.State.IDLE, mGSMPhone.getState());
+        assertEquals(PhoneConstants.State.IDLE, mGSMPhone.getState());
         assertEquals(Call.State.IDLE, mGSMPhone.getForegroundCall().getState());
         assertEquals(Call.State.DISCONNECTED, mGSMPhone.getBackgroundCall().getState());
     }
@@ -960,7 +961,7 @@ public class GSMPhoneTest extends AndroidTestCase implements PerformanceTestCase
             assertNotNull("Message Time Out", msg);
         } while (msg.what != EVENT_RINGING);
 
-        assertEquals(Phone.State.RINGING, mGSMPhone.getState());
+        assertEquals(PhoneConstants.State.RINGING, mGSMPhone.getState());
         assertTrue(mGSMPhone.getRingingCall().isRinging());
         assertEquals(Call.State.WAITING, mGSMPhone.getRingingCall().getState());
         assertEquals(Call.State.ACTIVE, mGSMPhone.getForegroundCall().getState());
@@ -975,7 +976,7 @@ public class GSMPhoneTest extends AndroidTestCase implements PerformanceTestCase
             assertNotNull("Message Time Out", mGSMTestHandler.waitForMessage(ANY_MESSAGE));
         } while (mGSMPhone.getRingingCall().getState() == Call.State.WAITING);
 
-        assertEquals(Phone.State.OFFHOOK, mGSMPhone.getState());
+        assertEquals(PhoneConstants.State.OFFHOOK, mGSMPhone.getState());
         assertFalse(mGSMPhone.getRingingCall().isRinging());
         assertEquals(Call.State.IDLE, mGSMPhone.getRingingCall().getState());
         assertEquals(Call.State.ACTIVE, mGSMPhone.getForegroundCall().getState());
@@ -1000,7 +1001,7 @@ public class GSMPhoneTest extends AndroidTestCase implements PerformanceTestCase
             assertNotNull("Message Time Out", mGSMTestHandler.waitForMessage(ANY_MESSAGE));
         } while (mGSMPhone.getBackgroundCall().getState() != Call.State.IDLE);
 
-        assertEquals(Phone.State.OFFHOOK, mGSMPhone.getState());
+        assertEquals(PhoneConstants.State.OFFHOOK, mGSMPhone.getState());
         assertEquals(Call.State.ACTIVE, mGSMPhone.getForegroundCall().getState());
         assertEquals(Call.State.IDLE, mGSMPhone.getBackgroundCall().getState());
         assertEquals("18005551212",
@@ -1014,7 +1015,7 @@ public class GSMPhoneTest extends AndroidTestCase implements PerformanceTestCase
         msg = mGSMTestHandler.waitForMessage(EVENT_RINGING);
         assertNotNull("Message Time Out", msg);
 
-        assertEquals(Phone.State.RINGING, mGSMPhone.getState());
+        assertEquals(PhoneConstants.State.RINGING, mGSMPhone.getState());
         assertTrue(mGSMPhone.getRingingCall().isRinging());
         assertEquals(Call.State.WAITING, mGSMPhone.getRingingCall().getState());
         assertEquals(Call.State.ACTIVE, mGSMPhone.getForegroundCall().getState());
@@ -1028,7 +1029,7 @@ public class GSMPhoneTest extends AndroidTestCase implements PerformanceTestCase
             assertNotNull("Message Time Out", mGSMTestHandler.waitForMessage(ANY_MESSAGE));
         } while (mGSMPhone.getForegroundCall().getState() == Call.State.ACTIVE);
 
-        assertEquals(Phone.State.RINGING, mGSMPhone.getState());
+        assertEquals(PhoneConstants.State.RINGING, mGSMPhone.getState());
         assertTrue(mGSMPhone.getRingingCall().isRinging());
         assertEquals(Call.State.WAITING, mGSMPhone.getRingingCall().getState());
         assertEquals(Call.State.DISCONNECTED, mGSMPhone.getForegroundCall().getState());
@@ -1038,9 +1039,9 @@ public class GSMPhoneTest extends AndroidTestCase implements PerformanceTestCase
 
         do {
             assertNotNull("Message Time Out", mGSMTestHandler.waitForMessage(ANY_MESSAGE));
-        } while (mGSMPhone.getState() != Phone.State.OFFHOOK);
+        } while (mGSMPhone.getState() != PhoneConstants.State.OFFHOOK);
 
-        assertEquals(Phone.State.OFFHOOK, mGSMPhone.getState());
+        assertEquals(PhoneConstants.State.OFFHOOK, mGSMPhone.getState());
         assertFalse(mGSMPhone.getRingingCall().isRinging());
         assertEquals(Call.State.IDLE, mGSMPhone.getRingingCall().getState());
         assertEquals(Call.State.ACTIVE, mGSMPhone.getForegroundCall().getState());
@@ -1090,7 +1091,7 @@ public class GSMPhoneTest extends AndroidTestCase implements PerformanceTestCase
             assertNotNull("Message Time Out", mGSMTestHandler.waitForMessage(ANY_MESSAGE));
         } while (mGSMPhone.getBackgroundCall().getState() != Call.State.IDLE);
 
-        assertEquals(Phone.State.OFFHOOK, mGSMPhone.getState());
+        assertEquals(PhoneConstants.State.OFFHOOK, mGSMPhone.getState());
         assertEquals(Call.State.ACTIVE, mGSMPhone.getForegroundCall().getState());
         assertEquals(Call.State.IDLE, mGSMPhone.getBackgroundCall().getState());
         assertEquals("16505550100",
@@ -1129,7 +1130,7 @@ public class GSMPhoneTest extends AndroidTestCase implements PerformanceTestCase
         msg = mGSMTestHandler.waitForMessage(EVENT_RINGING);
         assertNotNull("Message Time Out", msg);
 
-        assertEquals(Phone.State.RINGING, mGSMPhone.getState());
+        assertEquals(PhoneConstants.State.RINGING, mGSMPhone.getState());
         assertTrue(mGSMPhone.getRingingCall().isRinging());
         assertEquals(Call.State.WAITING, mGSMPhone.getRingingCall().getState());
         assertEquals(Call.State.ACTIVE, mGSMPhone.getForegroundCall().getState());
@@ -1147,7 +1148,7 @@ public class GSMPhoneTest extends AndroidTestCase implements PerformanceTestCase
 
 
         assertFalse(mGSMPhone.getRingingCall().isRinging());
-        assertEquals(Phone.State.OFFHOOK, mGSMPhone.getState());
+        assertEquals(PhoneConstants.State.OFFHOOK, mGSMPhone.getState());
         assertEquals(Call.State.IDLE, mGSMPhone.getRingingCall().getState());
         assertEquals(Call.State.ACTIVE,
                 mGSMPhone.getForegroundCall().getState());
@@ -1239,7 +1240,7 @@ public class GSMPhoneTest extends AndroidTestCase implements PerformanceTestCase
             assertNotNull("Message Time Out", mGSMTestHandler.waitForMessage(ANY_MESSAGE));
         } while (mGSMPhone.getBackgroundCall().getState() != Call.State.IDLE);
 
-        assertEquals(Phone.State.OFFHOOK, mGSMPhone.getState());
+        assertEquals(PhoneConstants.State.OFFHOOK, mGSMPhone.getState());
         assertEquals(Call.State.ACTIVE, mGSMPhone.getForegroundCall().getState());
         assertEquals("18005551212",
                 mGSMPhone.getForegroundCall().getConnections().get(0).getAddress());
@@ -1303,7 +1304,7 @@ public class GSMPhoneTest extends AndroidTestCase implements PerformanceTestCase
         msg = mGSMTestHandler.waitForMessage(EVENT_RINGING);
         assertNotNull("Message Time Out", msg);
 
-        assertEquals(Phone.State.RINGING, mGSMPhone.getState());
+        assertEquals(PhoneConstants.State.RINGING, mGSMPhone.getState());
         assertTrue(mGSMPhone.getRingingCall().isRinging());
         assertEquals(Call.State.WAITING, mGSMPhone.getRingingCall().getState());
         assertEquals(Call.State.ACTIVE, mGSMPhone.getForegroundCall().getState());
@@ -1518,7 +1519,7 @@ public class GSMPhoneTest extends AndroidTestCase implements PerformanceTestCase
         mRadioControl.triggerHangupAll();
         msg = mGSMTestHandler.waitForMessage(EVENT_DISCONNECT);
         assertNotNull("Message Time Out", msg);
-        assertEquals(Phone.State.IDLE, mGSMPhone.getState());
+        assertEquals(PhoneConstants.State.IDLE, mGSMPhone.getState());
 
         assertEquals(Connection.DisconnectCause.NORMAL, cn.getDisconnectCause());
 
@@ -1556,7 +1557,7 @@ public class GSMPhoneTest extends AndroidTestCase implements PerformanceTestCase
         mRadioControl.triggerHangupAll();
         msg = mGSMTestHandler.waitForMessage(EVENT_DISCONNECT);
         assertNotNull("Message Time Out", msg);
-        assertEquals(Phone.State.IDLE, mGSMPhone.getState());
+        assertEquals(PhoneConstants.State.IDLE, mGSMPhone.getState());
 
         assertEquals(Connection.DisconnectCause.BUSY, cn.getDisconnectCause());
 
@@ -1601,9 +1602,9 @@ public class GSMPhoneTest extends AndroidTestCase implements PerformanceTestCase
             msg = mGSMTestHandler.waitForMessage(ANY_MESSAGE);
             assertNotNull("Message Time Out", msg);
         } while (!(msg.what == EVENT_PHONE_STATE_CHANGED
-                && mGSMPhone.getState() == Phone.State.IDLE));
+                && mGSMPhone.getState() == PhoneConstants.State.IDLE));
 
-        assertEquals(Phone.State.IDLE, mGSMPhone.getState());
+        assertEquals(PhoneConstants.State.IDLE, mGSMPhone.getState());
 
         assertEquals(Connection.DisconnectCause.CONGESTION, cn.getDisconnectCause());
 

@@ -45,7 +45,7 @@ public class TelephonyCapabilities {
      * otherwise.
      */
     public static boolean supportsEcm(Phone phone) {
-        return (phone.getPhoneType() == Phone.PHONE_TYPE_CDMA);
+        return (phone.getPhoneType() == PhoneConstants.PHONE_TYPE_CDMA);
     }
 
     /**
@@ -66,7 +66,7 @@ public class TelephonyCapabilities {
      * "if (CDMA)" checks sprinkled throughout the phone app.
      */
     public static boolean supportsOtasp(Phone phone) {
-        return (phone.getPhoneType() == Phone.PHONE_TYPE_CDMA);
+        return (phone.getPhoneType() == PhoneConstants.PHONE_TYPE_CDMA);
     }
 
     /**
@@ -75,7 +75,7 @@ public class TelephonyCapabilities {
      * Currently this is assumed to be true on CDMA phones and false otherwise.
      */
     public static boolean supportsVoiceMessageCount(Phone phone) {
-        return (phone.getPhoneType() == Phone.PHONE_TYPE_CDMA);
+        return (phone.getPhoneType() == PhoneConstants.PHONE_TYPE_CDMA);
     }
 
     /**
@@ -87,7 +87,7 @@ public class TelephonyCapabilities {
      * TODO: Should CDMA phones allow this as well?
      */
     public static boolean supportsNetworkSelection(Phone phone) {
-        return (phone.getPhoneType() == Phone.PHONE_TYPE_GSM);
+        return (phone.getPhoneType() == PhoneConstants.PHONE_TYPE_GSM);
     }
 
     /**
@@ -99,9 +99,9 @@ public class TelephonyCapabilities {
      * id is called "IMEI" on GSM phones and "MEID" on CDMA phones.
      */
     public static int getDeviceIdLabel(Phone phone) {
-        if (phone.getPhoneType() == Phone.PHONE_TYPE_GSM) {
+        if (phone.getPhoneType() == PhoneConstants.PHONE_TYPE_GSM) {
             return com.android.internal.R.string.imei;
-        } else if (phone.getPhoneType() == Phone.PHONE_TYPE_CDMA) {
+        } else if (phone.getPhoneType() == PhoneConstants.PHONE_TYPE_CDMA) {
             return com.android.internal.R.string.meid;
         } else {
             Log.w(LOG_TAG, "getDeviceIdLabel: no known label for phone "
@@ -121,8 +121,8 @@ public class TelephonyCapabilities {
      * Currently this is assumed to be true on GSM phones and false otherwise.
      */
     public static boolean supportsConferenceCallManagement(Phone phone) {
-        return ((phone.getPhoneType() == Phone.PHONE_TYPE_GSM)
-                || (phone.getPhoneType() == Phone.PHONE_TYPE_SIP));
+        return ((phone.getPhoneType() == PhoneConstants.PHONE_TYPE_GSM)
+                || (phone.getPhoneType() == PhoneConstants.PHONE_TYPE_SIP));
     }
 
     /**
@@ -135,8 +135,8 @@ public class TelephonyCapabilities {
      * on hold.")
      */
     public static boolean supportsHoldAndUnhold(Phone phone) {
-        return ((phone.getPhoneType() == Phone.PHONE_TYPE_GSM)
-                || (phone.getPhoneType() == Phone.PHONE_TYPE_SIP));
+        return ((phone.getPhoneType() == PhoneConstants.PHONE_TYPE_GSM)
+                || (phone.getPhoneType() == PhoneConstants.PHONE_TYPE_SIP));
     }
 
     /**
@@ -154,8 +154,8 @@ public class TelephonyCapabilities {
      * rather than focusing specifically on call-waiting behavior.
      */
     public static boolean supportsAnswerAndHold(Phone phone) {
-        return ((phone.getPhoneType() == Phone.PHONE_TYPE_GSM)
-                || (phone.getPhoneType() == Phone.PHONE_TYPE_SIP));
+        return ((phone.getPhoneType() == PhoneConstants.PHONE_TYPE_GSM)
+                || (phone.getPhoneType() == PhoneConstants.PHONE_TYPE_SIP));
     }
 
     /**
@@ -175,6 +175,17 @@ public class TelephonyCapabilities {
      * something more appropriate.
      */
     public static boolean supportsAdn(int phoneType) {
-        return phoneType == Phone.PHONE_TYPE_GSM;
+        return phoneType == PhoneConstants.PHONE_TYPE_GSM;
+    }
+
+    /**
+     * Returns true if the device can distinguish the phone's dialing state
+     * (Call.State.DIALING/ALERTING) and connected state (Call.State.ACTIVE).
+     *
+     * Currently this returns true for GSM phones as we cannot know when a CDMA
+     * phone has transitioned from dialing/active to connected.
+     */
+    public static boolean canDistinguishDialingAndConnected(int phoneType) {
+        return phoneType == PhoneConstants.PHONE_TYPE_GSM;
     }
 }

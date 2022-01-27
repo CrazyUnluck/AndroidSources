@@ -16,25 +16,32 @@
 
 package com.android.uiautomator.core;
 
-import android.graphics.Rect;
+import android.hardware.display.DisplayManagerGlobal;
 import android.os.Environment;
 import android.os.SystemClock;
 import android.util.Log;
 import android.util.Xml;
+import android.view.Display;
 import android.view.accessibility.AccessibilityNodeInfo;
-
-import org.xmlpull.v1.XmlSerializer;
 
 import java.io.File;
 import java.io.FileWriter;
 import java.io.IOException;
 import java.io.StringWriter;
 
+import org.xmlpull.v1.XmlSerializer;
+
+/**
+ *
+ * @hide
+ */
 public class AccessibilityNodeInfoDumper {
 
     private static final String LOGTAG = AccessibilityNodeInfoDumper.class.getSimpleName();
-    private static final String[] EXCLUDED_CLASSES = new String[]
-            {"LinearLayout", "RelativeLayout", "ListView"};
+    private static final String[] NAF_EXCLUDED_CLASSES = new String[] {
+            android.widget.GridView.class.getName(), android.widget.GridLayout.class.getName(),
+            android.widget.ListView.class.getName(), android.widget.TableLayout.class.getName()
+    };
 
     /**
      * Using {@link AccessibilityNodeInfo} this method will walk the layout hierarchy
@@ -70,6 +77,9 @@ public class AccessibilityNodeInfoDumper {
             serializer.setOutput(stringWriter);
             serializer.startDocument("UTF-8", true);
             serializer.startTag("", "hierarchy");
+            serializer.attribute("", "rotation", Integer.toString(
+                    DisplayManagerGlobal.getInstance().getRealDisplay(
+                            Display.DEFAULT_DISPLAY).getRotation()));
             dumpNodeRec(root, serializer, 0);
             serializer.endTag("", "hierarchy");
             serializer.endDocument();
@@ -82,15 +92,11 @@ public class AccessibilityNodeInfoDumper {
         Log.w(LOGTAG, "Fetch time: " + (endTime - startTime) + "ms");
     }
 
-    private static void dumpNodeRec(AccessibilityNodeInfo node, XmlSerializer serializer, int index)
-            throws IOException {
-        if(!excludedClass(node) && !accessibilityCheck(node)) {
-            serializer.comment("NAF: The following control may not be accessibility friendly");
-            serializer.startTag("", "node");
+    private static void dumpNodeRec(AccessibilityNodeInfo node, XmlSerializer serializer,
+            int index) throws IOException {
+        serializer.startTag("", "node");
+        if (!nafExcludedClass(node) && !nafCheck(node))
             serializer.attribute("", "NAF", Boolean.toString(true));
-        } else {
-            serializer.startTag("", "node");
-        }
         serializer.attribute("", "index", Integer.toString(index));
         serializer.attribute("", "text", safeCharSeqToString(node.getText()));
         serializer.attribute("", "class", safeCharSeqToString(node.getClassName()));
@@ -106,16 +112,15 @@ public class AccessibilityNodeInfoDumper {
         serializer.attribute("", "long-clickable", Boolean.toString(node.isLongClickable()));
         serializer.attribute("", "password", Boolean.toString(node.isPassword()));
         serializer.attribute("", "selected", Boolean.toString(node.isSelected()));
-        Rect bounds = new Rect();
-        node.getBoundsInScreen(bounds);
-        serializer.attribute("", "bounds", bounds.toShortString());
+        serializer.attribute("", "bounds",
+                AccessibilityNodeInfoHelper.getVisibleBoundsInScreen(node).toShortString());
         int count = node.getChildCount();
         for (int i = 0; i < count; i++) {
             AccessibilityNodeInfo child = node.getChild(i);
             if (child != null) {
                 if (child.isVisibleToUser()) {
-                dumpNodeRec(child, serializer, i);
-                child.recycle();
+                    dumpNodeRec(child, serializer, i);
+                    child.recycle();
                 } else {
                     Log.i(LOGTAG, String.format("Skipping invisible child: %s", child.toString()));
                 }
@@ -128,15 +133,16 @@ public class AccessibilityNodeInfoDumper {
     }
 
     /**
-     * The list of classes to exclude my not be complete. We're attempting to only
-     * reduce noise from standard layout classes that may be falsely configured to
-     * accept clicks and are also enabled.
+     * The list of classes to exclude my not be complete. We're attempting to
+     * only reduce noise from standard layout classes that may be falsely
+     * configured to accept clicks and are also enabled.
+     *
      * @param n
      * @return
      */
-    private static boolean excludedClass(AccessibilityNodeInfo n) {
+    private static boolean nafExcludedClass(AccessibilityNodeInfo n) {
         String className = safeCharSeqToString(n.getClassName());
-        for(String excludedClassName : EXCLUDED_CLASSES) {
+        for(String excludedClassName : NAF_EXCLUDED_CLASSES) {
             if(className.endsWith(excludedClassName))
                 return true;
         }
@@ -144,16 +150,54 @@ public class AccessibilityNodeInfoDumper {
     }
 
     /**
-     * We're looking for UI controls that are enabled, clickable but have no text nor
-     * content-description. Such controls configuration indicate an interactive control
-     * is present in the UI and is most likely not accessibility friendly.
-     * @param n
+     * We're looking for UI controls that are enabled, clickable but have no
+     * text nor content-description. Such controls configuration indicate an
+     * interactive control is present in the UI and is most likely not
+     * accessibility friendly. We refer to such controls here as NAF controls
+     * (Not Accessibility Friendly)
+     *
+     * @param node
+     * @return false if a node fails the check, true if all is OK
+     */
+    private static boolean nafCheck(AccessibilityNodeInfo node) {
+        boolean isNaf = node.isClickable() && node.isEnabled()
+                && safeCharSeqToString(node.getContentDescription()).isEmpty()
+                && safeCharSeqToString(node.getText()).isEmpty();
+
+        if (!isNaf)
+            return true;
+
+        // check children since sometimes the containing element is clickable
+        // and NAF but a child's text or description is available. Will assume
+        // such layout as fine.
+        return childNafCheck(node);
+    }
+
+    /**
+     * This should be used when it's already determined that the node is NAF and
+     * a further check of its children is in order. A node maybe a container
+     * such as LinerLayout and may be set to be clickable but have no text or
+     * content description but it is counting on one of its children to fulfill
+     * the requirement for being accessibility friendly by having one or more of
+     * its children fill the text or content-description. Such a combination is
+     * considered by this dumper as acceptable for accessibility.
+     *
+     * @param node
      * @return
      */
-    private static boolean accessibilityCheck(AccessibilityNodeInfo n) {
-        return !(n.isClickable() && n.isEnabled() &&
-                safeCharSeqToString(n.getContentDescription()).isEmpty() &&
-                safeCharSeqToString(n.getText()).isEmpty());
+    private static boolean childNafCheck(AccessibilityNodeInfo node) {
+        int childCount = node.getChildCount();
+        for (int x = 0; x < childCount; x++) {
+            AccessibilityNodeInfo childNode = node.getChild(x);
+
+            if (!safeCharSeqToString(childNode.getContentDescription()).isEmpty()
+                    || !safeCharSeqToString(childNode.getText()).isEmpty())
+                return true;
+
+            if (childNafCheck(childNode))
+                return true;
+        }
+        return false;
     }
 
     private static String safeCharSeqToString(CharSequence cs) {

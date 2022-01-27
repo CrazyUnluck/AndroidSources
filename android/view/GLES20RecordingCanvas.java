@@ -76,6 +76,7 @@ class GLES20RecordingCanvas extends GLES20Canvas implements Poolable<GLES20Recor
 
     void start() {
         mDisplayList.mBitmaps.clear();
+        mDisplayList.mChildDisplayLists.clear();
     }
 
     int end(int nativeDisplayList) {
@@ -156,6 +157,13 @@ class GLES20RecordingCanvas extends GLES20Canvas implements Poolable<GLES20Recor
     }
 
     @Override
+    public int drawDisplayList(DisplayList displayList, Rect dirty, int flags) {
+        int status = super.drawDisplayList(displayList, dirty, flags);
+        mDisplayList.mChildDisplayLists.add(displayList);
+        return status;
+    }
+
+    @Override
     public void drawLine(float startX, float startY, float stopX, float stopY, Paint paint) {
         super.drawLine(startX, startY, stopX, stopY, paint);
         recordShaderBitmap(paint);
@@ -224,18 +232,6 @@ class GLES20RecordingCanvas extends GLES20Canvas implements Poolable<GLES20Recor
     @Override
     public void drawRect(float left, float top, float right, float bottom, Paint paint) {
         super.drawRect(left, top, right, bottom, paint);
-        recordShaderBitmap(paint);
-    }
-
-    @Override
-    public void drawRect(Rect r, Paint paint) {
-        super.drawRect(r, paint);
-        recordShaderBitmap(paint);
-    }
-
-    @Override
-    public void drawRect(RectF r, Paint paint) {
-        super.drawRect(r, paint);
         recordShaderBitmap(paint);
     }
 

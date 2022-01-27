@@ -23,6 +23,7 @@ import android.content.pm.RegisteredServicesCache.ServiceInfo;
 import android.content.pm.RegisteredServicesCacheListener;
 import android.os.Bundle;
 import android.os.Handler;
+import android.os.UserHandle;
 import android.test.AndroidTestCase;
 import android.test.IsolatedContext;
 import android.test.RenamingDelegatingContext;
@@ -196,7 +197,9 @@ public class AccountManagerServiceTest extends AndroidTestCase {
             mServices.add(new ServiceInfo<AuthenticatorDescription>(d2, null, 0));
         }
 
-        public ServiceInfo<AuthenticatorDescription> getServiceInfo(AuthenticatorDescription type) {
+        @Override
+        public ServiceInfo<AuthenticatorDescription> getServiceInfo(
+                AuthenticatorDescription type, int userId) {
             for (ServiceInfo<AuthenticatorDescription> service : mServices) {
                 if (service.type.equals(type)) {
                     return service;
@@ -205,17 +208,25 @@ public class AccountManagerServiceTest extends AndroidTestCase {
             return null;
         }
 
-        public Collection<ServiceInfo<AuthenticatorDescription>> getAllServices() {
+        @Override
+        public Collection<ServiceInfo<AuthenticatorDescription>> getAllServices(int userId) {
             return mServices;
         }
 
-        public void dump(final FileDescriptor fd, final PrintWriter fout, final String[] args) {
+        @Override
+        public void dump(
+                final FileDescriptor fd, final PrintWriter fout, final String[] args, int userId) {
         }
 
+        @Override
         public void setListener(
                 final RegisteredServicesCacheListener<AuthenticatorDescription> listener,
                 final Handler handler) {
         }
+
+		@Override
+		public void invalidateCache(int userId) {
+		}
     }
 
     static public class MyMockContext extends MockContext {
@@ -239,11 +250,11 @@ public class AccountManagerServiceTest extends AndroidTestCase {
         }
 
         @Override
-        protected void installNotification(final int notificationId, final Notification n) {
+        protected void installNotification(final int notificationId, final Notification n, UserHandle user) {
         }
 
         @Override
-        protected void cancelNotification(final int id) {
+        protected void cancelNotification(final int id, UserHandle user) {
         }
     }
 }

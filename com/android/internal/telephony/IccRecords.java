@@ -26,6 +26,8 @@ import android.os.RegistrantList;
 import com.android.internal.telephony.gsm.UsimServiceTable;
 import com.android.internal.telephony.ims.IsimRecords;
 
+import java.util.concurrent.atomic.AtomicBoolean;
+
 /**
  * {@hide}
  */
@@ -33,13 +35,14 @@ public abstract class IccRecords extends Handler implements IccConstants {
 
     protected static final boolean DBG = true;
     // ***** Instance Variables
-    protected boolean mDestroyed = false; // set to true once this object needs to be disposed of
+    protected AtomicBoolean mDestroyed = new AtomicBoolean(false);
     protected Context mContext;
     protected CommandsInterface mCi;
     protected IccFileHandler mFh;
-    protected IccCard mParentCard;
+    protected UiccCardApplication mParentApp;
 
     protected RegistrantList recordsLoadedRegistrants = new RegistrantList();
+    protected RegistrantList mImsiReadyRegistrants = new RegistrantList();
     protected RegistrantList mRecordsEventsRegistrants = new RegistrantList();
     protected RegistrantList mNewSmsRegistrants = new RegistrantList();
     protected RegistrantList mNetworkSelectionModeAutomaticRegistrants = new RegistrantList();
@@ -61,6 +64,7 @@ public abstract class IccRecords extends Handler implements IccConstants {
     protected String newVoiceMailTag = null;
     protected boolean isVoiceMailFixed = false;
     protected int countVoiceMessages = 0;
+    protected String mImsi;
 
     protected int mncLength = UNINITIALIZED;
     protected int mailboxIndex = 0; // 0 is no mailbox dailing number associated
@@ -79,9 +83,9 @@ public abstract class IccRecords extends Handler implements IccConstants {
 
     // ***** Event Constants
     protected static final int EVENT_SET_MSISDN_DONE = 30;
-    public static final int EVENT_MWI = 0;
-    public static final int EVENT_CFI = 1;
-    public static final int EVENT_SPN = 2;
+    public static final int EVENT_MWI = 0; // Message Waiting indication
+    public static final int EVENT_CFI = 1; // Call Forwarding indication
+    public static final int EVENT_SPN = 2; // Service Provider Name
 
     public static final int EVENT_GET_ICC_RECORD_DONE = 100;
 
@@ -102,25 +106,24 @@ public abstract class IccRecords extends Handler implements IccConstants {
     }
 
     // ***** Constructor
-    public IccRecords(IccCard card, Context c, CommandsInterface ci) {
+    public IccRecords(UiccCardApplication app, Context c, CommandsInterface ci) {
         mContext = c;
         mCi = ci;
-        mFh = card.getIccFileHandler();
-        mParentCard = card;
+        mFh = app.getIccFileHandler();
+        mParentApp = app;
     }
 
     /**
      * Call when the IccRecords object is no longer going to be used.
      */
     public void dispose() {
-        mDestroyed = true;
-        mParentCard = null;
+        mDestroyed.set(true);
+        mParentApp = null;
         mFh = null;
         mCi = null;
         mContext = null;
     }
 
-    protected abstract void onRadioOffOrNotAvailable();
     public abstract void onReady();
 
     //***** Public Methods
@@ -128,12 +131,8 @@ public abstract class IccRecords extends Handler implements IccConstants {
         return adnCache;
     }
 
-    public IccCard getIccCard() {
-        return mParentCard;
-    }
-
     public void registerForRecordsLoaded(Handler h, int what, Object obj) {
-        if (mDestroyed) {
+        if (mDestroyed.get()) {
             return;
         }
 
@@ -146,6 +145,22 @@ public abstract class IccRecords extends Handler implements IccConstants {
     }
     public void unregisterForRecordsLoaded(Handler h) {
         recordsLoadedRegistrants.remove(h);
+    }
+
+    public void registerForImsiReady(Handler h, int what, Object obj) {
+        if (mDestroyed.get()) {
+            return;
+        }
+
+        Registrant r = new Registrant(h, what, obj);
+        mImsiReadyRegistrants.add(r);
+
+        if (mImsi != null) {
+            r.notifyRegistrant(new AsyncResult(null, null, null));
+        }
+    }
+    public void unregisterForImsiReady(Handler h) {
+        mImsiReadyRegistrants.remove(h);
     }
 
     public void registerForRecordsEvents(Handler h, int what, Object obj) {
@@ -182,6 +197,15 @@ public abstract class IccRecords extends Handler implements IccConstants {
      */
     public String getIMSI() {
         return null;
+    }
+
+    /**
+     * Imsi could be set by ServiceStateTrackers in case of cdma
+     * @param imsi
+     */
+    public void setImsi(String imsi) {
+        this.mImsi = imsi;
+        mImsiReadyRegistrants.notifyRegistrants();
     }
 
     public String getMsisdnNumber() {

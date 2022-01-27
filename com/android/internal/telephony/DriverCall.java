@@ -69,7 +69,7 @@ public class DriverCall implements Comparable {
             ret.isMpty = p.nextBoolean();
 
             // use ALLOWED as default presentation while parsing CLCC
-            ret.numberPresentation = Connection.PRESENTATION_ALLOWED;
+            ret.numberPresentation = PhoneConstants.PRESENTATION_ALLOWED;
 
             if (p.hasMore()) {
                 // Some lame implementations return strings
@@ -133,10 +133,10 @@ public class DriverCall implements Comparable {
     presentationFromCLIP(int cli) throws ATParseEx
     {
         switch(cli) {
-            case 0: return Connection.PRESENTATION_ALLOWED;
-            case 1: return Connection.PRESENTATION_RESTRICTED;
-            case 2: return Connection.PRESENTATION_UNKNOWN;
-            case 3: return Connection.PRESENTATION_PAYPHONE;
+            case 0: return PhoneConstants.PRESENTATION_ALLOWED;
+            case 1: return PhoneConstants.PRESENTATION_RESTRICTED;
+            case 2: return PhoneConstants.PRESENTATION_UNKNOWN;
+            case 3: return PhoneConstants.PRESENTATION_PAYPHONE;
             default:
                 throw new ATParseEx("illegal presentation " + cli);
         }

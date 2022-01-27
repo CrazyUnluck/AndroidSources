@@ -29,6 +29,7 @@ import android.content.pm.ActivityInfo;
 import android.content.pm.ApplicationInfo;
 import android.content.pm.IPackageManager;
 import android.content.pm.InstrumentationInfo;
+import android.content.pm.PackageInfo;
 import android.content.pm.PackageManager;
 import android.content.pm.PackageManager.NameNotFoundException;
 import android.content.pm.ProviderInfo;
@@ -42,6 +43,8 @@ import android.database.sqlite.SQLiteDebug;
 import android.database.sqlite.SQLiteDebug.DbStats;
 import android.graphics.Bitmap;
 import android.graphics.Canvas;
+import android.hardware.display.DisplayManager;
+import android.hardware.display.DisplayManagerGlobal;
 import android.net.IConnectivityManager;
 import android.net.Proxy;
 import android.net.ProxyProperties;
@@ -50,6 +53,8 @@ import android.os.AsyncTask;
 import android.os.Binder;
 import android.os.Bundle;
 import android.os.Debug;
+import android.os.DropBoxManager;
+import android.os.Environment;
 import android.os.Handler;
 import android.os.IBinder;
 import android.os.Looper;
@@ -61,8 +66,9 @@ import android.os.RemoteException;
 import android.os.ServiceManager;
 import android.os.StrictMode;
 import android.os.SystemClock;
+import android.os.SystemProperties;
 import android.os.Trace;
-import android.os.UserId;
+import android.os.UserHandle;
 import android.util.AndroidRuntimeException;
 import android.util.DisplayMetrics;
 import android.util.EventLog;
@@ -70,6 +76,7 @@ import android.util.Log;
 import android.util.LogPrinter;
 import android.util.PrintWriterPrinter;
 import android.util.Slog;
+import android.view.CompatibilityInfoHolder;
 import android.view.Display;
 import android.view.HardwareRenderer;
 import android.view.View;
@@ -78,12 +85,13 @@ import android.view.ViewManager;
 import android.view.ViewRootImpl;
 import android.view.Window;
 import android.view.WindowManager;
-import android.view.WindowManagerImpl;
+import android.view.WindowManagerGlobal;
 import android.renderscript.RenderScript;
 
 import com.android.internal.os.BinderInternal;
 import com.android.internal.os.RuntimeInit;
 import com.android.internal.os.SamplingProfilerIntegration;
+import com.android.internal.util.Objects;
 
 import org.apache.harmony.xnet.provider.jsse.OpenSSLSocketImpl;
 
@@ -94,6 +102,7 @@ import java.io.IOException;
 import java.io.PrintWriter;
 import java.lang.ref.WeakReference;
 import java.net.InetAddress;
+import java.security.Security;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.Iterator;
@@ -103,6 +112,8 @@ import java.util.Map;
 import java.util.TimeZone;
 import java.util.regex.Pattern;
 
+import libcore.io.DropBox;
+import libcore.io.EventLogger;
 import libcore.io.IoUtils;
 
 import dalvik.system.CloseGuard;
@@ -165,6 +176,8 @@ public final class ActivityThread {
             = new HashMap<IBinder, Service>();
     AppBindData mBoundApplication;
     Profiler mProfiler;
+    int mCurDefaultDisplayDpi;
+    boolean mDensityCompatMode;
     Configuration mConfiguration;
     Configuration mCompatConfiguration;
     Configuration mResConfiguration;
@@ -196,7 +209,7 @@ public final class ActivityThread {
             = new HashMap<String, WeakReference<LoadedApk>>();
     final HashMap<String, WeakReference<LoadedApk>> mResourcePackages
             = new HashMap<String, WeakReference<LoadedApk>>();
-    final HashMap<CompatibilityInfo, DisplayMetrics> mDisplayMetrics
+    final HashMap<CompatibilityInfo, DisplayMetrics> mDefaultDisplayMetrics
             = new HashMap<CompatibilityInfo, DisplayMetrics>();
     final HashMap<ResourcesKey, WeakReference<Resources> > mActiveResources
             = new HashMap<ResourcesKey, WeakReference<Resources> >();
@@ -204,9 +217,33 @@ public final class ActivityThread {
             = new ArrayList<ActivityClientRecord>();
     Configuration mPendingConfiguration = null;
 
+    private static final class ProviderKey {
+        final String authority;
+        final int userId;
+
+        public ProviderKey(String authority, int userId) {
+            this.authority = authority;
+            this.userId = userId;
+        }
+
+        @Override
+        public boolean equals(Object o) {
+            if (o instanceof ProviderKey) {
+                final ProviderKey other = (ProviderKey) o;
+                return Objects.equal(authority, other.authority) && userId == other.userId;
+            }
+            return false;
+        }
+
+        @Override
+        public int hashCode() {
+            return ((authority != null) ? authority.hashCode() : 0) ^ userId;
+        }
+    }
+
     // The lock of mProviderMap protects the following variables.
-    final HashMap<String, ProviderClientRecord> mProviderMap
-        = new HashMap<String, ProviderClientRecord>();
+    final HashMap<ProviderKey, ProviderClientRecord> mProviderMap
+        = new HashMap<ProviderKey, ProviderClientRecord>();
     final HashMap<IBinder, ProviderRefCount> mProviderRefCountMap
         = new HashMap<IBinder, ProviderRefCount>();
     final HashMap<IBinder, ProviderClientRecord> mLocalProviders
@@ -313,8 +350,9 @@ public final class ActivityThread {
 
     static final class ReceiverData extends BroadcastReceiver.PendingResult {
         public ReceiverData(Intent intent, int resultCode, String resultData, Bundle resultExtras,
-                boolean ordered, boolean sticky, IBinder token) {
-            super(resultCode, resultData, resultExtras, TYPE_COMPONENT, ordered, sticky, token);
+                boolean ordered, boolean sticky, IBinder token, int sendingUser) {
+            super(resultCode, resultData, resultExtras, TYPE_COMPONENT, ordered, sticky,
+                    token, sendingUser);
             this.intent = intent;
         }
 
@@ -606,9 +644,9 @@ public final class ActivityThread {
 
         public final void scheduleReceiver(Intent intent, ActivityInfo info,
                 CompatibilityInfo compatInfo, int resultCode, String data, Bundle extras,
-                boolean sync) {
+                boolean sync, int sendingUser) {
             ReceiverData r = new ReceiverData(intent, resultCode, data, extras,
-                    sync, false, mAppThread.asBinder());
+                    sync, false, mAppThread.asBinder(), sendingUser);
             r.info = info;
             r.compatInfo = compatInfo;
             queueOrSendMessage(H.RECEIVER, r);
@@ -767,8 +805,9 @@ public final class ActivityThread {
         // applies transaction ordering per object for such calls.
         public void scheduleRegisteredReceiver(IIntentReceiver receiver, Intent intent,
                 int resultCode, String dataStr, Bundle extras, boolean ordered,
-                boolean sticky) throws RemoteException {
-            receiver.performReceive(intent, resultCode, dataStr, extras, ordered, sticky);
+                boolean sticky, int sendingUser) throws RemoteException {
+            receiver.performReceive(intent, resultCode, dataStr, extras, ordered,
+                    sticky, sendingUser);
         }
 
         public void scheduleLowMemory() {
@@ -1052,7 +1091,7 @@ public final class ActivityThread {
         @Override
         public void dumpGfxInfo(FileDescriptor fd, String[] args) {
             dumpGraphicsInfo(fd);
-            WindowManagerImpl.getDefault().dumpGfxInfo(fd);
+            WindowManagerGlobal.getInstance().dumpGfxInfo(fd);
         }
 
         @Override
@@ -1235,7 +1274,7 @@ public final class ActivityThread {
                 case RESUME_ACTIVITY:
                     Trace.traceBegin(Trace.TRACE_TAG_ACTIVITY_MANAGER, "activityResume");
                     handleResumeActivity((IBinder)msg.obj, true,
-                            msg.arg1 != 0);
+                            msg.arg1 != 0, true);
                     Trace.traceEnd(Trace.TRACE_TAG_ACTIVITY_MANAGER);
                     break;
                 case SEND_RESULT:
@@ -1305,6 +1344,7 @@ public final class ActivityThread {
                     break;
                 case CONFIGURATION_CHANGED:
                     Trace.traceBegin(Trace.TRACE_TAG_ACTIVITY_MANAGER, "configChanged");
+                    mCurDefaultDisplayDpi = ((Configuration)msg.obj).densityDpi;
                     handleConfigurationChanged((Configuration)msg.obj, null);
                     Trace.traceEnd(Trace.TRACE_TAG_ACTIVITY_MANAGER);
                     break;
@@ -1467,13 +1507,28 @@ public final class ActivityThread {
 
     private static class ResourcesKey {
         final private String mResDir;
+        final private int mDisplayId;
+        final private Configuration mOverrideConfiguration;
         final private float mScale;
         final private int mHash;
 
-        ResourcesKey(String resDir, float scale) {
+        ResourcesKey(String resDir, int displayId, Configuration overrideConfiguration, float scale) {
             mResDir = resDir;
+            mDisplayId = displayId;
+            if (overrideConfiguration != null) {
+                if (Configuration.EMPTY.equals(overrideConfiguration)) {
+                    overrideConfiguration = null;
+                }
+            }
+            mOverrideConfiguration = overrideConfiguration;
             mScale = scale;
-            mHash = mResDir.hashCode() << 2 + (int) (mScale * 2);
+            int hash = 17;
+            hash = 31 * hash + mResDir.hashCode();
+            hash = 31 * hash + mDisplayId;
+            hash = 31 * hash + (mOverrideConfiguration != null
+                    ? mOverrideConfiguration.hashCode() : 0);
+            hash = 31 * hash + Float.floatToIntBits(mScale);
+            mHash = hash;
         }
 
         @Override
@@ -1487,7 +1542,24 @@ public final class ActivityThread {
                 return false;
             }
             ResourcesKey peer = (ResourcesKey) obj;
-            return mResDir.equals(peer.mResDir) && mScale == peer.mScale;
+            if (!mResDir.equals(peer.mResDir)) {
+                return false;
+            }
+            if (mDisplayId != peer.mDisplayId) {
+                return false;
+            }
+            if (mOverrideConfiguration != peer.mOverrideConfiguration) {
+                if (mOverrideConfiguration == null || peer.mOverrideConfiguration == null) {
+                    return false;
+                }
+                if (!mOverrideConfiguration.equals(peer.mOverrideConfiguration)) {
+                    return false;
+                }
+            }
+            if (mScale != peer.mScale) {
+                return false;
+            }
+            return true;
         }
     }
 
@@ -1518,17 +1590,41 @@ public final class ActivityThread {
         return sPackageManager;
     }
 
-    DisplayMetrics getDisplayMetricsLocked(CompatibilityInfo ci, boolean forceUpdate) {
-        DisplayMetrics dm = mDisplayMetrics.get(ci);
-        if (dm != null && !forceUpdate) {
+    private void flushDisplayMetricsLocked() {
+        mDefaultDisplayMetrics.clear();
+    }
+
+    DisplayMetrics getDisplayMetricsLocked(int displayId, CompatibilityInfo ci) {
+        boolean isDefaultDisplay = (displayId == Display.DEFAULT_DISPLAY);
+        DisplayMetrics dm = isDefaultDisplay ? mDefaultDisplayMetrics.get(ci) : null;
+        if (dm != null) {
             return dm;
         }
-        if (dm == null) {
-            dm = new DisplayMetrics();
-            mDisplayMetrics.put(ci, dm);
+        dm = new DisplayMetrics();
+
+        DisplayManagerGlobal displayManager = DisplayManagerGlobal.getInstance();
+        if (displayManager == null) {
+            // may be null early in system startup
+            dm.setToDefaults();
+            return dm;
         }
-        Display d = WindowManagerImpl.getDefault(ci).getDefaultDisplay();
-        d.getMetrics(dm);
+
+        if (isDefaultDisplay) {
+            mDefaultDisplayMetrics.put(ci, dm);
+        }
+
+        CompatibilityInfoHolder cih = new CompatibilityInfoHolder();
+        cih.set(ci);
+        Display d = displayManager.getCompatibleDisplay(displayId, cih);
+        if (d != null) {
+            d.getMetrics(dm);
+        } else {
+            // Display no longer exists
+            // FIXME: This would not be a problem if we kept the Display object around
+            // instead of using the raw display id everywhere.  The Display object caches
+            // its information even after the display has been removed.
+            dm.setToDefaults();
+        }
         //Slog.i("foo", "New metrics: w=" + metrics.widthPixels + " h="
         //        + metrics.heightPixels + " den=" + metrics.density
         //        + " xdpi=" + metrics.xdpi + " ydpi=" + metrics.ydpi);
@@ -1536,14 +1632,15 @@ public final class ActivityThread {
     }
 
     private Configuration mMainThreadConfig = new Configuration();
-    Configuration applyConfigCompatMainThread(Configuration config, CompatibilityInfo compat) {
+    Configuration applyConfigCompatMainThread(int displayDensity, Configuration config,
+            CompatibilityInfo compat) {
         if (config == null) {
             return null;
         }
         if (compat != null && !compat.supportsScreen()) {
             mMainThreadConfig.setTo(config);
             config = mMainThreadConfig;
-            compat.applyToConfiguration(config);
+            compat.applyToConfiguration(displayDensity, config);
         }
         return config;
     }
@@ -1555,8 +1652,12 @@ public final class ActivityThread {
      * @param compInfo the compability info. It will use the default compatibility info when it's
      * null.
      */
-    Resources getTopLevelResources(String resDir, CompatibilityInfo compInfo) {
-        ResourcesKey key = new ResourcesKey(resDir, compInfo.applicationScale);
+    Resources getTopLevelResources(String resDir,
+            int displayId, Configuration overrideConfiguration,
+            CompatibilityInfo compInfo) {
+        ResourcesKey key = new ResourcesKey(resDir,
+                displayId, overrideConfiguration,
+                compInfo.applicationScale);
         Resources r;
         synchronized (mPackages) {
             // Resources is app scale dependent.
@@ -1587,14 +1688,27 @@ public final class ActivityThread {
         }
 
         //Slog.i(TAG, "Resource: key=" + key + ", display metrics=" + metrics);
-        DisplayMetrics metrics = getDisplayMetricsLocked(null, false);
-        r = new Resources(assets, metrics, getConfiguration(), compInfo);
+        DisplayMetrics dm = getDisplayMetricsLocked(displayId, null);
+        Configuration config;
+        boolean isDefaultDisplay = (displayId == Display.DEFAULT_DISPLAY);
+        if (!isDefaultDisplay || key.mOverrideConfiguration != null) {
+            config = new Configuration(getConfiguration());
+            if (!isDefaultDisplay) {
+                applyNonDefaultDisplayMetricsToConfigurationLocked(dm, config);
+            }
+            if (key.mOverrideConfiguration != null) {
+                config.updateFrom(key.mOverrideConfiguration);
+            }
+        } else {
+            config = getConfiguration();
+        }
+        r = new Resources(assets, dm, config, compInfo);
         if (false) {
             Slog.i(TAG, "Created app resources " + resDir + " " + r + ": "
                     + r.getConfiguration() + " appScale="
                     + r.getCompatibilityInfo().applicationScale);
         }
-        
+
         synchronized (mPackages) {
             WeakReference<Resources> wr = mActiveResources.get(key);
             Resources existing = wr != null ? wr.get() : null;
@@ -1614,8 +1728,11 @@ public final class ActivityThread {
     /**
      * Creates the top level resources for the given package.
      */
-    Resources getTopLevelResources(String resDir, LoadedApk pkgInfo) {
-        return getTopLevelResources(resDir, pkgInfo.mCompatibilityInfo.get());
+    Resources getTopLevelResources(String resDir,
+            int displayId, Configuration overrideConfiguration,
+            LoadedApk pkgInfo) {
+        return getTopLevelResources(resDir, displayId, overrideConfiguration,
+                pkgInfo.mCompatibilityInfo.get());
     }
 
     final Handler getHandler() {
@@ -1624,6 +1741,11 @@ public final class ActivityThread {
 
     public final LoadedApk getPackageInfo(String packageName, CompatibilityInfo compatInfo,
             int flags) {
+        return getPackageInfo(packageName, compatInfo, flags, UserHandle.myUserId());
+    }
+
+    public final LoadedApk getPackageInfo(String packageName, CompatibilityInfo compatInfo,
+            int flags, int userId) {
         synchronized (mPackages) {
             WeakReference<LoadedApk> ref;
             if ((flags&Context.CONTEXT_INCLUDE_CODE) != 0) {
@@ -1652,7 +1774,7 @@ public final class ActivityThread {
         ApplicationInfo ai = null;
         try {
             ai = getPackageManager().getApplicationInfo(packageName,
-                    PackageManager.GET_SHARED_LIBRARY_FILES, UserId.myUserId());
+                    PackageManager.GET_SHARED_LIBRARY_FILES, userId);
         } catch (RemoteException e) {
             // Ignore
         }
@@ -1669,7 +1791,7 @@ public final class ActivityThread {
         boolean includeCode = (flags&Context.CONTEXT_INCLUDE_CODE) != 0;
         boolean securityViolation = includeCode && ai.uid != 0
                 && ai.uid != Process.SYSTEM_UID && (mBoundApplication != null
-                        ? !UserId.isSameApp(ai.uid, mBoundApplication.appInfo.uid)
+                        ? !UserHandle.isSameApp(ai.uid, mBoundApplication.appInfo.uid)
                         : true);
         if ((flags&(Context.CONTEXT_INCLUDE_CODE
                 |Context.CONTEXT_IGNORE_SECURITY))
@@ -1786,7 +1908,8 @@ public final class ActivityThread {
                 context.init(info, null, this);
                 context.getResources().updateConfiguration(
                         getConfiguration(), getDisplayMetricsLocked(
-                                CompatibilityInfo.DEFAULT_COMPATIBILITY_INFO, false));
+                                Display.DEFAULT_DISPLAY,
+                                CompatibilityInfo.DEFAULT_COMPATIBILITY_INFO));
                 mSystemContext = context;
                 //Slog.i(TAG, "Created system resources " + context.getResources()
                 //        + ": " + context.getResources().getConfiguration());
@@ -1998,9 +2121,7 @@ public final class ActivityThread {
                     + ", dir=" + r.packageInfo.getAppDir());
 
             if (activity != null) {
-                ContextImpl appContext = new ContextImpl();
-                appContext.init(r.packageInfo, r.token, this);
-                appContext.setOuterContext(activity);
+                Context appContext = createBaseContextForActivity(r, activity);
                 CharSequence title = r.activityInfo.loadLabel(appContext.getPackageManager());
                 Configuration config = new Configuration(mCompatConfiguration);
                 if (DEBUG_CONFIGURATION) Slog.v(TAG, "Launching activity "
@@ -2065,6 +2186,31 @@ public final class ActivityThread {
         return activity;
     }
 
+    private Context createBaseContextForActivity(ActivityClientRecord r,
+            final Activity activity) {
+        ContextImpl appContext = new ContextImpl();
+        appContext.init(r.packageInfo, r.token, this);
+        appContext.setOuterContext(activity);
+
+        // For debugging purposes, if the activity's package name contains the value of
+        // the "debug.use-second-display" system property as a substring, then show
+        // its content on a secondary display if there is one.
+        Context baseContext = appContext;
+        String pkgName = SystemProperties.get("debug.second-display.pkg");
+        if (pkgName != null && !pkgName.isEmpty()
+                && r.packageInfo.mPackageName.contains(pkgName)) {
+            DisplayManagerGlobal dm = DisplayManagerGlobal.getInstance();
+            for (int displayId : dm.getDisplayIds()) {
+                if (displayId != Display.DEFAULT_DISPLAY) {
+                    Display display = dm.getRealDisplay(displayId);
+                    baseContext = appContext.createDisplayContext(display);
+                    break;
+                }
+            }
+        }
+        return baseContext;
+    }
+
     private void handleLaunchActivity(ActivityClientRecord r, Intent customIntent) {
         // If we are getting ready to gc after going to the background, well
         // we are back active so skip it.
@@ -2086,7 +2232,8 @@ public final class ActivityThread {
         if (a != null) {
             r.createdConfig = new Configuration(mConfiguration);
             Bundle oldState = r.state;
-            handleResumeActivity(r.token, false, r.isForward);
+            handleResumeActivity(r.token, false, r.isForward,
+                    !r.activity.mFinished && !r.startsNotResumed);
 
             if (!r.activity.mFinished && r.startsNotResumed) {
                 // The activity manager actually wants this one to start out
@@ -2250,12 +2397,31 @@ public final class ActivityThread {
     private void handleCreateBackupAgent(CreateBackupAgentData data) {
         if (DEBUG_BACKUP) Slog.v(TAG, "handleCreateBackupAgent: " + data);
 
+        // Sanity check the requested target package's uid against ours
+        try {
+            PackageInfo requestedPackage = getPackageManager().getPackageInfo(
+                    data.appInfo.packageName, 0, UserHandle.myUserId());
+            if (requestedPackage.applicationInfo.uid != Process.myUid()) {
+                Slog.w(TAG, "Asked to instantiate non-matching package "
+                        + data.appInfo.packageName);
+                return;
+            }
+        } catch (RemoteException e) {
+            Slog.e(TAG, "Can't reach package manager", e);
+            return;
+        }
+
         // no longer idle; we have backup work to do
         unscheduleGcIdler();
 
         // instantiate the BackupAgent class named in the manifest
         LoadedApk packageInfo = getPackageInfoNoCheck(data.appInfo, data.compatInfo);
         String packageName = packageInfo.mPackageName;
+        if (packageName == null) {
+            Slog.d(TAG, "Asked to create backup agent for nonexistent package");
+            return;
+        }
+
         if (mBackupAgents.get(packageName) != null) {
             Slog.d(TAG, "BackupAgent " + "  for " + packageName
                     + " already exists");
@@ -2554,6 +2720,7 @@ public final class ActivityThread {
                 r.activity.mStartedActivity = false;
             }
             try {
+                r.activity.mFragments.noteStateNotSaved();
                 if (r.pendingIntents != null) {
                     deliverNewIntents(r, r.pendingIntents);
                     r.pendingIntents = null;
@@ -2565,7 +2732,7 @@ public final class ActivityThread {
                 r.activity.performResume();
 
                 EventLog.writeEvent(LOG_ON_RESUME_CALLED,
-                        r.activity.getComponentName().getClassName());
+                        UserHandle.myUserId(), r.activity.getComponentName().getClassName());
 
                 r.paused = false;
                 r.stopped = false;
@@ -2587,7 +2754,7 @@ public final class ActivityThread {
             r.mPendingRemoveWindowManager.removeViewImmediate(r.mPendingRemoveWindow);
             IBinder wtoken = r.mPendingRemoveWindow.getWindowToken();
             if (wtoken != null) {
-                WindowManagerImpl.getDefault().closeAll(wtoken,
+                WindowManagerGlobal.getInstance().closeAll(wtoken,
                         r.activity.getClass().getName(), "Activity");
             }
         }
@@ -2595,7 +2762,8 @@ public final class ActivityThread {
         r.mPendingRemoveWindowManager = null;
     }
 
-    final void handleResumeActivity(IBinder token, boolean clearHide, boolean isForward) {
+    final void handleResumeActivity(IBinder token, boolean clearHide, boolean isForward,
+            boolean reallyResume) {
         // If we are getting ready to gc after going to the background, well
         // we are back active so skip it.
         unscheduleGcIdler();
@@ -2692,6 +2860,14 @@ public final class ActivityThread {
             }
             r.onlyLocalRequest = false;
 
+            // Tell the activity manager we have resumed.
+            if (reallyResume) {
+                try {
+                    ActivityManagerNative.getDefault().activityResumed(token);
+                } catch (RemoteException ex) {
+                }
+            }
+
         } else {
             // If an exception was thrown when trying to resume, then
             // just end this activity.
@@ -2727,7 +2903,8 @@ public final class ActivityThread {
 
                 // On platforms where we don't want thumbnails, set dims to (0,0)
                 if ((w > 0) && (h > 0)) {
-                    thumbnail = Bitmap.createBitmap(w, h, THUMBNAIL_FORMAT);
+                    thumbnail = Bitmap.createBitmap(r.activity.getResources().getDisplayMetrics(),
+                            w, h, THUMBNAIL_FORMAT);
                     thumbnail.eraseColor(0);
                 }
             }
@@ -2775,7 +2952,7 @@ public final class ActivityThread {
             if (r.isPreHoneycomb()) {
                 QueuedWork.waitToFinish();
             }
-            
+
             // Tell the activity manager we have paused.
             try {
                 ActivityManagerNative.getDefault().activityPaused(token);
@@ -2823,7 +3000,8 @@ public final class ActivityThread {
             // Now we are idle.
             r.activity.mCalled = false;
             mInstrumentation.callActivityOnPause(r.activity);
-            EventLog.writeEvent(LOG_ON_PAUSE_CALLED, r.activity.getComponentName().getClassName());
+            EventLog.writeEvent(LOG_ON_PAUSE_CALLED, UserHandle.myUserId(),
+                    r.activity.getComponentName().getClassName());
             if (!r.activity.mCalled) {
                 throw new SuperNotCalledException(
                     "Activity " + r.intent.getComponent().toShortString() +
@@ -3121,7 +3299,7 @@ public final class ActivityThread {
             apk.mCompatibilityInfo.set(data.info);
         }
         handleConfigurationChanged(mConfiguration, data.info);
-        WindowManagerImpl.getDefault().reportNewConfiguration(mConfiguration);
+        WindowManagerGlobal.getInstance().reportNewConfiguration(mConfiguration);
     }
 
     private void deliverResults(ActivityClientRecord r, List<ResultInfo> results) {
@@ -3208,7 +3386,7 @@ public final class ActivityThread {
                 try {
                     r.activity.mCalled = false;
                     mInstrumentation.callActivityOnPause(r.activity);
-                    EventLog.writeEvent(LOG_ON_PAUSE_CALLED,
+                    EventLog.writeEvent(LOG_ON_PAUSE_CALLED, UserHandle.myUserId(),
                             r.activity.getComponentName().getClassName());
                     if (!r.activity.mCalled) {
                         throw new SuperNotCalledException(
@@ -3310,7 +3488,7 @@ public final class ActivityThread {
                     }
                 }
                 if (wtoken != null && r.mPendingRemoveWindow == null) {
-                    WindowManagerImpl.getDefault().closeAll(wtoken,
+                    WindowManagerGlobal.getInstance().closeAll(wtoken,
                             r.activity.getClass().getName(), "Activity");
                 }
                 r.activity.mDecor = null;
@@ -3322,7 +3500,7 @@ public final class ActivityThread {
                 // by the app will leak.  Well we try to warning them a lot
                 // about leaking windows, because that is a bug, so if they are
                 // using this recreate facility then they get to live with leaks.
-                WindowManagerImpl.getDefault().closeAll(token,
+                WindowManagerGlobal.getInstance().closeAll(token,
                         r.activity.getClass().getName(), "Activity");
             }
 
@@ -3461,6 +3639,8 @@ public final class ActivityThread {
         
         // If there was a pending configuration change, execute it first.
         if (changedConfig != null) {
+            mCurDefaultDisplayDpi = changedConfig.densityDpi;
+            updateDefaultDensity();
             handleConfigurationChanged(changedConfig, null);
         }
 
@@ -3534,39 +3714,45 @@ public final class ActivityThread {
         }
     }
 
-    ArrayList<ComponentCallbacks2> collectComponentCallbacksLocked(
+    ArrayList<ComponentCallbacks2> collectComponentCallbacks(
             boolean allActivities, Configuration newConfig) {
         ArrayList<ComponentCallbacks2> callbacks
                 = new ArrayList<ComponentCallbacks2>();
 
-        if (mActivities.size() > 0) {
-            for (ActivityClientRecord ar : mActivities.values()) {
-                Activity a = ar.activity;
-                if (a != null) {
-                    Configuration thisConfig = applyConfigCompatMainThread(newConfig,
-                            ar.packageInfo.mCompatibilityInfo.getIfNeeded());
-                    if (!ar.activity.mFinished && (allActivities || !ar.paused)) {
-                        // If the activity is currently resumed, its configuration
-                        // needs to change right now.
-                        callbacks.add(a);
-                    } else if (thisConfig != null) {
-                        // Otherwise, we will tell it about the change
-                        // the next time it is resumed or shown.  Note that
-                        // the activity manager may, before then, decide the
-                        // activity needs to be destroyed to handle its new
-                        // configuration.
-                        if (DEBUG_CONFIGURATION) {
-                            Slog.v(TAG, "Setting activity "
-                                    + ar.activityInfo.name + " newConfig=" + thisConfig);
+        synchronized (mPackages) {
+            final int N = mAllApplications.size();
+            for (int i=0; i<N; i++) {
+                callbacks.add(mAllApplications.get(i));
+            }
+            if (mActivities.size() > 0) {
+                for (ActivityClientRecord ar : mActivities.values()) {
+                    Activity a = ar.activity;
+                    if (a != null) {
+                        Configuration thisConfig = applyConfigCompatMainThread(mCurDefaultDisplayDpi,
+                                newConfig, ar.packageInfo.mCompatibilityInfo.getIfNeeded());
+                        if (!ar.activity.mFinished && (allActivities || !ar.paused)) {
+                            // If the activity is currently resumed, its configuration
+                            // needs to change right now.
+                            callbacks.add(a);
+                        } else if (thisConfig != null) {
+                            // Otherwise, we will tell it about the change
+                            // the next time it is resumed or shown.  Note that
+                            // the activity manager may, before then, decide the
+                            // activity needs to be destroyed to handle its new
+                            // configuration.
+                            if (DEBUG_CONFIGURATION) {
+                                Slog.v(TAG, "Setting activity "
+                                        + ar.activityInfo.name + " newConfig=" + thisConfig);
+                            }
+                            ar.newConfig = thisConfig;
                         }
-                        ar.newConfig = thisConfig;
                     }
                 }
             }
-        }
-        if (mServices.size() > 0) {
-            for (Service service : mServices.values()) {
-                callbacks.add(service);
+            if (mServices.size() > 0) {
+                for (Service service : mServices.values()) {
+                    callbacks.add(service);
+                }
             }
         }
         synchronized (mProviderMap) {
@@ -3575,10 +3761,6 @@ public final class ActivityThread {
                     callbacks.add(providerClientRecord.mLocalProvider);
                 }
             }
-        }
-        final int N = mAllApplications.size();
-        for (int i=0; i<N; i++) {
-            callbacks.add(mAllApplications.get(i));
         }
 
         return callbacks;
@@ -3646,7 +3828,9 @@ public final class ActivityThread {
             return false;
         }
         int changes = mResConfiguration.updateFrom(config);
-        DisplayMetrics dm = getDisplayMetricsLocked(null, true);
+        flushDisplayMetricsLocked();
+        DisplayMetrics defaultDisplayMetrics = getDisplayMetricsLocked(
+                Display.DEFAULT_DISPLAY, null);
 
         if (compat != null && (mResCompatibilityInfo == null ||
                 !mResCompatibilityInfo.equals(compat))) {
@@ -3661,22 +3845,41 @@ public final class ActivityThread {
             Locale.setDefault(config.locale);
         }
 
-        Resources.updateSystemConfiguration(config, dm, compat);
+        Resources.updateSystemConfiguration(config, defaultDisplayMetrics, compat);
 
         ApplicationPackageManager.configurationChanged();
         //Slog.i(TAG, "Configuration changed in " + currentPackageName());
-        
-        Iterator<WeakReference<Resources>> it =
-            mActiveResources.values().iterator();
-        //Iterator<Map.Entry<String, WeakReference<Resources>>> it =
-        //    mActiveResources.entrySet().iterator();
+
+        Configuration tmpConfig = null;
+
+        Iterator<Map.Entry<ResourcesKey, WeakReference<Resources>>> it =
+                mActiveResources.entrySet().iterator();
         while (it.hasNext()) {
-            WeakReference<Resources> v = it.next();
-            Resources r = v.get();
+            Map.Entry<ResourcesKey, WeakReference<Resources>> entry = it.next();
+            Resources r = entry.getValue().get();
             if (r != null) {
                 if (DEBUG_CONFIGURATION) Slog.v(TAG, "Changing resources "
                         + r + " config to: " + config);
-                r.updateConfiguration(config, dm, compat);
+                int displayId = entry.getKey().mDisplayId;
+                boolean isDefaultDisplay = (displayId == Display.DEFAULT_DISPLAY);
+                DisplayMetrics dm = defaultDisplayMetrics;
+                Configuration overrideConfig = entry.getKey().mOverrideConfiguration;
+                if (!isDefaultDisplay || overrideConfig != null) {
+                    if (tmpConfig == null) {
+                        tmpConfig = new Configuration();
+                    }
+                    tmpConfig.setTo(config);
+                    if (!isDefaultDisplay) {
+                        dm = getDisplayMetricsLocked(displayId, null);
+                        applyNonDefaultDisplayMetricsToConfigurationLocked(dm, tmpConfig);
+                    }
+                    if (overrideConfig != null) {
+                        tmpConfig.updateFrom(overrideConfig);
+                    }
+                    r.updateConfiguration(tmpConfig, dm, compat);
+                } else {
+                    r.updateConfiguration(config, dm, compat);
+                }
                 //Slog.i(TAG, "Updated app resources " + v.getKey()
                 //        + " " + r + ": " + r.getConfiguration());
             } else {
@@ -3688,14 +3891,36 @@ public final class ActivityThread {
         return changes != 0;
     }
 
-    final Configuration applyCompatConfiguration() {
+    final void applyNonDefaultDisplayMetricsToConfigurationLocked(
+            DisplayMetrics dm, Configuration config) {
+        config.touchscreen = Configuration.TOUCHSCREEN_NOTOUCH;
+        config.densityDpi = dm.densityDpi;
+        config.screenWidthDp = (int)(dm.widthPixels / dm.density);
+        config.screenHeightDp = (int)(dm.heightPixels / dm.density);
+        int sl = Configuration.resetScreenLayout(config.screenLayout);
+        if (dm.widthPixels > dm.heightPixels) {
+            config.orientation = Configuration.ORIENTATION_LANDSCAPE;
+            config.screenLayout = Configuration.reduceScreenLayout(sl,
+                    config.screenWidthDp, config.screenHeightDp);
+        } else {
+            config.orientation = Configuration.ORIENTATION_PORTRAIT;
+            config.screenLayout = Configuration.reduceScreenLayout(sl,
+                    config.screenHeightDp, config.screenWidthDp);
+        }
+        config.smallestScreenWidthDp = config.screenWidthDp; // assume screen does not rotate
+        config.compatScreenWidthDp = config.screenWidthDp;
+        config.compatScreenHeightDp = config.screenHeightDp;
+        config.compatSmallestScreenWidthDp = config.smallestScreenWidthDp;
+    }
+
+    final Configuration applyCompatConfiguration(int displayDensity) {
         Configuration config = mConfiguration;
         if (mCompatConfiguration == null) {
             mCompatConfiguration = new Configuration();
         }
         mCompatConfiguration.setTo(mConfiguration);
         if (mResCompatibilityInfo != null && !mResCompatibilityInfo.supportsScreen()) {
-            mResCompatibilityInfo.applyToConfiguration(mCompatConfiguration);
+            mResCompatibilityInfo.applyToConfiguration(displayDensity, mCompatConfiguration);
             config = mCompatConfiguration;
         }
         return config;
@@ -3703,13 +3928,14 @@ public final class ActivityThread {
 
     final void handleConfigurationChanged(Configuration config, CompatibilityInfo compat) {
 
-        ArrayList<ComponentCallbacks2> callbacks = null;
         int configDiff = 0;
 
         synchronized (mPackages) {
             if (mPendingConfiguration != null) {
                 if (!mPendingConfiguration.isOtherSeqNewer(config)) {
                     config = mPendingConfiguration;
+                    mCurDefaultDisplayDpi = config.densityDpi;
+                    updateDefaultDensity();
                 }
                 mPendingConfiguration = null;
             }
@@ -3731,12 +3957,13 @@ public final class ActivityThread {
             }
             configDiff = mConfiguration.diff(config);
             mConfiguration.updateFrom(config);
-            config = applyCompatConfiguration();
-            callbacks = collectComponentCallbacksLocked(false, config);
+            config = applyCompatConfiguration(mCurDefaultDisplayDpi);
         }
-        
+
+        ArrayList<ComponentCallbacks2> callbacks = collectComponentCallbacks(false, config);
+
         // Cleanup hardware accelerated stuff
-        WindowManagerImpl.getDefault().trimLocalMemory();
+        WindowManagerGlobal.getInstance().trimLocalMemory();
 
         freeTextLayoutCachesIfNeeded(configDiff);
 
@@ -3847,11 +4074,7 @@ public final class ActivityThread {
     }
         
     final void handleLowMemory() {
-        ArrayList<ComponentCallbacks2> callbacks;
-
-        synchronized (mPackages) {
-            callbacks = collectComponentCallbacksLocked(true, null);
-        }
+        ArrayList<ComponentCallbacks2> callbacks = collectComponentCallbacks(true, null);
 
         final int N = callbacks.size();
         for (int i=0; i<N; i++) {
@@ -3876,20 +4099,17 @@ public final class ActivityThread {
     final void handleTrimMemory(int level) {
         if (DEBUG_MEMORY_TRIM) Slog.v(TAG, "Trimming memory to level: " + level);
 
-        final WindowManagerImpl windowManager = WindowManagerImpl.getDefault();
+        final WindowManagerGlobal windowManager = WindowManagerGlobal.getInstance();
         windowManager.startTrimMemory(level);
 
-        ArrayList<ComponentCallbacks2> callbacks;
-        synchronized (mPackages) {
-            callbacks = collectComponentCallbacksLocked(true, null);
-        }
+        ArrayList<ComponentCallbacks2> callbacks = collectComponentCallbacks(true, null);
 
         final int N = callbacks.size();
         for (int i = 0; i < N; i++) {
             callbacks.get(i).onTrimMemory(level);
         }
 
-        windowManager.endTrimMemory();        
+        windowManager.endTrimMemory();
     }
 
     private void setupGraphicsSupport(LoadedApk info, File cacheDir) {
@@ -3910,8 +4130,20 @@ public final class ActivityThread {
         } catch (RemoteException e) {
             // Ignore
         }
-    }    
-    
+    }
+
+    private void updateDefaultDensity() {
+        if (mCurDefaultDisplayDpi != Configuration.DENSITY_DPI_UNDEFINED
+                && mCurDefaultDisplayDpi != DisplayMetrics.DENSITY_DEVICE
+                && !mDensityCompatMode) {
+            Slog.i(TAG, "Switching default density from "
+                    + DisplayMetrics.DENSITY_DEVICE + " to "
+                    + mCurDefaultDisplayDpi);
+            DisplayMetrics.DENSITY_DEVICE = mCurDefaultDisplayDpi;
+            Bitmap.setDefaultDensity(DisplayMetrics.DENSITY_DEFAULT);
+        }
+    }
+
     private void handleBindApplication(AppBindData data) {
         mBoundApplication = data;
         mConfiguration = new Configuration(data.config);
@@ -3924,14 +4156,14 @@ public final class ActivityThread {
 
         // send up app name; do this *before* waiting for debugger
         Process.setArgV0(data.processName);
-        android.ddm.DdmHandleAppName.setAppName(data.processName);
+        android.ddm.DdmHandleAppName.setAppName(data.processName,
+                                                UserHandle.myUserId());
 
         if (data.persistent) {
             // Persistent processes on low-memory devices do not get to
             // use hardware accelerated drawing, since this can add too much
             // overhead to the process.
-            Display display = WindowManagerImpl.getDefault().getDefaultDisplay();
-            if (!ActivityManager.isHighEndGfx(display)) {
+            if (!ActivityManager.isHighEndGfx()) {
                 HardwareRenderer.disable(false);
             }
         }
@@ -3967,19 +4199,35 @@ public final class ActivityThread {
          * in AppBindData can be safely assumed to be up to date
          */
         applyConfigurationToResourcesLocked(data.config, data.compatInfo);
-        applyCompatConfiguration();
+        mCurDefaultDisplayDpi = data.config.densityDpi;
+        applyCompatConfiguration(mCurDefaultDisplayDpi);
 
         data.info = getPackageInfoNoCheck(data.appInfo, data.compatInfo);
 
+        /**
+         * Switch this process to density compatibility mode if needed.
+         */
+        if ((data.appInfo.flags&ApplicationInfo.FLAG_SUPPORTS_SCREEN_DENSITIES)
+                == 0) {
+            mDensityCompatMode = true;
+            Bitmap.setDefaultDensity(DisplayMetrics.DENSITY_DEFAULT);
+        }
+        updateDefaultDensity();
+
         final ContextImpl appContext = new ContextImpl();
         appContext.init(data.info, null, this);
-        final File cacheDir = appContext.getCacheDir();
+        if (!Process.isIsolated()) {
+            final File cacheDir = appContext.getCacheDir();
 
-        // Provide a usable directory for temporary files
-        System.setProperty("java.io.tmpdir", cacheDir.getAbsolutePath());
-
-        setupGraphicsSupport(data.info, cacheDir);
-
+            if (cacheDir != null) {
+                // Provide a usable directory for temporary files
+                System.setProperty("java.io.tmpdir", cacheDir.getAbsolutePath());
+    
+                setupGraphicsSupport(data.info, cacheDir);
+            } else {
+                Log.e(TAG, "Unable to setupGraphicsSupport due to missing cache directory");
+            }
+        }
         /**
          * For system applications on userdebug/eng builds, log stack
          * traces of disk and network access to dropbox for analysis.
@@ -3999,14 +4247,6 @@ public final class ActivityThread {
          */
         if (data.appInfo.targetSdkVersion > 9) {
             StrictMode.enableDeathOnNetwork();
-        }
-
-        /**
-         * Switch this process to density compatibility mode if needed.
-         */
-        if ((data.appInfo.flags&ApplicationInfo.FLAG_SUPPORTS_SCREEN_DENSITIES)
-                == 0) {
-            Bitmap.setDefaultDensity(DisplayMetrics.DENSITY_DEFAULT);
         }
 
         if (data.debugMode != IApplicationThread.DEBUG_OFF) {
@@ -4202,8 +4442,9 @@ public final class ActivityThread {
         }
     }
 
-    public final IContentProvider acquireProvider(Context c, String name, boolean stable) {
-        IContentProvider provider = acquireExistingProvider(c, name, stable);
+    public final IContentProvider acquireProvider(
+            Context c, String auth, int userId, boolean stable) {
+        final IContentProvider provider = acquireExistingProvider(c, auth, userId, stable);
         if (provider != null) {
             return provider;
         }
@@ -4217,11 +4458,11 @@ public final class ActivityThread {
         IActivityManager.ContentProviderHolder holder = null;
         try {
             holder = ActivityManagerNative.getDefault().getContentProvider(
-                    getApplicationThread(), name, stable);
+                    getApplicationThread(), auth, userId, stable);
         } catch (RemoteException ex) {
         }
         if (holder == null) {
-            Slog.e(TAG, "Failed to find provider info for " + name);
+            Slog.e(TAG, "Failed to find provider info for " + auth);
             return null;
         }
 
@@ -4298,16 +4539,25 @@ public final class ActivityThread {
         }
     }
 
-    public final IContentProvider acquireExistingProvider(Context c, String name,
-            boolean stable) {
+    public final IContentProvider acquireExistingProvider(
+            Context c, String auth, int userId, boolean stable) {
         synchronized (mProviderMap) {
-            ProviderClientRecord pr = mProviderMap.get(name);
+            final ProviderKey key = new ProviderKey(auth, userId);
+            final ProviderClientRecord pr = mProviderMap.get(key);
             if (pr == null) {
                 return null;
             }
 
             IContentProvider provider = pr.mProvider;
             IBinder jBinder = provider.asBinder();
+            if (!jBinder.isBinderAlive()) {
+                // The hosting process of the provider has died; we can't
+                // use this one.
+                Log.i(TAG, "Acquiring provider " + auth + " for user " + userId
+                        + ": existing object's process dead");
+                handleUnstableProviderDiedLocked(jBinder, true);
+                return null;
+            }
 
             // Only increment the ref count if we have one.  If we don't then the
             // provider is not reference counted and never needs to be released.
@@ -4448,50 +4698,57 @@ public final class ActivityThread {
     }
 
     final void handleUnstableProviderDied(IBinder provider, boolean fromClient) {
-        synchronized(mProviderMap) {
-            ProviderRefCount prc = mProviderRefCountMap.get(provider);
-            if (prc != null) {
-                if (DEBUG_PROVIDER) Slog.v(TAG, "Cleaning up dead provider "
-                        + provider + " " + prc.holder.info.name);
-                mProviderRefCountMap.remove(provider);
-                if (prc.client != null && prc.client.mNames != null) {
-                    for (String name : prc.client.mNames) {
-                        ProviderClientRecord pr = mProviderMap.get(name);
-                        if (pr != null && pr.mProvider.asBinder() == provider) {
-                            Slog.i(TAG, "Removing dead content provider: " + name);
-                            mProviderMap.remove(name);
-                        }
+        synchronized (mProviderMap) {
+            handleUnstableProviderDiedLocked(provider, fromClient);
+        }
+    }
+
+    final void handleUnstableProviderDiedLocked(IBinder provider, boolean fromClient) {
+        ProviderRefCount prc = mProviderRefCountMap.get(provider);
+        if (prc != null) {
+            if (DEBUG_PROVIDER) Slog.v(TAG, "Cleaning up dead provider "
+                    + provider + " " + prc.holder.info.name);
+            mProviderRefCountMap.remove(provider);
+            if (prc.client != null && prc.client.mNames != null) {
+                for (String name : prc.client.mNames) {
+                    ProviderClientRecord pr = mProviderMap.get(name);
+                    if (pr != null && pr.mProvider.asBinder() == provider) {
+                        Slog.i(TAG, "Removing dead content provider: " + name);
+                        mProviderMap.remove(name);
                     }
                 }
-                if (fromClient) {
-                    // We found out about this due to execution in our client
-                    // code.  Tell the activity manager about it now, to ensure
-                    // that the next time we go to do anything with the provider
-                    // it knows it is dead (so we don't race with its death
-                    // notification).
-                    try {
-                        ActivityManagerNative.getDefault().unstableProviderDied(
-                                prc.holder.connection);
-                    } catch (RemoteException e) {
-                        //do nothing content provider object is dead any way
-                    }
+            }
+            if (fromClient) {
+                // We found out about this due to execution in our client
+                // code.  Tell the activity manager about it now, to ensure
+                // that the next time we go to do anything with the provider
+                // it knows it is dead (so we don't race with its death
+                // notification).
+                try {
+                    ActivityManagerNative.getDefault().unstableProviderDied(
+                            prc.holder.connection);
+                } catch (RemoteException e) {
+                    //do nothing content provider object is dead any way
                 }
             }
         }
     }
 
     private ProviderClientRecord installProviderAuthoritiesLocked(IContentProvider provider,
-            ContentProvider localProvider,IActivityManager.ContentProviderHolder holder) {
-        String names[] = PATTERN_SEMICOLON.split(holder.info.authority);
-        ProviderClientRecord pcr = new ProviderClientRecord(names, provider,
-                localProvider, holder);
-        for (int i = 0; i < names.length; i++) {
-            ProviderClientRecord existing = mProviderMap.get(names[i]);
+            ContentProvider localProvider, IActivityManager.ContentProviderHolder holder) {
+        final String auths[] = PATTERN_SEMICOLON.split(holder.info.authority);
+        final int userId = UserHandle.getUserId(holder.info.applicationInfo.uid);
+
+        final ProviderClientRecord pcr = new ProviderClientRecord(
+                auths, provider, localProvider, holder);
+        for (String auth : auths) {
+            final ProviderKey key = new ProviderKey(auth, userId);
+            final ProviderClientRecord existing = mProviderMap.get(key);
             if (existing != null) {
                 Slog.w(TAG, "Content provider " + pcr.mHolder.info.name
-                        + " already published as " + names[i]);
+                        + " already published as " + auth);
             } else {
-                mProviderMap.put(names[i], pcr);
+                mProviderMap.put(key, pcr);
             }
         }
         return pcr;
@@ -4643,7 +4900,8 @@ public final class ActivityThread {
                     ensureJitEnabled();
                 }
             });
-            android.ddm.DdmHandleAppName.setAppName("<pre-initialized>");
+            android.ddm.DdmHandleAppName.setAppName("<pre-initialized>",
+                                                    UserHandle.myUserId());
             RuntimeInit.setApplicationObject(mAppThread.asBinder());
             IActivityManager mgr = ActivityManagerNative.getDefault();
             try {
@@ -4654,7 +4912,8 @@ public final class ActivityThread {
         } else {
             // Don't set application object here -- if the system crashes,
             // we can't display an alert, we just want to die die die.
-            android.ddm.DdmHandleAppName.setAppName("system_process");
+            android.ddm.DdmHandleAppName.setAppName("system_process",
+                                                    UserHandle.myUserId());
             try {
                 mInstrumentation = new Instrumentation();
                 ContextImpl context = new ContextImpl();
@@ -4668,7 +4927,10 @@ public final class ActivityThread {
                         "Unable to instantiate Application():" + e.toString(), e);
             }
         }
-        
+
+        // add dropbox logging to libcore
+        DropBox.setReporter(new DropBoxReporter());
+
         ViewRootImpl.addConfigCallback(new ComponentCallbacks2() {
             public void onConfigurationChanged(Configuration newConfig) {
                 synchronized (mPackages) {
@@ -4717,6 +4979,32 @@ public final class ActivityThread {
         }
     }
 
+    private static class EventLoggingReporter implements EventLogger.Reporter {
+        @Override
+        public void report (int code, Object... list) {
+            EventLog.writeEvent(code, list);
+        }
+    }
+
+    private class DropBoxReporter implements DropBox.Reporter {
+
+        private DropBoxManager dropBox;
+
+        public DropBoxReporter() {
+            dropBox = (DropBoxManager) getSystemContext().getSystemService(Context.DROPBOX_SERVICE);
+        }
+
+        @Override
+        public void addData(String tag, byte[] data, int flags) {
+            dropBox.addData(tag, data, flags);
+        }
+
+        @Override
+        public void addText(String tag, String data) {
+            dropBox.addText(tag, data);
+        }
+    }
+
     public static void main(String[] args) {
         SamplingProfilerIntegration.start();
 
@@ -4725,15 +5013,21 @@ public final class ActivityThread {
         // StrictMode) on debug builds, but using DropBox, not logs.
         CloseGuard.setEnabled(false);
 
+        Environment.initForCurrentUser();
+
+        // Set the reporter for event logging in libcore
+        EventLogger.setReporter(new EventLoggingReporter());
+
         Process.setArgV0("<pre-initialized>");
 
         Looper.prepareMainLooper();
-        if (sMainThreadHandler == null) {
-            sMainThreadHandler = new Handler();
-        }
 
         ActivityThread thread = new ActivityThread();
         thread.attach(false);
+
+        if (sMainThreadHandler == null) {
+            sMainThreadHandler = thread.getHandler();
+        }
 
         AsyncTask.init();
 

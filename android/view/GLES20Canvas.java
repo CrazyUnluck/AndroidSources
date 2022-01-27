@@ -147,19 +147,35 @@ class GLES20Canvas extends HardwareCanvas {
     ///////////////////////////////////////////////////////////////////////////
     // Hardware layers
     ///////////////////////////////////////////////////////////////////////////
-    
+
+    @Override
+    void pushLayerUpdate(HardwareLayer layer) {
+        nPushLayerUpdate(mRenderer, ((GLES20RenderLayer) layer).mLayer);
+    }
+
+    @Override
+    void clearLayerUpdates() {
+        nClearLayerUpdates(mRenderer);
+    }
+
     static native int nCreateTextureLayer(boolean opaque, int[] layerInfo);
     static native int nCreateLayer(int width, int height, boolean isOpaque, int[] layerInfo);
-    static native void nResizeLayer(int layerId, int width, int height, int[] layerInfo);
+    static native boolean nResizeLayer(int layerId, int width, int height, int[] layerInfo);
+    static native void nSetOpaqueLayer(int layerId, boolean isOpaque);
+    static native void nSetLayerPaint(int layerId, int nativePaint);
+    static native void nSetLayerColorFilter(int layerId, int nativeColorFilter);
     static native void nUpdateTextureLayer(int layerId, int width, int height, boolean opaque,
             SurfaceTexture surface);
+    static native void nClearLayerTexture(int layerId);
     static native void nSetTextureLayerTransform(int layerId, int matrix);
     static native void nDestroyLayer(int layerId);
     static native void nDestroyLayerDeferred(int layerId);
-    static native void nFlushLayer(int layerId);
     static native void nUpdateRenderLayer(int layerId, int renderer, int displayList,
             int left, int top, int right, int bottom);
     static native boolean nCopyLayer(int layerId, int bitmap);
+
+    private static native void nClearLayerUpdates(int renderer);
+    private static native void nPushLayerUpdate(int renderer, int layer);
 
     ///////////////////////////////////////////////////////////////////////////
     // Canvas management
@@ -394,13 +410,8 @@ class GLES20Canvas extends HardwareCanvas {
     
     void drawHardwareLayer(HardwareLayer layer, float x, float y, Paint paint) {
         final GLES20Layer glLayer = (GLES20Layer) layer;
-        int modifier = paint != null ? setupColorFilter(paint) : MODIFIER_NONE;
-        try {
-            final int nativePaint = paint == null ? 0 : paint.mNativePaint;
-            nDrawLayer(mRenderer, glLayer.getLayer(), x, y, nativePaint);
-        } finally {
-            if (modifier != MODIFIER_NONE) nResetModifiers(mRenderer, modifier);
-        }
+        final int nativePaint = paint == null ? 0 : paint.mNativePaint;
+        nDrawLayer(mRenderer, glLayer.getLayer(), x, y, nativePaint);
     }
 
     private static native void nDrawLayer(int renderer, int layer, float x, float y, int paint);

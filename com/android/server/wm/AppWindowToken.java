@@ -50,6 +50,7 @@ class AppWindowToken extends WindowToken {
     int groupId = -1;
     boolean appFullscreen;
     int requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED;
+    boolean showWhenLocked;
 
     // The input dispatching timeout for this application token in nanoseconds.
     long inputDispatchingTimeoutNanos;
@@ -104,7 +105,7 @@ class AppWindowToken extends WindowToken {
         appToken = _token;
         mInputApplicationHandle = new InputApplicationHandle(this);
         mAnimator = service.mAnimator;
-        mAppAnimator = new AppWindowAnimator(_service, this);
+        mAppAnimator = new AppWindowAnimator(this);
     }
 
     void sendAppVisibilityToClients() {

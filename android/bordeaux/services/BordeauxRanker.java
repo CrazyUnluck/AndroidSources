@@ -132,7 +132,7 @@ public class BordeauxRanker {
         try {
             return mRanker.SetModelParameter(key, value);
         } catch (RemoteException e) {
-            Log.e(TAG,"Exception: scoring the sample with prior.");
+            Log.e(TAG,"Exception: Setting Parameter");
             throw new RuntimeException(RANKER_NOTAVAILABLE);
         }
     }

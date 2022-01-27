@@ -22,6 +22,7 @@ import android.content.res.AssetFileDescriptor;
 import android.media.MediaCodec;
 import android.media.MediaFormat;
 import android.net.Uri;
+
 import java.io.FileDescriptor;
 import java.io.IOException;
 import java.nio.ByteBuffer;
@@ -44,7 +45,7 @@ import java.util.Map;
  * }
  * ByteBuffer inputBuffer = ByteBuffer.allocate(...)
  * while (extractor.readSampleData(inputBuffer, ...) &gt;= 0) {
- *   int trackIndex = extractor.getTrackIndex();
+ *   int trackIndex = extractor.getSampleTrackIndex();
  *   long presentationTimeUs = extractor.getSampleTime();
  *   ...
  *   extractor.advance();
@@ -58,6 +59,12 @@ final public class MediaExtractor {
     public MediaExtractor() {
         native_setup();
     }
+
+    /**
+     * Sets the DataSource object to be used as the data source for this extractor
+     * {@hide}
+     */
+    public native final void setDataSource(DataSource source);
 
     /**
      * Sets the data source as a content Uri.
@@ -295,7 +302,7 @@ final public class MediaExtractor {
      * Returns true iff we are caching data and the cache has reached the
      * end of the data stream (for now, a future seek may of course restart
      * the fetching of data).
-     * This API only returns a meaningful result if {link #getCachedDuration}
+     * This API only returns a meaningful result if {@link #getCachedDuration}
      * indicates the presence of a cache, i.e. does NOT return -1.
      */
     public native boolean hasCacheReachedEndOfStream();

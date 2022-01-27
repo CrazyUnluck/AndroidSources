@@ -19,6 +19,7 @@ package com.android.internal.telephony.sip;
 import com.android.internal.telephony.Call;
 import com.android.internal.telephony.Connection;
 import com.android.internal.telephony.Phone;
+import com.android.internal.telephony.PhoneConstants;
 import com.android.internal.telephony.UUSInfo;
 
 import android.net.sip.SipAudioCall;
@@ -170,7 +171,7 @@ abstract class SipConnectionBase extends Connection {
     @Override
     public int getNumberPresentation() {
         // TODO: add PRESENTATION_URL
-        return Connection.PRESENTATION_ALLOWED;
+        return PhoneConstants.PRESENTATION_ALLOWED;
     }
 
     @Override

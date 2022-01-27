@@ -24,6 +24,7 @@ import android.os.AsyncResult;
 import android.os.Handler;
 import android.os.Message;
 import android.os.SystemProperties;
+import android.text.TextUtils;
 import android.util.Log;
 
 import com.android.internal.telephony.AdnRecord;
@@ -31,7 +32,7 @@ import com.android.internal.telephony.AdnRecordCache;
 import com.android.internal.telephony.AdnRecordLoader;
 import com.android.internal.telephony.BaseCommands;
 import com.android.internal.telephony.CommandsInterface;
-import com.android.internal.telephony.IccCard;
+import com.android.internal.telephony.IccCardConstants;
 import com.android.internal.telephony.IccFileHandler;
 import com.android.internal.telephony.IccRecords;
 import com.android.internal.telephony.IccUtils;
@@ -42,6 +43,7 @@ import com.android.internal.telephony.Phone;
 import com.android.internal.telephony.PhoneBase;
 import com.android.internal.telephony.SmsMessageBase;
 import com.android.internal.telephony.IccRefreshResponse;
+import com.android.internal.telephony.UiccCardApplication;
 
 import java.util.ArrayList;
 
@@ -65,7 +67,6 @@ public class SIMRecords extends IccRecords {
 
     // ***** Cached SIM State; cleared on channel close
 
-    private String imsi;
     private boolean callForwardingEnabled;
 
 
@@ -124,9 +125,9 @@ public class SIMRecords extends IccRecords {
 
     // ***** Event Constants
 
-    private static final int EVENT_RADIO_OFF_OR_NOT_AVAILABLE = 2;
-    protected static final int EVENT_GET_IMSI_DONE = 3;
-    protected static final int EVENT_GET_ICCID_DONE = 4;
+    private static final int EVENT_APP_READY = 1;
+    private static final int EVENT_GET_IMSI_DONE = 3;
+    private static final int EVENT_GET_ICCID_DONE = 4;
     private static final int EVENT_GET_MBI_DONE = 5;
     private static final int EVENT_GET_MBDN_DONE = 6;
     private static final int EVENT_GET_MWIS_DONE = 7;
@@ -175,8 +176,8 @@ public class SIMRecords extends IccRecords {
 
     // ***** Constructor
 
-    public SIMRecords(IccCard card, Context c, CommandsInterface ci) {
-        super(card, c, ci);
+    public SIMRecords(UiccCardApplication app, Context c, CommandsInterface ci) {
+        super(app, c, ci);
 
         adnCache = new AdnRecordCache(mFh);
 
@@ -188,23 +189,22 @@ public class SIMRecords extends IccRecords {
         // recordsToLoad is set to 0 because no requests are made yet
         recordsToLoad = 0;
 
-        mCi.registerForOffOrNotAvailable(
-                        this, EVENT_RADIO_OFF_OR_NOT_AVAILABLE, null);
         mCi.setOnSmsOnSim(this, EVENT_SMS_ON_SIM, null);
         mCi.registerForIccRefresh(this, EVENT_SIM_REFRESH, null);
 
         // Start off by setting empty state
-        onRadioOffOrNotAvailable();
-
+        resetRecords();
+        mParentApp.registerForReady(this, EVENT_APP_READY, null);
     }
 
     @Override
     public void dispose() {
         if (DBG) log("Disposing SIMRecords " + this);
         //Unregister for all events
-        mCi.unregisterForOffOrNotAvailable( this);
         mCi.unregisterForIccRefresh(this);
         mCi.unSetOnSmsOnSim(this);
+        mParentApp.unregisterForReady(this);
+        resetRecords();
         super.dispose();
     }
 
@@ -212,8 +212,8 @@ public class SIMRecords extends IccRecords {
         if(DBG) log("finalized");
     }
 
-    protected void onRadioOffOrNotAvailable() {
-        imsi = null;
+    protected void resetRecords() {
+        mImsi = null;
         msisdn = null;
         voiceMailNum = null;
         countVoiceMessages = 0;
@@ -247,7 +247,7 @@ public class SIMRecords extends IccRecords {
      */
     @Override
     public String getIMSI() {
-        return imsi;
+        return mImsi;
     }
 
     public String getMsisdnNumber() {
@@ -422,6 +422,12 @@ public class SIMRecords extends IccRecords {
         }
     }
 
+    // Validate data is !null and the MSP (Multiple Subscriber Profile)
+    // byte is between 1 and 4. See ETSI TS 131 102 v11.3.0 section 4.2.64.
+    private boolean validEfCfis(byte[] data) {
+        return ((data != null) && (data[0] >= 1) && (data[0] <= 4));
+    }
+
     /**
      * {@inheritDoc}
      */
@@ -443,7 +449,7 @@ public class SIMRecords extends IccRecords {
         mRecordsEventsRegistrants.notifyResult(EVENT_CFI);
 
         try {
-            if (mEfCfis != null) {
+            if (validEfCfis(mEfCfis)) {
                 // lsb is of byte 1 is voice status
                 if (enable) {
                     mEfCfis[1] |= 1;
@@ -451,12 +457,18 @@ public class SIMRecords extends IccRecords {
                     mEfCfis[1] &= 0xfe;
                 }
 
+                log("setVoiceCallForwardingFlag: enable=" + enable
+                        + " mEfCfis=" + IccUtils.bytesToHexString(mEfCfis));
+
                 // TODO: Should really update other fields in EF_CFIS, eg,
                 // dialing number.  We don't read or use it right now.
 
                 mFh.updateEFLinearFixed(
                         EF_CFIS, 1, mEfCfis, null,
                         obtainMessage (EVENT_UPDATE_DONE, EF_CFIS));
+            } else {
+                log("setVoiceCallForwardingFlag: ignoring enable=" + enable
+                        + " invalid mEfCfis=" + IccUtils.bytesToHexString(mEfCfis));
             }
 
             if (mEfCff != null) {
@@ -498,7 +510,7 @@ public class SIMRecords extends IccRecords {
      */
     @Override
     public String getOperatorNumeric() {
-        if (imsi == null) {
+        if (mImsi == null) {
             log("getOperatorNumeric: IMSI == null");
             return null;
         }
@@ -509,7 +521,7 @@ public class SIMRecords extends IccRecords {
 
         // Length = length of MCC + length of MNC
         // length of mcc = 3 (TS 23.003 Section 2.2)
-        return imsi.substring(0, 3 + mncLength);
+        return mImsi.substring(0, 3 + mncLength);
     }
 
     // ***** Overridden from Handler
@@ -521,16 +533,16 @@ public class SIMRecords extends IccRecords {
 
         boolean isRecordLoadResponse = false;
 
-        if (mDestroyed) {
+        if (mDestroyed.get()) {
             loge("Received message " + msg + "[" + msg.what + "] " +
                     " while being destroyed. Ignoring.");
             return;
         }
 
         try { switch (msg.what) {
-            case EVENT_RADIO_OFF_OR_NOT_AVAILABLE:
-                onRadioOffOrNotAvailable();
-            break;
+            case EVENT_APP_READY:
+                onReady();
+                break;
 
             /* IO events */
             case EVENT_GET_IMSI_DONE:
@@ -543,20 +555,20 @@ public class SIMRecords extends IccRecords {
                     break;
                 }
 
-                imsi = (String) ar.result;
+                mImsi = (String) ar.result;
 
                 // IMSI (MCC+MNC+MSIN) is at least 6 digits, but not more
                 // than 15 (and usually 15).
-                if (imsi != null && (imsi.length() < 6 || imsi.length() > 15)) {
-                    loge("invalid IMSI " + imsi);
-                    imsi = null;
+                if (mImsi != null && (mImsi.length() < 6 || mImsi.length() > 15)) {
+                    loge("invalid IMSI " + mImsi);
+                    mImsi = null;
                 }
 
                 log("IMSI: " + /* imsi.substring(0, 6) +*/ "xxxxxxx");
 
                 if (((mncLength == UNKNOWN) || (mncLength == 2)) &&
-                        ((imsi != null) && (imsi.length() >= 6))) {
-                    String mccmncCode = imsi.substring(0, 6);
+                        ((mImsi != null) && (mImsi.length() >= 6))) {
+                    String mccmncCode = mImsi.substring(0, 6);
                     for (String mccmnc : MCCMNC_CODES_HAVING_3DIGITS_MNC) {
                         if (mccmnc.equals(mccmncCode)) {
                             mncLength = 3;
@@ -569,7 +581,7 @@ public class SIMRecords extends IccRecords {
                     // the SIM has told us all it knows, but it didn't know the mnc length.
                     // guess using the mcc
                     try {
-                        int mcc = Integer.parseInt(imsi.substring(0,3));
+                        int mcc = Integer.parseInt(mImsi.substring(0,3));
                         mncLength = MccTable.smallestDigitsMccForMnc(mcc);
                     } catch (NumberFormatException e) {
                         mncLength = UNKNOWN;
@@ -579,10 +591,9 @@ public class SIMRecords extends IccRecords {
 
                 if (mncLength != UNKNOWN && mncLength != UNINITIALIZED) {
                     // finally have both the imsi and the mncLength and can parse the imsi properly
-                    MccTable.updateMccMncConfiguration(mContext, imsi.substring(0, 3 + mncLength));
+                    MccTable.updateMccMncConfiguration(mContext, mImsi.substring(0, 3 + mncLength));
                 }
-                mParentCard.broadcastIccStateChangedIntent(
-                        IccCard.INTENT_VALUE_ICC_IMSI, null);
+                mImsiReadyRegistrants.notifyRegistrants();
             break;
 
             case EVENT_GET_MBI_DONE:
@@ -814,8 +825,8 @@ public class SIMRecords extends IccRecords {
                     }
                 } finally {
                     if (((mncLength == UNINITIALIZED) || (mncLength == UNKNOWN) ||
-                            (mncLength == 2)) && ((imsi != null) && (imsi.length() >= 6))) {
-                        String mccmncCode = imsi.substring(0, 6);
+                            (mncLength == 2)) && ((mImsi != null) && (mImsi.length() >= 6))) {
+                        String mccmncCode = mImsi.substring(0, 6);
                         for (String mccmnc : MCCMNC_CODES_HAVING_3DIGITS_MNC) {
                             if (mccmnc.equals(mccmncCode)) {
                                 mncLength = 3;
@@ -825,9 +836,9 @@ public class SIMRecords extends IccRecords {
                     }
 
                     if (mncLength == UNKNOWN || mncLength == UNINITIALIZED) {
-                        if (imsi != null) {
+                        if (mImsi != null) {
                             try {
-                                int mcc = Integer.parseInt(imsi.substring(0,3));
+                                int mcc = Integer.parseInt(mImsi.substring(0,3));
 
                                 mncLength = MccTable.smallestDigitsMccForMnc(mcc);
                             } catch (NumberFormatException e) {
@@ -841,11 +852,11 @@ public class SIMRecords extends IccRecords {
                             log("MNC length not present in EF_AD");
                         }
                     }
-                    if (imsi != null && mncLength != UNKNOWN) {
+                    if (mImsi != null && mncLength != UNKNOWN) {
                         // finally have both imsi and the length of the mnc and can parse
                         // the imsi properly
                         MccTable.updateMccMncConfiguration(mContext,
-                                imsi.substring(0, 3 + mncLength));
+                                mImsi.substring(0, 3 + mncLength));
                     }
                 }
             break;
@@ -869,11 +880,14 @@ public class SIMRecords extends IccRecords {
                 log("EF_CFF_CPHS: " + IccUtils.bytesToHexString(data));
                 mEfCff = data;
 
-                if (mEfCfis == null) {
+                if (validEfCfis(mEfCfis)) {
                     callForwardingEnabled =
                         ((data[0] & CFF_LINE1_MASK) == CFF_UNCONDITIONAL_ACTIVE);
 
                     mRecordsEventsRegistrants.notifyResult(EVENT_CFI);
+                } else {
+                    log("EVENT_GET_CFF_DONE: invalid mEfCfis="
+                            + IccUtils.bytesToHexString(mEfCfis));
                 }
                 break;
 
@@ -1067,12 +1081,17 @@ public class SIMRecords extends IccRecords {
 
                 log("EF_CFIS: " + IccUtils.bytesToHexString(data));
 
-                mEfCfis = data;
+                if (validEfCfis(data)) {
+                    mEfCfis = data;
 
-                // Refer TS 51.011 Section 10.3.46 for the content description
-                callForwardingEnabled = ((data[1] & 0x01) != 0);
+                    // Refer TS 51.011 Section 10.3.46 for the content description
+                    callForwardingEnabled = ((data[1] & 0x01) != 0);
+                    log("EF_CFIS: callFordwardingEnabled=" + callForwardingEnabled);
 
-                mRecordsEventsRegistrants.notifyResult(EVENT_CFI);
+                    mRecordsEventsRegistrants.notifyResult(EVENT_CFI);
+                } else {
+                    log("EF_CFIS: invalid data=" + IccUtils.bytesToHexString(data));
+                }
                 break;
 
             case EVENT_GET_CSP_CPHS_DONE:
@@ -1140,7 +1159,7 @@ public class SIMRecords extends IccRecords {
         }
 
         if (refreshResponse.aid != null &&
-                !refreshResponse.aid.equals(mParentCard.getAid())) {
+                !refreshResponse.aid.equals(mParentApp.getAid())) {
             // This is for different app. Ignore.
             return;
         }
@@ -1263,9 +1282,9 @@ public class SIMRecords extends IccRecords {
                 operator + "'");
         SystemProperties.set(PROPERTY_ICC_OPERATOR_NUMERIC, operator);
 
-        if (imsi != null) {
+        if (mImsi != null) {
             SystemProperties.set(PROPERTY_ICC_OPERATOR_ISO_COUNTRY,
-                    MccTable.countryCodeForMcc(Integer.parseInt(imsi.substring(0,3))));
+                    MccTable.countryCodeForMcc(Integer.parseInt(mImsi.substring(0,3))));
         }
         else {
             loge("onAllRecordsLoaded: imsi is NULL!");
@@ -1276,8 +1295,6 @@ public class SIMRecords extends IccRecords {
 
         recordsLoadedRegistrants.notifyRegistrants(
             new AsyncResult(null, null, null));
-        mParentCard.broadcastIccStateChangedIntent(
-                IccCard.INTENT_VALUE_ICC_LOADED, null);
     }
 
     //***** Private methods
@@ -1299,12 +1316,6 @@ public class SIMRecords extends IccRecords {
 
     @Override
     public void onReady() {
-        /* broadcast intent SIM_READY here so that we can make sure
-          READY is sent before IMSI ready
-        */
-        mParentCard.broadcastIccStateChangedIntent(
-                IccCard.INTENT_VALUE_ICC_READY, null);
-
         fetchSimRecords();
     }
 
@@ -1313,7 +1324,7 @@ public class SIMRecords extends IccRecords {
 
         if (DBG) log("fetchSimRecords " + recordsToLoad);
 
-        mCi.getIMSIForApp(mParentCard.getAid(), obtainMessage(EVENT_GET_IMSI_DONE));
+        mCi.getIMSIForApp(mParentApp.getAid(), obtainMessage(EVENT_GET_IMSI_DONE));
         recordsToLoad++;
 
         mFh.loadEFTransparent(EF_ICCID, obtainMessage(EVENT_GET_ICCID_DONE));
@@ -1397,13 +1408,14 @@ public class SIMRecords extends IccRecords {
      * specified plmn (currently-registered PLMN).  See TS 22.101 Annex A
      * and TS 51.011 10.3.11 for details.
      *
-     * If the SPN is not found on the SIM, the rule is always PLMN_ONLY.
+     * If the SPN is not found on the SIM or is empty, the rule is
+     * always PLMN_ONLY.
      */
     @Override
     public int getDisplayRule(String plmn) {
         int rule;
-        if (spn == null || spnDisplayCondition == -1) {
-            // EF_SPN was not found on the SIM, or not yet loaded.  Just show ONS.
+        if (TextUtils.isEmpty(spn) || spnDisplayCondition == -1) {
+            // No EF_SPN content was found on the SIM, or not yet loaded.  Just show ONS.
             rule = SPN_RULE_SHOW_PLMN;
         } else if (isOnMatchingPlmn(plmn)) {
             rule = SPN_RULE_SHOW_SPN;
@@ -1524,8 +1536,7 @@ public class SIMRecords extends IccRecords {
             case READ_SPN_CPHS:
                 if (ar != null && ar.exception == null) {
                     data = (byte[]) ar.result;
-                    spn = IccUtils.adnStringFieldToString(
-                            data, 0, data.length - 1 );
+                    spn = IccUtils.adnStringFieldToString(data, 0, data.length);
 
                     if (DBG) log("Load EF_SPN_CPHS: " + spn);
                     SystemProperties.set(PROPERTY_ICC_OPERATOR_ALPHA, spn);
@@ -1542,8 +1553,7 @@ public class SIMRecords extends IccRecords {
             case READ_SPN_SHORT_CPHS:
                 if (ar != null && ar.exception == null) {
                     data = (byte[]) ar.result;
-                    spn = IccUtils.adnStringFieldToString(
-                            data, 0, data.length - 1);
+                    spn = IccUtils.adnStringFieldToString(data, 0, data.length);
 
                     if (DBG) log("Load EF_SPN_SHORT_CPHS: " + spn);
                     SystemProperties.set(PROPERTY_ICC_OPERATOR_ALPHA, spn);

@@ -31,13 +31,14 @@ import android.content.Intent;
 import android.content.pm.IPackageManager;
 import android.content.pm.ResolveInfo;
 import android.net.Uri;
-import android.os.Binder;
 import android.os.Bundle;
 import android.os.ParcelFileDescriptor;
 import android.os.RemoteException;
 import android.os.ServiceManager;
 import android.os.SystemProperties;
+import android.os.UserHandle;
 import android.util.AndroidException;
+import android.view.Display;
 import android.view.IWindowManager;
 
 import java.io.BufferedReader;
@@ -62,7 +63,7 @@ public class Am {
     private boolean mStopOption = false;
 
     private int mRepeat = 0;
-    private int mUserId = 0;
+    private int mUserId;
 
     private String mProfileFile;
 
@@ -126,24 +127,42 @@ public class Am {
             runSetDebugApp();
         } else if (op.equals("clear-debug-app")) {
             runClearDebugApp();
+        } else if (op.equals("bug-report")) {
+            runBugReport();
         } else if (op.equals("monitor")) {
             runMonitor();
         } else if (op.equals("screen-compat")) {
             runScreenCompat();
         } else if (op.equals("display-size")) {
             runDisplaySize();
+        } else if (op.equals("display-density")) {
+            runDisplayDensity();
         } else if (op.equals("to-uri")) {
             runToUri(false);
         } else if (op.equals("to-intent-uri")) {
             runToUri(true);
         } else if (op.equals("switch-user")) {
             runSwitchUser();
+        } else if (op.equals("stop-user")) {
+            runStopUser();
         } else {
             throw new IllegalArgumentException("Unknown command: " + op);
         }
     }
 
-    private Intent makeIntent() throws URISyntaxException {
+    int parseUserArg(String arg) {
+        int userId;
+        if ("all".equals(arg)) {
+            userId = UserHandle.USER_ALL;
+        } else if ("current".equals(arg) || "cur".equals(arg)) {
+            userId = UserHandle.USER_CURRENT;
+        } else {
+            userId = Integer.parseInt(arg);
+        }
+        return userId;
+    }
+
+    private Intent makeIntent(int defUser) throws URISyntaxException {
         Intent intent = new Intent();
         Intent baseIntent = intent;
         boolean hasIntentInfo = false;
@@ -153,7 +172,7 @@ public class Am {
         mStopOption = false;
         mRepeat = 0;
         mProfileFile = null;
-        mUserId = 0;
+        mUserId = defUser;
         Uri data = null;
         String type = null;
 
@@ -317,10 +336,9 @@ public class Am {
             } else if (opt.equals("--opengl-trace")) {
                 mStartFlags |= ActivityManager.START_FLAG_OPENGL_TRACES;
             } else if (opt.equals("--user")) {
-                mUserId = Integer.parseInt(nextArgRequired());
+                mUserId = parseUserArg(nextArgRequired());
             } else {
                 System.err.println("Error: Unknown option: " + opt);
-                showUsage();
                 return null;
             }
         }
@@ -388,21 +406,34 @@ public class Am {
     }
 
     private void runStartService() throws Exception {
-        Intent intent = makeIntent();
+        Intent intent = makeIntent(UserHandle.USER_CURRENT);
+        if (mUserId == UserHandle.USER_ALL) {
+            System.err.println("Error: Can't start activity with user 'all'");
+            return;
+        }
         System.out.println("Starting service: " + intent);
-        ComponentName cn = mAm.startService(null, intent, intent.getType());
+        ComponentName cn = mAm.startService(null, intent, intent.getType(), mUserId);
         if (cn == null) {
             System.err.println("Error: Not found; no service started.");
+        } else if (cn.getPackageName().equals("!")) {
+            System.err.println("Error: Requires permission " + cn.getClassName());
+        } else if (cn.getPackageName().equals("!!")) {
+            System.err.println("Error: " + cn.getClassName());
         }
     }
 
     private void runStart() throws Exception {
-        Intent intent = makeIntent();
+        Intent intent = makeIntent(UserHandle.USER_CURRENT);
+
+        if (mUserId == UserHandle.USER_ALL) {
+            System.err.println("Error: Can't start service with user 'all'");
+            return;
+        }
 
         String mimeType = intent.getType();
         if (mimeType == null && intent.getData() != null
                 && "content".equals(intent.getData().getScheme())) {
-            mimeType = mAm.getProviderMimeType(intent.getData());
+            mimeType = mAm.getProviderMimeType(intent.getData(), mUserId);
         }
 
         do {
@@ -431,7 +462,7 @@ public class Am {
                     packageName = activities.get(0).activityInfo.packageName;
                 }
                 System.out.println("Stopping: " + packageName);
-                mAm.forceStopPackage(packageName);
+                mAm.forceStopPackage(packageName, mUserId);
                 Thread.sleep(250);
             }
     
@@ -457,11 +488,11 @@ public class Am {
             int res;
             if (mWaitOption) {
                 result = mAm.startActivityAndWait(null, intent, mimeType,
-                            null, null, 0, mStartFlags, mProfileFile, fd, null);
+                            null, null, 0, mStartFlags, mProfileFile, fd, null, mUserId);
                 res = result.result;
             } else {
-                res = mAm.startActivity(null, intent, mimeType,
-                        null, null, 0, mStartFlags, mProfileFile, fd, null);
+                res = mAm.startActivityAsUser(null, intent, mimeType,
+                        null, null, 0, mStartFlags, mProfileFile, fd, null, mUserId);
             }
             PrintStream out = mWaitOption ? System.out : System.err;
             boolean launched = false;
@@ -545,11 +576,33 @@ public class Am {
     }
 
     private void runForceStop() throws Exception {
-        mAm.forceStopPackage(nextArgRequired());
+        int userId = UserHandle.USER_ALL;
+
+        String opt;
+        while ((opt=nextOption()) != null) {
+            if (opt.equals("--user")) {
+                userId = parseUserArg(nextArgRequired());
+            } else {
+                System.err.println("Error: Unknown option: " + opt);
+                return;
+            }
+        }
+        mAm.forceStopPackage(nextArgRequired(), userId);
     }
 
     private void runKill() throws Exception {
-        mAm.killBackgroundProcesses(nextArgRequired());
+        int userId = UserHandle.USER_ALL;
+
+        String opt;
+        while ((opt=nextOption()) != null) {
+            if (opt.equals("--user")) {
+                userId = parseUserArg(nextArgRequired());
+            } else {
+                System.err.println("Error: Unknown option: " + opt);
+                return;
+            }
+        }
+        mAm.killBackgroundProcesses(nextArgRequired(), userId);
     }
 
     private void runKillAll() throws Exception {
@@ -557,7 +610,7 @@ public class Am {
     }
 
     private void sendBroadcast() throws Exception {
-        Intent intent = makeIntent();
+        Intent intent = makeIntent(UserHandle.USER_ALL);
         IntentReceiver receiver = new IntentReceiver();
         System.out.println("Broadcasting: " + intent);
         mAm.broadcastIntent(null, intent, null, receiver, 0, null, null, null, true, false,
@@ -570,6 +623,7 @@ public class Am {
         boolean wait = false;
         boolean rawMode = false;
         boolean no_window_animation = false;
+        int userId = UserHandle.USER_CURRENT;
         Bundle args = new Bundle();
         String argKey = null, argValue = null;
         IWindowManager wm = IWindowManager.Stub.asInterface(ServiceManager.getService("window"));
@@ -589,11 +643,17 @@ public class Am {
             } else if (opt.equals("--no_window_animation")
                     || opt.equals("--no-window-animation")) {
                 no_window_animation = true;
+            } else if (opt.equals("--user")) {
+                userId = parseUserArg(nextArgRequired());
             } else {
                 System.err.println("Error: Unknown option: " + opt);
-                showUsage();
                 return;
             }
+        }
+
+        if (userId == UserHandle.USER_ALL) {
+            System.err.println("Error: Can't start instrumentation with user 'all'");
+            return;
         }
 
         String cnArg = nextArgRequired();
@@ -612,7 +672,7 @@ public class Am {
             wm.setAnimationScale(1, 0.0f);
         }
 
-        if (!mAm.startInstrumentation(cn, profileFile, 0, args, watcher)) {
+        if (!mAm.startInstrumentation(cn, profileFile, 0, args, watcher, userId)) {
             throw new AndroidException("INSTRUMENTATION_FAILED: " + cn.flattenToString());
         }
 
@@ -640,17 +700,37 @@ public class Am {
         String profileFile = null;
         boolean start = false;
         boolean wall = false;
+        int userId = UserHandle.USER_CURRENT;
         int profileType = 0;
-        
+
         String process = null;
-        
+
         String cmd = nextArgRequired();
 
         if ("start".equals(cmd)) {
             start = true;
-            wall = "--wall".equals(nextOption());
+            String opt;
+            while ((opt=nextOption()) != null) {
+                if (opt.equals("--user")) {
+                    userId = parseUserArg(nextArgRequired());
+                } else if (opt.equals("--wall")) {
+                    wall = true;
+                } else {
+                    System.err.println("Error: Unknown option: " + opt);
+                    return;
+                }
+            }
             process = nextArgRequired();
         } else if ("stop".equals(cmd)) {
+            String opt;
+            while ((opt=nextOption()) != null) {
+                if (opt.equals("--user")) {
+                    userId = parseUserArg(nextArgRequired());
+                } else {
+                    System.err.println("Error: Unknown option: " + opt);
+                    return;
+                }
+            }
             process = nextArg();
         } else {
             // Compatibility with old syntax: process is specified first.
@@ -662,7 +742,12 @@ public class Am {
                 throw new IllegalArgumentException("Profile command " + process + " not valid");
             }
         }
-        
+
+        if (userId == UserHandle.USER_ALL) {
+            System.err.println("Error: Can't profile with user 'all'");
+            return;
+        }
+
         ParcelFileDescriptor fd = null;
 
         if (start) {
@@ -690,7 +775,7 @@ public class Am {
             } else if (start) {
                 //removeWallOption();
             }
-            if (!mAm.profileControl(process, start, profileFile, fd, profileType)) {
+            if (!mAm.profileControl(process, userId, start, profileFile, fd, profileType)) {
                 wall = false;
                 throw new AndroidException("PROFILE FAILED on process " + process);
             }
@@ -702,14 +787,32 @@ public class Am {
     }
 
     private void runDumpHeap() throws Exception {
-        boolean managed = !"-n".equals(nextOption());
+        boolean managed = true;
+        int userId = UserHandle.USER_CURRENT;
+
+        String opt;
+        while ((opt=nextOption()) != null) {
+            if (opt.equals("--user")) {
+                userId = parseUserArg(nextArgRequired());
+                if (userId == UserHandle.USER_ALL) {
+                    System.err.println("Error: Can't dump heap with user 'all'");
+                    return;
+                }
+            } else if (opt.equals("-n")) {
+                managed = false;
+            } else {
+                System.err.println("Error: Unknown option: " + opt);
+                return;
+            }
+        }
         String process = nextArgRequired();
         String heapFile = nextArgRequired();
         ParcelFileDescriptor fd = null;
 
         try {
-            fd = ParcelFileDescriptor.open(
-                    new File(heapFile),
+            File file = new File(heapFile);
+            file.delete();
+            fd = ParcelFileDescriptor.open(file,
                     ParcelFileDescriptor.MODE_CREATE |
                     ParcelFileDescriptor.MODE_TRUNCATE |
                     ParcelFileDescriptor.MODE_READ_WRITE);
@@ -718,7 +821,7 @@ public class Am {
             return;
         }
 
-        if (!mAm.dumpHeap(process, managed, heapFile, fd)) {
+        if (!mAm.dumpHeap(process, userId, managed, heapFile, fd)) {
             throw new AndroidException("HEAP DUMP FAILED on process " + process);
         }
     }
@@ -735,7 +838,6 @@ public class Am {
                 persistent = true;
             } else {
                 System.err.println("Error: Unknown option: " + opt);
-                showUsage();
                 return;
             }
         }
@@ -748,12 +850,31 @@ public class Am {
         mAm.setDebugApp(null, false, true);
     }
 
+    private void runBugReport() throws Exception {
+        mAm.requestBugReport();
+        System.out.println("Your lovely bug report is being created; please be patient.");
+    }
+
     private void runSwitchUser() throws Exception {
-        if (android.os.Process.myUid() != 0) {
-            throw new RuntimeException("switchuser can only be run as root");
-        }
         String user = nextArgRequired();
         mAm.switchUser(Integer.parseInt(user));
+    }
+
+    private void runStopUser() throws Exception {
+        String user = nextArgRequired();
+        int res = mAm.stopUser(Integer.parseInt(user), null);
+        if (res != ActivityManager.USER_OP_SUCCESS) {
+            String txt = "";
+            switch (res) {
+                case ActivityManager.USER_OP_IS_CURRENT:
+                    txt = " (Can't stop current user)";
+                    break;
+                case ActivityManager.USER_OP_UNKNOWN_USER:
+                    txt = " (Unknown user " + user + ")";
+                    break;
+            }
+            System.err.println("Switch failed: " + res + txt);
+        }
     }
 
     class MyActivityController extends IActivityController.Stub {
@@ -1044,7 +1165,6 @@ public class Am {
                 gdbPort = nextArgRequired();
             } else {
                 System.err.println("Error: Unknown option: " + opt);
-                showUsage();
                 return;
             }
         }
@@ -1062,7 +1182,6 @@ public class Am {
             enabled = false;
         } else {
             System.err.println("Error: enabled mode must be 'on' or 'off' at " + mode);
-            showUsage();
             return;
         }
 
@@ -1080,32 +1199,24 @@ public class Am {
 
     private void runDisplaySize() throws Exception {
         String size = nextArgRequired();
-        int m, n;
+        int w, h;
         if ("reset".equals(size)) {
-            m = n = -1;
+            w = h = -1;
         } else {
             int div = size.indexOf('x');
             if (div <= 0 || div >= (size.length()-1)) {
                 System.err.println("Error: bad size " + size);
-                showUsage();
                 return;
             }
-            String mstr = size.substring(0, div);
-            String nstr = size.substring(div+1);
+            String wstr = size.substring(0, div);
+            String hstr = size.substring(div+1);
             try {
-                m = Integer.parseInt(mstr);
-                n = Integer.parseInt(nstr);
+                w = Integer.parseInt(wstr);
+                h = Integer.parseInt(hstr);
             } catch (NumberFormatException e) {
                 System.err.println("Error: bad number " + e);
-                showUsage();
                 return;
             }
-        }
-
-        if (m < n) {
-            int tmp = m;
-            m = n;
-            n = tmp;
         }
 
         IWindowManager wm = IWindowManager.Stub.asInterface(ServiceManager.checkService(
@@ -1116,32 +1227,71 @@ public class Am {
         }
 
         try {
-            if (m >= 0 && n >= 0) {
-                wm.setForcedDisplaySize(m, n);
+            if (w >= 0 && h >= 0) {
+                // TODO(multidisplay): For now Configuration only applies to main screen.
+                wm.setForcedDisplaySize(Display.DEFAULT_DISPLAY, w, h);
             } else {
-                wm.clearForcedDisplaySize();
+                wm.clearForcedDisplaySize(Display.DEFAULT_DISPLAY);
+            }
+        } catch (RemoteException e) {
+        }
+    }
+
+    private void runDisplayDensity() throws Exception {
+        String densityStr = nextArgRequired();
+        int density;
+        if ("reset".equals(densityStr)) {
+            density = -1;
+        } else {
+            try {
+                density = Integer.parseInt(densityStr);
+            } catch (NumberFormatException e) {
+                System.err.println("Error: bad number " + e);
+                return;
+            }
+            if (density < 72) {
+                System.err.println("Error: density must be >= 72");
+                return;
+            }
+        }
+
+        IWindowManager wm = IWindowManager.Stub.asInterface(ServiceManager.checkService(
+                Context.WINDOW_SERVICE));
+        if (wm == null) {
+            System.err.println(NO_SYSTEM_ERROR_CODE);
+            throw new AndroidException("Can't connect to window manager; is the system running?");
+        }
+
+        try {
+            if (density > 0) {
+                // TODO(multidisplay): For now Configuration only applies to main screen.
+                wm.setForcedDisplayDensity(Display.DEFAULT_DISPLAY, density);
+            } else {
+                wm.clearForcedDisplayDensity(Display.DEFAULT_DISPLAY);
             }
         } catch (RemoteException e) {
         }
     }
 
     private void runToUri(boolean intentScheme) throws Exception {
-        Intent intent = makeIntent();
+        Intent intent = makeIntent(UserHandle.USER_CURRENT);
         System.out.println(intent.toUri(intentScheme ? Intent.URI_INTENT_SCHEME : 0));
     }
 
     private class IntentReceiver extends IIntentReceiver.Stub {
         private boolean mFinished = false;
 
-        public synchronized void performReceive(
-                Intent intent, int rc, String data, Bundle ext, boolean ord,
-                boolean sticky) {
-            String line = "Broadcast completed: result=" + rc;
+        @Override
+        public void performReceive(Intent intent, int resultCode, String data, Bundle extras,
+                boolean ordered, boolean sticky, int sendingUser) throws RemoteException {
+            String line = "Broadcast completed: result=" + resultCode;
             if (data != null) line = line + ", data=\"" + data + "\"";
-            if (ext != null) line = line + ", extras: " + ext;
+            if (extras != null) line = line + ", extras: " + extras;
             System.out.println(line);
-            mFinished = true;
-            notifyAll();
+            synchronized (this) {
+              mFinished = true;
+              notifyAll();
+            }
         }
 
         public synchronized void waitForFinish() {
@@ -1283,24 +1433,29 @@ public class Am {
         System.err.println(
                 "usage: am [subcommand] [options]\n" +
                 "usage: am start [-D] [-W] [-P <FILE>] [--start-profiler <FILE>]\n" +
-                "               [--R COUNT] [-S] [--opengl-trace] <INTENT>\n" +
-                "       am startservice <INTENT>\n" +
-                "       am force-stop <PACKAGE>\n" +
-                "       am kill <PACKAGE>\n" +
+                "               [--R COUNT] [-S] [--opengl-trace]\n" +
+                "               [--user <USER_ID> | current] <INTENT>\n" +
+                "       am startservice [--user <USER_ID> | current] <INTENT>\n" +
+                "       am force-stop [--user <USER_ID> | all | current] <PACKAGE>\n" +
+                "       am kill [--user <USER_ID> | all | current] <PACKAGE>\n" +
                 "       am kill-all\n" +
-                "       am broadcast <INTENT>\n" +
+                "       am broadcast [--user <USER_ID> | all | current] <INTENT>\n" +
                 "       am instrument [-r] [-e <NAME> <VALUE>] [-p <FILE>] [-w]\n" +
+                "               [--user <USER_ID> | current]\n" +
                 "               [--no-window-animation] <COMPONENT>\n" +
-                "       am profile start <PROCESS> <FILE>\n" +
-                "       am profile stop [<PROCESS>]\n" +
-                "       am dumpheap [flags] <PROCESS> <FILE>\n" +
+                "       am profile start [--user <USER_ID> current] <PROCESS> <FILE>\n" +
+                "       am profile stop [--user <USER_ID> current] [<PROCESS>]\n" +
+                "       am dumpheap [--user <USER_ID> current] [-n] <PROCESS> <FILE>\n" +
                 "       am set-debug-app [-w] [--persistent] <PACKAGE>\n" +
                 "       am clear-debug-app\n" +
                 "       am monitor [--gdb <port>]\n" +
                 "       am screen-compat [on|off] <PACKAGE>\n" +
-                "       am display-size [reset|MxN]\n" +
+                "       am display-size [reset|WxH]\n" +
+                "       am display-density [reset|DENSITY]\n" +
                 "       am to-uri [INTENT]\n" +
                 "       am to-intent-uri [INTENT]\n" +
+                "       am switch-user <USER_ID>\n" +
+                "       am stop-user <USER_ID>\n" +
                 "\n" +
                 "am start: start an Activity.  Options are:\n" +
                 "    -D: enable debugging\n" +
@@ -1311,18 +1466,28 @@ public class Am {
                 "        the top activity will be finished.\n" +
                 "    -S: force stop the target app before starting the activity\n" +
                 "    --opengl-trace: enable tracing of OpenGL functions\n" +
+                "    --user <USER_ID> | current: Specify which user to run as; if not\n" +
+                "        specified then run as the current user.\n" +
                 "\n" +
-                "am startservice: start a Service.\n" +
+                "am startservice: start a Service.  Options are:\n" +
+                "    --user <USER_ID> | current: Specify which user to run as; if not\n" +
+                "        specified then run as the current user.\n" +
                 "\n" +
                 "am force-stop: force stop everything associated with <PACKAGE>.\n" +
+                "    --user <USER_ID> | all | current: Specify user to force stop;\n" +
+                "        all users if not specified.\n" +
                 "\n" +
                 "am kill: Kill all processes associated with <PACKAGE>.  Only kills.\n" +
                 "  processes that are safe to kill -- that is, will not impact the user\n" +
                 "  experience.\n" +
+                "    --user <USER_ID> | all | current: Specify user whose processes to kill;\n" +
+                "        all users if not specified.\n" +
                 "\n" +
                 "am kill-all: Kill all background processes.\n" +
                 "\n" +
-                "am broadcast: send a broadcast Intent.\n" +
+                "am broadcast: send a broadcast Intent.  Options are:\n" +
+                "    --user <USER_ID> | all | current: Specify which user to send to; if not\n" +
+                "        specified then send to all users.\n" +
                 "\n" +
                 "am instrument: start an Instrumentation.  Typically this target <COMPONENT>\n" +
                 "  is the form <TEST_PACKAGE>/<RUNNER_CLASS>.  Options are:\n" +
@@ -1333,18 +1498,29 @@ public class Am {
                 "    -p <FILE>: write profiling data to <FILE>\n" +
                 "    -w: wait for instrumentation to finish before returning.  Required for\n" +
                 "        test runners.\n" +
+                "    --user <USER_ID> | current: Specify user instrumentation runs in;\n" +
+                "        current user if not specified.\n" +
                 "    --no-window-animation: turn off window animations will running.\n" +
                 "\n" +
-                "am profile: start and stop profiler on a process.\n" +
+                "am profile: start and stop profiler on a process.  The given <PROCESS> argument\n" +
+                "  may be either a process name or pid.  Options are:\n" +
+                "    --user <USER_ID> | current: When supplying a process name,\n" +
+                "        specify user of process to profile; uses current user if not specified.\n" +
                 "\n" +
-                "am dumpheap: dump the heap of a process.  Options are:\n" +
+                "am dumpheap: dump the heap of a process.  The given <PROCESS> argument may\n" +
+                "  be either a process name or pid.  Options are:\n" +
                 "    -n: dump native heap instead of managed heap\n" +
+                "    --user <USER_ID> | current: When supplying a process name,\n" +
+                "        specify user of process to dump; uses current user if not specified.\n" +
                 "\n" +
                 "am set-debug-app: set application <PACKAGE> to debug.  Options are:\n" +
                 "    -w: wait for debugger when application starts\n" +
                 "    --persistent: retain this value\n" +
                 "\n" +
                 "am clear-debug-app: clear the previously set-debug-app.\n" +
+                "\n" +
+                "am bug-report: request bug report generation; will launch UI\n" +
+                "    when done to select where it should be delivered." +
                 "\n" +
                 "am monitor: start monitoring for crashes or ANRs.\n" +
                 "    --gdb: start gdbserv on the given port at crash/ANR\n" +
@@ -1353,9 +1529,17 @@ public class Am {
                 "\n" +
                 "am display-size: override display size.\n" +
                 "\n" +
+                "am display-density: override display density.\n" +
+                "\n" +
                 "am to-uri: print the given Intent specification as a URI.\n" +
                 "\n" +
                 "am to-intent-uri: print the given Intent specification as an intent: URI.\n" +
+                "\n" +
+                "am switch-user: switch to put USER_ID in the foreground, starting\n" +
+                "  execution of that user if it is currently stopped.\n" +
+                "\n" +
+                "am stop-user: stop execution of USER_ID, not allowing it to run any\n" +
+                "  code until a later explicit switch to it.\n" +
                 "\n" +
                 "<INTENT> specifications include these flags and arguments:\n" +
                 "    [-a <ACTION>] [-d <DATA_URI>] [-t <MIME_TYPE>]\n" +

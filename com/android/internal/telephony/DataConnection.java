@@ -39,6 +39,7 @@ import java.util.ArrayList;
 import java.util.Calendar;
 import java.util.HashMap;
 import java.util.List;
+import java.util.concurrent.atomic.AtomicInteger;
 
 /**
  * {@hide}
@@ -65,8 +66,7 @@ public abstract class DataConnection extends StateMachine {
     protected static final boolean DBG = true;
     protected static final boolean VDBG = false;
 
-    protected static Object mCountLock = new Object();
-    protected static int mCount;
+    protected static AtomicInteger mCount = new AtomicInteger(0);
     protected AsyncChannel mAc;
 
     protected List<ApnContext> mApnList = null;
@@ -260,12 +260,11 @@ public abstract class DataConnection extends StateMachine {
 
     protected abstract void log(String s);
 
-
    //***** Constructor
     protected DataConnection(PhoneBase phone, String name, int id, RetryManager rm,
             DataConnectionTracker dct) {
         super(name);
-        setProcessedMessagesSize(100);
+        setLogRecSize(100);
         if (DBG) log("DataConnection constructor E");
         this.phone = phone;
         this.mDataConnectionTracker = dct;
@@ -284,6 +283,27 @@ public abstract class DataConnection extends StateMachine {
 
         mApnList = new ArrayList<ApnContext>();
         if (DBG) log("DataConnection constructor X");
+    }
+
+    /**
+     * Shut down this instance and its state machine.
+     */
+    private void shutDown() {
+        if (DBG) log("shutDown");
+
+        if (mAc != null) {
+            mAc.disconnected();
+            mAc = null;
+        }
+        mApnList = null;
+        mReconnectIntent = null;
+        mDataConnectionTracker = null;
+        mApn = null;
+        phone = null;
+        mLinkProperties = null;
+        mCapabilities = null;
+        lastFailCause = null;
+        userData = null;
     }
 
     /**
@@ -372,7 +392,7 @@ public abstract class DataConnection extends StateMachine {
                 if (a == alreadySent) continue;
                 if (reason != null) a.setReason(reason);
                 Message msg = mDataConnectionTracker.obtainMessage(
-                        DataConnectionTracker.EVENT_DISCONNECT_DONE, a);
+                        DctConstants.EVENT_DISCONNECT_DONE, a);
                 AsyncResult.forMessage(msg);
                 msg.sendToTarget();
             }
@@ -423,6 +443,14 @@ public abstract class DataConnection extends StateMachine {
      */
     public int getRetryCount() {
         return mRetryMgr.getRetryCount();
+    }
+
+    /**
+     * set retry manager retryCount
+     */
+    public void setRetryCount(int retryCount) {
+        if (DBG) log("setRetryCount: " + retryCount);
+        mRetryMgr.setRetryCount(retryCount);
     }
 
     /**
@@ -619,9 +647,11 @@ public abstract class DataConnection extends StateMachine {
         @Override
         public void exit() {
             phone.mCM.unregisterForRilConnected(getHandler());
+            shutDown();
         }
         @Override
         public boolean processMessage(Message msg) {
+            boolean retVal = HANDLED;
             AsyncResult ar;
 
             switch (msg.what) {
@@ -639,14 +669,9 @@ public abstract class DataConnection extends StateMachine {
                     }
                     break;
                 }
-                case AsyncChannel.CMD_CHANNEL_DISCONNECT: {
-                    if (VDBG) log("CMD_CHANNEL_DISCONNECT");
-                    mAc.disconnect();
-                    break;
-                }
                 case AsyncChannel.CMD_CHANNEL_DISCONNECTED: {
                     if (VDBG) log("CMD_CHANNEL_DISCONNECTED");
-                    mAc = null;
+                    quit();
                     break;
                 }
                 case DataConnectionAc.REQ_IS_INACTIVE: {
@@ -784,7 +809,7 @@ public abstract class DataConnection extends StateMachine {
                     break;
             }
 
-            return HANDLED;
+            return retVal;
         }
     }
     private DcDefaultState mDefaultState = new DcDefaultState();
@@ -1215,11 +1240,11 @@ public abstract class DataConnection extends StateMachine {
      * @return the string for msg.what as our info.
      */
     @Override
-    protected String getMessageInfo(Message msg) {
+    protected String getWhatToString(int what) {
         String info = null;
-        info = cmdToString(msg.what);
+        info = cmdToString(what);
         if (info == null) {
-            info = DataConnectionAc.cmdToString(msg.what);
+            info = DataConnectionAc.cmdToString(what);
         }
         return info;
     }

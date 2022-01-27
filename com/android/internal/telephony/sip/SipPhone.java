@@ -36,6 +36,7 @@ import com.android.internal.telephony.Call;
 import com.android.internal.telephony.CallStateException;
 import com.android.internal.telephony.Connection;
 import com.android.internal.telephony.Phone;
+import com.android.internal.telephony.PhoneConstants;
 import com.android.internal.telephony.PhoneNotifier;
 
 import java.text.ParseException;
@@ -707,7 +708,7 @@ public class SipPhone extends SipPhoneBase {
 
         @Override
         public int getNumberPresentation() {
-            return Connection.PRESENTATION_ALLOWED;
+            return PhoneConstants.PRESENTATION_ALLOWED;
         }
 
         void initIncomingCall(SipAudioCall sipAudioCall, Call.State newState) {

@@ -4,16 +4,15 @@ package com.android.server.wm;
 
 import android.graphics.Matrix;
 import android.util.Slog;
+import android.view.Display;
 import android.view.Surface;
 import android.view.WindowManagerPolicy;
 import android.view.animation.Animation;
 import android.view.animation.Transformation;
 
 import java.io.PrintWriter;
+import java.util.ArrayList;
 
-/**
- *
- */
 public class AppWindowAnimator {
     static final String TAG = "AppWindowAnimator";
 
@@ -48,12 +47,15 @@ public class AppWindowAnimator {
     Animation thumbnailAnimation;
     final Transformation thumbnailTransformation = new Transformation();
 
+    /** WindowStateAnimator from mAppAnimator.allAppWindows as of last performLayout */
+    ArrayList<WindowStateAnimator> mAllAppWinAnimators = new ArrayList<WindowStateAnimator>();
+
     static final Animation sDummyAnimation = new DummyAnimation();
 
-    public AppWindowAnimator(final WindowManagerService service, final AppWindowToken atoken) {
-        mService = service;
+    public AppWindowAnimator(final AppWindowToken atoken) {
         mAppToken = atoken;
-        mAnimator = service.mAnimator;
+        mService = atoken.service;
+        mAnimator = atoken.mAnimator;
     }
 
     public void setAnimation(Animation anim, boolean initialized) {
@@ -123,7 +125,7 @@ public class AppWindowAnimator {
             if (w == mService.mInputMethodTarget && !mService.mInputMethodTargetWaitingAnim) {
                 mService.setInputMethodAnimLayerAdjustment(adj);
             }
-            if (w == mService.mWallpaperTarget && mService.mLowerWallpaperTarget == null) {
+            if (w == mAnimator.mWallpaperTarget && mAnimator.mLowerWallpaperTarget == null) {
                 mService.setWallpaperAnimLayerAdjustmentLocked(adj);
             }
         }
@@ -133,11 +135,13 @@ public class AppWindowAnimator {
         thumbnailTransformation.clear();
         thumbnailAnimation.getTransformation(currentTime, thumbnailTransformation);
         thumbnailTransformation.getMatrix().preTranslate(thumbnailX, thumbnailY);
-        final boolean screenAnimation = mAnimator.mScreenRotationAnimation != null
-                && mAnimator.mScreenRotationAnimation.isAnimating();
+
+        ScreenRotationAnimation screenRotationAnimation =
+                mAnimator.getScreenRotationAnimationLocked(Display.DEFAULT_DISPLAY);
+        final boolean screenAnimation = screenRotationAnimation != null
+                && screenRotationAnimation.isAnimating();
         if (screenAnimation) {
-            thumbnailTransformation.postCompose(
-                    mAnimator.mScreenRotationAnimation.getEnterTransformation());
+            thumbnailTransformation.postCompose(screenRotationAnimation.getEnterTransformation());
         }
         // cache often used attributes locally
         final float tmpFloats[] = mService.mTmpFloats;
@@ -168,7 +172,7 @@ public class AppWindowAnimator {
         }
         transformation.clear();
         final boolean more = animation.getTransformation(currentTime, transformation);
-        if (WindowManagerService.DEBUG_ANIM) Slog.v(
+        if (false && WindowManagerService.DEBUG_ANIM) Slog.v(
             TAG, "Stepped animation in " + mAppToken + ": more=" + more + ", xform=" + transformation);
         if (!more) {
             animation = null;
@@ -233,10 +237,8 @@ public class AppWindowAnimator {
             return false;
         }
 
-        mAnimator.mPendingLayoutChanges |= WindowManagerPolicy.FINISH_LAYOUT_REDO_ANIM;
-        if (WindowManagerService.DEBUG_LAYOUT_REPEATS) {
-            mService.debugLayoutRepeats("AppWindowToken", mAnimator.mPendingLayoutChanges);
-        }
+        mAnimator.setAppLayoutChanges(this, WindowManagerPolicy.FINISH_LAYOUT_REDO_ANIM,
+                "AppWindowToken");
 
         clearAnimation();
         animating = false;
@@ -255,9 +257,9 @@ public class AppWindowAnimator {
 
         transformation.clear();
 
-        final int N = mAppToken.windows.size();
+        final int N = mAllAppWinAnimators.size();
         for (int i=0; i<N; i++) {
-            mAppToken.windows.get(i).mWinAnimator.finishExit();
+            mAllAppWinAnimators.get(i).finishExit();
         }
         mAppToken.updateReportedVisibilityLocked();
 
@@ -266,9 +268,9 @@ public class AppWindowAnimator {
 
     boolean showAllWindowsLocked() {
         boolean isAnimating = false;
-        final int NW = mAppToken.allAppWindows.size();
+        final int NW = mAllAppWinAnimators.size();
         for (int i=0; i<NW; i++) {
-            WindowStateAnimator winAnimator = mAppToken.allAppWindows.get(i).mWinAnimator;
+            WindowStateAnimator winAnimator = mAllAppWinAnimators.get(i);
             if (WindowManagerService.DEBUG_VISIBILITY) Slog.v(TAG,
                     "performing show on: " + winAnimator);
             winAnimator.performShowLocked();
@@ -277,21 +279,21 @@ public class AppWindowAnimator {
         return isAnimating;
     }
 
-    void dump(PrintWriter pw, String prefix) {
-        if (freezingScreen) {
-            pw.print(prefix); pw.print(" freezingScreen="); pw.println(freezingScreen);
-        }
+    void dump(PrintWriter pw, String prefix, boolean dumpAll) {
+        pw.print(prefix); pw.print("mAppToken="); pw.println(mAppToken);
+        pw.print(prefix); pw.print("mAnimator="); pw.println(mAnimator);
+        pw.print(prefix); pw.print("freezingScreen="); pw.print(freezingScreen);
+                pw.print(" allDrawn="); pw.print(allDrawn);
+                pw.print(" animLayerAdjustment="); pw.println(animLayerAdjustment);
         if (animating || animation != null) {
             pw.print(prefix); pw.print("animating="); pw.print(animating);
-                    pw.print(" animation="); pw.println(animation);
+                    pw.print(" animInitialized="); pw.println(animInitialized);
+            pw.print(prefix); pw.print("animation="); pw.println(animation);
         }
         if (hasTransformation) {
             pw.print(prefix); pw.print("XForm: ");
                     transformation.printShortString(pw);
                     pw.println();
-        }
-        if (animLayerAdjustment != 0) {
-            pw.print(prefix); pw.print("animLayerAdjustment="); pw.println(animLayerAdjustment);
         }
         if (thumbnail != null) {
             pw.print(prefix); pw.print("thumbnail="); pw.print(thumbnail);
@@ -301,6 +303,11 @@ public class AppWindowAnimator {
             pw.print(prefix); pw.print("thumbnailAnimation="); pw.println(thumbnailAnimation);
             pw.print(prefix); pw.print("thumbnailTransformation=");
                     pw.println(thumbnailTransformation.toShortString());
+        }
+        for (int i=0; i<mAllAppWinAnimators.size(); i++) {
+            WindowStateAnimator wanim = mAllAppWinAnimators.get(i);
+            pw.print(prefix); pw.print("App Win Anim #"); pw.print(i);
+                    pw.print(": "); pw.println(wanim);
         }
     }
 

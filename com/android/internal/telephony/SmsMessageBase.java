@@ -16,10 +16,10 @@
 
 package com.android.internal.telephony;
 
+import com.android.internal.telephony.SmsConstants;
 import com.android.internal.telephony.SmsHeader;
 import java.util.Arrays;
 
-import static android.telephony.SmsMessage.MessageClass;
 import android.provider.Telephony;
 
 /**
@@ -86,60 +86,6 @@ public abstract class SmsMessageBase {
     /** TP-Message-Reference - Message Reference of sent message. @hide */
     public int messageRef;
 
-    /**
-     * For a specific text string, this object describes protocol
-     * properties of encoding it for transmission as message user
-     * data.
-     */
-    public static class TextEncodingDetails {
-        /**
-         *The number of SMS's required to encode the text.
-         */
-        public int msgCount;
-
-        /**
-         * The number of code units consumed so far, where code units
-         * are basically characters in the encoding -- for example,
-         * septets for the standard ASCII and GSM encodings, and 16
-         * bits for Unicode.
-         */
-        public int codeUnitCount;
-
-        /**
-         * How many code units are still available without spilling
-         * into an additional message.
-         */
-        public int codeUnitsRemaining;
-
-        /**
-         * The encoding code unit size (specified using
-         * android.telephony.SmsMessage ENCODING_*).
-         */
-        public int codeUnitSize;
-
-        /**
-         * The GSM national language table to use, or 0 for the default 7-bit alphabet.
-         */
-        public int languageTable;
-
-        /**
-         * The GSM national language shift table to use, or 0 for the default 7-bit extension table.
-         */
-        public int languageShiftTable;
-
-        @Override
-        public String toString() {
-            return "TextEncodingDetails " +
-                    "{ msgCount=" + msgCount +
-                    ", codeUnitCount=" + codeUnitCount +
-                    ", codeUnitsRemaining=" + codeUnitsRemaining +
-                    ", codeUnitSize=" + codeUnitSize +
-                    ", languageTable=" + languageTable +
-                    ", languageShiftTable=" + languageShiftTable +
-                    " }";
-        }
-    }
-
     // TODO(): This class is duplicated in SmsMessage.java. Refactor accordingly.
     public static abstract class SubmitPduBase  {
         public byte[] encodedScAddress; // Null if not applicable.
@@ -197,7 +143,7 @@ public abstract class SmsMessageBase {
     /**
      * Returns the class of this message.
      */
-    public abstract MessageClass getMessageClass();
+    public abstract SmsConstants.MessageClass getMessageClass();
 
     /**
      * Returns the message body, or email message body if this message was from

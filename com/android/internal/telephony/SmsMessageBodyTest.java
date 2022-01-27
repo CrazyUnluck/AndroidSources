@@ -24,12 +24,9 @@ import android.test.suitebuilder.annotation.MediumTest;
 import android.test.suitebuilder.annotation.SmallTest;
 import android.util.Log;
 
-import java.util.Random;
+import com.android.internal.telephony.SmsConstants;
 
-import static android.telephony.SmsMessage.MAX_USER_DATA_BYTES;
-import static android.telephony.SmsMessage.MAX_USER_DATA_BYTES_WITH_HEADER;
-import static android.telephony.SmsMessage.MAX_USER_DATA_SEPTETS;
-import static android.telephony.SmsMessage.MAX_USER_DATA_SEPTETS_WITH_HEADER;
+import java.util.Random;
 
 /**
  * Test cases to verify selection of the optimal 7 bit encoding tables
@@ -261,7 +258,7 @@ public class SmsMessageBodyTest extends AndroidTestCase {
     @SmallTest
     public void testCalcLengthAscii() throws Exception {
         StringBuilder sb = new StringBuilder(320);
-        int[] values = {0, 0, 0, SmsMessage.ENCODING_7BIT, 0, 0};
+        int[] values = {0, 0, 0, SmsConstants.ENCODING_7BIT, 0, 0};
         int startPos = 0;
         int asciiCharsLen = sAsciiChars.length();
 
@@ -293,8 +290,8 @@ public class SmsMessageBodyTest extends AndroidTestCase {
     @SmallTest
     public void testCalcLengthUnicode() throws Exception {
         StringBuilder sb = new StringBuilder(160);
-        int[] values = {0, 0, 0, SmsMessage.ENCODING_16BIT, 0, 0};
-        int[] values7bit = {1, 0, 0, SmsMessage.ENCODING_7BIT, 0, 0};
+        int[] values = {0, 0, 0, SmsConstants.ENCODING_16BIT, 0, 0};
+        int[] values7bit = {1, 0, 0, SmsConstants.ENCODING_7BIT, 0, 0};
         int startPos = 0;
         int unicodeCharsLen = sUnicodeChars.length();
 
@@ -317,7 +314,7 @@ public class SmsMessageBodyTest extends AndroidTestCase {
             values[1] = len;
             values[2] = sUnicodeUnitsRemaining[i];
             values7bit[1] = len;
-            values7bit[2] = MAX_USER_DATA_SEPTETS - len;
+            values7bit[2] = SmsConstants.MAX_USER_DATA_SEPTETS - len;
 
             callGsmLengthMethods(testStr, false, values);
             callCdmaLengthMethods(testStr, false, values);
@@ -401,12 +398,12 @@ public class SmsMessageBodyTest extends AndroidTestCase {
                     }
                 }
                 int numSeptetsWithHeader;
-                if (pair.length > (MAX_USER_DATA_SEPTETS - udhLength)) {
+                if (pair.length > (SmsConstants.MAX_USER_DATA_SEPTETS - udhLength)) {
                     if (udhLength == 0) {
                         udhLength = UDH_SEPTET_COST_LENGTH;
                     }
                     udhLength += UDH_SEPTET_COST_CONCATENATED_MESSAGE;
-                    int septetsPerPart = MAX_USER_DATA_SEPTETS - udhLength;
+                    int septetsPerPart = SmsConstants.MAX_USER_DATA_SEPTETS - udhLength;
                     int msgCount = (pair.length + septetsPerPart - 1) / septetsPerPart;
                     numSeptetsWithHeader = udhLength * msgCount + pair.length;
                 } else {
@@ -434,16 +431,17 @@ public class SmsMessageBodyTest extends AndroidTestCase {
             if (langIndex == -1) {
                 // nothing matches, use values for Unicode
                 int byteCount = length * 2;
-                if (byteCount > MAX_USER_DATA_BYTES) {
-                    values[0] = (byteCount + MAX_USER_DATA_BYTES_WITH_HEADER - 1) /
-                            MAX_USER_DATA_BYTES_WITH_HEADER;
-                    values[2] = ((values[0] * MAX_USER_DATA_BYTES_WITH_HEADER) - byteCount) / 2;
+                if (byteCount > SmsConstants.MAX_USER_DATA_BYTES) {
+                    values[0] = (byteCount + SmsConstants.MAX_USER_DATA_BYTES_WITH_HEADER - 1) /
+                            SmsConstants.MAX_USER_DATA_BYTES_WITH_HEADER;
+                    values[2] = ((values[0] * SmsConstants.MAX_USER_DATA_BYTES_WITH_HEADER) -
+                            byteCount) / 2;
                 } else {
                     values[0] = 1;
-                    values[2] = (MAX_USER_DATA_BYTES - byteCount) / 2;
+                    values[2] = (SmsConstants.MAX_USER_DATA_BYTES - byteCount) / 2;
                 }
                 values[1] = length;
-                values[3] = SmsMessage.ENCODING_16BIT;
+                values[3] = SmsConstants.ENCODING_16BIT;
                 values[4] = 0;
                 values[5] = 0;
                 mUnicodeCounter++;
@@ -458,20 +456,21 @@ public class SmsMessageBodyTest extends AndroidTestCase {
                     }
                 }
                 int msgCount;
-                if (minNumSeptets > (MAX_USER_DATA_SEPTETS - udhLength)) {
+                if (minNumSeptets > (SmsConstants.MAX_USER_DATA_SEPTETS - udhLength)) {
                     if (udhLength == 0) {
                         udhLength = UDH_SEPTET_COST_LENGTH;
                     }
                     udhLength += UDH_SEPTET_COST_CONCATENATED_MESSAGE;
-                    int septetsPerPart = MAX_USER_DATA_SEPTETS - udhLength;
+                    int septetsPerPart = SmsConstants.MAX_USER_DATA_SEPTETS - udhLength;
                     msgCount = (minNumSeptets + septetsPerPart - 1) / septetsPerPart;
                 } else {
                     msgCount = 1;
                 }
                 values[0] = msgCount;
                 values[1] = minNumSeptets;
-                values[2] = (values[0] * (MAX_USER_DATA_SEPTETS - udhLength)) - minNumSeptets;
-                values[3] = SmsMessage.ENCODING_7BIT;
+                values[2] = (values[0] * (SmsConstants.MAX_USER_DATA_SEPTETS - udhLength)) -
+                        minNumSeptets;
+                values[3] = SmsConstants.ENCODING_7BIT;
                 values[4] = (langIndex == 2 ? 3 : langIndex); // Portuguese is code 3, index 2
                 values[5] = langShiftIndex;
                 assertEquals("minNumSeptetsWithHeader", minNumSeptetsWithHeader,
@@ -527,7 +526,7 @@ public class SmsMessageBodyTest extends AndroidTestCase {
                     GsmAlphabet.setEnabledSingleShiftTables(sEnabledSingleShiftTables[j]);
                     GsmAlphabet.setEnabledLockingShiftTables(sEnabledLockingShiftTables[j]);
                     ch.fillData(j, false, expectedValues, i);
-                    if (expectedValues[3] == SmsMessage.ENCODING_7BIT) {
+                    if (expectedValues[3] == SmsConstants.ENCODING_7BIT) {
                         unicodeOnly = false;
                     }
                     callGsmLengthMethods(sb, false, expectedValues);
@@ -568,7 +567,7 @@ public class SmsMessageBodyTest extends AndroidTestCase {
             assertEquals("codeUnitSize",       expectedValues[3], values[3]);
         }
 
-        SmsMessageBase.TextEncodingDetails ted =
+        GsmAlphabet.TextEncodingDetails ted =
                 com.android.internal.telephony.gsm.SmsMessage.calculateLength(msgBody, use7bitOnly);
         assertEquals("msgCount",           expectedValues[0], ted.msgCount);
         assertEquals("codeUnitCount",      expectedValues[1], ted.codeUnitCount);
@@ -590,7 +589,7 @@ public class SmsMessageBodyTest extends AndroidTestCase {
             assertEquals("codeUnitSize",       expectedValues[3], values[3]);
         }
 
-        SmsMessageBase.TextEncodingDetails ted =
+        GsmAlphabet.TextEncodingDetails ted =
                 com.android.internal.telephony.cdma.SmsMessage.calculateLength(msgBody, use7bitOnly);
         assertEquals("msgCount",           expectedValues[0], ted.msgCount);
         assertEquals("codeUnitCount",      expectedValues[1], ted.codeUnitCount);

@@ -232,6 +232,13 @@ public class ValueAnimator extends Animator {
     }
 
     /**
+     * @hide
+     */
+    public static float getDurationScale() {
+        return sDurationScale;
+    }
+
+    /**
      * Creates a new ValueAnimator object. This default constructor is primarily for
      * use internally; the factory methods which take parameters are more generally
      * useful.
@@ -529,6 +536,9 @@ public class ValueAnimator extends Animator {
         // The per-thread list of all active animations
         private final ArrayList<ValueAnimator> mAnimations = new ArrayList<ValueAnimator>();
 
+        // Used in doAnimationFrame() to avoid concurrent modifications of mAnimations
+        private final ArrayList<ValueAnimator> mTmpAnimations = new ArrayList<ValueAnimator>();
+
         // The per-thread set of animations to be started on the next animation frame
         private final ArrayList<ValueAnimator> mPendingAnimations = new ArrayList<ValueAnimator>();
 
@@ -598,28 +608,18 @@ public class ValueAnimator extends Animator {
             // Now process all active animations. The return value from animationFrame()
             // tells the handler whether it should now be ended
             int numAnims = mAnimations.size();
-            int i = 0;
-            while (i < numAnims) {
-                ValueAnimator anim = mAnimations.get(i);
-                if (anim.doAnimationFrame(frameTime)) {
+            for (int i = 0; i < numAnims; ++i) {
+                mTmpAnimations.add(mAnimations.get(i));
+            }
+            for (int i = 0; i < numAnims; ++i) {
+                ValueAnimator anim = mTmpAnimations.get(i);
+                if (mAnimations.contains(anim) && anim.doAnimationFrame(frameTime)) {
                     mEndingAnims.add(anim);
                 }
-                if (mAnimations.size() == numAnims) {
-                    ++i;
-                } else {
-                    // An animation might be canceled or ended by client code
-                    // during the animation frame. Check to see if this happened by
-                    // seeing whether the current index is the same as it was before
-                    // calling animationFrame(). Another approach would be to copy
-                    // animations to a temporary list and process that list instead,
-                    // but that entails garbage and processing overhead that would
-                    // be nice to avoid.
-                    --numAnims;
-                    mEndingAnims.remove(anim);
-                }
             }
+            mTmpAnimations.clear();
             if (mEndingAnims.size() > 0) {
-                for (i = 0; i < mEndingAnims.size(); ++i) {
+                for (int i = 0; i < mEndingAnims.size(); ++i) {
                     mEndingAnims.get(i).endAnimation(this);
                 }
                 mEndingAnims.clear();
@@ -958,13 +958,7 @@ public class ValueAnimator extends Animator {
         } else if (!mInitialized) {
             initAnimation();
         }
-        // The final value set on the target varies, depending on whether the animation
-        // was supposed to repeat an odd number of times
-        if (mRepeatCount > 0 && (mRepeatCount & 0x01) == 1) {
-            animateValue(0f);
-        } else {
-            animateValue(1f);
-        }
+        animateValue(mPlayingBackwards ? 0f : 1f);
         endAnimation(handler);
     }
 

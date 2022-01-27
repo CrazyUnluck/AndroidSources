@@ -34,6 +34,7 @@ import android.os.Message;
 import android.os.PowerManager;
 import android.os.SystemClock;
 import android.os.SystemProperties;
+import android.os.UserHandle;
 import android.os.WorkSource;
 import android.text.TextUtils;
 import android.text.format.Time;
@@ -129,12 +130,14 @@ class AlarmManagerService extends IAlarmManager.Stub {
         PowerManager pm = (PowerManager)context.getSystemService(Context.POWER_SERVICE);
         mWakeLock = pm.newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, TAG);
         
-        mTimeTickSender = PendingIntent.getBroadcast(context, 0,
+        mTimeTickSender = PendingIntent.getBroadcastAsUser(context, 0,
                 new Intent(Intent.ACTION_TIME_TICK).addFlags(
-                        Intent.FLAG_RECEIVER_REGISTERED_ONLY), 0);
+                        Intent.FLAG_RECEIVER_REGISTERED_ONLY), 0,
+                        UserHandle.ALL);
         Intent intent = new Intent(Intent.ACTION_DATE_CHANGED);
         intent.addFlags(Intent.FLAG_RECEIVER_REPLACE_PENDING);
-        mDateChangeSender = PendingIntent.getBroadcast(context, 0, intent, 0);
+        mDateChangeSender = PendingIntent.getBroadcastAsUser(context, 0, intent,
+                Intent.FLAG_RECEIVER_REGISTERED_ONLY_BEFORE_BOOT, UserHandle.ALL);
         
         // now that we have initied the driver schedule the alarm
         mClockReceiver= new ClockReceiver();
@@ -242,32 +245,39 @@ class AlarmManagerService extends IAlarmManager.Stub {
                 "android.permission.SET_TIME_ZONE",
                 "setTimeZone");
 
-        if (TextUtils.isEmpty(tz)) return;
-        TimeZone zone = TimeZone.getTimeZone(tz);
-        // Prevent reentrant calls from stepping on each other when writing
-        // the time zone property
-        boolean timeZoneWasChanged = false;
-        synchronized (this) {
-            String current = SystemProperties.get(TIMEZONE_PROPERTY);
-            if (current == null || !current.equals(zone.getID())) {
-                if (localLOGV) Slog.v(TAG, "timezone changed: " + current + ", new=" + zone.getID());
-                timeZoneWasChanged = true; 
-                SystemProperties.set(TIMEZONE_PROPERTY, zone.getID());
-            }
-            
-            // Update the kernel timezone information
-            // Kernel tracks time offsets as 'minutes west of GMT'
-            int gmtOffset = zone.getOffset(System.currentTimeMillis());
-            setKernelTimezone(mDescriptor, -(gmtOffset / 60000));
-        }
+        long oldId = Binder.clearCallingIdentity();
+        try {
+            if (TextUtils.isEmpty(tz)) return;
+            TimeZone zone = TimeZone.getTimeZone(tz);
+            // Prevent reentrant calls from stepping on each other when writing
+            // the time zone property
+            boolean timeZoneWasChanged = false;
+            synchronized (this) {
+                String current = SystemProperties.get(TIMEZONE_PROPERTY);
+                if (current == null || !current.equals(zone.getID())) {
+                    if (localLOGV) {
+                        Slog.v(TAG, "timezone changed: " + current + ", new=" + zone.getID());
+                    }
+                    timeZoneWasChanged = true;
+                    SystemProperties.set(TIMEZONE_PROPERTY, zone.getID());
+                }
 
-        TimeZone.setDefault(null);
-        
-        if (timeZoneWasChanged) {
-            Intent intent = new Intent(Intent.ACTION_TIMEZONE_CHANGED);
-            intent.addFlags(Intent.FLAG_RECEIVER_REPLACE_PENDING);
-            intent.putExtra("time-zone", zone.getID());
-            mContext.sendBroadcast(intent);
+                // Update the kernel timezone information
+                // Kernel tracks time offsets as 'minutes west of GMT'
+                int gmtOffset = zone.getOffset(System.currentTimeMillis());
+                setKernelTimezone(mDescriptor, -(gmtOffset / 60000));
+            }
+
+            TimeZone.setDefault(null);
+
+            if (timeZoneWasChanged) {
+                Intent intent = new Intent(Intent.ACTION_TIMEZONE_CHANGED);
+                intent.addFlags(Intent.FLAG_RECEIVER_REPLACE_PENDING);
+                intent.putExtra("time-zone", zone.getID());
+                mContext.sendBroadcastAsUser(intent, UserHandle.ALL);
+            }
+        } finally {
+            Binder.restoreCallingIdentity(oldId);
         }
     }
     
@@ -303,7 +313,7 @@ class AlarmManagerService extends IAlarmManager.Stub {
             }
         }
     }
-    
+
     public void removeLocked(String packageName) {
         removeLocked(mRtcWakeupAlarms, packageName);
         removeLocked(mRtcAlarms, packageName);
@@ -323,6 +333,29 @@ class AlarmManagerService extends IAlarmManager.Stub {
         while (it.hasNext()) {
             Alarm alarm = it.next();
             if (alarm.operation.getTargetPackage().equals(packageName)) {
+                it.remove();
+            }
+        }
+    }
+
+    public void removeUserLocked(int userHandle) {
+        removeUserLocked(mRtcWakeupAlarms, userHandle);
+        removeUserLocked(mRtcAlarms, userHandle);
+        removeUserLocked(mElapsedRealtimeWakeupAlarms, userHandle);
+        removeUserLocked(mElapsedRealtimeAlarms, userHandle);
+    }
+
+    private void removeUserLocked(ArrayList<Alarm> alarmList, int userHandle) {
+        if (alarmList.size() <= 0) {
+            return;
+        }
+
+        // iterator over the list removing any it where the intent match
+        Iterator<Alarm> it = alarmList.iterator();
+
+        while (it.hasNext()) {
+            Alarm alarm = it.next();
+            if (UserHandle.getUserId(alarm.operation.getCreatorUid()) == userHandle) {
                 it.remove();
             }
         }
@@ -637,7 +670,7 @@ class AlarmManagerService extends IAlarmManager.Stub {
                     Intent intent = new Intent(Intent.ACTION_TIME_CHANGED);
                     intent.addFlags(Intent.FLAG_RECEIVER_REPLACE_PENDING
                             | Intent.FLAG_RECEIVER_REGISTERED_ONLY_BEFORE_BOOT);
-                    mContext.sendBroadcast(intent);
+                    mContext.sendBroadcastAsUser(intent, UserHandle.ALL);
                 }
                 
                 synchronized (mLock) {
@@ -822,6 +855,7 @@ class AlarmManagerService extends IAlarmManager.Stub {
              // Register for events related to sdcard installation.
             IntentFilter sdFilter = new IntentFilter();
             sdFilter.addAction(Intent.ACTION_EXTERNAL_APPLICATIONS_UNAVAILABLE);
+            sdFilter.addAction(Intent.ACTION_USER_STOPPED);
             mContext.registerReceiver(this, sdFilter);
         }
         
@@ -841,6 +875,11 @@ class AlarmManagerService extends IAlarmManager.Stub {
                     return;
                 } else if (Intent.ACTION_EXTERNAL_APPLICATIONS_UNAVAILABLE.equals(action)) {
                     pkgList = intent.getStringArrayExtra(Intent.EXTRA_CHANGED_PACKAGE_LIST);
+                } else if (Intent.ACTION_USER_STOPPED.equals(action)) {
+                    int userHandle = intent.getIntExtra(Intent.EXTRA_USER_HANDLE, -1);
+                    if (userHandle >= 0) {
+                        removeUserLocked(userHandle);
+                    }
                 } else {
                     if (Intent.ACTION_PACKAGE_REMOVED.equals(action)
                             && intent.getBooleanExtra(Intent.EXTRA_REPLACING, false)) {

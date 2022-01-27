@@ -35,10 +35,9 @@ import java.util.HashMap;
  */
 public class WifiP2pDeviceList implements Parcelable {
 
-    private HashMap<String, WifiP2pDevice> mDevices;
+    private final HashMap<String, WifiP2pDevice> mDevices = new HashMap<String, WifiP2pDevice>();
 
     public WifiP2pDeviceList() {
-        mDevices = new HashMap<String, WifiP2pDevice>();
     }
 
     /** copy constructor */
@@ -52,7 +51,6 @@ public class WifiP2pDeviceList implements Parcelable {
 
     /** @hide */
     public WifiP2pDeviceList(ArrayList<WifiP2pDevice> devices) {
-        mDevices = new HashMap<String, WifiP2pDevice>();
         for (WifiP2pDevice device : devices) {
             if (device.deviceAddress != null) {
                 mDevices.put(device.deviceAddress, device);
@@ -78,6 +76,7 @@ public class WifiP2pDeviceList implements Parcelable {
             d.wpsConfigMethodsSupported = device.wpsConfigMethodsSupported;
             d.deviceCapability = device.deviceCapability;
             d.groupCapability = device.groupCapability;
+            d.wfdInfo = device.wfdInfo;
             return;
         }
         //Not found, add a new one
@@ -113,6 +112,15 @@ public class WifiP2pDeviceList implements Parcelable {
     public boolean remove(WifiP2pDevice device) {
         if (device == null || device.deviceAddress == null) return false;
         return mDevices.remove(device.deviceAddress) != null;
+    }
+
+    /** Returns true if any device the list was removed @hide */
+    public boolean remove(WifiP2pDeviceList list) {
+        boolean ret = false;
+        for (WifiP2pDevice d : list.mDevices.values()) {
+            if (remove(d)) ret = true;
+        }
+        return ret;
     }
 
     /** Get the list of devices */

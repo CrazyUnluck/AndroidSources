@@ -36,6 +36,7 @@ import com.android.internal.telephony.Connection;
 import com.android.internal.telephony.DriverCall;
 import com.android.internal.telephony.EventLogTags;
 import com.android.internal.telephony.Phone;
+import com.android.internal.telephony.PhoneConstants;
 import com.android.internal.telephony.TelephonyProperties;
 import com.android.internal.telephony.UUSInfo;
 import com.android.internal.telephony.gsm.CallFailCause;
@@ -84,7 +85,7 @@ public final class GsmCallTracker extends CallTracker {
 
     boolean desiredMute = false;    // false = mute off
 
-    Phone.State state = Phone.State.IDLE;
+    PhoneConstants.State state = PhoneConstants.State.IDLE;
 
 
 
@@ -384,21 +385,21 @@ public final class GsmCallTracker extends CallTracker {
 
     private void
     updatePhoneState() {
-        Phone.State oldState = state;
+        PhoneConstants.State oldState = state;
 
         if (ringingCall.isRinging()) {
-            state = Phone.State.RINGING;
+            state = PhoneConstants.State.RINGING;
         } else if (pendingMO != null ||
                 !(foregroundCall.isIdle() && backgroundCall.isIdle())) {
-            state = Phone.State.OFFHOOK;
+            state = PhoneConstants.State.OFFHOOK;
         } else {
-            state = Phone.State.IDLE;
+            state = PhoneConstants.State.IDLE;
         }
 
-        if (state == Phone.State.IDLE && oldState != state) {
+        if (state == PhoneConstants.State.IDLE && oldState != state) {
             voiceCallEndedRegistrants.notifyRegistrants(
                 new AsyncResult(null, null, null));
-        } else if (oldState == Phone.State.IDLE && oldState != state) {
+        } else if (oldState == PhoneConstants.State.IDLE && oldState != state) {
             voiceCallStartedRegistrants.notifyRegistrants (
                     new AsyncResult(null, null, null));
         }

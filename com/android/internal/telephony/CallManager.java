@@ -234,14 +234,14 @@ public final class CallManager {
      * then the phone state is RINGING not OFFHOOK
      *
      */
-    public Phone.State getState() {
-        Phone.State s = Phone.State.IDLE;
+    public PhoneConstants.State getState() {
+        PhoneConstants.State s = PhoneConstants.State.IDLE;
 
         for (Phone phone : mPhones) {
-            if (phone.getState() == Phone.State.RINGING) {
-                s = Phone.State.RINGING;
-            } else if (phone.getState() == Phone.State.OFFHOOK) {
-                if (s == Phone.State.IDLE) s = Phone.State.OFFHOOK;
+            if (phone.getState() == PhoneConstants.State.RINGING) {
+                s = PhoneConstants.State.RINGING;
+            } else if (phone.getState() == PhoneConstants.State.OFFHOOK) {
+                if (s == PhoneConstants.State.IDLE) s = PhoneConstants.State.OFFHOOK;
             }
         }
         return s;
@@ -443,13 +443,13 @@ public final class CallManager {
         phone.registerForServiceStateChanged(mHandler, EVENT_SERVICE_STATE_CHANGED, null);
 
         // for events supported only by GSM and CDMA phone
-        if (phone.getPhoneType() == Phone.PHONE_TYPE_GSM ||
-                phone.getPhoneType() == Phone.PHONE_TYPE_CDMA) {
+        if (phone.getPhoneType() == PhoneConstants.PHONE_TYPE_GSM ||
+                phone.getPhoneType() == PhoneConstants.PHONE_TYPE_CDMA) {
             phone.setOnPostDialCharacter(mHandler, EVENT_POST_DIAL_CHARACTER, null);
         }
 
         // for events supported only by CDMA phone
-        if (phone.getPhoneType() == Phone.PHONE_TYPE_CDMA ){
+        if (phone.getPhoneType() == PhoneConstants.PHONE_TYPE_CDMA ){
             phone.registerForCdmaOtaStatusChange(mHandler, EVENT_CDMA_OTA_STATUS_CHANGE, null);
             phone.registerForSubscriptionInfoReady(mHandler, EVENT_SUBSCRIPTION_INFO_READY, null);
             phone.registerForCallWaiting(mHandler, EVENT_CALL_WAITING, null);
@@ -476,13 +476,13 @@ public final class CallManager {
         phone.unregisterForServiceStateChanged(mHandler);
 
         // for events supported only by GSM and CDMA phone
-        if (phone.getPhoneType() == Phone.PHONE_TYPE_GSM ||
-                phone.getPhoneType() == Phone.PHONE_TYPE_CDMA) {
+        if (phone.getPhoneType() == PhoneConstants.PHONE_TYPE_GSM ||
+                phone.getPhoneType() == PhoneConstants.PHONE_TYPE_CDMA) {
             phone.setOnPostDialCharacter(null, EVENT_POST_DIAL_CHARACTER, null);
         }
 
         // for events supported only by CDMA phone
-        if (phone.getPhoneType() == Phone.PHONE_TYPE_CDMA ){
+        if (phone.getPhoneType() == PhoneConstants.PHONE_TYPE_CDMA ){
             phone.unregisterForCdmaOtaStatusChange(mHandler);
             phone.unregisterForSubscriptionInfoReady(mHandler);
             phone.unregisterForCallWaiting(mHandler);

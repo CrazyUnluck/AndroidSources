@@ -243,7 +243,7 @@ public class GsmSmsTest extends AndroidTestCase {
         String text = "123456789012345678901234567890123456789012345678901234567890" +
                 "1234567890123456789012345678901234567890123456789012345678901234567890" +
                 "123456789012345678901234567890";
-        SmsMessageBase.TextEncodingDetails ted = SmsMessage.calculateLength(text, false);
+        GsmAlphabet.TextEncodingDetails ted = SmsMessage.calculateLength(text, false);
         assertEquals(1, ted.msgCount);
         assertEquals(160, ted.codeUnitCount);
         assertEquals(1, ted.codeUnitSize);
@@ -285,7 +285,7 @@ public class GsmSmsTest extends AndroidTestCase {
         // Valid 77 character text with Turkish characters.
         String text = "ĞŞİğşıĞŞİğşıĞŞİğşıĞŞİğşıĞŞİğşıĞŞİğşıĞŞİğşıĞŞİğşıĞŞİğşıĞŞİğşı" +
                 "ĞŞİğşıĞŞİğşıĞŞİğş";
-        SmsMessageBase.TextEncodingDetails ted = SmsMessage.calculateLength(text, false);
+        GsmAlphabet.TextEncodingDetails ted = SmsMessage.calculateLength(text, false);
         assertEquals(1, ted.msgCount);
         assertEquals(154, ted.codeUnitCount);
         assertEquals(1, ted.codeUnitSize);

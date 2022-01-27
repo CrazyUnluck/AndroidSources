@@ -35,7 +35,7 @@ import android.os.OperationCanceledException;
 import android.os.ParcelFileDescriptor;
 import android.os.Process;
 import android.os.RemoteException;
-import android.os.UserId;
+import android.os.UserHandle;
 import android.util.Log;
 
 import java.io.File;
@@ -279,7 +279,7 @@ public abstract class ContentProvider implements ComponentCallbacks2 {
             final int uid = Binder.getCallingUid();
             String missingPerm = null;
 
-            if (uid == mMyUid) {
+            if (UserHandle.isSameApp(uid, mMyUid)) {
                 return;
             }
 
@@ -340,7 +340,7 @@ public abstract class ContentProvider implements ComponentCallbacks2 {
             final int uid = Binder.getCallingUid();
             String missingPerm = null;
 
-            if (uid == mMyUid) {
+            if (UserHandle.isSameApp(uid, mMyUid)) {
                 return;
             }
 

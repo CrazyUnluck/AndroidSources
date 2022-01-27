@@ -28,6 +28,8 @@ import android.util.Log;
 
 import com.android.internal.telephony.ITelephonyRegistry;
 
+import java.util.List;
+
 /**
  * broadcast intents
  */
@@ -102,12 +104,12 @@ public class DefaultPhoneNotifier implements PhoneNotifier {
     }
 
     public void notifyDataConnection(Phone sender, String reason, String apnType,
-            Phone.DataState state) {
+            PhoneConstants.DataState state) {
         doNotifyDataConnection(sender, reason, apnType, state);
     }
 
     private void doNotifyDataConnection(Phone sender, String reason, String apnType,
-            Phone.DataState state) {
+            PhoneConstants.DataState state) {
         // TODO
         // use apnType as the key to which connection we're talking about.
         // pass apnType back up to fetch particular for this one.
@@ -116,7 +118,7 @@ public class DefaultPhoneNotifier implements PhoneNotifier {
         LinkCapabilities linkCapabilities = null;
         boolean roaming = false;
 
-        if (state == Phone.DataState.CONNECTED) {
+        if (state == PhoneConstants.DataState.CONNECTED) {
             linkProperties = sender.getLinkProperties(apnType);
             linkCapabilities = sender.getLinkCapabilities(apnType);
         }
@@ -157,7 +159,7 @@ public class DefaultPhoneNotifier implements PhoneNotifier {
         }
     }
 
-    public void notifyCellInfo(Phone sender, CellInfo cellInfo) {
+    public void notifyCellInfo(Phone sender, List<CellInfo> cellInfo) {
         try {
             mRegistry.notifyCellInfo(cellInfo);
         } catch (RemoteException ex) {
@@ -181,7 +183,7 @@ public class DefaultPhoneNotifier implements PhoneNotifier {
      * Convert the {@link State} enum into the TelephonyManager.CALL_STATE_* constants
      * for the public API.
      */
-    public static int convertCallState(Phone.State state) {
+    public static int convertCallState(PhoneConstants.State state) {
         switch (state) {
             case RINGING:
                 return TelephonyManager.CALL_STATE_RINGING;
@@ -196,14 +198,14 @@ public class DefaultPhoneNotifier implements PhoneNotifier {
      * Convert the TelephonyManager.CALL_STATE_* constants into the {@link State} enum
      * for the public API.
      */
-    public static Phone.State convertCallState(int state) {
+    public static PhoneConstants.State convertCallState(int state) {
         switch (state) {
             case TelephonyManager.CALL_STATE_RINGING:
-                return Phone.State.RINGING;
+                return PhoneConstants.State.RINGING;
             case TelephonyManager.CALL_STATE_OFFHOOK:
-                return Phone.State.OFFHOOK;
+                return PhoneConstants.State.OFFHOOK;
             default:
-                return Phone.State.IDLE;
+                return PhoneConstants.State.IDLE;
         }
     }
 
@@ -211,7 +213,7 @@ public class DefaultPhoneNotifier implements PhoneNotifier {
      * Convert the {@link DataState} enum into the TelephonyManager.DATA_* constants
      * for the public API.
      */
-    public static int convertDataState(Phone.DataState state) {
+    public static int convertDataState(PhoneConstants.DataState state) {
         switch (state) {
             case CONNECTING:
                 return TelephonyManager.DATA_CONNECTING;
@@ -228,16 +230,16 @@ public class DefaultPhoneNotifier implements PhoneNotifier {
      * Convert the TelephonyManager.DATA_* constants into {@link DataState} enum
      * for the public API.
      */
-    public static Phone.DataState convertDataState(int state) {
+    public static PhoneConstants.DataState convertDataState(int state) {
         switch (state) {
             case TelephonyManager.DATA_CONNECTING:
-                return Phone.DataState.CONNECTING;
+                return PhoneConstants.DataState.CONNECTING;
             case TelephonyManager.DATA_CONNECTED:
-                return Phone.DataState.CONNECTED;
+                return PhoneConstants.DataState.CONNECTED;
             case TelephonyManager.DATA_SUSPENDED:
-                return Phone.DataState.SUSPENDED;
+                return PhoneConstants.DataState.SUSPENDED;
             default:
-                return Phone.DataState.DISCONNECTED;
+                return PhoneConstants.DataState.DISCONNECTED;
         }
     }
 

@@ -19,16 +19,21 @@ package android.appwidget;
 import java.util.ArrayList;
 import java.util.HashMap;
 
+import android.app.ActivityThread;
 import android.content.Context;
+import android.os.Binder;
 import android.os.Handler;
 import android.os.IBinder;
 import android.os.Looper;
 import android.os.Message;
+import android.os.Process;
 import android.os.RemoteException;
 import android.os.ServiceManager;
+import android.os.UserHandle;
 import android.util.DisplayMetrics;
 import android.util.TypedValue;
 import android.widget.RemoteViews;
+import android.widget.RemoteViews.OnClickHandler;
 
 import com.android.internal.appwidget.IAppWidgetHost;
 import com.android.internal.appwidget.IAppWidgetService;
@@ -41,7 +46,8 @@ public class AppWidgetHost {
 
     static final int HANDLE_UPDATE = 1;
     static final int HANDLE_PROVIDER_CHANGED = 2;
-    static final int HANDLE_VIEW_DATA_CHANGED = 3;
+    static final int HANDLE_PROVIDERS_CHANGED = 3;
+    static final int HANDLE_VIEW_DATA_CHANGED = 4;
 
     final static Object sServiceLock = new Object();
     static IAppWidgetService sService;
@@ -52,6 +58,9 @@ public class AppWidgetHost {
 
     class Callbacks extends IAppWidgetHost.Stub {
         public void updateAppWidget(int appWidgetId, RemoteViews views) {
+            if (isLocalBinder() && views != null) {
+                views = views.clone();
+            }
             Message msg = mHandler.obtainMessage(HANDLE_UPDATE);
             msg.arg1 = appWidgetId;
             msg.obj = views;
@@ -59,9 +68,17 @@ public class AppWidgetHost {
         }
 
         public void providerChanged(int appWidgetId, AppWidgetProviderInfo info) {
+            if (isLocalBinder() && info != null) {
+                info = info.clone();
+            }
             Message msg = mHandler.obtainMessage(HANDLE_PROVIDER_CHANGED);
             msg.arg1 = appWidgetId;
             msg.obj = info;
+            msg.sendToTarget();
+        }
+
+        public void providersChanged() {
+            Message msg = mHandler.obtainMessage(HANDLE_PROVIDERS_CHANGED);
             msg.sendToTarget();
         }
 
@@ -77,7 +94,7 @@ public class AppWidgetHost {
         public UpdateHandler(Looper looper) {
             super(looper);
         }
-        
+
         public void handleMessage(Message msg) {
             switch (msg.what) {
                 case HANDLE_UPDATE: {
@@ -88,6 +105,10 @@ public class AppWidgetHost {
                     onProviderChanged(msg.arg1, (AppWidgetProviderInfo)msg.obj);
                     break;
                 }
+                case HANDLE_PROVIDERS_CHANGED: {
+                    onProvidersChanged();
+                    break;
+                }
                 case HANDLE_VIEW_DATA_CHANGED: {
                     viewDataChanged(msg.arg1, msg.arg2);
                     break;
@@ -95,18 +116,31 @@ public class AppWidgetHost {
             }
         }
     }
-    
+
     Handler mHandler;
 
     int mHostId;
     Callbacks mCallbacks = new Callbacks();
     final HashMap<Integer,AppWidgetHostView> mViews = new HashMap<Integer, AppWidgetHostView>();
+    private OnClickHandler mOnClickHandler;
 
     public AppWidgetHost(Context context, int hostId) {
+        this(context, hostId, null, context.getMainLooper());
+    }
+
+    /**
+     * @hide
+     */
+    public AppWidgetHost(Context context, int hostId, OnClickHandler handler, Looper looper) {
         mContext = context;
         mHostId = hostId;
-        mHandler = new UpdateHandler(context.getMainLooper());
+        mOnClickHandler = handler;
+        mHandler = new UpdateHandler(looper);
         mDisplayMetrics = context.getResources().getDisplayMetrics();
+        bindService();
+    }
+
+    private static void bindService() {
         synchronized (sServiceLock) {
             if (sService == null) {
                 IBinder b = ServiceManager.getService(Context.APPWIDGET_SERVICE);
@@ -122,7 +156,7 @@ public class AppWidgetHost {
     public void startListening() {
         int[] updatedIds;
         ArrayList<RemoteViews> updatedViews = new ArrayList<RemoteViews>();
-        
+
         try {
             if (mPackageName == null) {
                 mPackageName = mContext.getPackageName();
@@ -170,7 +204,40 @@ public class AppWidgetHost {
     }
 
     /**
-     * Stop listening to changes for this AppWidget.  
+     * Get a appWidgetId for a host in the calling process.
+     *
+     * @return a appWidgetId
+     * @hide
+     */
+    public static int allocateAppWidgetIdForSystem(int hostId) {
+        checkCallerIsSystem();
+        try {
+            if (sService == null) {
+                bindService();
+            }
+            Context systemContext =
+                    (Context) ActivityThread.currentActivityThread().getSystemContext();
+            String packageName = systemContext.getPackageName();
+            return sService.allocateAppWidgetId(packageName, hostId);
+        } catch (RemoteException e) {
+            throw new RuntimeException("system server dead?", e);
+        }
+    }
+
+    private static void checkCallerIsSystem() {
+        int uid = Process.myUid();
+        if (UserHandle.getAppId(uid) == Process.SYSTEM_UID || uid == 0) {
+            return;
+        }
+        throw new SecurityException("Disallowed call for uid " + uid);
+    }
+
+    private boolean isLocalBinder() {
+        return Process.myPid() == Binder.getCallingPid();
+    }
+
+    /**
+     * Stop listening to changes for this AppWidget.
      */
     public void deleteAppWidgetId(int appWidgetId) {
         synchronized (mViews) {
@@ -181,6 +248,22 @@ public class AppWidgetHost {
             catch (RemoteException e) {
                 throw new RuntimeException("system server dead?", e);
             }
+        }
+    }
+
+    /**
+     * Stop listening to changes for this AppWidget.
+     * @hide
+     */
+    public static void deleteAppWidgetIdForSystem(int appWidgetId) {
+        checkCallerIsSystem();
+        try {
+            if (sService == null) {
+                bindService();
+            }
+            sService.deleteAppWidgetId(appWidgetId);
+        } catch (RemoteException e) {
+            throw new RuntimeException("system server dead?", e);
         }
     }
 
@@ -225,6 +308,7 @@ public class AppWidgetHost {
     public final AppWidgetHostView createView(Context context, int appWidgetId,
             AppWidgetProviderInfo appWidget) {
         AppWidgetHostView view = onCreateView(context, appWidgetId, appWidget);
+        view.setOnClickHandler(mOnClickHandler);
         view.setAppWidget(appWidgetId, appWidget);
         synchronized (mViews) {
             mViews.put(appWidgetId, view);
@@ -236,6 +320,7 @@ public class AppWidgetHost {
             throw new RuntimeException("system server dead?", e);
         }
         view.updateAppWidget(views);
+
         return view;
     }
 
@@ -245,7 +330,7 @@ public class AppWidgetHost {
      */
     protected AppWidgetHostView onCreateView(Context context, int appWidgetId,
             AppWidgetProviderInfo appWidget) {
-        return new AppWidgetHostView(context);
+        return new AppWidgetHostView(context, mOnClickHandler);
     }
 
     /**
@@ -255,7 +340,7 @@ public class AppWidgetHost {
         AppWidgetHostView v;
 
         // Convert complex to dp -- we are getting the AppWidgetProviderInfo from the
-        // AppWidgetService, which doesn't have our context, hence we need to do the 
+        // AppWidgetService, which doesn't have our context, hence we need to do the
         // conversion here.
         appWidget.minWidth =
             TypedValue.complexToDimensionPixelSize(appWidget.minWidth, mDisplayMetrics);
@@ -272,6 +357,14 @@ public class AppWidgetHost {
         if (v != null) {
             v.resetAppWidget(appWidget);
         }
+    }
+
+    /**
+     * Called when the set of available widgets changes (ie. widget containing packages
+     * are added, updated or removed, or widget components are enabled or disabled.)
+     */
+    protected void onProvidersChanged() {
+        // Do nothing
     }
 
     void updateAppWidgetView(int appWidgetId, RemoteViews views) {

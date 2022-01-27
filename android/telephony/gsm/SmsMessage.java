@@ -199,7 +199,7 @@ public class SmsMessage {
      */
     @Deprecated
     public static int[] calculateLength(CharSequence messageBody, boolean use7bitOnly) {
-        SmsMessageBase.TextEncodingDetails ted =
+        GsmAlphabet.TextEncodingDetails ted =
                 com.android.internal.telephony.gsm.SmsMessage
                         .calculateLength(messageBody, use7bitOnly);
         int ret[] = new int[4];

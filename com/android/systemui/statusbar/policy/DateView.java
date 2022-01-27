@@ -30,7 +30,7 @@ import com.android.systemui.R;
 
 import java.util.Date;
 
-public final class DateView extends TextView {
+public class DateView extends TextView {
     private static final String TAG = "DateView";
 
     private boolean mAttachedToWindow;
@@ -86,12 +86,9 @@ public final class DateView extends TextView {
         return 0;
     }
 
-    private final void updateClock() {
-        final Context context = getContext();
-        Date now = new Date();
-        CharSequence dow = DateFormat.format("EEEE", now);
-        CharSequence date = DateFormat.getLongDateFormat(context).format(now);
-        setText(context.getString(R.string.status_bar_date_formatter, dow, date));
+    protected void updateClock() {
+        final String dateFormat = getContext().getString(R.string.abbrev_wday_month_day_no_year);
+        setText(DateFormat.format(dateFormat, new Date()));
     }
 
     private boolean isVisible() {

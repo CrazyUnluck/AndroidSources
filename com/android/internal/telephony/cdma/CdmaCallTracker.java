@@ -32,6 +32,7 @@ import com.android.internal.telephony.CommandsInterface;
 import com.android.internal.telephony.Connection;
 import com.android.internal.telephony.DriverCall;
 import com.android.internal.telephony.Phone;
+import com.android.internal.telephony.PhoneConstants;
 import com.android.internal.telephony.TelephonyProperties;
 
 import java.io.FileDescriptor;
@@ -81,7 +82,7 @@ public final class CdmaCallTracker extends CallTracker {
     boolean desiredMute = false;    // false = mute off
 
     int pendingCallClirMode;
-    Phone.State state = Phone.State.IDLE;
+    PhoneConstants.State state = PhoneConstants.State.IDLE;
 
     private boolean mIsEcmTimerCanceled = false;
 
@@ -137,7 +138,7 @@ public final class CdmaCallTracker extends CallTracker {
         Registrant r = new Registrant(h, what, obj);
         voiceCallStartedRegistrants.add(r);
         // Notify if in call when registering
-        if (state != Phone.State.IDLE) {
+        if (state != PhoneConstants.State.IDLE) {
             r.notifyRegistrant(new AsyncResult(null, null, null));
         }
     }
@@ -444,21 +445,21 @@ public final class CdmaCallTracker extends CallTracker {
 
     private void
     updatePhoneState() {
-        Phone.State oldState = state;
+        PhoneConstants.State oldState = state;
 
         if (ringingCall.isRinging()) {
-            state = Phone.State.RINGING;
+            state = PhoneConstants.State.RINGING;
         } else if (pendingMO != null ||
                 !(foregroundCall.isIdle() && backgroundCall.isIdle())) {
-            state = Phone.State.OFFHOOK;
+            state = PhoneConstants.State.OFFHOOK;
         } else {
-            state = Phone.State.IDLE;
+            state = PhoneConstants.State.IDLE;
         }
 
-        if (state == Phone.State.IDLE && oldState != state) {
+        if (state == PhoneConstants.State.IDLE && oldState != state) {
             voiceCallEndedRegistrants.notifyRegistrants(
                 new AsyncResult(null, null, null));
-        } else if (oldState == Phone.State.IDLE && oldState != state) {
+        } else if (oldState == PhoneConstants.State.IDLE && oldState != state) {
             voiceCallStartedRegistrants.notifyRegistrants (
                     new AsyncResult(null, null, null));
         }

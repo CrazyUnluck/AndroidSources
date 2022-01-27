@@ -39,6 +39,7 @@ import android.os.ParcelFileDescriptor;
 import android.os.RemoteException;
 import android.os.ServiceManager;
 import android.os.SystemClock;
+import android.os.UserHandle;
 import android.text.TextUtils;
 import android.util.EventLog;
 import android.util.Log;
@@ -230,7 +231,8 @@ public abstract class ContentResolver {
         }
 
         try {
-            String type = ActivityManagerNative.getDefault().getProviderMimeType(url);
+            String type = ActivityManagerNative.getDefault().getProviderMimeType(
+                    url, UserHandle.myUserId());
             return type;
         } catch (RemoteException e) {
             // Arbitrary and not worth documenting, as Activity
@@ -1217,9 +1219,16 @@ public abstract class ContentResolver {
     public final void registerContentObserver(Uri uri, boolean notifyForDescendents,
             ContentObserver observer)
     {
+        registerContentObserver(uri, notifyForDescendents, observer, UserHandle.myUserId());
+    }
+
+    /** @hide - designated user version */
+    public final void registerContentObserver(Uri uri, boolean notifyForDescendents,
+            ContentObserver observer, int userHandle)
+    {
         try {
             getContentService().registerContentObserver(uri, notifyForDescendents,
-                    observer.getContentObserver());
+                    observer.getContentObserver(), userHandle);
         } catch (RemoteException e) {
         }
     }
@@ -1274,10 +1283,21 @@ public abstract class ContentResolver {
      * @see #requestSync(android.accounts.Account, String, android.os.Bundle)
      */
     public void notifyChange(Uri uri, ContentObserver observer, boolean syncToNetwork) {
+        notifyChange(uri, observer, syncToNetwork, UserHandle.getCallingUserId());
+    }
+
+    /**
+     * Notify registered observers within the designated user(s) that a row was updated.
+     *
+     * @hide
+     */
+    public void notifyChange(Uri uri, ContentObserver observer, boolean syncToNetwork,
+            int userHandle) {
         try {
             getContentService().notifyChange(
                     uri, observer == null ? null : observer.getContentObserver(),
-                    observer != null && observer.deliverSelfNotifications(), syncToNetwork);
+                    observer != null && observer.deliverSelfNotifications(), syncToNetwork,
+                    userHandle);
         } catch (RemoteException e) {
         }
     }

@@ -84,6 +84,13 @@ import java.util.List;
  * items.  Doing this implicitly switches the class into its new "headers
  * + fragments" mode rather than the old style of just showing a single
  * preferences list.
+ * 
+ * <div class="special reference">
+ * <h3>Developer Guides</h3>
+ * <p>For information about using {@code PreferenceActivity},
+ * read the <a href="{@docRoot}guide/topics/ui/settings.html">Settings</a>
+ * guide.</p>
+ * </div>
  *
  * <a name="SampleCode"></a>
  * <h3>Sample Code</h3>
@@ -1075,6 +1082,12 @@ public abstract class PreferenceActivity extends ListActivity implements
                     setTitle(title);
                 }
                 return;
+            }
+            if (mSinglePane) {
+                mFragmentBreadCrumbs.setVisibility(View.GONE);
+                // Hide the breadcrumb section completely for single-pane
+                View bcSection = findViewById(com.android.internal.R.id.breadcrumb_section);
+                if (bcSection != null) bcSection.setVisibility(View.GONE);
             }
             mFragmentBreadCrumbs.setMaxVisible(2);
             mFragmentBreadCrumbs.setActivity(this);

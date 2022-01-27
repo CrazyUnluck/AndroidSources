@@ -18,6 +18,7 @@
 package android.view;
 
 import android.graphics.Bitmap;
+import android.graphics.Paint;
 
 /**
  * An OpenGL ES 2.0 implementation of {@link HardwareLayer}.
@@ -43,13 +44,17 @@ abstract class GLES20Layer extends HardwareLayer {
     }
 
     @Override
+    void setLayerPaint(Paint paint) {
+        if (paint != null) {
+            GLES20Canvas.nSetLayerPaint(mLayer, paint.mNativePaint);
+            GLES20Canvas.nSetLayerColorFilter(mLayer, paint.getColorFilter() != null ?
+                    paint.getColorFilter().nativeColorFilter : 0);
+        }
+    }
+
+    @Override
     boolean copyInto(Bitmap bitmap) {
         return GLES20Canvas.nCopyLayer(mLayer, bitmap.mNativeBitmap);
-    }
-    
-    @Override
-    void update(int width, int height, boolean isOpaque) {
-        super.update(width, height, isOpaque);
     }
 
     @Override
@@ -60,12 +65,10 @@ abstract class GLES20Layer extends HardwareLayer {
         }
         mLayer = 0;
     }
-    
+
     @Override
-    void flush() {
-        if (mLayer != 0) {
-            GLES20Canvas.nFlushLayer(mLayer);
-        }
+    void clearStorage() {
+        if (mLayer != 0) GLES20Canvas.nClearLayerTexture(mLayer);
     }
 
     static class Finalizer {

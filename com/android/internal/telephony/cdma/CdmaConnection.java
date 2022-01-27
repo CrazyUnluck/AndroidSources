@@ -31,8 +31,11 @@ import android.text.TextUtils;
 
 import android.telephony.PhoneNumberUtils;
 import android.telephony.ServiceState;
+
+import com.android.internal.telephony.IccCardApplicationStatus.AppState;
 import com.android.internal.telephony.TelephonyProperties;
 import com.android.internal.telephony.RILConstants;
+import com.android.internal.telephony.uicc.UiccController;
 
 /**
  * {@hide}
@@ -51,7 +54,6 @@ public class CdmaConnection extends Connection {
     String postDialString;      // outgoing calls only
     boolean isIncoming;
     boolean disconnected;
-    String cnapName;
     int index;          // index in CdmaCallTracker.connections[], -1 if unassigned
 
     /*
@@ -76,8 +78,7 @@ public class CdmaConnection extends Connection {
 
     DisconnectCause cause = DisconnectCause.NOT_DISCONNECTED;
     PostDialState postDialState = PostDialState.NOT_STARTED;
-    int numberPresentation = Connection.PRESENTATION_ALLOWED;
-    int cnapNamePresentation  = Connection.PRESENTATION_ALLOWED;
+    int numberPresentation = PhoneConstants.PRESENTATION_ALLOWED;
 
 
     Handler h;
@@ -161,8 +162,8 @@ public class CdmaConnection extends Connection {
 
         isIncoming = false;
         cnapName = null;
-        cnapNamePresentation = Connection.PRESENTATION_ALLOWED;
-        numberPresentation = Connection.PRESENTATION_ALLOWED;
+        cnapNamePresentation = PhoneConstants.PRESENTATION_ALLOWED;
+        numberPresentation = PhoneConstants.PRESENTATION_ALLOWED;
         createTime = System.currentTimeMillis();
 
         if (parent != null) {
@@ -228,14 +229,6 @@ public class CdmaConnection extends Connection {
 
     public String getAddress() {
         return address;
-    }
-
-    public String getCnapName() {
-        return cnapName;
-    }
-
-    public int getCnapNamePresentation() {
-        return cnapNamePresentation;
     }
 
     public CdmaCall getCall() {
@@ -425,14 +418,18 @@ public class CdmaConnection extends Connection {
             default:
                 CDMAPhone phone = owner.phone;
                 int serviceState = phone.getServiceState().getState();
+                AppState uiccAppState = UiccController
+                        .getInstance()
+                        .getUiccCardApplication(UiccController.APP_FAM_3GPP2)
+                        .getState();
                 if (serviceState == ServiceState.STATE_POWER_OFF) {
                     return DisconnectCause.POWER_OFF;
                 } else if (serviceState == ServiceState.STATE_OUT_OF_SERVICE
                         || serviceState == ServiceState.STATE_EMERGENCY_ONLY) {
                     return DisconnectCause.OUT_OF_SERVICE;
                 } else if (phone.mCdmaSubscriptionSource ==
-                               CdmaSubscriptionSourceManager.SUBSCRIPTION_FROM_RUIM
-                           && phone.getIccCard().getState() != IccCard.State.READY) {
+                        CdmaSubscriptionSourceManager.SUBSCRIPTION_FROM_RUIM
+                        && uiccAppState != AppState.APPSTATE_READY) {
                     return DisconnectCause.ICC_ERROR;
                 } else if (causeCode==CallFailCause.NORMAL_CLEARING) {
                     return DisconnectCause.NORMAL;

@@ -16,15 +16,8 @@
 package com.android.uiautomator.core;
 
 /**
- * Used to enumerate a container's UI elements for the purpose of verification
- * and/or targeting a sub container by a child's text or description. For example
- * if a list view contained many list items each in its own LinearLayout, and
- * the test desired to locate an On/Off switch next to text Wi-Fi so not to be
- * confused with a switch near text Bluetooth, the test use a UiCollection pointing
- * at the list view of the items then use {@link #getChildByText(UiSelector, String)} for
- * locating the LinearLayout element containing the text Wi-Fi. The returned UiObject
- * can further be used to retrieve a child by selector targeting the desired switch and
- * not other switches that may also be in the list.
+ * Used to enumerate a container's UI elements for the purpose of counting,
+ * or targeting a sub elements by a child's text or description.
  */
 public class UiCollection extends UiObject {
 
@@ -34,10 +27,13 @@ public class UiCollection extends UiObject {
 
     /**
      * Searches for child UI element within the constraints of this UiCollection {@link UiSelector}
-     * selector. It looks for any child matching the <code>childPattern</code> argument that has
+     * selector.
+     *
+     * It looks for any child matching the <code>childPattern</code> argument that has
      * a child UI element anywhere within its sub hierarchy that has content-description text.
      * The returned UiObject will point at the <code>childPattern</code> instance that matched the
      * search and not at the identifying child element that matched the content description.</p>
+     *
      * @param childPattern {@link UiSelector} selector of the child pattern to match and return
      * @param text String of the identifying child contents of of the <code>childPattern</code>
      * @return {@link UiObject} pointing at and instance of <code>childPattern</code>
@@ -64,10 +60,13 @@ public class UiCollection extends UiObject {
 
     /**
      * Searches for child UI element within the constraints of this UiCollection {@link UiSelector}
-     * selector. It looks for any child matching the <code>childPattern</code> argument that has
+     * selector.
+     *
+     * It looks for any child matching the <code>childPattern</code> argument that has
      * a child UI element anywhere within its sub hierarchy that is at the <code>instance</code>
      * specified. The operation is performed only on the visible items and no scrolling is performed
      * in this case.
+     *
      * @param childPattern {@link UiSelector} selector of the child pattern to match and return
      * @param instance int the desired matched instance of this <code>childPattern</code>
      * @return {@link UiObject} pointing at and instance of <code>childPattern</code>
@@ -81,11 +80,14 @@ public class UiCollection extends UiObject {
 
     /**
      * Searches for child UI element within the constraints of this UiCollection {@link UiSelector}
-     * selector. It looks for any child matching the <code>childPattern</code> argument that has
+     * selector.
+     *
+     * It looks for any child matching the <code>childPattern</code> argument that has
      * a child UI element anywhere within its sub hierarchy that has text attribute =
      * <code>text</code>. The returned UiObject will point at the <code>childPattern</code>
      * instance that matched the search and not at the identifying child element that matched the
      * text attribute.</p>
+     *
      * @param childPattern {@link UiSelector} selector of the child pattern to match and return
      * @param text String of the identifying child contents of of the <code>childPattern</code>
      * @return {@link UiObject} pointing at and instance of <code>childPattern</code>
@@ -112,12 +114,13 @@ public class UiCollection extends UiObject {
     }
 
     /**
-     * Count child UI element instances matching the <code>childPattern</code>
-     * argument. The number of elements match returned represent those elements that are
-     * currently visible on the display within the sub hierarchy of this UiCollection
-     * {@link UiSelector} selector. Take note that more elements may be present but
-     * invisible and are not counted.
-     * @param childPattern is a {@link UiSelector} selector that is a pattern to count
+     * Counts child UI element instances matching the <code>childPattern</code>
+     * argument. The method returns the number of matching UI elements that are
+     * currently visible.  The count does not include items of a scrollable list
+     * that are off-screen.
+     *
+     * @param childPattern a {@link UiSelector} that represents the matching child UI
+     * elements to count
      * @return the number of matched childPattern under the current {@link UiCollection}
      */
     public int getChildCount(UiSelector childPattern) {

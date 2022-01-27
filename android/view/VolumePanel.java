@@ -18,6 +18,7 @@ package android.view;
 
 import com.android.internal.R;
 
+import android.app.AlertDialog;
 import android.app.Dialog;
 import android.content.DialogInterface.OnDismissListener;
 import android.content.BroadcastReceiver;
@@ -92,6 +93,7 @@ public class VolumePanel extends Handler implements OnSeekBarChangeListener, Vie
     private static final int MSG_REMOTE_VOLUME_CHANGED = 8;
     private static final int MSG_REMOTE_VOLUME_UPDATE_IF_SHOWN = 9;
     private static final int MSG_SLIDER_VISIBILITY_CHANGED = 10;
+    private static final int MSG_DISPLAY_SAFE_VOLUME_WARNING = 11;
 
     // Pseudo stream type for master volume
     private static final int STREAM_MASTER = -100;
@@ -103,6 +105,9 @@ public class VolumePanel extends Handler implements OnSeekBarChangeListener, Vie
     private boolean mRingIsSilent;
     private boolean mShowCombinedVolumes;
     private boolean mVoiceCapable;
+
+    // True if we want to play tones on the system stream when the master stream is specified.
+    private final boolean mPlayMasterStreamTones;
 
     /** Dialog containing all the sliders */
     private final Dialog mDialog;
@@ -208,6 +213,38 @@ public class VolumePanel extends Handler implements OnSeekBarChangeListener, Vie
     private ToneGenerator mToneGenerators[];
     private Vibrator mVibrator;
 
+    private static AlertDialog sConfirmSafeVolumeDialog;
+    private static Object sConfirmSafeVolumeLock = new Object();
+
+    private static class WarningDialogReceiver extends BroadcastReceiver
+            implements DialogInterface.OnDismissListener {
+        private Context mContext;
+        private Dialog mDialog;
+
+        WarningDialogReceiver(Context context, Dialog dialog) {
+            mContext = context;
+            mDialog = dialog;
+            IntentFilter filter = new IntentFilter(Intent.ACTION_CLOSE_SYSTEM_DIALOGS);
+            context.registerReceiver(this, filter);
+        }
+
+        @Override
+        public void onReceive(Context context, Intent intent) {
+            mDialog.cancel();
+            synchronized (sConfirmSafeVolumeLock) {
+                sConfirmSafeVolumeDialog = null;
+            }
+        }
+
+        public void onDismiss(DialogInterface unused) {
+            mContext.unregisterReceiver(this);
+            synchronized (sConfirmSafeVolumeLock) {
+                sConfirmSafeVolumeDialog = null;
+            }
+        }
+    }
+
+
     public VolumePanel(final Context context, AudioService volumeService) {
         mContext = context;
         mAudioManager = (AudioManager) context.getSystemService(Context.AUDIO_SERVICE);
@@ -281,6 +318,13 @@ public class VolumePanel extends Handler implements OnSeekBarChangeListener, Vie
         } else {
             mMoreButton.setOnClickListener(this);
         }
+
+        boolean masterVolumeOnly = context.getResources().getBoolean(
+                com.android.internal.R.bool.config_useMasterVolume);
+        boolean masterVolumeKeySounds = mContext.getResources().getBoolean(
+                com.android.internal.R.bool.config_useVolumeKeySounds);
+
+        mPlayMasterStreamTones = masterVolumeOnly && masterVolumeKeySounds;
 
         listenToRingerMode();
     }
@@ -518,6 +562,11 @@ public class VolumePanel extends Handler implements OnSeekBarChangeListener, Vie
         postMuteChanged(STREAM_MASTER, flags);
     }
 
+    public void postDisplaySafeVolumeWarning() {
+        if (hasMessages(MSG_DISPLAY_SAFE_VOLUME_WARNING)) return;
+        obtainMessage(MSG_DISPLAY_SAFE_VOLUME_WARNING, 0, 0).sendToTarget();
+    }
+
     /**
      * Override this if you have other work to do when the volume changes (for
      * example, vibrating, playing a sound, etc.). Make sure to call through to
@@ -650,9 +699,12 @@ public class VolumePanel extends Handler implements OnSeekBarChangeListener, Vie
             if (sc.seekbarView.getMax() != max) {
                 sc.seekbarView.setMax(max);
             }
+
             sc.seekbarView.setProgress(index);
-            if (streamType != mAudioManager.getMasterStreamType()
-                    && streamType != AudioService.STREAM_REMOTE_MUSIC && isMuted(streamType)) {
+            if (((flags & AudioManager.FLAG_FIXED_VOLUME) != 0) ||
+                    (streamType != mAudioManager.getMasterStreamType() &&
+                     streamType != AudioService.STREAM_REMOTE_MUSIC &&
+                     isMuted(streamType))) {
                 sc.seekbarView.setEnabled(false);
             } else {
                 sc.seekbarView.setEnabled(true);
@@ -786,11 +838,46 @@ public class VolumePanel extends Handler implements OnSeekBarChangeListener, Vie
         }
     }
 
+    protected void onDisplaySafeVolumeWarning() {
+        synchronized (sConfirmSafeVolumeLock) {
+            if (sConfirmSafeVolumeDialog != null) {
+                return;
+            }
+            sConfirmSafeVolumeDialog = new AlertDialog.Builder(mContext)
+                    .setMessage(com.android.internal.R.string.safe_media_volume_warning)
+                    .setPositiveButton(com.android.internal.R.string.yes,
+                                        new DialogInterface.OnClickListener() {
+                        public void onClick(DialogInterface dialog, int which) {
+                            mAudioService.disableSafeMediaVolume();
+                        }
+                    })
+                    .setNegativeButton(com.android.internal.R.string.no, null)
+                    .setIconAttribute(android.R.attr.alertDialogIcon)
+                    .create();
+            final WarningDialogReceiver warning = new WarningDialogReceiver(mContext,
+                    sConfirmSafeVolumeDialog);
+
+            sConfirmSafeVolumeDialog.setOnDismissListener(warning);
+            sConfirmSafeVolumeDialog.getWindow().setType(
+                                                    WindowManager.LayoutParams.TYPE_KEYGUARD_DIALOG);
+            sConfirmSafeVolumeDialog.show();
+        }
+    }
+
     /**
      * Lock on this VolumePanel instance as long as you use the returned ToneGenerator.
      */
     private ToneGenerator getOrCreateToneGenerator(int streamType) {
-        if (streamType == STREAM_MASTER) return null;
+        if (streamType == STREAM_MASTER) {
+            // For devices that use the master volume setting only but still want to
+            // play a volume-changed tone, direct the master volume pseudostream to
+            // the system stream's tone generator.
+            if (mPlayMasterStreamTones) {
+                streamType = AudioManager.STREAM_SYSTEM;
+            } else {
+                return null;
+            }
+        }
         synchronized (this) {
             if (mToneGenerators[streamType] == null) {
                 try {
@@ -890,6 +977,10 @@ public class VolumePanel extends Handler implements OnSeekBarChangeListener, Vie
 
             case MSG_SLIDER_VISIBILITY_CHANGED:
                 onSliderVisibilityChanged(msg.arg1, msg.arg2);
+                break;
+
+            case MSG_DISPLAY_SAFE_VOLUME_WARNING:
+                onDisplaySafeVolumeWarning();
                 break;
         }
     }

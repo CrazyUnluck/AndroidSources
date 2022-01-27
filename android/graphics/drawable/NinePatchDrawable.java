@@ -181,7 +181,7 @@ public class NinePatchDrawable extends Drawable {
         }
     }
 
-    private Insets scaleFromDensity(Insets insets, int sdensity, int tdensity) {
+    private static Insets scaleFromDensity(Insets insets, int sdensity, int tdensity) {
         int left = Bitmap.scaleFromDensity(insets.left, sdensity, tdensity);
         int top = Bitmap.scaleFromDensity(insets.top, sdensity, tdensity);
         int right = Bitmap.scaleFromDensity(insets.right, sdensity, tdensity);
@@ -296,7 +296,7 @@ public class NinePatchDrawable extends Drawable {
         if (dither) {
             options.inDither = false;
         }
-        options.inScreenDensity = DisplayMetrics.DENSITY_DEVICE;
+        options.inScreenDensity = r.getDisplayMetrics().noncompatDensityDpi;
 
         final Rect padding = new Rect();
         final Rect layoutInsets = new Rect();

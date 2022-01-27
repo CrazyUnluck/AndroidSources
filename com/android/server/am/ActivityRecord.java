@@ -37,7 +37,7 @@ import android.os.Message;
 import android.os.Process;
 import android.os.RemoteException;
 import android.os.SystemClock;
-import android.os.UserId;
+import android.os.UserHandle;
 import android.util.EventLog;
 import android.util.Log;
 import android.util.Slog;
@@ -219,7 +219,13 @@ final class ActivityRecord {
         pw.print(prefix); pw.print("frozenBeforeDestroy="); pw.print(frozenBeforeDestroy);
                 pw.print(" thumbnailNeeded="); pw.print(thumbnailNeeded);
                 pw.print(" forceNewConfig="); pw.println(forceNewConfig);
-        pw.print(prefix); pw.print("thumbHolder="); pw.println(thumbHolder);
+        pw.print(prefix); pw.print("thumbHolder: ");
+                pw.print(Integer.toHexString(System.identityHashCode(thumbHolder)));
+                if (thumbHolder != null) {
+                    pw.print(" bm="); pw.print(thumbHolder.lastThumbnail);
+                    pw.print(" desc="); pw.print(thumbHolder.lastDescription);
+                }
+                pw.println();
         if (launchTime != 0 || startTime != 0) {
             pw.print(prefix); pw.print("launchTime=");
                     if (launchTime == 0) pw.print("0");
@@ -321,7 +327,7 @@ final class ActivityRecord {
         appToken = new Token(this);
         info = aInfo;
         launchedFromUid = _launchedFromUid;
-        userId = UserId.getUserId(aInfo.applicationInfo.uid);
+        userId = UserHandle.getUserId(aInfo.applicationInfo.uid);
         intent = _intent;
         shortComponentName = _intent.getComponent().flattenToShortString();
         resolvedType = _resolvedType;
@@ -333,7 +339,6 @@ final class ActivityRecord {
         state = ActivityState.INITIALIZING;
         frontOfTask = false;
         launchFailed = false;
-        haveState = false;
         stopped = false;
         delayedResume = false;
         finishing = false;
@@ -346,6 +351,11 @@ final class ActivityRecord {
         thumbnailNeeded = false;
         idle = false;
         hasBeenLaunched = false;
+
+        // This starts out true, since the initial state of an activity
+        // is that we have everything, and we shouldn't never consider it
+        // lacking in state to be removed if it dies.
+        haveState = true;
 
         if (aInfo != null) {
             if (aInfo.targetActivity == null
@@ -592,6 +602,15 @@ final class ActivityRecord {
         }
     }
 
+    void updateOptionsLocked(ActivityOptions options) {
+        if (options != null) {
+            if (pendingOptions != null) {
+                pendingOptions.abort();
+            }
+            pendingOptions = options;
+        }
+    }
+
     void applyOptionsLocked() {
         if (pendingOptions != null) {
             final int animationType = pendingOptions.getAnimationType();
@@ -614,14 +633,14 @@ final class ActivityRecord {
                                 pendingOptions.getStartY()+pendingOptions.getStartHeight()));
                     }
                     break;
-                case ActivityOptions.ANIM_THUMBNAIL:
-                case ActivityOptions.ANIM_THUMBNAIL_DELAYED:
-                    boolean delayed = (animationType == ActivityOptions.ANIM_THUMBNAIL_DELAYED);
+                case ActivityOptions.ANIM_THUMBNAIL_SCALE_UP:
+                case ActivityOptions.ANIM_THUMBNAIL_SCALE_DOWN:
+                    boolean scaleUp = (animationType == ActivityOptions.ANIM_THUMBNAIL_SCALE_UP);
                     service.mWindowManager.overridePendingAppTransitionThumb(
                             pendingOptions.getThumbnail(),
                             pendingOptions.getStartX(), pendingOptions.getStartY(),
                             pendingOptions.getOnAnimationStartListener(),
-                            delayed);
+                            scaleUp);
                     if (intent.getSourceBounds() == null) {
                         intent.setSourceBounds(new Rect(pendingOptions.getStartX(),
                                 pendingOptions.getStartY(),
@@ -641,6 +660,12 @@ final class ActivityRecord {
             pendingOptions.abort();
             pendingOptions = null;
         }
+    }
+
+    ActivityOptions takeOptionsLocked() {
+        ActivityOptions opts = pendingOptions;
+        pendingOptions = null;
+        return opts;
     }
 
     void removeUriPermissionsLocked() {
@@ -670,16 +695,12 @@ final class ActivityRecord {
         }
         if (thumbHolder != null) {
             if (newThumbnail != null) {
+                if (ActivityManagerService.DEBUG_THUMBNAILS) Slog.i(ActivityManagerService.TAG,
+                        "Setting thumbnail of " + this + " holder " + thumbHolder
+                        + " to " + newThumbnail);
                 thumbHolder.lastThumbnail = newThumbnail;
             }
             thumbHolder.lastDescription = description;
-        }
-    }
-
-    void clearThumbnail() {
-        if (thumbHolder != null) {
-            thumbHolder.lastThumbnail = null;
-            thumbHolder.lastDescription = null;
         }
     }
 
@@ -740,8 +761,8 @@ final class ActivityRecord {
                 final long totalTime = stack.mInitialStartTime != 0
                         ? (curTime - stack.mInitialStartTime) : thisTime;
                 if (ActivityManagerService.SHOW_ACTIVITY_START_TIME) {
-                    EventLog.writeEvent(EventLogTags.ACTIVITY_LAUNCH_TIME,
-                            System.identityHashCode(this), shortComponentName,
+                    EventLog.writeEvent(EventLogTags.AM_ACTIVITY_LAUNCH_TIME,
+                            userId, System.identityHashCode(this), shortComponentName,
                             thisTime, totalTime);
                     StringBuilder sb = service.mStringBuilder;
                     sb.setLength(0);
@@ -835,6 +856,7 @@ final class ActivityRecord {
     }
 
     public boolean keyDispatchingTimedOut() {
+        // TODO: Unify this code with ActivityManagerService.inputDispatchingTimedOut().
         ActivityRecord r;
         ProcessRecord anrApp = null;
         synchronized(service) {
@@ -863,8 +885,7 @@ final class ActivityRecord {
         }
         
         if (anrApp != null) {
-            service.appNotResponding(anrApp, r, this,
-                    "keyDispatchingTimedOut");
+            service.appNotResponding(anrApp, r, this, false, "keyDispatchingTimedOut");
         }
         
         return true;
@@ -917,6 +938,8 @@ final class ActivityRecord {
         StringBuilder sb = new StringBuilder(128);
         sb.append("ActivityRecord{");
         sb.append(Integer.toHexString(System.identityHashCode(this)));
+        sb.append(" u");
+        sb.append(userId);
         sb.append(' ');
         sb.append(intent.getComponent().flattenToShortString());
         sb.append('}');

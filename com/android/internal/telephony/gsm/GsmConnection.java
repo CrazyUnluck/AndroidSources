@@ -26,8 +26,11 @@ import android.os.SystemClock;
 import android.util.Log;
 import android.telephony.PhoneNumberUtils;
 import android.telephony.ServiceState;
+import android.text.TextUtils;
 
 import com.android.internal.telephony.*;
+import com.android.internal.telephony.IccCardApplicationStatus.AppState;
+import com.android.internal.telephony.uicc.UiccController;
 
 /**
  * {@hide}
@@ -71,7 +74,7 @@ public class GsmConnection extends Connection {
 
     DisconnectCause cause = DisconnectCause.NOT_DISCONNECTED;
     PostDialState postDialState = PostDialState.NOT_STARTED;
-    int numberPresentation = Connection.PRESENTATION_ALLOWED;
+    int numberPresentation = PhoneConstants.PRESENTATION_ALLOWED;
     UUSInfo uusInfo;
 
     Handler h;
@@ -125,6 +128,8 @@ public class GsmConnection extends Connection {
 
         isIncoming = dc.isMT;
         createTime = System.currentTimeMillis();
+        cnapName = dc.name;
+        cnapNamePresentation = dc.namePresentation;
         numberPresentation = dc.numberPresentation;
         uusInfo = dc.uusInfo;
 
@@ -151,6 +156,9 @@ public class GsmConnection extends Connection {
         index = -1;
 
         isIncoming = false;
+        cnapName = null;
+        cnapNamePresentation = PhoneConstants.PRESENTATION_ALLOWED;
+        numberPresentation = PhoneConstants.PRESENTATION_ALLOWED;
         createTime = System.currentTimeMillis();
 
         this.parent = parent;
@@ -365,12 +373,17 @@ public class GsmConnection extends Connection {
             default:
                 GSMPhone phone = owner.phone;
                 int serviceState = phone.getServiceState().getState();
+                UiccCardApplication cardApp = UiccController
+                        .getInstance()
+                        .getUiccCardApplication(UiccController.APP_FAM_3GPP);
+                AppState uiccAppState = (cardApp != null) ? cardApp.getState() :
+                                                            AppState.APPSTATE_UNKNOWN;
                 if (serviceState == ServiceState.STATE_POWER_OFF) {
                     return DisconnectCause.POWER_OFF;
                 } else if (serviceState == ServiceState.STATE_OUT_OF_SERVICE
                         || serviceState == ServiceState.STATE_EMERGENCY_ONLY ) {
                     return DisconnectCause.OUT_OF_SERVICE;
-                } else if (phone.getIccCard().getState() != IccCard.State.READY) {
+                } else if (uiccAppState != AppState.APPSTATE_READY) {
                     return DisconnectCause.ICC_ERROR;
                 } else if (causeCode == CallFailCause.ERROR_UNSPECIFIED) {
                     if (phone.mSST.mRestrictedState.isCsRestricted()) {
@@ -436,6 +449,21 @@ public class GsmConnection extends Connection {
             address = dc.number;
             changed = true;
         }
+
+        // A null cnapName should be the same as ""
+        if (TextUtils.isEmpty(dc.name)) {
+            if (!TextUtils.isEmpty(cnapName)) {
+                changed = true;
+                cnapName = "";
+            }
+        } else if (!dc.name.equals(cnapName)) {
+            changed = true;
+            cnapName = dc.name;
+        }
+
+        if (Phone.DEBUG_PHONE) log("--dssds----"+cnapName);
+        cnapNamePresentation = dc.namePresentation;
+        numberPresentation = dc.numberPresentation;
 
         if (newParent != parent) {
             if (parent != null) {

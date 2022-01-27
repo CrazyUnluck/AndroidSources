@@ -17,6 +17,7 @@
 package android.inputmethodservice;
 
 import com.android.internal.os.HandlerCaller;
+import com.android.internal.os.SomeArgs;
 import com.android.internal.view.IInputMethodCallback;
 import com.android.internal.view.IInputMethodSession;
 
@@ -42,6 +43,7 @@ class IInputMethodSessionWrapper extends IInputMethodSession.Stub
     private static final int DO_UPDATE_EXTRACTED_TEXT = 67;
     private static final int DO_DISPATCH_KEY_EVENT = 70;
     private static final int DO_DISPATCH_TRACKBALL_EVENT = 80;
+    private static final int DO_DISPATCH_GENERIC_MOTION_EVENT = 85;
     private static final int DO_UPDATE_SELECTION = 90;
     private static final int DO_UPDATE_CURSOR = 95;
     private static final int DO_APP_PRIVATE_COMMAND = 100;
@@ -91,28 +93,37 @@ class IInputMethodSessionWrapper extends IInputMethodSession.Stub
                         (ExtractedText)msg.obj);
                 return;
             case DO_DISPATCH_KEY_EVENT: {
-                HandlerCaller.SomeArgs args = (HandlerCaller.SomeArgs)msg.obj;
+                SomeArgs args = (SomeArgs)msg.obj;
                 mInputMethodSession.dispatchKeyEvent(msg.arg1,
                         (KeyEvent)args.arg1,
                         new InputMethodEventCallbackWrapper(
                                 (IInputMethodCallback)args.arg2));
-                mCaller.recycleArgs(args);
+                args.recycle();
                 return;
             }
             case DO_DISPATCH_TRACKBALL_EVENT: {
-                HandlerCaller.SomeArgs args = (HandlerCaller.SomeArgs)msg.obj;
+                SomeArgs args = (SomeArgs)msg.obj;
                 mInputMethodSession.dispatchTrackballEvent(msg.arg1,
                         (MotionEvent)args.arg1,
                         new InputMethodEventCallbackWrapper(
                                 (IInputMethodCallback)args.arg2));
-                mCaller.recycleArgs(args);
+                args.recycle();
+                return;
+            }
+            case DO_DISPATCH_GENERIC_MOTION_EVENT: {
+                SomeArgs args = (SomeArgs)msg.obj;
+                mInputMethodSession.dispatchGenericMotionEvent(msg.arg1,
+                        (MotionEvent)args.arg1,
+                        new InputMethodEventCallbackWrapper(
+                                (IInputMethodCallback)args.arg2));
+                args.recycle();
                 return;
             }
             case DO_UPDATE_SELECTION: {
-                HandlerCaller.SomeArgs args = (HandlerCaller.SomeArgs)msg.obj;
+                SomeArgs args = (SomeArgs)msg.obj;
                 mInputMethodSession.updateSelection(args.argi1, args.argi2,
                         args.argi3, args.argi4, args.argi5, args.argi6);
-                mCaller.recycleArgs(args);
+                args.recycle();
                 return;
             }
             case DO_UPDATE_CURSOR: {
@@ -120,10 +131,10 @@ class IInputMethodSessionWrapper extends IInputMethodSession.Stub
                 return;
             }
             case DO_APP_PRIVATE_COMMAND: {
-                HandlerCaller.SomeArgs args = (HandlerCaller.SomeArgs)msg.obj;
+                SomeArgs args = (SomeArgs)msg.obj;
                 mInputMethodSession.appPrivateCommand((String)args.arg1,
                         (Bundle)args.arg2);
-                mCaller.recycleArgs(args);
+                args.recycle();
                 return;
             }
             case DO_TOGGLE_SOFT_INPUT: {
@@ -163,6 +174,12 @@ class IInputMethodSessionWrapper extends IInputMethodSession.Stub
 
     public void dispatchTrackballEvent(int seq, MotionEvent event, IInputMethodCallback callback) {
         mCaller.executeOrSendMessage(mCaller.obtainMessageIOO(DO_DISPATCH_TRACKBALL_EVENT, seq,
+                event, callback));
+    }
+
+    public void dispatchGenericMotionEvent(int seq, MotionEvent event,
+            IInputMethodCallback callback) {
+        mCaller.executeOrSendMessage(mCaller.obtainMessageIOO(DO_DISPATCH_GENERIC_MOTION_EVENT, seq,
                 event, callback));
     }
 

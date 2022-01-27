@@ -15,12 +15,6 @@
  */
 package com.android.vcard.tests;
 
-import com.android.vcard.VCardConfig;
-import com.android.vcard.tests.testutils.ContentValuesVerifier;
-import com.android.vcard.tests.testutils.ContentValuesVerifierElem;
-import com.android.vcard.tests.testutils.PropertyNodesVerifierElem.TypeSet;
-import com.android.vcard.tests.testutils.VCardTestsBase;
-
 import android.content.ContentValues;
 import android.provider.ContactsContract.CommonDataKinds.Email;
 import android.provider.ContactsContract.CommonDataKinds.Event;
@@ -35,6 +29,12 @@ import android.provider.ContactsContract.CommonDataKinds.StructuredName;
 import android.provider.ContactsContract.CommonDataKinds.StructuredPostal;
 import android.provider.ContactsContract.CommonDataKinds.Website;
 import android.provider.ContactsContract.Data;
+
+import com.android.vcard.VCardConfig;
+import com.android.vcard.tests.testutils.ContentValuesVerifier;
+import com.android.vcard.tests.testutils.ContentValuesVerifierElem;
+import com.android.vcard.tests.testutils.PropertyNodesVerifierElem.TypeSet;
+import com.android.vcard.tests.testutils.VCardTestsBase;
 
 import java.util.Arrays;
 
@@ -694,6 +694,27 @@ public class VCardImporterTests extends VCardTestsBase {
                 .put(Email.ADDRESS, "\"Omega\" <omega@example.com>");
     }
 
+    public void testAdrMultipleLineV21() {
+        ContentValues contentValuesForValue = new ContentValues();
+        contentValuesForValue.put("VALUE", "DATE");
+
+        mVerifier.initForImportTest(V21, R.raw.v21_adr_multiple_line);
+        mVerifier.addPropertyNodesVerifierElem()
+                .addExpectedNodeWithOrder("N", "bogus")
+                .addExpectedNodeWithOrder("URL", "http://bogus.com/")
+                .addExpectedNodeWithOrder("ADR",
+                        ";;Grindelberg 999;Hamburg;;99999;Deutschland",
+                        Arrays.asList("", "", "Grindelberg 999", "Hamburg", "", "99999",
+                                "Deutschland"),
+                        new TypeSet("HOME"))
+                .addExpectedNodeWithOrder("ADR", ";;Hermann v. Brevern\\ 9999999\\ " +
+                        "Packstation 999;Hamburg;;99999;Deutschland",
+                        Arrays.asList("", "", "Hermann v. Brevern\\ 9999999\\ Packstation 999",
+                                "Hamburg", "", "99999", "Deutschland"),
+                        new TypeSet("HOME"))
+                .addExpectedNodeWithOrder("BDAY", "20081203", contentValuesForValue);
+    }
+
     public void testV30Simple_Parsing() {
         mVerifier.initForImportTest(V30, R.raw.v30_simple);
         mVerifier.addPropertyNodesVerifierElem()
@@ -1215,6 +1236,27 @@ public class VCardImporterTests extends VCardTestsBase {
                 .addExpectedNodeWithOrder("PHOTO", null,
                         null, sPhotoByteArrayForComplicatedCase, mContentValuesForBase64V21,
                         new TypeSet("JPEG"), null);
+    }
+
+    public void testBase64Without2CrLfForBlackBerry_Parse() {
+        mVerifier.initForImportTest(V21, R.raw.v21_blackberry_photo);
+        mVerifier.addPropertyNodesVerifierElem()
+                .addExpectedNodeWithOrder("FN", "boogie")
+                .addExpectedNodeWithOrder("N", "boogie")
+                .addExpectedNodeWithOrder("PHOTO", null,
+                        null, sPhotoByteArrayForComplicatedCase, mContentValuesForBase64V21,
+                        null, null)
+                .addExpectedNodeWithOrder("TEL", "+5555555", new TypeSet("WORK"))
+                .addExpectedNodeWithOrder("TEL", "+5555556", new TypeSet("CELL"))
+                .addExpectedNodeWithOrder("EMAIL", "forrestgump@walladalla.com",
+                        new TypeSet("INTERNET"));
+    }
+
+    public void testMalformedBase64PhotoThrowsVCardException() {
+        mVerifier.initForImportTest(V21, R.raw.v21_malformed_photo);
+
+        String expectedMsgContent = "qgEPAAIAAAAHAAAAugEQAAIAAAAG:ASDF==";
+        mVerifier.addVCardExceptionVerifier(expectedMsgContent);
     }
 
     public void testAndroidCustomPropertyV21() {

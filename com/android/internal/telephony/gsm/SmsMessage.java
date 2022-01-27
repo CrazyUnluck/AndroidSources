@@ -22,22 +22,24 @@ import android.util.Log;
 
 import com.android.internal.telephony.EncodeException;
 import com.android.internal.telephony.GsmAlphabet;
+import com.android.internal.telephony.GsmAlphabet.TextEncodingDetails;
 import com.android.internal.telephony.IccUtils;
 import com.android.internal.telephony.SmsHeader;
 import com.android.internal.telephony.SmsMessageBase;
 
 import java.io.ByteArrayOutputStream;
 import java.io.UnsupportedEncodingException;
+import java.text.ParseException;
 
-import static android.telephony.SmsMessage.ENCODING_16BIT;
-import static android.telephony.SmsMessage.ENCODING_7BIT;
-import static android.telephony.SmsMessage.ENCODING_8BIT;
-import static android.telephony.SmsMessage.ENCODING_KSC5601;
-import static android.telephony.SmsMessage.ENCODING_UNKNOWN;
-import static android.telephony.SmsMessage.MAX_USER_DATA_BYTES;
-import static android.telephony.SmsMessage.MAX_USER_DATA_BYTES_WITH_HEADER;
-import static android.telephony.SmsMessage.MAX_USER_DATA_SEPTETS;
-import static android.telephony.SmsMessage.MessageClass;
+import static com.android.internal.telephony.SmsConstants.MessageClass;
+import static com.android.internal.telephony.SmsConstants.ENCODING_UNKNOWN;
+import static com.android.internal.telephony.SmsConstants.ENCODING_7BIT;
+import static com.android.internal.telephony.SmsConstants.ENCODING_8BIT;
+import static com.android.internal.telephony.SmsConstants.ENCODING_16BIT;
+import static com.android.internal.telephony.SmsConstants.ENCODING_KSC5601;
+import static com.android.internal.telephony.SmsConstants.MAX_USER_DATA_SEPTETS;
+import static com.android.internal.telephony.SmsConstants.MAX_USER_DATA_BYTES;
+import static com.android.internal.telephony.SmsConstants.MAX_USER_DATA_BYTES_WITH_HEADER;
 
 /**
  * A Short Message Service message.
@@ -222,7 +224,8 @@ public class SmsMessage extends SmsMessageBase {
      * specified encoding.
      *
      * @param scAddress Service Centre address.  Null means use default.
-     * @param encoding Encoding defined by constants in android.telephony.SmsMessage.ENCODING_*
+     * @param encoding Encoding defined by constants in
+     *        com.android.internal.telephony.SmsConstants.ENCODING_*
      * @param languageTable
      * @param languageShiftTable
      * @return a <code>SubmitPdu</code> containing the encoded SC
@@ -247,7 +250,8 @@ public class SmsMessage extends SmsMessageBase {
             languageTable = ted.languageTable;
             languageShiftTable = ted.languageShiftTable;
 
-            if (encoding == ENCODING_7BIT && (languageTable != 0 || languageShiftTable != 0)) {
+            if (encoding == ENCODING_7BIT &&
+                    (languageTable != 0 || languageShiftTable != 0)) {
                 if (header != null) {
                     SmsHeader smsHeader = SmsHeader.fromByteArray(header);
                     if (smsHeader.languageTable != languageTable
@@ -557,7 +561,12 @@ public class SmsMessage extends SmsMessageBase {
             int addressLength = pdu[cur] & 0xff;
             int lengthBytes = 2 + (addressLength + 1) / 2;
 
-            ret = new GsmSmsAddress(pdu, cur, lengthBytes);
+            try {
+                ret = new GsmSmsAddress(pdu, cur, lengthBytes);
+            } catch (ParseException e) {
+                Log.e(LOG_TAG, e.getMessage());
+                ret = null;
+            }
 
             cur += lengthBytes;
 
@@ -957,18 +966,22 @@ public class SmsMessage extends SmsMessageBase {
                 // additional TP-PI octets.
                 moreExtraParams = p.getByte();
             }
-            // TP-Protocol-Identifier
-            if ((extraParams & 0x01) != 0) {
-                protocolIdentifier = p.getByte();
-            }
-            // TP-Data-Coding-Scheme
-            if ((extraParams & 0x02) != 0) {
-                dataCodingScheme = p.getByte();
-            }
-            // TP-User-Data-Length (implies existence of TP-User-Data)
-            if ((extraParams & 0x04) != 0) {
-                boolean hasUserDataHeader = (firstByte & 0x40) == 0x40;
-                parseUserData(p, hasUserDataHeader);
+            // As per 3GPP 23.040 section 9.2.3.27 TP-Parameter-Indicator,
+            // only process the byte if the reserved bits (bits3 to 6) are zero.
+            if ((extraParams & 0x78) == 0) {
+                // TP-Protocol-Identifier
+                if ((extraParams & 0x01) != 0) {
+                    protocolIdentifier = p.getByte();
+                }
+                // TP-Data-Coding-Scheme
+                if ((extraParams & 0x02) != 0) {
+                    dataCodingScheme = p.getByte();
+                }
+                // TP-User-Data-Length (implies existence of TP-User-Data)
+                if ((extraParams & 0x04) != 0) {
+                    boolean hasUserDataHeader = (firstByte & 0x40) == 0x40;
+                    parseUserData(p, hasUserDataHeader);
+                }
             }
         }
     }

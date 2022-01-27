@@ -66,7 +66,7 @@ import com.android.internal.os.HandlerCaller;
  * accessibility service. Following is an example declaration:
  * </p>
  * <pre> &lt;service android:name=".MyAccessibilityService"
- *         android:permission="android.permission.BIND_ACCESSIBILITY_SERVICE&gt;
+ *         android:permission="android.permission.BIND_ACCESSIBILITY_SERVICE"&gt;
  *     &lt;intent-filter&gt;
  *         &lt;action android:name="android.accessibilityservice.AccessibilityService" /&gt;
  *     &lt;/intent-filter&gt;
@@ -323,7 +323,7 @@ public abstract class AccessibilityService extends Service {
     public static final int GLOBAL_ACTION_HOME = 2;
 
     /**
-     * Action to open the recents.
+     * Action to open the recent apps.
      */
     public static final int GLOBAL_ACTION_RECENTS = 3;
 
@@ -331,6 +331,11 @@ public abstract class AccessibilityService extends Service {
      * Action to open the notifications.
      */
     public static final int GLOBAL_ACTION_NOTIFICATIONS = 4;
+
+    /**
+     * Action to open the quick settings.
+     */
+    public static final int GLOBAL_ACTION_QUICK_SETTINGS = 5;
 
     private static final String LOG_TAG = "AccessibilityService";
 

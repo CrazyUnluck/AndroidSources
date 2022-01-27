@@ -20,11 +20,9 @@ import android.os.Message;
 import android.util.Log;
 
 import com.android.internal.telephony.CommandsInterface;
-import com.android.internal.telephony.IccCard;
-import com.android.internal.telephony.IccCardApplication;
 import com.android.internal.telephony.IccConstants;
 import com.android.internal.telephony.IccFileHandler;
-import com.android.internal.telephony.PhoneBase;
+import com.android.internal.telephony.UiccCardApplication;
 
 /**
  * {@hide}
@@ -36,21 +34,13 @@ public final class SIMFileHandler extends IccFileHandler implements IccConstants
 
     //***** Constructor
 
-    public SIMFileHandler(IccCard card, String aid, CommandsInterface ci) {
-        super(card, aid, ci);
-    }
-
-    protected void finalize() {
-        Log.d(LOG_TAG, "SIMFileHandler finalized");
+    public SIMFileHandler(UiccCardApplication app, String aid, CommandsInterface ci) {
+        super(app, aid, ci);
     }
 
     //***** Overridden from IccFileHandler
 
     @Override
-    public void handleMessage(Message msg) {
-        super.handleMessage(msg);
-    }
-
     protected String getEFPath(int efid) {
         // TODO(): DF_GSM can be 7F20 or 7F21 to handle backward compatibility.
         // Implement this after discussion with OEMs.
@@ -78,29 +68,20 @@ public final class SIMFileHandler extends IccFileHandler implements IccConstants
         case EF_INFO_CPHS:
         case EF_CSP_CPHS:
             return MF_SIM + DF_GSM;
-
-        case EF_PBR:
-            // we only support global phonebook.
-            return MF_SIM + DF_TELECOM + DF_PHONEBOOK;
         }
         String path = getCommonIccEFPath(efid);
         if (path == null) {
-            // The EFids in USIM phone book entries are decided by the card manufacturer.
-            // So if we don't match any of the cases above and if its a USIM return
-            // the phone book path.
-            if (mParentCard != null
-                    && mParentCard.isApplicationOnIcc(IccCardApplication.AppType.APPTYPE_USIM)) {
-                return MF_SIM + DF_TELECOM + DF_PHONEBOOK;
-            }
             Log.e(LOG_TAG, "Error: EF Path being returned in null");
         }
         return path;
     }
 
+    @Override
     protected void logd(String msg) {
         Log.d(LOG_TAG, "[SIMFileHandler] " + msg);
     }
 
+    @Override
     protected void loge(String msg) {
         Log.e(LOG_TAG, "[SIMFileHandler] " + msg);
     }

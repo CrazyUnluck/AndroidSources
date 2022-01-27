@@ -17,7 +17,12 @@
 package com.android.uiautomator.core;
 
 import android.content.Context;
+import android.graphics.Bitmap;
+import android.graphics.Canvas;
+import android.graphics.Matrix;
 import android.graphics.Point;
+import android.hardware.display.DisplayManagerGlobal;
+import android.os.Build;
 import android.os.Environment;
 import android.os.RemoteException;
 import android.os.ServiceManager;
@@ -25,10 +30,8 @@ import android.os.SystemClock;
 import android.util.DisplayMetrics;
 import android.util.Log;
 import android.view.Display;
-import android.view.IWindowManager;
 import android.view.KeyEvent;
 import android.view.Surface;
-import android.view.WindowManagerImpl;
 import android.view.accessibility.AccessibilityEvent;
 import android.view.accessibility.AccessibilityNodeInfo;
 
@@ -36,19 +39,26 @@ import com.android.internal.statusbar.IStatusBarService;
 import com.android.internal.util.Predicate;
 
 import java.io.File;
+import java.io.FileOutputStream;
+import java.io.IOException;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
 import java.util.concurrent.TimeoutException;
 
 /**
- * UiDevice provides access to device wide states. Also provides methods to simulate
- * pressing hardware buttons such as DPad or the soft buttons such as Home and Menu.
+ * UiDevice provides access to state information about the device.
+ * You can also use this class to simulate user actions on the device,
+ * such as pressing the d-pad or pressing the Home and Menu buttons.
  */
 public class UiDevice {
     private static final String LOG_TAG = UiDevice.class.getSimpleName();
 
     private static final long DEFAULT_TIMEOUT_MILLIS = 10 * 1000;
+
+    // Sometimes HOME and BACK key presses will generate no events if already on
+    // home page or there is nothing to go back to, Set low timeouts.
+    private static final long KEY_PRESS_EVENT_TIMEOUT = 1 * 1000;
 
     // store for registered UiWatchers
     private final HashMap<String, UiWatcher> mWatchers = new HashMap<String, UiWatcher>();
@@ -62,8 +72,6 @@ public class UiDevice {
 
     // reference to self
     private static UiDevice mDevice;
-
-    private Boolean mIsPhone = null;
 
     private UiDevice() {
         mUiAutomationBridge = new UiAutomatorBridge();
@@ -82,10 +90,8 @@ public class UiDevice {
         return mUiAutomationBridge;
     }
     /**
-     * Allow both the direct creation of a UiDevice and retrieving a existing
-     * instance of UiDevice. This helps tests and their libraries to have access
-     * to UiDevice with necessitating having to always pass copies of UiDevice
-     * instances around.
+     * Retrieves a singleton instance of UiDevice
+     *
      * @return UiDevice instance
      */
     public static UiDevice getInstance() {
@@ -96,171 +102,169 @@ public class UiDevice {
     }
 
     /**
-     * This forces the return value of {@link #isPhone()} to be a specific device type.
-     * For example, on certain devices the {@link #isPhone} may return true when an application
-     * is actually behaving as if it is on a tablet. For these types of devices, it would be
-     * best if the test forces the issue by invoking this method accordingly.
-     * @param val true for phone behavior else false for all other
+     * Returns the display size in dp (device-independent pixel)
+     *
+     * The returned display size is adjusted per screen rotation
+     *
+     * @return a Point containing the display size in dp
+     * @hide
      */
-    public void setTypeAsPhone(boolean val) {
-        mIsPhone = val;
+    public Point getDisplaySizeDp() {
+        Display display = getDefaultDisplay();
+        Point p = new Point();
+        display.getSize(p);
+        DisplayMetrics metrics = new DisplayMetrics();
+        display.getMetrics(metrics);
+        float dpx = p.x / metrics.density;
+        float dpy = p.y / metrics.density;
+        p.x = Math.round(dpx);
+        p.y = Math.round(dpy);
+        return p;
     }
 
     /**
-     * Check if the tests are running on a phone screen. This method assumes a
-     * phone is a device that its natural rotation has a height > width or when
-     * rotated it has a width > height. This API is deprecated. Use the UI to
-     * determine the layout. For example if on larger screen devices your app displays
-     * two ListViews but on a small screen one, then count the ListViews to decide. see
-     * {@link UiObject#getMatchesCount()}
-     * @return true if the device has a phone else false
+     * Retrieves the product name of the device.
+     *
+     * This method provides information on what type of device the
+     * test is running on. If you are trying to test for different types of
+     * UI screen sizes, your test should use
+     * {@link UiDevice#getDisplaySizeDp()} instead. This value is the same
+     * returned by invoking #adb shell getprop ro.product.name.
+     *
+     * @return product name of the device
      */
-    @Deprecated
-    public boolean isPhone() {
-        if(mIsPhone == null) {
-            DisplayMetrics metrics = new DisplayMetrics();
-            Display display = WindowManagerImpl.getDefault().getDefaultDisplay();
-            display.getMetrics(metrics);
-
-            if(isOrientationNatural()) {
-                // we assume a phone has a natural orientation that has height > width
-                if(metrics.heightPixels > metrics.widthPixels)
-                    return true;
-            } else {
-                // we assume a phone has a rotated orientation that has height < width
-                if(metrics.heightPixels < metrics.widthPixels)
-                    return true;
-            }
-
-            // not a phone
-            return false;
-        }
-
-        return mIsPhone;
+    public String getProductName() {
+        return Build.PRODUCT;
     }
 
     /**
-     * Check the current device orientation
-     * @return true if in natural orientation
-     */
-    public boolean isOrientationNatural() {
-        Display display = WindowManagerImpl.getDefault().getDefaultDisplay();
-        return display.getRotation() == Surface.ROTATION_0 ||
-                display.getRotation() == Surface.ROTATION_180;
-    }
-
-    /**
-     * Every event received from accessibility may or may not contain text. This
-     * method returns the text from the last UI traversal event received that had text.
-     * This is helpful in web views when the test performs down arrow presses to focus
-     * on different elements inside the web view, the accessibility will fire events
-     * with the text just highlighted. In effect once can read the contents of a
-     * web view this way.
-     * @return text of the last traversal event else an empty string
+     * Retrieves the text from the last UI traversal event received.
+     *
+     * You can use this method to read the contents in a WebView container
+     * because the accessibility framework fires events
+     * as each text is highlighted. You can write a test to perform
+     * directional arrow presses to focus on different elements inside a WebView,
+     * and call this method to get the text from each traversed element.
+     * If you are testing a view container that can return a reference to a
+     * Document Object Model (DOM) object, your test should use the view's
+     * DOM instead.
+     *
+     * @return text of the last traversal event, else return an empty string
      */
     public String getLastTraversedText() {
         return mUiAutomationBridge.getQueryController().getLastTraversedText();
     }
 
     /**
-     * Helper to clear the text saved of the last accessibility UI traversal event that had
-     * any text in it. See {@link #getLastTraversedText()}.
+     * Clears the text from the last UI traversal event.
+     * See {@link #getLastTraversedText()}.
      */
     public void clearLastTraversedText() {
         mUiAutomationBridge.getQueryController().clearLastTraversedText();
     }
 
     /**
-     * Helper method to do a short press on MENU button
-     * @return true if successful else false
+     * Simulates a short press on the MENU button.
+     * @return true if successful, else return false
      */
     public boolean pressMenu() {
-        return pressKeyCode(KeyEvent.KEYCODE_MENU);
+        waitForIdle();
+        return mUiAutomationBridge.getInteractionController().sendKeyAndWaitForEvent(
+                KeyEvent.KEYCODE_MENU, 0, AccessibilityEvent.TYPE_WINDOW_CONTENT_CHANGED,
+                KEY_PRESS_EVENT_TIMEOUT);
     }
 
     /**
-     * Helper method to do a short press on BACK button
-     * @return true if successful else false
+     * Simulates a short press on the BACK button.
+     * @return true if successful, else return false
      */
     public boolean pressBack() {
-        return pressKeyCode(KeyEvent.KEYCODE_BACK);
+        waitForIdle();
+        return mUiAutomationBridge.getInteractionController().sendKeyAndWaitForEvent(
+                KeyEvent.KEYCODE_BACK, 0, AccessibilityEvent.TYPE_WINDOW_CONTENT_CHANGED,
+                KEY_PRESS_EVENT_TIMEOUT);
     }
 
     /**
-     * Helper method to do a short press on HOME button
-     * @return true if successful else false
+     * Simulates a short press on the HOME button.
+     * @return true if successful, else return false
      */
     public boolean pressHome() {
-        return pressKeyCode(KeyEvent.KEYCODE_HOME);
+        waitForIdle();
+        return mUiAutomationBridge.getInteractionController().sendKeyAndWaitForEvent(
+                KeyEvent.KEYCODE_HOME, 0, AccessibilityEvent.TYPE_WINDOW_CONTENT_CHANGED,
+                KEY_PRESS_EVENT_TIMEOUT);
     }
 
     /**
-     * Helper method to do a short press on SEARCH button
-     * @return true if successful else false
+     * Simulates a short press on the SEARCH button.
+     * @return true if successful, else return false
      */
     public boolean pressSearch() {
         return pressKeyCode(KeyEvent.KEYCODE_SEARCH);
     }
 
     /**
-     * Helper method to do a short press on DOWN button
-     * @return true if successful else false
+     * Simulates a short press on the CENTER button.
+     * @return true if successful, else return false
      */
     public boolean pressDPadCenter() {
         return pressKeyCode(KeyEvent.KEYCODE_DPAD_CENTER);
     }
 
     /**
-     * Helper method to do a short press on DOWN button
-     * @return true if successful else false
+     * Simulates a short press on the DOWN button.
+     * @return true if successful, else return false
      */
     public boolean pressDPadDown() {
         return pressKeyCode(KeyEvent.KEYCODE_DPAD_DOWN);
     }
 
     /**
-     * Helper method to do a short press on UP button
-     * @return true if successful else false
+     * Simulates a short press on the UP button.
+     * @return true if successful, else return false
      */
     public boolean pressDPadUp() {
         return pressKeyCode(KeyEvent.KEYCODE_DPAD_UP);
     }
 
     /**
-     * Helper method to do a short press on LEFT button
-     * @return true if successful else false
+     * Simulates a short press on the LEFT button.
+     * @return true if successful, else return false
      */
     public boolean pressDPadLeft() {
         return pressKeyCode(KeyEvent.KEYCODE_DPAD_LEFT);
     }
 
     /**
-     * Helper method to do a short press on RIGTH button
-     * @return true if successful else false
+     * Simulates a short press on the RIGHT button.
+     * @return true if successful, else return false
      */
     public boolean pressDPadRight() {
         return pressKeyCode(KeyEvent.KEYCODE_DPAD_RIGHT);
     }
 
     /**
-     * Helper method to do a short press on DELETE
-     * @return true if successful else false
+     * Simulates a short press on the DELETE key.
+     * @return true if successful, else return false
      */
     public boolean pressDelete() {
         return pressKeyCode(KeyEvent.KEYCODE_DEL);
     }
 
     /**
-     * Helper method to do a short press on ENTER
-     * @return true if successful else false
+     * Simulates a short press on the ENTER key.
+     * @return true if successful, else return false
      */
     public boolean pressEnter() {
         return pressKeyCode(KeyEvent.KEYCODE_ENTER);
     }
 
     /**
-     * Helper method to do a short press using a key code. See {@link KeyEvent}
-     * @return true if successful else false
+     * Simulates a short press using a key code.
+     *
+     * See {@link KeyEvent}
+     * @return true if successful, else return false
      */
     public boolean pressKeyCode(int keyCode) {
         waitForIdle();
@@ -268,10 +272,12 @@ public class UiDevice {
     }
 
     /**
-     * Helper method to do a short press using a key code. See {@link KeyEvent}
-     * @param keyCode See {@link KeyEvent}
-     * @param metaState See {@link KeyEvent}
-     * @return true if successful else false
+     * Simulates a short press using a key code.
+     *
+     * See {@link KeyEvent}.
+     * @param keyCode the key code of the event.
+     * @param metaState an integer in which each bit set to 1 represents a pressed meta key
+     * @return true if successful, else return false
      */
     public boolean pressKeyCode(int keyCode, int metaState) {
         waitForIdle();
@@ -279,25 +285,9 @@ public class UiDevice {
     }
 
     /**
-     * Gets the raw width of the display, in pixels. The size is adjusted based
-     * on the current rotation of the display.
-     * @return width in pixels or zero on failure
-     */
-    public int getDisplayWidth() {
-        IWindowManager wm = IWindowManager.Stub.asInterface(
-                ServiceManager.getService(Context.WINDOW_SERVICE));
-        Point p = new Point();
-        try {
-            wm.getDisplaySize(p);
-        } catch (RemoteException e) {
-            return 0;
-        }
-        return p.x;
-    }
-
-    /**
-     * Press recent apps soft key
-     * @return true if successful
+     * Simulates a short press on the Recent Apps button.
+     *
+     * @return true if successful, else return false
      * @throws RemoteException
      */
     public boolean pressRecentApps() throws RemoteException {
@@ -313,24 +303,32 @@ public class UiDevice {
     }
 
     /**
-     * Gets the raw height of the display, in pixels. The size is adjusted based
-     * on the current rotation of the display.
+     * Gets the width of the display, in pixels. The width and height details
+     * are reported based on the current orientation of the display.
+     * @return width in pixels or zero on failure
+     */
+    public int getDisplayWidth() {
+        Display display = getDefaultDisplay();
+        Point p = new Point();
+        display.getSize(p);
+        return p.x;
+    }
+
+    /**
+     * Gets the height of the display, in pixels. The size is adjusted based
+     * on the current orientation of the display.
      * @return height in pixels or zero on failure
      */
     public int getDisplayHeight() {
-        IWindowManager wm = IWindowManager.Stub.asInterface(
-                ServiceManager.getService(Context.WINDOW_SERVICE));
+        Display display = getDefaultDisplay();
         Point p = new Point();
-        try {
-            wm.getDisplaySize(p);
-        } catch (RemoteException e) {
-            return 0;
-        }
+        display.getSize(p);
         return p.y;
     }
 
     /**
      * Perform a click at arbitrary coordinates specified by the user
+     *
      * @param x coordinate
      * @param y coordinate
      * @return true if the click succeeded else false
@@ -344,8 +342,9 @@ public class UiDevice {
 
     /**
      * Performs a swipe from one coordinate to another using the number of steps
-     * to determine smoothness and speed. The more steps the slower and smoother
-     * the swipe will be.
+     * to determine smoothness and speed. Each step execution is throttled to 5ms
+     * per step. So for a 100 steps, the swipe will take about 1/2 second to complete.
+     *
      * @param startX
      * @param startY
      * @param endX
@@ -359,7 +358,9 @@ public class UiDevice {
     }
 
     /**
-     * Performs a swipe between points in the Point array.
+     * Performs a swipe between points in the Point array. Each step execution is throttled
+     * to 5ms per step. So for a 100 steps, the swipe will take about 1/2 second to complete
+     *
      * @param segments is Point array containing at least one Point object
      * @param segmentSteps steps to inject between two Points
      * @return true on success
@@ -368,16 +369,24 @@ public class UiDevice {
         return mUiAutomationBridge.getInteractionController().swipe(segments, segmentSteps);
     }
 
+    /**
+     * Waits for the current application to idle.
+     * Default wait timeout is 10 seconds
+     */
     public void waitForIdle() {
         waitForIdle(DEFAULT_TIMEOUT_MILLIS);
     }
 
+    /**
+     * Waits for the current application to idle.
+     * @param timeout in milliseconds
+     */
     public void waitForIdle(long time) {
         mUiAutomationBridge.waitForIdle(time);
     }
 
     /**
-     * Last activity to report accessibility events
+     * Retrieves the last activity to report accessibility events.
      * @return String name of activity
      */
     public String getCurrentActivityName() {
@@ -385,23 +394,18 @@ public class UiDevice {
     }
 
     /**
-     * Last package to report accessibility events
+     * Retrieves the name of the last package to report accessibility events.
      * @return String name of package
      */
     public String getCurrentPackageName() {
         return mUiAutomationBridge.getQueryController().getCurrentPackageName();
     }
 
-
     /**
-     * Enables the test script to register a condition watcher to be called by
-     * the automation library. The automation library will invoke
-     * {@link UiWatcher#checkForCondition} only when a regular API call is in
-     * retry mode when it is unable to locate its selector yet. Only during this
-     * time, the watchers are invoked to check if there is something else
-     * unexpected on the screen that may be causing the delay in detecting the
-     * required UI object.
-     * @param name of watcher
+     * Registers a {@link UiWatcher} to run automatically when the testing framework is unable to
+     * find a match using a {@link UiSelector}. See {@link #runWatchers()}
+     *
+     * @param name to register the UiWatcher
      * @param watcher {@link UiWatcher}
      */
     public void registerWatcher(String name, UiWatcher watcher) {
@@ -412,8 +416,10 @@ public class UiDevice {
     }
 
     /**
-     * Removes a previously registered {@link #registerWatcher(String, UiWatcher)}.
-     * @param name of watcher used when <code>registerWatcher</code> was called.
+     * Removes a previously registered {@link UiWatcher}.
+     *
+     * See {@link #registerWatcher(String, UiWatcher)}
+     * @param name used to register the UiWatcher
      * @throws UiAutomationException
      */
     public void removeWatcher(String name) {
@@ -424,11 +430,8 @@ public class UiDevice {
     }
 
     /**
-     * Watchers are generally not run unless a certain UI object is not being
-     * found. This will help improve performance of tests until there is a good
-     * reason to check for possible exceptions on the display.<b/><b/> However,
-     * in some cases it may be desirable to force run the watchers. Calling this
-     * method will execute all registered watchers.
+     * This method forces all registered watchers to run.
+     * See {@link #registerWatcher(String, UiWatcher)}
      */
     public void runWatchers() {
         if (mInWatcherContext) {
@@ -453,35 +456,43 @@ public class UiDevice {
     }
 
     /**
-     * If you have used {@link #registerWatcher(String, UiWatcher)} then this
-     * method can be used to reset reported UiWatcher triggers.
-     * A {@link UiWatcher} reports it is triggered by returning true
-     * from its implementation of {@link UiWatcher#checkForCondition()}
+     * Resets a {@link UiWatcher} that has been triggered.
+     * If a UiWatcher runs and its {@link UiWatcher#checkForCondition()} call
+     * returned <code>true</code>, then the UiWatcher is considered triggered.
+     * See {@link #registerWatcher(String, UiWatcher)}
      */
     public void resetWatcherTriggers() {
         mWatchersTriggers.clear();
     }
 
     /**
-     * If you have used {@link #registerWatcher(String, UiWatcher)} then this
-     * method can be used to check if a specific UiWatcher has ever triggered during the
-     * test. For a {@link UiWatcher} to report it is triggered it needs to return true
-     * from its implementation of {@link UiWatcher#checkForCondition()}
+     * Checks if a specific registered  {@link UiWatcher} has triggered.
+     * See {@link #registerWatcher(String, UiWatcher)}. If a UiWatcher runs and its
+     * {@link UiWatcher#checkForCondition()} call returned <code>true</code>, then
+     * the UiWatcher is considered triggered. This is helpful if a watcher is detecting errors
+     * from ANR or crash dialogs and the test needs to know if a UiWatcher has been triggered.
+     *
+     * @param watcherName
+     * @return true if triggered else false
      */
     public boolean hasWatcherTriggered(String watcherName) {
         return mWatchersTriggers.contains(watcherName);
     }
 
     /**
-     * If you have used {@link #registerWatcher(String, UiWatcher)} then this
-     * method can be used to check if any of those have ever triggered during the
-     * test. For a {@link UiWatcher} to report it is triggered it needs to return true
-     * from its implementation of {@link UiWatcher#checkForCondition()}
+     * Checks if any registered {@link UiWatcher} have triggered.
+     *
+     * See {@link #registerWatcher(String, UiWatcher)}
+     * See {@link #hasWatcherTriggered(String)}
      */
     public boolean hasAnyWatcherTriggered() {
         return mWatchersTriggers.size() > 0;
     }
 
+    /**
+     * Used internally by this class to set a {@link UiWatcher} state as triggered.
+     * @param watcherName
+     */
     private void setWatcherTriggered(String watcherName) {
         if (!hasWatcherTriggered(watcherName)) {
             mWatchersTriggers.add(watcherName);
@@ -489,13 +500,22 @@ public class UiDevice {
     }
 
     /**
-     * Check if the device is in its natural orientation. This is determined by
-     * checking whether the orientation is at 0 or 180 degrees.
+     * Check if the device is in its natural orientation. This is determined by checking if the
+     * orientation is at 0 or 180 degrees.
      * @return true if it is in natural orientation
-     * @throws RemoteException
      */
-    public boolean isNaturalRotation() throws RemoteException {
-        return getAutomatorBridge().getInteractionController().isNaturalRotation();
+    public boolean isNaturalOrientation() {
+        Display display = getDefaultDisplay();
+        return display.getRotation() == Surface.ROTATION_0 ||
+                display.getRotation() == Surface.ROTATION_180;
+    }
+
+    /**
+     * Returns the current rotation of the display, as defined in {@link Surface}
+     * @return
+     */
+    public int getDisplayRotation() {
+        return getDefaultDisplay().getRotation();
     }
 
     /**
@@ -508,8 +528,9 @@ public class UiDevice {
     }
 
     /**
-     * Re-enables the sensors and un-freezes the device rotation
-     * allowing its contents to rotate with the device physical rotation.
+     * Re-enables the sensors and un-freezes the device rotation allowing its contents
+     * to rotate with the device physical rotation. During a test execution, it is best to
+     * keep the device frozen in a specific orientation until the test case execution has completed.
      * @throws RemoteException
      */
     public void unfreezeRotation() throws RemoteException {
@@ -517,44 +538,47 @@ public class UiDevice {
     }
 
     /**
-     * Rotates left and also freezes rotation in that position by
-     * disabling the sensors. If you want to un-freeze the rotation
-     * and re-enable the sensors see {@link #unfreezeRotation()}. Note
-     * that doing so may cause the screen contents to rotate
-     * depending on the current physical position of the test device.
+     * Simulates orienting the device to the left and also freezes rotation
+     * by disabling the sensors.
+     *
+     * If you want to un-freeze the rotation and re-enable the sensors
+     * see {@link #unfreezeRotation()}.
      * @throws RemoteException
      */
-    public void setRotationLeft() throws RemoteException {
+    public void setOrientationLeft() throws RemoteException {
         getAutomatorBridge().getInteractionController().setRotationLeft();
     }
 
     /**
-     * Rotates right and also freezes rotation in that position by
-     * disabling the sensors. If you want to un-freeze the rotation
-     * and re-enable the sensors see {@link #unfreezeRotation()}. Note
-     * that doing so may cause the screen contents to rotate
-     * depending on the current physical position of the test device.
+     * Simulates orienting the device to the right and also freezes rotation
+     * by disabling the sensors.
+     *
+     * If you want to un-freeze the rotation and re-enable the sensors
+     * see {@link #unfreezeRotation()}.
      * @throws RemoteException
      */
-    public void setRotationRight() throws RemoteException {
+    public void setOrientationRight() throws RemoteException {
         getAutomatorBridge().getInteractionController().setRotationRight();
     }
 
     /**
-     * Check if the device is in its natural orientation. This is determined by
-     * checking whether the orientation is at 0 or 180 degrees.
-     * @return true if it is in natural orientation
+     * Simulates orienting the device into its natural orientation and also freezes rotation
+     * by disabling the sensors.
+     *
+     * If you want to un-freeze the rotation and re-enable the sensors
+     * see {@link #unfreezeRotation()}.
      * @throws RemoteException
      */
-    public void setRotationNatural() throws RemoteException {
+    public void setOrientationNatural() throws RemoteException {
         getAutomatorBridge().getInteractionController().setRotationNatural();
     }
 
     /**
-     * This method simply presses the power button if the screen is OFF else
-     * it does nothing if the screen is already ON. If the screen was OFF and
-     * it just got turned ON, this method will insert a 500ms delay to allow
-     * the device time to wake up and accept input.
+     * This method simulates pressing the power button if the screen is OFF else
+     * it does nothing if the screen is already ON.
+     *
+     * If the screen was OFF and it just got turned ON, this method will insert a 500ms delay
+     * to allow the device time to wake up and accept input.
      * @throws RemoteException
      */
     public void wakeUp() throws RemoteException {
@@ -566,7 +590,8 @@ public class UiDevice {
     }
 
     /**
-     * Checks the power manager if the screen is ON
+     * Checks the power manager if the screen is ON.
+     *
      * @return true if the screen is ON else false
      * @throws RemoteException
      */
@@ -577,6 +602,7 @@ public class UiDevice {
     /**
      * This method simply presses the power button if the screen is ON else
      * it does nothing if the screen is already OFF.
+     *
      * @throws RemoteException
      */
     public void sleep() throws RemoteException {
@@ -586,6 +612,7 @@ public class UiDevice {
     /**
      * Helper method used for debugging to dump the current window's layout hierarchy.
      * The file root location is /data/local/tmp
+     *
      * @param fileName
      */
     public void dumpWindowHierarchy(String fileName) {
@@ -598,19 +625,18 @@ public class UiDevice {
         }
     }
 
-
     /**
-     * Waits for a window content update event to occur
+     * Waits for a window content update event to occur.
      *
-     * if a package name for window is specified, but current window is not with the same package
-     * name, the function will return immediately
+     * If a package name for the window is specified, but the current window
+     * does not have the same package name, the function returns immediately.
      *
-     * @param packageName the specified window package name; maybe <code>null</code>, and a window
-     *                    update from any frontend window will end the wait
+     * @param packageName the specified window package name (can be <code>null</code>).
+     *        If <code>null</code>, a window update from any front-end window will end the wait
      * @param timeout the timeout for the wait
      *
-     * @return true if a window update occured, false if timeout has reached or current window is
-     * not the specified package name
+     * @return true if a window update occurred, false if timeout has elapsed or if the current
+     *         window does not have the specified package name
      */
     public boolean waitForWindowUpdate(final String packageName, long timeout) {
         if (packageName != null) {
@@ -640,6 +666,111 @@ public class UiDevice {
         } catch (Exception e) {
             Log.e(LOG_TAG, "waitForWindowUpdate: general exception from bridge", e);
             return false;
+        }
+        return true;
+    }
+
+    private static Display getDefaultDisplay() {
+        return DisplayManagerGlobal.getInstance().getRealDisplay(Display.DEFAULT_DISPLAY);
+    }
+
+    /**
+     * @return the current display rotation in degrees
+     */
+    private static float getDegreesForRotation(int value) {
+        switch (value) {
+        case Surface.ROTATION_90:
+            return 360f - 90f;
+        case Surface.ROTATION_180:
+            return 360f - 180f;
+        case Surface.ROTATION_270:
+            return 360f - 270f;
+        }
+        return 0f;
+    }
+
+    /**
+     * Take a screenshot of current window and store it as PNG
+     *
+     * Default scale of 1.0f (original size) and 90% quality is used
+     *
+     * @param storePath where the PNG should be written to
+     * @return
+     */
+    public boolean takeScreenshot(File storePath) {
+        return takeScreenshot(storePath, 1.0f, 90);
+    }
+
+    /**
+     * Take a screenshot of current window and store it as PNG
+     *
+     * The screenshot is adjusted per screen rotation;
+     *
+     * @param storePath where the PNG should be written to
+     * @param scale scale the screenshot down if needed; 1.0f for original size
+     * @param quality quality of the PNG compression; range: 0-100
+     * @return
+     */
+    public boolean takeScreenshot(File storePath, float scale, int quality) {
+        // This is from com.android.systemui.screenshot.GlobalScreenshot#takeScreenshot
+        // We need to orient the screenshot correctly (and the Surface api seems to take screenshots
+        // only in the natural orientation of the device :!)
+        DisplayMetrics displayMetrics = new DisplayMetrics();
+        Display display = getDefaultDisplay();
+        display.getRealMetrics(displayMetrics);
+        float[] dims = {displayMetrics.widthPixels, displayMetrics.heightPixels};
+        float degrees = getDegreesForRotation(display.getRotation());
+        boolean requiresRotation = (degrees > 0);
+        Matrix matrix = new Matrix();
+        matrix.reset();
+        if (scale != 1.0f) {
+            matrix.setScale(scale, scale);
+        }
+        if (requiresRotation) {
+            // Get the dimensions of the device in its native orientation
+            matrix.preRotate(-degrees);
+        }
+        matrix.mapPoints(dims);
+        dims[0] = Math.abs(dims[0]);
+        dims[1] = Math.abs(dims[1]);
+
+        // Take the screenshot
+        Bitmap screenShot = Surface.screenshot((int) dims[0], (int) dims[1]);
+        if (screenShot == null) {
+            return false;
+        }
+
+        if (requiresRotation) {
+            // Rotate the screenshot to the current orientation
+            int width = displayMetrics.widthPixels;
+            int height = displayMetrics.heightPixels;
+            if (scale != 1.0f) {
+                width = Math.round(scale * width);
+                height = Math.round(scale * height);
+            }
+            Bitmap ss = Bitmap.createBitmap(width, height, Bitmap.Config.ARGB_8888);
+            Canvas c = new Canvas(ss);
+            c.translate(ss.getWidth() / 2, ss.getHeight() / 2);
+            c.rotate(degrees);
+            c.translate(-dims[0] / 2, -dims[1] / 2);
+            c.drawBitmap(screenShot, 0, 0, null);
+            c.setBitmap(null);
+            screenShot = ss;
+        }
+
+        // Optimizations
+        screenShot.setHasAlpha(false);
+
+        try {
+            FileOutputStream fos = new FileOutputStream(storePath);
+            screenShot.compress(Bitmap.CompressFormat.PNG, quality, fos);
+            fos.flush();
+            fos.close();
+        } catch (IOException ioe) {
+            Log.e(LOG_TAG, "failed to save screen shot to file", ioe);
+            return false;
+        } finally {
+            screenShot.recycle();
         }
         return true;
     }

@@ -17,6 +17,7 @@
 package com.android.systemui;
 
 import android.animation.LayoutTransition;
+import android.app.ActivityManagerNative;
 import android.app.ActivityOptions;
 import android.app.SearchManager;
 import android.content.ActivityNotFoundException;
@@ -24,10 +25,14 @@ import android.content.ComponentName;
 import android.content.Context;
 import android.content.Intent;
 import android.content.res.Resources;
+import android.os.RemoteException;
+import android.os.ServiceManager;
+import android.os.UserHandle;
 import android.os.Vibrator;
 import android.provider.Settings;
 import android.util.AttributeSet;
 import android.util.Slog;
+import android.view.IWindowManager;
 import android.view.MotionEvent;
 import android.view.View;
 import android.view.ViewGroup;
@@ -59,6 +64,7 @@ public class SearchPanelView extends FrameLayout implements
     private boolean mShowing;
     private View mSearchTargetsContainer;
     private GlowPadView mGlowPadView;
+    private IWindowManager mWm;
 
     public SearchPanelView(Context context, AttributeSet attrs) {
         this(context, attrs, 0);
@@ -67,23 +73,52 @@ public class SearchPanelView extends FrameLayout implements
     public SearchPanelView(Context context, AttributeSet attrs, int defStyle) {
         super(context, attrs, defStyle);
         mContext = context;
+        mWm = IWindowManager.Stub.asInterface(ServiceManager.getService("window"));
     }
 
     private void startAssistActivity() {
+        if (!mBar.isDeviceProvisioned()) return;
+
         // Close Recent Apps if needed
-        mBar.animateCollapse(CommandQueue.FLAG_EXCLUDE_SEARCH_PANEL);
-        // Launch Assist
-        Intent intent = SearchManager.getAssistIntent(mContext);
-        if (intent == null) return;
+        mBar.animateCollapsePanels(CommandQueue.FLAG_EXCLUDE_SEARCH_PANEL);
+        boolean isKeyguardShowing = false;
         try {
-            ActivityOptions opts = ActivityOptions.makeCustomAnimation(mContext,
-                    R.anim.search_launch_enter, R.anim.search_launch_exit,
-                    getHandler(), this);
-            intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
-            mContext.startActivity(intent, opts.toBundle());
-        } catch (ActivityNotFoundException e) {
-            Slog.w(TAG, "Activity not found for " + intent.getAction());
+            isKeyguardShowing = mWm.isKeyguardLocked();
+        } catch (RemoteException e) {
+
+        }
+
+        if (isKeyguardShowing) {
+            // Have keyguard show the bouncer and launch the activity if the user succeeds.
+            try {
+                mWm.showAssistant();
+            } catch (RemoteException e) {
+                // too bad, so sad...
+            }
             onAnimationStarted();
+        } else {
+            // Otherwise, keyguard isn't showing so launch it from here.
+            Intent intent = ((SearchManager) mContext.getSystemService(Context.SEARCH_SERVICE))
+                    .getAssistIntent(mContext, UserHandle.USER_CURRENT);
+            if (intent == null) return;
+
+            try {
+                ActivityManagerNative.getDefault().dismissKeyguardOnNextActivity();
+            } catch (RemoteException e) {
+                // too bad, so sad...
+            }
+
+            try {
+                ActivityOptions opts = ActivityOptions.makeCustomAnimation(mContext,
+                        R.anim.search_launch_enter, R.anim.search_launch_exit,
+                        getHandler(), this);
+                intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
+                mContext.startActivityAsUser(intent, opts.toBundle(),
+                        new UserHandle(UserHandle.USER_CURRENT));
+            } catch (ActivityNotFoundException e) {
+                Slog.w(TAG, "Activity not found for " + intent.getAction());
+                onAnimationStarted();
+            }
         }
     }
 
@@ -140,7 +175,8 @@ public class SearchPanelView extends FrameLayout implements
     }
 
     private void maybeSwapSearchIcon() {
-        Intent intent = SearchManager.getAssistIntent(mContext);
+        Intent intent = ((SearchManager) mContext.getSystemService(Context.SEARCH_SERVICE))
+                .getAssistIntent(mContext, UserHandle.USER_CURRENT);
         if (intent != null) {
             ComponentName component = intent.getComponent();
             if (component == null || !mGlowPadView.replaceTargetDrawablesIfPresent(component,
@@ -180,8 +216,8 @@ public class SearchPanelView extends FrameLayout implements
 
     private void vibrate() {
         Context context = getContext();
-        if (Settings.System.getInt(context.getContentResolver(),
-                Settings.System.HAPTIC_FEEDBACK_ENABLED, 1) != 0) {
+        if (Settings.System.getIntForUser(context.getContentResolver(),
+                Settings.System.HAPTIC_FEEDBACK_ENABLED, 1, UserHandle.USER_CURRENT) != 0) {
             Resources res = context.getResources();
             Vibrator vibrator = (Vibrator) context.getSystemService(Context.VIBRATOR_SERVICE);
             vibrator.vibrate(res.getInteger(R.integer.config_search_panel_view_vibration_duration));
@@ -216,7 +252,7 @@ public class SearchPanelView extends FrameLayout implements
     public void hide(boolean animate) {
         if (mBar != null) {
             // This will indirectly cause show(false, ...) to get called
-            mBar.animateCollapse(CommandQueue.FLAG_EXCLUDE_NONE);
+            mBar.animateCollapsePanels(CommandQueue.FLAG_EXCLUDE_NONE);
         } else {
             setVisibility(View.INVISIBLE);
         }
@@ -277,6 +313,7 @@ public class SearchPanelView extends FrameLayout implements
     }
 
     public boolean isAssistantAvailable() {
-        return SearchManager.getAssistIntent(mContext) != null;
+        return ((SearchManager) mContext.getSystemService(Context.SEARCH_SERVICE))
+                .getAssistIntent(mContext, UserHandle.USER_CURRENT) != null;
     }
 }

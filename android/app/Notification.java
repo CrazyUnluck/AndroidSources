@@ -29,6 +29,7 @@ import android.os.IBinder;
 import android.os.Parcel;
 import android.os.Parcelable;
 import android.os.SystemClock;
+import android.os.UserHandle;
 import android.text.TextUtils;
 import android.util.IntProperty;
 import android.util.Log;
@@ -893,16 +894,36 @@ public class Notification implements Parcelable
         return sb.toString();
     }
 
+    /** {@hide} */
+    public void setUser(UserHandle user) {
+        if (user.getIdentifier() == UserHandle.USER_ALL) {
+            user = UserHandle.OWNER;
+        }
+        if (tickerView != null) {
+            tickerView.setUser(user);
+        }
+        if (contentView != null) {
+            contentView.setUser(user);
+        }
+        if (bigContentView != null) {
+            bigContentView.setUser(user);
+        }
+    }
+
     /**
      * Builder class for {@link Notification} objects.
      * 
      * Provides a convenient way to set the various fields of a {@link Notification} and generate
-     * content views using the platform's notification layout template. 
+     * content views using the platform's notification layout template. If your app supports
+     * versions of Android as old as API level 4, you can instead use
+     * {@link android.support.v4.app.NotificationCompat.Builder NotificationCompat.Builder},
+     * available in the <a href="{@docRoot}tools/extras/support-library.html">Android Support
+     * library</a>.
      * 
-     * Example:
+     * <p>Example:
      * 
      * <pre class="prettyprint">
-     * Notification noti = new Notification.Builder()
+     * Notification noti = new Notification.Builder(mContext)
      *         .setContentTitle(&quot;New mail from &quot; + sender.toString())
      *         .setContentText(subject)
      *         .setSmallIcon(R.drawable.new_mail)
@@ -947,6 +968,7 @@ public class Notification implements Parcelable
         private ArrayList<Action> mActions = new ArrayList<Action>(MAX_ACTION_BUTTONS);
         private boolean mUseChronometer;
         private Style mStyle;
+        private boolean mShowWhen = true;
 
         /**
          * Constructs a new Builder with the defaults:
@@ -978,12 +1000,22 @@ public class Notification implements Parcelable
 
         /**
          * Add a timestamp pertaining to the notification (usually the time the event occurred).
+         * It will be shown in the notification content view by default; use
+         * {@link Builder#setShowWhen(boolean) setShowWhen} to control this.
          *
-
          * @see Notification#when
          */
         public Builder setWhen(long when) {
             mWhen = when;
+            return this;
+        }
+
+        /**
+         * Control whether the timestamp set with {@link Builder#setWhen(long) setWhen} is shown
+         * in the content view.
+         */
+        public Builder setShowWhen(boolean show) {
+            mShowWhen = show;
             return this;
         }
 
@@ -1463,7 +1495,7 @@ public class Notification implements Parcelable
                 contentView.setViewPadding(R.id.line1, 0, 0, 0, 0);
             }
 
-            if (mWhen != 0) {
+            if (mWhen != 0 && mShowWhen) {
                 if (mUseChronometer) {
                     contentView.setViewVisibility(R.id.chronometer, View.VISIBLE);
                     contentView.setLong(R.id.chronometer, "setBase",
@@ -1473,7 +1505,10 @@ public class Notification implements Parcelable
                     contentView.setViewVisibility(R.id.time, View.VISIBLE);
                     contentView.setLong(R.id.time, "setTime", mWhen);
                 }
+            } else {
+                contentView.setViewVisibility(R.id.time, View.GONE);
             }
+
             contentView.setViewVisibility(R.id.line3, showLine3 ? View.VISIBLE : View.GONE);
             contentView.setViewVisibility(R.id.overflow_divider, showLine3 ? View.VISIBLE : View.GONE);
             return contentView;
@@ -1731,6 +1766,9 @@ public class Notification implements Parcelable
             return this;
         }
 
+        /**
+         * Provide the bitmap to be used as the payload for the BigPicture notification.
+         */
         public BigPictureStyle bigPicture(Bitmap b) {
             mPicture = b;
             return this;
@@ -1770,7 +1808,7 @@ public class Notification implements Parcelable
      * 
      * This class is a "rebuilder": It consumes a Builder object and modifies its behavior, like so:
      * <pre class="prettyprint">
-     * Notification noti = new Notification.BigPictureStyle(
+     * Notification noti = new Notification.BigTextStyle(
      *      new Notification.Builder()
      *         .setContentTitle(&quot;New mail from &quot; + sender.toString())
      *         .setContentText(subject)
@@ -1809,6 +1847,10 @@ public class Notification implements Parcelable
             return this;
         }
 
+        /**
+         * Provide the longer text to be displayed in the big form of the
+         * template in place of the content text.
+         */
         public BigTextStyle bigText(CharSequence cs) {
             mBigText = cs;
             return this;
@@ -1889,6 +1931,9 @@ public class Notification implements Parcelable
             return this;
         }
 
+        /**
+         * Append a line to the digest section of the Inbox notification.
+         */
         public InboxStyle addLine(CharSequence cs) {
             mTexts.add(cs);
             return this;
@@ -1909,6 +1954,7 @@ public class Notification implements Parcelable
                 contentView.setViewVisibility(rowId, View.GONE);
             }
 
+
             int i=0;
             while (i < mTexts.size() && i < rowIds.length) {
                 CharSequence str = mTexts.get(i);
@@ -1919,11 +1965,11 @@ public class Notification implements Parcelable
                 i++;
             }
 
-            if  (mTexts.size() > rowIds.length) {
-                contentView.setViewVisibility(R.id.inbox_more, View.VISIBLE);
-            } else {
-                contentView.setViewVisibility(R.id.inbox_more, View.GONE);
-            }
+            contentView.setViewVisibility(R.id.inbox_end_pad,
+                    mTexts.size() > 0 ? View.VISIBLE : View.GONE);
+
+            contentView.setViewVisibility(R.id.inbox_more,
+                    mTexts.size() > rowIds.length ? View.VISIBLE : View.GONE);
 
             return contentView;
         }

@@ -37,6 +37,11 @@ public class WifiP2pConfig implements Parcelable {
      */
     public WpsInfo wps;
 
+    /** @hide */
+    public static final int MAX_GROUP_OWNER_INTENT   =   15;
+    /** @hide */
+    public static final int MIN_GROUP_OWNER_INTENT   =   0;
+
     /**
      * This is an integer value between 0 and 15 where 0 indicates the least
      * inclination to be a group owner and 15 indicates the highest inclination
@@ -46,18 +51,8 @@ public class WifiP2pConfig implements Parcelable {
      */
     public int groupOwnerIntent = -1;
 
-    /**
-     * Indicates whether the configuration is saved
-     * @hide
-     */
-    public enum Persist {
-        SYSTEM_DEFAULT,
-        YES,
-        NO
-    }
-
     /** @hide */
-    public Persist persist = Persist.SYSTEM_DEFAULT;
+    public int netId = WifiP2pGroup.PERSISTENT_NET_ID;
 
     public WifiP2pConfig() {
         //set defaults
@@ -110,7 +105,7 @@ public class WifiP2pConfig implements Parcelable {
         sbuf.append("\n address: ").append(deviceAddress);
         sbuf.append("\n wps: ").append(wps);
         sbuf.append("\n groupOwnerIntent: ").append(groupOwnerIntent);
-        sbuf.append("\n persist: ").append(persist.toString());
+        sbuf.append("\n persist: ").append(netId);
         return sbuf.toString();
     }
 
@@ -125,7 +120,7 @@ public class WifiP2pConfig implements Parcelable {
             deviceAddress = source.deviceAddress;
             wps = new WpsInfo(source.wps);
             groupOwnerIntent = source.groupOwnerIntent;
-            persist = source.persist;
+            netId = source.netId;
         }
     }
 
@@ -134,7 +129,7 @@ public class WifiP2pConfig implements Parcelable {
         dest.writeString(deviceAddress);
         dest.writeParcelable(wps, flags);
         dest.writeInt(groupOwnerIntent);
-        dest.writeString(persist.name());
+        dest.writeInt(netId);
     }
 
     /** Implement the Parcelable interface */
@@ -145,7 +140,7 @@ public class WifiP2pConfig implements Parcelable {
                 config.deviceAddress = in.readString();
                 config.wps = (WpsInfo) in.readParcelable(null);
                 config.groupOwnerIntent = in.readInt();
-                config.persist = Persist.valueOf(in.readString());
+                config.netId = in.readInt();
                 return config;
             }
 

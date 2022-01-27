@@ -17,6 +17,7 @@
 package android.content;
 
 import android.accounts.Account;
+import android.app.ActivityManager;
 import android.database.IContentObserver;
 import android.database.sqlite.SQLiteException;
 import android.net.Uri;
@@ -26,13 +27,14 @@ import android.os.IBinder;
 import android.os.Parcel;
 import android.os.RemoteException;
 import android.os.ServiceManager;
-import android.os.UserId;
+import android.os.UserHandle;
 import android.util.Log;
 import android.util.SparseIntArray;
 import android.Manifest;
 
 import java.io.FileDescriptor;
 import java.io.PrintWriter;
+import java.security.InvalidParameterException;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.Comparator;
@@ -132,20 +134,53 @@ public final class ContentService extends IContentService.Stub {
     /*package*/ ContentService(Context context, boolean factoryTest) {
         mContext = context;
         mFactoryTest = factoryTest;
+    }
+
+    public void systemReady() {
         getSyncManager();
     }
 
-    public void registerContentObserver(Uri uri, boolean notifyForDescendents,
-            IContentObserver observer) {
+    /**
+     * Register a content observer tied to a specific user's view of the provider.
+     * @param userHandle the user whose view of the provider is to be observed.  May be
+     *     the calling user without requiring any permission, otherwise the caller needs to
+     *     hold the INTERACT_ACROSS_USERS_FULL permission.  Pseudousers USER_ALL and
+     *     USER_CURRENT are properly handled; all other pseudousers are forbidden.
+     */
+    @Override
+    public void registerContentObserver(Uri uri, boolean notifyForDescendants,
+            IContentObserver observer, int userHandle) {
         if (observer == null || uri == null) {
             throw new IllegalArgumentException("You must pass a valid uri and observer");
         }
-        synchronized (mRootNode) {
-            mRootNode.addObserverLocked(uri, observer, notifyForDescendents, mRootNode,
-                    Binder.getCallingUid(), Binder.getCallingPid());
-            if (false) Log.v(TAG, "Registered observer " + observer + " at " + uri +
-                    " with notifyForDescendents " + notifyForDescendents);
+
+        final int callingUser = UserHandle.getCallingUserId();
+        if (callingUser != userHandle) {
+            mContext.enforceCallingOrSelfPermission(Manifest.permission.INTERACT_ACROSS_USERS_FULL,
+                    "no permission to observe other users' provider view");
         }
+
+        if (userHandle < 0) {
+            if (userHandle == UserHandle.USER_CURRENT) {
+                userHandle = ActivityManager.getCurrentUser();
+            } else if (userHandle != UserHandle.USER_ALL) {
+                throw new InvalidParameterException("Bad user handle for registerContentObserver: "
+                        + userHandle);
+            }
+        }
+
+        synchronized (mRootNode) {
+            mRootNode.addObserverLocked(uri, observer, notifyForDescendants, mRootNode,
+                    Binder.getCallingUid(), Binder.getCallingPid(), userHandle);
+            if (false) Log.v(TAG, "Registered observer " + observer + " at " + uri +
+                    " with notifyForDescendants " + notifyForDescendants);
+        }
+    }
+
+    public void registerContentObserver(Uri uri, boolean notifyForDescendants,
+            IContentObserver observer) {
+        registerContentObserver(uri, notifyForDescendants, observer,
+                UserHandle.getCallingUserId());
     }
 
     public void unregisterContentObserver(IContentObserver observer) {
@@ -158,14 +193,39 @@ public final class ContentService extends IContentService.Stub {
         }
     }
 
+    /**
+     * Notify observers of a particular user's view of the provider.
+     * @param userHandle the user whose view of the provider is to be notified.  May be
+     *     the calling user without requiring any permission, otherwise the caller needs to
+     *     hold the INTERACT_ACROSS_USERS_FULL permission.  Pseudousers USER_ALL and
+     *     USER_CURRENT are properly interpreted; no other pseudousers are allowed.
+     */
+    @Override
     public void notifyChange(Uri uri, IContentObserver observer,
-            boolean observerWantsSelfNotifications, boolean syncToNetwork) {
+            boolean observerWantsSelfNotifications, boolean syncToNetwork,
+            int userHandle) {
         if (Log.isLoggable(TAG, Log.VERBOSE)) {
-            Log.v(TAG, "Notifying update of " + uri + " from observer " + observer
-                    + ", syncToNetwork " + syncToNetwork);
+            Log.v(TAG, "Notifying update of " + uri + " for user " + userHandle
+                    + " from observer " + observer + ", syncToNetwork " + syncToNetwork);
         }
 
-        int userId = UserId.getCallingUserId();
+        // Notify for any user other than the caller's own requires permission.
+        final int callingUserHandle = UserHandle.getCallingUserId();
+        if (userHandle != callingUserHandle) {
+            mContext.enforceCallingOrSelfPermission(Manifest.permission.INTERACT_ACROSS_USERS_FULL,
+                    "no permission to notify other users");
+        }
+
+        // We passed the permission check; resolve pseudouser targets as appropriate
+        if (userHandle < 0) {
+            if (userHandle == UserHandle.USER_CURRENT) {
+                userHandle = ActivityManager.getCurrentUser();
+            } else if (userHandle != UserHandle.USER_ALL) {
+                throw new InvalidParameterException("Bad user handle for notifyChange: "
+                        + userHandle);
+            }
+        }
+
         // This makes it so that future permission checks will be in the context of this
         // process rather than the caller's process. We will restore this before returning.
         long identityToken = clearCallingIdentity();
@@ -173,7 +233,7 @@ public final class ContentService extends IContentService.Stub {
             ArrayList<ObserverCall> calls = new ArrayList<ObserverCall>();
             synchronized (mRootNode) {
                 mRootNode.collectObserversLocked(uri, 0, observer, observerWantsSelfNotifications,
-                        calls);
+                        userHandle, calls);
             }
             final int numCalls = calls.size();
             for (int i=0; i<numCalls; i++) {
@@ -204,13 +264,19 @@ public final class ContentService extends IContentService.Stub {
             if (syncToNetwork) {
                 SyncManager syncManager = getSyncManager();
                 if (syncManager != null) {
-                    syncManager.scheduleLocalSync(null /* all accounts */, userId,
+                    syncManager.scheduleLocalSync(null /* all accounts */, callingUserHandle,
                             uri.getAuthority());
                 }
             }
         } finally {
             restoreCallingIdentity(identityToken);
         }
+    }
+
+    public void notifyChange(Uri uri, IContentObserver observer,
+            boolean observerWantsSelfNotifications, boolean syncToNetwork) {
+        notifyChange(uri, observer, observerWantsSelfNotifications, syncToNetwork,
+                UserHandle.getCallingUserId());
     }
 
     /**
@@ -233,7 +299,7 @@ public final class ContentService extends IContentService.Stub {
 
     public void requestSync(Account account, String authority, Bundle extras) {
         ContentResolver.validateSyncExtrasBundle(extras);
-        int userId = UserId.getCallingUserId();
+        int userId = UserHandle.getCallingUserId();
 
         // This makes it so that future permission checks will be in the context of this
         // process rather than the caller's process. We will restore this before returning.
@@ -256,7 +322,7 @@ public final class ContentService extends IContentService.Stub {
      * @param authority filter the pending and active syncs to cancel using this authority
      */
     public void cancelSync(Account account, String authority) {
-        int userId = UserId.getCallingUserId();
+        int userId = UserHandle.getCallingUserId();
 
         // This makes it so that future permission checks will be in the context of this
         // process rather than the caller's process. We will restore this before returning.
@@ -279,10 +345,11 @@ public final class ContentService extends IContentService.Stub {
     public SyncAdapterType[] getSyncAdapterTypes() {
         // This makes it so that future permission checks will be in the context of this
         // process rather than the caller's process. We will restore this before returning.
-        long identityToken = clearCallingIdentity();
+        final int userId = UserHandle.getCallingUserId();
+        final long identityToken = clearCallingIdentity();
         try {
             SyncManager syncManager = getSyncManager();
-            return syncManager.getSyncAdapterTypes();
+            return syncManager.getSyncAdapterTypes(userId);
         } finally {
             restoreCallingIdentity(identityToken);
         }
@@ -291,7 +358,7 @@ public final class ContentService extends IContentService.Stub {
     public boolean getSyncAutomatically(Account account, String providerName) {
         mContext.enforceCallingOrSelfPermission(Manifest.permission.READ_SYNC_SETTINGS,
                 "no permission to read the sync settings");
-        int userId = UserId.getCallingUserId();
+        int userId = UserHandle.getCallingUserId();
 
         long identityToken = clearCallingIdentity();
         try {
@@ -309,7 +376,7 @@ public final class ContentService extends IContentService.Stub {
     public void setSyncAutomatically(Account account, String providerName, boolean sync) {
         mContext.enforceCallingOrSelfPermission(Manifest.permission.WRITE_SYNC_SETTINGS,
                 "no permission to write the sync settings");
-        int userId = UserId.getCallingUserId();
+        int userId = UserHandle.getCallingUserId();
 
         long identityToken = clearCallingIdentity();
         try {
@@ -327,7 +394,7 @@ public final class ContentService extends IContentService.Stub {
             long pollFrequency) {
         mContext.enforceCallingOrSelfPermission(Manifest.permission.WRITE_SYNC_SETTINGS,
                 "no permission to write the sync settings");
-        int userId = UserId.getCallingUserId();
+        int userId = UserHandle.getCallingUserId();
 
         long identityToken = clearCallingIdentity();
         try {
@@ -341,7 +408,7 @@ public final class ContentService extends IContentService.Stub {
     public void removePeriodicSync(Account account, String authority, Bundle extras) {
         mContext.enforceCallingOrSelfPermission(Manifest.permission.WRITE_SYNC_SETTINGS,
                 "no permission to write the sync settings");
-        int userId = UserId.getCallingUserId();
+        int userId = UserHandle.getCallingUserId();
 
         long identityToken = clearCallingIdentity();
         try {
@@ -355,7 +422,7 @@ public final class ContentService extends IContentService.Stub {
     public List<PeriodicSync> getPeriodicSyncs(Account account, String providerName) {
         mContext.enforceCallingOrSelfPermission(Manifest.permission.READ_SYNC_SETTINGS,
                 "no permission to read the sync settings");
-        int userId = UserId.getCallingUserId();
+        int userId = UserHandle.getCallingUserId();
 
         long identityToken = clearCallingIdentity();
         try {
@@ -369,7 +436,7 @@ public final class ContentService extends IContentService.Stub {
     public int getIsSyncable(Account account, String providerName) {
         mContext.enforceCallingOrSelfPermission(Manifest.permission.READ_SYNC_SETTINGS,
                 "no permission to read the sync settings");
-        int userId = UserId.getCallingUserId();
+        int userId = UserHandle.getCallingUserId();
 
         long identityToken = clearCallingIdentity();
         try {
@@ -387,7 +454,7 @@ public final class ContentService extends IContentService.Stub {
     public void setIsSyncable(Account account, String providerName, int syncable) {
         mContext.enforceCallingOrSelfPermission(Manifest.permission.WRITE_SYNC_SETTINGS,
                 "no permission to write the sync settings");
-        int userId = UserId.getCallingUserId();
+        int userId = UserHandle.getCallingUserId();
 
         long identityToken = clearCallingIdentity();
         try {
@@ -404,7 +471,7 @@ public final class ContentService extends IContentService.Stub {
     public boolean getMasterSyncAutomatically() {
         mContext.enforceCallingOrSelfPermission(Manifest.permission.READ_SYNC_SETTINGS,
                 "no permission to read the sync settings");
-        int userId = UserId.getCallingUserId();
+        int userId = UserHandle.getCallingUserId();
 
         long identityToken = clearCallingIdentity();
         try {
@@ -421,7 +488,7 @@ public final class ContentService extends IContentService.Stub {
     public void setMasterSyncAutomatically(boolean flag) {
         mContext.enforceCallingOrSelfPermission(Manifest.permission.WRITE_SYNC_SETTINGS,
                 "no permission to write the sync settings");
-        int userId = UserId.getCallingUserId();
+        int userId = UserHandle.getCallingUserId();
 
         long identityToken = clearCallingIdentity();
         try {
@@ -437,7 +504,7 @@ public final class ContentService extends IContentService.Stub {
     public boolean isSyncActive(Account account, String authority) {
         mContext.enforceCallingOrSelfPermission(Manifest.permission.READ_SYNC_STATS,
                 "no permission to read the sync stats");
-        int userId = UserId.getCallingUserId();
+        int userId = UserHandle.getCallingUserId();
 
         long identityToken = clearCallingIdentity();
         try {
@@ -455,7 +522,7 @@ public final class ContentService extends IContentService.Stub {
     public List<SyncInfo> getCurrentSyncs() {
         mContext.enforceCallingOrSelfPermission(Manifest.permission.READ_SYNC_STATS,
                 "no permission to read the sync stats");
-        int userId = UserId.getCallingUserId();
+        int userId = UserHandle.getCallingUserId();
 
         long identityToken = clearCallingIdentity();
         try {
@@ -468,7 +535,7 @@ public final class ContentService extends IContentService.Stub {
     public SyncStatusInfo getSyncStatus(Account account, String authority) {
         mContext.enforceCallingOrSelfPermission(Manifest.permission.READ_SYNC_STATS,
                 "no permission to read the sync stats");
-        int userId = UserId.getCallingUserId();
+        int userId = UserHandle.getCallingUserId();
 
         long identityToken = clearCallingIdentity();
         try {
@@ -486,7 +553,7 @@ public final class ContentService extends IContentService.Stub {
     public boolean isSyncPending(Account account, String authority) {
         mContext.enforceCallingOrSelfPermission(Manifest.permission.READ_SYNC_STATS,
                 "no permission to read the sync stats");
-        int userId = UserId.getCallingUserId();
+        int userId = UserHandle.getCallingUserId();
 
         long identityToken = clearCallingIdentity();
         try {
@@ -524,7 +591,7 @@ public final class ContentService extends IContentService.Stub {
         }
     }
 
-    public static IContentService main(Context context, boolean factoryTest) {
+    public static ContentService main(Context context, boolean factoryTest) {
         ContentService service = new ContentService(context, factoryTest);
         ServiceManager.addService(ContentResolver.CONTENT_SERVICE_NAME, service);
         return service;
@@ -540,16 +607,18 @@ public final class ContentService extends IContentService.Stub {
             public final IContentObserver observer;
             public final int uid;
             public final int pid;
-            public final boolean notifyForDescendents;
+            public final boolean notifyForDescendants;
+            private final int userHandle;
             private final Object observersLock;
 
             public ObserverEntry(IContentObserver o, boolean n, Object observersLock,
-                    int _uid, int _pid) {
+                    int _uid, int _pid, int _userHandle) {
                 this.observersLock = observersLock;
                 observer = o;
                 uid = _uid;
                 pid = _pid;
-                notifyForDescendents = n;
+                userHandle = _userHandle;
+                notifyForDescendants = n;
                 try {
                     observer.asBinder().linkToDeath(this, 0);
                 } catch (RemoteException e) {
@@ -568,7 +637,8 @@ public final class ContentService extends IContentService.Stub {
                 pidCounts.put(pid, pidCounts.get(pid)+1);
                 pw.print(prefix); pw.print(name); pw.print(": pid=");
                         pw.print(pid); pw.print(" uid=");
-                        pw.print(uid); pw.print(" target=");
+                        pw.print(uid); pw.print(" user=");
+                        pw.print(userHandle); pw.print(" target=");
                         pw.println(Integer.toHexString(System.identityHashCode(
                                 observer != null ? observer.asBinder() : null)));
             }
@@ -636,17 +706,21 @@ public final class ContentService extends IContentService.Stub {
             return uri.getPathSegments().size() + 1;
         }
 
+        // Invariant:  userHandle is either a hard user number or is USER_ALL
         public void addObserverLocked(Uri uri, IContentObserver observer,
-                boolean notifyForDescendents, Object observersLock, int uid, int pid) {
-            addObserverLocked(uri, 0, observer, notifyForDescendents, observersLock, uid, pid);
+                boolean notifyForDescendants, Object observersLock,
+                int uid, int pid, int userHandle) {
+            addObserverLocked(uri, 0, observer, notifyForDescendants, observersLock,
+                    uid, pid, userHandle);
         }
 
         private void addObserverLocked(Uri uri, int index, IContentObserver observer,
-                boolean notifyForDescendents, Object observersLock, int uid, int pid) {
+                boolean notifyForDescendants, Object observersLock,
+                int uid, int pid, int userHandle) {
             // If this is the leaf node add the observer
             if (index == countUriSegments(uri)) {
-                mObservers.add(new ObserverEntry(observer, notifyForDescendents, observersLock,
-                        uid, pid));
+                mObservers.add(new ObserverEntry(observer, notifyForDescendants, observersLock,
+                        uid, pid, userHandle));
                 return;
             }
 
@@ -659,8 +733,8 @@ public final class ContentService extends IContentService.Stub {
             for (int i = 0; i < N; i++) {
                 ObserverNode node = mChildren.get(i);
                 if (node.mName.equals(segment)) {
-                    node.addObserverLocked(uri, index + 1, observer, notifyForDescendents,
-                            observersLock, uid, pid);
+                    node.addObserverLocked(uri, index + 1, observer, notifyForDescendants,
+                            observersLock, uid, pid, userHandle);
                     return;
                 }
             }
@@ -668,8 +742,8 @@ public final class ContentService extends IContentService.Stub {
             // No child found, create one
             ObserverNode node = new ObserverNode(segment);
             mChildren.add(node);
-            node.addObserverLocked(uri, index + 1, observer, notifyForDescendents,
-                    observersLock, uid, pid);
+            node.addObserverLocked(uri, index + 1, observer, notifyForDescendants,
+                    observersLock, uid, pid, userHandle);
         }
 
         public boolean removeObserverLocked(IContentObserver observer) {
@@ -702,37 +776,49 @@ public final class ContentService extends IContentService.Stub {
         }
 
         private void collectMyObserversLocked(boolean leaf, IContentObserver observer,
-                boolean observerWantsSelfNotifications, ArrayList<ObserverCall> calls) {
+                boolean observerWantsSelfNotifications, int targetUserHandle,
+                ArrayList<ObserverCall> calls) {
             int N = mObservers.size();
             IBinder observerBinder = observer == null ? null : observer.asBinder();
             for (int i = 0; i < N; i++) {
                 ObserverEntry entry = mObservers.get(i);
 
-                // Don't notify the observer if it sent the notification and isn't interesed
+                // Don't notify the observer if it sent the notification and isn't interested
                 // in self notifications
                 boolean selfChange = (entry.observer.asBinder() == observerBinder);
                 if (selfChange && !observerWantsSelfNotifications) {
                     continue;
                 }
 
-                // Make sure the observer is interested in the notification
-                if (leaf || (!leaf && entry.notifyForDescendents)) {
-                    calls.add(new ObserverCall(this, entry.observer, selfChange));
+                // Does this observer match the target user?
+                if (targetUserHandle == UserHandle.USER_ALL
+                        || entry.userHandle == UserHandle.USER_ALL
+                        || targetUserHandle == entry.userHandle) {
+                    // Make sure the observer is interested in the notification
+                    if (leaf || (!leaf && entry.notifyForDescendants)) {
+                        calls.add(new ObserverCall(this, entry.observer, selfChange));
+                    }
                 }
             }
         }
 
+        /**
+         * targetUserHandle is either a hard user handle or is USER_ALL
+         */
         public void collectObserversLocked(Uri uri, int index, IContentObserver observer,
-                boolean observerWantsSelfNotifications, ArrayList<ObserverCall> calls) {
+                boolean observerWantsSelfNotifications, int targetUserHandle,
+                ArrayList<ObserverCall> calls) {
             String segment = null;
             int segmentCount = countUriSegments(uri);
             if (index >= segmentCount) {
                 // This is the leaf node, notify all observers
-                collectMyObserversLocked(true, observer, observerWantsSelfNotifications, calls);
+                collectMyObserversLocked(true, observer, observerWantsSelfNotifications,
+                        targetUserHandle, calls);
             } else if (index < segmentCount){
                 segment = getUriSegment(uri, index);
-                // Notify any observers at this level who are interested in descendents
-                collectMyObserversLocked(false, observer, observerWantsSelfNotifications, calls);
+                // Notify any observers at this level who are interested in descendants
+                collectMyObserversLocked(false, observer, observerWantsSelfNotifications,
+                        targetUserHandle, calls);
             }
 
             int N = mChildren.size();
@@ -741,7 +827,7 @@ public final class ContentService extends IContentService.Stub {
                 if (segment == null || node.mName.equals(segment)) {
                     // We found the child,
                     node.collectObserversLocked(uri, index + 1,
-                            observer, observerWantsSelfNotifications, calls);
+                            observer, observerWantsSelfNotifications, targetUserHandle, calls);
                     if (segment != null) {
                         break;
                     }

@@ -20,10 +20,11 @@ import android.os.Parcel;
 import android.util.Log;
 
 import com.android.internal.telephony.GsmAlphabet;
+import com.android.internal.telephony.GsmAlphabet.TextEncodingDetails;
+import com.android.internal.telephony.SmsConstants;
 import com.android.internal.telephony.SmsHeader;
 import com.android.internal.telephony.SmsMessageBase;
 import com.android.internal.telephony.SmsMessageBase.SubmitPduBase;
-import com.android.internal.telephony.SmsMessageBase.TextEncodingDetails;
 
 import java.lang.Math;
 import java.util.ArrayList;
@@ -134,7 +135,8 @@ public class SmsMessage {
      */
     public static SmsMessage createFromPdu(byte[] pdu) {
         int activePhone = TelephonyManager.getDefault().getCurrentPhoneType();
-        String format = (PHONE_TYPE_CDMA == activePhone) ? FORMAT_3GPP2 : FORMAT_3GPP;
+        String format = (PHONE_TYPE_CDMA == activePhone) ?
+                SmsConstants.FORMAT_3GPP2 : SmsConstants.FORMAT_3GPP;
         return createFromPdu(pdu, format);
     }
 
@@ -151,9 +153,9 @@ public class SmsMessage {
     public static SmsMessage createFromPdu(byte[] pdu, String format) {
         SmsMessageBase wrappedMessage;
 
-        if (FORMAT_3GPP2.equals(format)) {
+        if (SmsConstants.FORMAT_3GPP2.equals(format)) {
             wrappedMessage = com.android.internal.telephony.cdma.SmsMessage.createFromPdu(pdu);
-        } else if (FORMAT_3GPP.equals(format)) {
+        } else if (SmsConstants.FORMAT_3GPP.equals(format)) {
             wrappedMessage = com.android.internal.telephony.gsm.SmsMessage.createFromPdu(pdu);
         } else {
             Log.e(LOG_TAG, "createFromPdu(): unsupported message format " + format);
@@ -254,8 +256,7 @@ public class SmsMessage {
      *         required, int[1] the number of code units used, and
      *         int[2] is the number of code units remaining until the
      *         next message. int[3] is an indicator of the encoding
-     *         code unit size (see the ENCODING_* definitions in this
-     *         class).
+     *         code unit size (see the ENCODING_* definitions in SmsConstants)
      */
     public static int[] calculateLength(CharSequence msgBody, boolean use7bitOnly) {
         int activePhone = TelephonyManager.getDefault().getCurrentPhoneType();
@@ -291,7 +292,7 @@ public class SmsMessage {
         // flexibly...
 
         int limit;
-        if (ted.codeUnitSize == ENCODING_7BIT) {
+        if (ted.codeUnitSize == SmsConstants.ENCODING_7BIT) {
             int udhLength;
             if (ted.languageTable != 0 && ted.languageShiftTable != 0) {
                 udhLength = GsmAlphabet.UDH_SEPTET_COST_TWO_SHIFT_TABLES;
@@ -309,12 +310,12 @@ public class SmsMessage {
                 udhLength += GsmAlphabet.UDH_SEPTET_COST_LENGTH;
             }
 
-            limit = MAX_USER_DATA_SEPTETS - udhLength;
+            limit = SmsConstants.MAX_USER_DATA_SEPTETS - udhLength;
         } else {
             if (ted.msgCount > 1) {
-                limit = MAX_USER_DATA_BYTES_WITH_HEADER;
+                limit = SmsConstants.MAX_USER_DATA_BYTES_WITH_HEADER;
             } else {
-                limit = MAX_USER_DATA_BYTES;
+                limit = SmsConstants.MAX_USER_DATA_BYTES;
             }
         }
 
@@ -323,7 +324,7 @@ public class SmsMessage {
         ArrayList<String> result = new ArrayList<String>(ted.msgCount);
         while (pos < textLen) {
             int nextPos = 0;  // Counts code units.
-            if (ted.codeUnitSize == ENCODING_7BIT) {
+            if (ted.codeUnitSize == SmsConstants.ENCODING_7BIT) {
                 if (activePhone == PHONE_TYPE_CDMA && ted.msgCount == 1) {
                     // For a singleton CDMA message, the encoding must be ASCII...
                     nextPos = pos + Math.min(limit, textLen - pos);
@@ -477,7 +478,14 @@ public class SmsMessage {
      * Returns the class of this message.
      */
     public MessageClass getMessageClass() {
-        return mWrappedSmsMessage.getMessageClass();
+        switch(mWrappedSmsMessage.getMessageClass()) {
+            case CLASS_0: return MessageClass.CLASS_0;
+            case CLASS_1: return MessageClass.CLASS_1;
+            case CLASS_2: return MessageClass.CLASS_2;
+            case CLASS_3: return MessageClass.CLASS_3;
+            default: return MessageClass.UNKNOWN;
+
+        }
     }
 
     /**

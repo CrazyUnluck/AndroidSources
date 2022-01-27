@@ -71,4 +71,33 @@ public class FloatMath {
      * @return the square root of value
      */
     public static native float sqrt(float value);
+
+    /**
+     * Returns the closest float approximation of the raising "e" to the power
+     * of the argument.
+     *
+     * @param value to compute the exponential of
+     * @return the exponential of value
+     */
+    public static native float exp(float value);
+
+    /**
+     * Returns the closest float approximation of the result of raising {@code
+     * x} to the power of {@code y}.
+     *
+     * @param x the base of the operation.
+     * @param y the exponent of the operation.
+     * @return {@code x} to the power of {@code y}.
+     */
+    public static native float pow(float x, float y);
+
+    /**
+     * Returns {@code sqrt(}<i>{@code x}</i><sup>{@code 2}</sup>{@code +} <i>
+     * {@code y}</i><sup>{@code 2}</sup>{@code )}.
+     *
+     * @param x a float number
+     * @param y a float number
+     * @return the hypotenuse
+     */
+    public static native float hypot(float x, float y);
 }

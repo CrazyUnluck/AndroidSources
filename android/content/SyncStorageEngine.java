@@ -16,7 +16,6 @@
 
 package android.content;
 
-import com.android.internal.os.AtomicFile;
 import com.android.internal.util.ArrayUtils;
 import com.android.internal.util.FastXmlSerializer;
 
@@ -26,6 +25,7 @@ import org.xmlpull.v1.XmlSerializer;
 
 import android.accounts.Account;
 import android.accounts.AccountAndUser;
+import android.content.res.Resources;
 import android.database.Cursor;
 import android.database.sqlite.SQLiteDatabase;
 import android.database.sqlite.SQLiteException;
@@ -37,7 +37,7 @@ import android.os.Message;
 import android.os.Parcel;
 import android.os.RemoteCallbackList;
 import android.os.RemoteException;
-import android.os.SystemClock;
+import android.util.AtomicFile;
 import android.util.Log;
 import android.util.SparseArray;
 import android.util.Xml;
@@ -337,6 +337,7 @@ public class SyncStorageEngine extends Handler {
 
     private int mNextHistoryId = 0;
     private SparseArray<Boolean> mMasterSyncAutomatically = new SparseArray<Boolean>();
+    private boolean mDefaultMasterSyncAutomatically;
 
     private OnSyncRequestListener mSyncRequestListener;
 
@@ -345,6 +346,9 @@ public class SyncStorageEngine extends Handler {
         sSyncStorageEngine = this;
 
         mCal = Calendar.getInstance(TimeZone.getTimeZone("GMT+0"));
+
+        mDefaultMasterSyncAutomatically = mContext.getResources().getBoolean(
+               com.android.internal.R.bool.config_syncstorageengine_masterSyncAutomatically);
 
         File systemDir = new File(dataDir, "system");
         File syncDir = new File(systemDir, "sync");
@@ -605,23 +609,25 @@ public class SyncStorageEngine extends Handler {
     public void clearAllBackoffs(SyncQueue syncQueue) {
         boolean changed = false;
         synchronized (mAuthorities) {
-            for (AccountInfo accountInfo : mAccounts.values()) {
-                for (AuthorityInfo authorityInfo : accountInfo.authorities.values()) {
-                    if (authorityInfo.backoffTime != NOT_IN_BACKOFF_MODE
-                            || authorityInfo.backoffDelay != NOT_IN_BACKOFF_MODE) {
-                        if (Log.isLoggable(TAG, Log.VERBOSE)) {
-                            Log.v(TAG, "clearAllBackoffs:"
-                                    + " authority:" + authorityInfo.authority
-                                    + " account:" + accountInfo.accountAndUser.account.name
-                                    + " user:" + accountInfo.accountAndUser.userId
-                                    + " backoffTime was: " + authorityInfo.backoffTime
-                                    + " backoffDelay was: " + authorityInfo.backoffDelay);
+            synchronized (syncQueue) {
+                for (AccountInfo accountInfo : mAccounts.values()) {
+                    for (AuthorityInfo authorityInfo : accountInfo.authorities.values()) {
+                        if (authorityInfo.backoffTime != NOT_IN_BACKOFF_MODE
+                                || authorityInfo.backoffDelay != NOT_IN_BACKOFF_MODE) {
+                            if (Log.isLoggable(TAG, Log.VERBOSE)) {
+                                Log.v(TAG, "clearAllBackoffs:"
+                                        + " authority:" + authorityInfo.authority
+                                        + " account:" + accountInfo.accountAndUser.account.name
+                                        + " user:" + accountInfo.accountAndUser.userId
+                                        + " backoffTime was: " + authorityInfo.backoffTime
+                                        + " backoffDelay was: " + authorityInfo.backoffDelay);
+                            }
+                            authorityInfo.backoffTime = NOT_IN_BACKOFF_MODE;
+                            authorityInfo.backoffDelay = NOT_IN_BACKOFF_MODE;
+                            syncQueue.onBackoffChanged(accountInfo.accountAndUser.account,
+                                    accountInfo.accountAndUser.userId, authorityInfo.authority, 0);
+                            changed = true;
                         }
-                        authorityInfo.backoffTime = NOT_IN_BACKOFF_MODE;
-                        authorityInfo.backoffDelay = NOT_IN_BACKOFF_MODE;
-                        syncQueue.onBackoffChanged(accountInfo.accountAndUser.account,
-                                accountInfo.accountAndUser.userId, authorityInfo.authority, 0);
-                        changed = true;
                     }
                 }
             }
@@ -781,7 +787,7 @@ public class SyncStorageEngine extends Handler {
     public boolean getMasterSyncAutomatically(int userId) {
         synchronized (mAuthorities) {
             Boolean auto = mMasterSyncAutomatically.get(userId);
-            return auto == null ? true : auto;
+            return auto == null ? mDefaultMasterSyncAutomatically : auto;
         }
     }
 

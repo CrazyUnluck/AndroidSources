@@ -16,8 +16,7 @@
 
 package com.android.internal.telephony;
 
-import android.telephony.SmsMessage;
-
+import com.android.internal.telephony.SmsConstants;
 import com.android.internal.util.HexDump;
 
 import java.io.ByteArrayInputStream;
@@ -196,7 +195,8 @@ public class SmsHeader {
             return null;
         }
 
-        ByteArrayOutputStream outStream = new ByteArrayOutputStream(SmsMessage.MAX_USER_DATA_BYTES);
+        ByteArrayOutputStream outStream =
+                new ByteArrayOutputStream(SmsConstants.MAX_USER_DATA_BYTES);
         ConcatRef concatRef = smsHeader.concatRef;
         if (concatRef != null) {
             if (concatRef.isEightBits) {

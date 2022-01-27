@@ -24,6 +24,7 @@ import android.content.res.Configuration;
 import android.net.wifi.WifiManager;
 import android.os.RemoteException;
 import android.os.SystemProperties;
+import android.telephony.TelephonyManager;
 import android.text.TextUtils;
 import android.util.Log;
 
@@ -283,7 +284,7 @@ public final class MccTable
      * @param mcc Mobile Country Code of the SIM or SIM-like entity (build prop on CDMA)
      */
     private static void setLocaleFromMccIfNeeded(Context context, int mcc) {
-        if (BaseCommands.getLteOnCdmaModeStatic() == Phone.LTE_ON_CDMA_TRUE) {
+        if (TelephonyManager.getLteOnCdmaModeStatic() == PhoneConstants.LTE_ON_CDMA_TRUE) {
             // Avoid system locale is set from MCC table if CDMALTEPhone is used.
             // The locale will be picked up based on EFpl/EFli once CSIM records are loaded.
             return;

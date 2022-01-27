@@ -35,7 +35,7 @@ public class ApnContext {
 
     private final String mApnType;
 
-    private DataConnectionTracker.State mState;
+    private DctConstants.State mState;
 
     private ArrayList<ApnSetting> mWaitingApns = null;
 
@@ -50,6 +50,8 @@ public class ApnContext {
 
     String mReason;
 
+    int mRetryCount;
+
     /**
      * user/app requested connection on this APN
      */
@@ -62,8 +64,9 @@ public class ApnContext {
 
     public ApnContext(String apnType, String logTag) {
         mApnType = apnType;
-        mState = DataConnectionTracker.State.IDLE;
+        mState = DctConstants.State.IDLE;
         setReason(Phone.REASON_DATA_ENABLED);
+        setRetryCount(0);
         mDataEnabled = new AtomicBoolean(false);
         mDependencyMet = new AtomicBoolean(true);
         mWaitingApnsPermanentFailureCountDown = new AtomicInteger(0);
@@ -147,28 +150,28 @@ public class ApnContext {
         return mWaitingApns;
     }
 
-    public synchronized void setState(DataConnectionTracker.State s) {
+    public synchronized void setState(DctConstants.State s) {
         if (DBG) {
             log("setState: " + s + ", previous state:" + mState);
         }
 
         mState = s;
 
-        if (mState == DataConnectionTracker.State.FAILED) {
+        if (mState == DctConstants.State.FAILED) {
             if (mWaitingApns != null) {
                 mWaitingApns.clear(); // when teardown the connection and set to IDLE
             }
         }
     }
 
-    public synchronized DataConnectionTracker.State getState() {
+    public synchronized DctConstants.State getState() {
         return mState;
     }
 
     public boolean isDisconnected() {
-        DataConnectionTracker.State currentState = getState();
-        return ((currentState == DataConnectionTracker.State.IDLE) ||
-                    currentState == DataConnectionTracker.State.FAILED);
+        DctConstants.State currentState = getState();
+        return ((currentState == DctConstants.State.IDLE) ||
+                    currentState == DctConstants.State.FAILED);
     }
 
     public synchronized void setReason(String reason) {
@@ -180,6 +183,21 @@ public class ApnContext {
 
     public synchronized String getReason() {
         return mReason;
+    }
+
+    public synchronized void setRetryCount(int retryCount) {
+        if (DBG) {
+            log("setRetryCount: " + retryCount);
+        }
+        mRetryCount = retryCount;
+        DataConnection dc = mDataConnection;
+        if (dc != null) {
+            dc.setRetryCount(retryCount);
+        }
+    }
+
+    public synchronized int getRetryCount() {
+        return mRetryCount;
     }
 
     public boolean isReady() {
@@ -214,8 +232,8 @@ public class ApnContext {
         return "{mApnType=" + mApnType + " mState=" + getState() + " mWaitingApns=" + mWaitingApns +
                 " mWaitingApnsPermanentFailureCountDown=" + mWaitingApnsPermanentFailureCountDown +
                 " mApnSetting=" + mApnSetting + " mDataConnectionAc=" + mDataConnectionAc +
-                " mReason=" + mReason + " mDataEnabled=" + mDataEnabled +
-                " mDependencyMet=" + mDependencyMet + "}";
+                " mReason=" + mReason + " mRetryCount=" + mRetryCount +
+                " mDataEnabled=" + mDataEnabled + " mDependencyMet=" + mDependencyMet + "}";
     }
 
     protected void log(String s) {

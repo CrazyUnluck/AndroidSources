@@ -193,15 +193,6 @@ public class ImageView extends View {
         }
     }
 
-    /**
-     * @hide
-     */
-    @Override
-    public int getResolvedLayoutDirection(Drawable dr) {
-        return (dr == mDrawable) ?
-                getResolvedLayoutDirection() : super.getResolvedLayoutDirection(dr);
-    }
-
     @Override
     public boolean hasOverlappingRendering() {
         return (getBackground() != null);
@@ -351,8 +342,15 @@ public class ImageView extends View {
             updateDrawable(null);
             mResource = resId;
             mUri = null;
+
+            final int oldWidth = mDrawableWidth;
+            final int oldHeight = mDrawableHeight;
+
             resolveUri();
-            requestLayout();
+
+            if (oldWidth != mDrawableWidth || oldHeight != mDrawableHeight) {
+                requestLayout();
+            }
             invalidate();
         }
     }
@@ -376,8 +374,15 @@ public class ImageView extends View {
             updateDrawable(null);
             mResource = 0;
             mUri = uri;
+
+            final int oldWidth = mDrawableWidth;
+            final int oldHeight = mDrawableHeight;
+
             resolveUri();
-            requestLayout();
+
+            if (oldWidth != mDrawableWidth || oldHeight != mDrawableHeight) {
+                requestLayout();
+            }
             invalidate();
         }
     }
@@ -392,8 +397,8 @@ public class ImageView extends View {
             mResource = 0;
             mUri = null;
 
-            int oldWidth = mDrawableWidth;
-            int oldHeight = mDrawableHeight;
+            final int oldWidth = mDrawableWidth;
+            final int oldHeight = mDrawableHeight;
 
             updateDrawable(drawable);
 
@@ -675,6 +680,7 @@ public class ImageView extends View {
                 d.setState(getDrawableState());
             }
             d.setLevel(mLevel);
+            d.setLayoutDirection(getLayoutDirection());
             mDrawableWidth = d.getIntrinsicWidth();
             mDrawableHeight = d.getIntrinsicHeight();
             applyColorMod();

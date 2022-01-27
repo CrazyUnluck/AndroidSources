@@ -365,6 +365,8 @@ public class AccessibilityNodeInfo implements Parcelable {
     private int mWindowId = UNDEFINED;
     private long mSourceNodeId = ROOT_NODE_ID;
     private long mParentNodeId = ROOT_NODE_ID;
+    private long mLabelForId = ROOT_NODE_ID;
+    private long mLabeledById = ROOT_NODE_ID;
 
     private int mBooleanProperties;
     private final Rect mBoundsInParent = new Rect();
@@ -381,10 +383,6 @@ public class AccessibilityNodeInfo implements Parcelable {
     private int mMovementGranularities;
 
     private int mConnectionId = UNDEFINED;
-
-    // TODO: These are a workaround for 6623031. Remove when fixed.
-    private int mActualAndReportedWindowLeftDelta;
-    private int mActualAndReportedWindowTopDelta;
 
     /**
      * Hide constructor from clients.
@@ -432,10 +430,6 @@ public class AccessibilityNodeInfo implements Parcelable {
         final int rootAccessibilityViewId =
             (root != null) ? root.getAccessibilityViewId() : UNDEFINED;
         mSourceNodeId = makeNodeId(rootAccessibilityViewId, virtualDescendantId);
-        if (root != null) {
-            mActualAndReportedWindowLeftDelta = root.getActualAndReportedWindowLeftDelta();
-            mActualAndReportedWindowTopDelta = root.getActualAndReportedWindowTopDelta();
-        }
     }
 
     /**
@@ -833,7 +827,6 @@ public class AccessibilityNodeInfo implements Parcelable {
     public void setBoundsInScreen(Rect bounds) {
         enforceNotSealed();
         mBoundsInScreen.set(bounds.left, bounds.top, bounds.right, bounds.bottom);
-        mBoundsInScreen.offset(mActualAndReportedWindowLeftDelta, mActualAndReportedWindowTopDelta);
     }
 
     /**
@@ -1242,6 +1235,120 @@ public class AccessibilityNodeInfo implements Parcelable {
     }
 
     /**
+     * Sets the view for which the view represented by this info serves as a
+     * label for accessibility purposes.
+     *
+     * @param labeled The view for which this info serves as a label.
+     */
+    public void setLabelFor(View labeled) {
+        setLabelFor(labeled, UNDEFINED);
+    }
+
+    /**
+     * Sets the view for which the view represented by this info serves as a
+     * label for accessibility purposes. If <code>virtualDescendantId</code>
+     * is {@link View#NO_ID} the root is set as the labeled.
+     * <p>
+     * A virtual descendant is an imaginary View that is reported as a part of the view
+     * hierarchy for accessibility purposes. This enables custom views that draw complex
+     * content to report themselves as a tree of virtual views, thus conveying their
+     * logical structure.
+     * </p>
+     * <p>
+     *   <strong>Note:</strong> Cannot be called from an
+     *   {@link android.accessibilityservice.AccessibilityService}.
+     *   This class is made immutable before being delivered to an AccessibilityService.
+     * </p>
+     *
+     * @param root The root whose virtual descendant serves as a label.
+     * @param virtualDescendantId The id of the virtual descendant.
+     */
+    public void setLabelFor(View root, int virtualDescendantId) {
+        enforceNotSealed();
+        final int rootAccessibilityViewId = (root != null)
+                ? root.getAccessibilityViewId() : UNDEFINED;
+        mLabelForId = makeNodeId(rootAccessibilityViewId, virtualDescendantId);
+    }
+
+    /**
+     * Gets the node info for which the view represented by this info serves as
+     * a label for accessibility purposes.
+     * <p>
+     *   <strong>Note:</strong> It is a client responsibility to recycle the
+     *     received info by calling {@link AccessibilityNodeInfo#recycle()}
+     *     to avoid creating of multiple instances.
+     * </p>
+     *
+     * @return The labeled info.
+     */
+    public AccessibilityNodeInfo getLabelFor() {
+        enforceSealed();
+        if (!canPerformRequestOverConnection(mLabelForId)) {
+            return null;
+        }
+        AccessibilityInteractionClient client = AccessibilityInteractionClient.getInstance();
+        return client.findAccessibilityNodeInfoByAccessibilityId(mConnectionId,
+                mWindowId, mLabelForId, FLAG_PREFETCH_DESCENDANTS | FLAG_PREFETCH_SIBLINGS);
+    }
+
+    /**
+     * Sets the view which serves as the label of the view represented by
+     * this info for accessibility purposes.
+     *
+     * @param label The view that labels this node's source.
+     */
+    public void setLabeledBy(View label) {
+        setLabeledBy(label, UNDEFINED);
+    }
+
+    /**
+     * Sets the view which serves as the label of the view represented by
+     * this info for accessibility purposes. If <code>virtualDescendantId</code>
+     * is {@link View#NO_ID} the root is set as the label.
+     * <p>
+     * A virtual descendant is an imaginary View that is reported as a part of the view
+     * hierarchy for accessibility purposes. This enables custom views that draw complex
+     * content to report themselves as a tree of virtual views, thus conveying their
+     * logical structure.
+     * </p>
+     * <p>
+     *   <strong>Note:</strong> Cannot be called from an
+     *   {@link android.accessibilityservice.AccessibilityService}.
+     *   This class is made immutable before being delivered to an AccessibilityService.
+     * </p>
+     *
+     * @param root The root whose virtual descendant labels this node's source.
+     * @param virtualDescendantId The id of the virtual descendant.
+     */
+    public void setLabeledBy(View root, int virtualDescendantId) {
+        enforceNotSealed();
+        final int rootAccessibilityViewId = (root != null)
+                ? root.getAccessibilityViewId() : UNDEFINED;
+        mLabeledById = makeNodeId(rootAccessibilityViewId, virtualDescendantId);
+    }
+
+    /**
+     * Gets the node info which serves as the label of the view represented by
+     * this info for accessibility purposes.
+     * <p>
+     *   <strong>Note:</strong> It is a client responsibility to recycle the
+     *     received info by calling {@link AccessibilityNodeInfo#recycle()}
+     *     to avoid creating of multiple instances.
+     * </p>
+     *
+     * @return The label.
+     */
+    public AccessibilityNodeInfo getLabeledBy() {
+        enforceSealed();
+        if (!canPerformRequestOverConnection(mLabeledById)) {
+            return null;
+        }
+        AccessibilityInteractionClient client = AccessibilityInteractionClient.getInstance();
+        return client.findAccessibilityNodeInfoByAccessibilityId(mConnectionId,
+                mWindowId, mLabeledById, FLAG_PREFETCH_DESCENDANTS | FLAG_PREFETCH_SIBLINGS);
+    }
+
+    /**
      * Gets the value of a boolean property.
      *
      * @param property The property.
@@ -1343,12 +1450,6 @@ public class AccessibilityNodeInfo implements Parcelable {
             case View.FOCUS_RIGHT:
             case View.FOCUS_FORWARD:
             case View.FOCUS_BACKWARD:
-            case View.ACCESSIBILITY_FOCUS_DOWN:
-            case View.ACCESSIBILITY_FOCUS_UP:
-            case View.ACCESSIBILITY_FOCUS_LEFT:
-            case View.ACCESSIBILITY_FOCUS_RIGHT:
-            case View.ACCESSIBILITY_FOCUS_FORWARD:
-            case View.ACCESSIBILITY_FOCUS_BACKWARD:
                 return;
             default:
                 throw new IllegalArgumentException("Unknown direction: " + direction);
@@ -1477,6 +1578,8 @@ public class AccessibilityNodeInfo implements Parcelable {
         parcel.writeLong(mSourceNodeId);
         parcel.writeInt(mWindowId);
         parcel.writeLong(mParentNodeId);
+        parcel.writeLong(mLabelForId);
+        parcel.writeLong(mLabeledById);
         parcel.writeInt(mConnectionId);
 
         SparseLongArray childIds = mChildNodeIds;
@@ -1522,6 +1625,8 @@ public class AccessibilityNodeInfo implements Parcelable {
         mSealed = other.mSealed;
         mSourceNodeId = other.mSourceNodeId;
         mParentNodeId = other.mParentNodeId;
+        mLabelForId = other.mLabelForId;
+        mLabeledById = other.mLabeledById;
         mWindowId = other.mWindowId;
         mConnectionId = other.mConnectionId;
         mBoundsInParent.set(other.mBoundsInParent);
@@ -1549,6 +1654,8 @@ public class AccessibilityNodeInfo implements Parcelable {
         mSourceNodeId = parcel.readLong();
         mWindowId = parcel.readInt();
         mParentNodeId = parcel.readLong();
+        mLabelForId = parcel.readLong();
+        mLabeledById = parcel.readLong();
         mConnectionId = parcel.readInt();
 
         SparseLongArray childIds = mChildNodeIds;
@@ -1587,6 +1694,8 @@ public class AccessibilityNodeInfo implements Parcelable {
         mSealed = false;
         mSourceNodeId = ROOT_NODE_ID;
         mParentNodeId = ROOT_NODE_ID;
+        mLabelForId = ROOT_NODE_ID;
+        mLabeledById = ROOT_NODE_ID;
         mWindowId = UNDEFINED;
         mConnectionId = UNDEFINED;
         mMovementGranularities = 0;

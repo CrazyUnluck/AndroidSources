@@ -20,17 +20,8 @@ import android.os.*;
 import android.util.Log;
 
 import com.android.internal.telephony.CommandsInterface;
-import com.android.internal.telephony.IccCard;
-import com.android.internal.telephony.IccConstants;
-import com.android.internal.telephony.IccException;
 import com.android.internal.telephony.IccFileHandler;
-import com.android.internal.telephony.IccFileTypeMismatch;
-import com.android.internal.telephony.IccIoResult;
-import com.android.internal.telephony.IccUtils;
-import com.android.internal.telephony.PhoneBase;
-import com.android.internal.telephony.PhoneProxy;
-
-import java.util.ArrayList;
+import com.android.internal.telephony.UiccCardApplication;
 
 /**
  * {@hide}
@@ -41,12 +32,8 @@ public final class RuimFileHandler extends IccFileHandler {
     //***** Instance Variables
 
     //***** Constructor
-    public RuimFileHandler(IccCard card, String aid, CommandsInterface ci) {
-        super(card, aid, ci);
-    }
-
-    protected void finalize() {
-        Log.d(LOG_TAG, "RuimFileHandler finalized");
+    public RuimFileHandler(UiccCardApplication app, String aid, CommandsInterface ci) {
+        super(app, aid, ci);
     }
 
     //***** Overridden from IccFileHandler
@@ -63,25 +50,27 @@ public final class RuimFileHandler extends IccFileHandler {
     }
 
     @Override
-    public void handleMessage(Message msg) {
-
-        super.handleMessage(msg);
-    }
-
     protected String getEFPath(int efid) {
         switch(efid) {
         case EF_SMS:
         case EF_CST:
         case EF_RUIM_SPN:
+        case EF_CSIM_LI:
+        case EF_CSIM_MDN:
+        case EF_CSIM_IMSIM:
+        case EF_CSIM_CDMAHOME:
+        case EF_CSIM_EPRL:
             return MF_SIM + DF_CDMA;
         }
         return getCommonIccEFPath(efid);
     }
 
+    @Override
     protected void logd(String msg) {
         Log.d(LOG_TAG, "[RuimFileHandler] " + msg);
     }
 
+    @Override
     protected void loge(String msg) {
         Log.e(LOG_TAG, "[RuimFileHandler] " + msg);
     }

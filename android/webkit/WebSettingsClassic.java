@@ -34,7 +34,7 @@ import java.util.Locale;
  */
 public class WebSettingsClassic extends WebSettings {
     // TODO: Keep this up to date
-    private static final String PREVIOUS_VERSION = "4.0.4";
+    private static final String PREVIOUS_VERSION = "4.1.1";
 
     // WebView associated with this WebSettings.
     private WebViewClassic mWebView;
@@ -116,6 +116,7 @@ public class WebSettingsClassic extends WebSettings {
     private boolean         mNeedInitialFocus = true;
     private boolean         mNavDump = false;
     private boolean         mSupportZoom = true;
+    private boolean         mMediaPlaybackRequiresUserGesture = true;
     private boolean         mBuiltInZoomControls = false;
     private boolean         mDisplayZoomControls = true;
     private boolean         mAllowFileAccess = true;
@@ -373,6 +374,21 @@ public class WebSettingsClassic extends WebSettings {
         synchronized(sLockForLocaleSettings) {
             locale = sLocale;
         }
+        return getDefaultUserAgentForLocale(mContext, locale);
+    }
+
+    /**
+     * Returns the default User-Agent used by a WebView.
+     * An instance of WebView could use a different User-Agent if a call
+     * is made to {@link WebSettings#setUserAgent(int)} or
+     * {@link WebSettings#setUserAgentString(String)}.
+     *
+     * @param context a Context object used to access application assets
+     * @param locale The Locale to use in the User-Agent string.
+     * @see WebViewFactoryProvider#getDefaultUserAgent(Context)
+     * @see WebView#getDefaultUserAgent(Context)
+     */
+    public static String getDefaultUserAgentForLocale(Context context, Locale locale) {
         StringBuffer buffer = new StringBuffer();
         // Add version
         final String version = Build.VERSION.RELEASE;
@@ -416,9 +432,9 @@ public class WebSettingsClassic extends WebSettings {
             buffer.append(" Build/");
             buffer.append(id);
         }
-        String mobile = mContext.getResources().getText(
+        String mobile = context.getResources().getText(
             com.android.internal.R.string.web_user_agent_target_content).toString();
-        final String base = mContext.getResources().getText(
+        final String base = context.getResources().getText(
                 com.android.internal.R.string.web_user_agent).toString();
         return String.format(base, buffer, mobile);
     }
@@ -456,6 +472,25 @@ public class WebSettingsClassic extends WebSettings {
     @Override
     public boolean supportZoom() {
         return mSupportZoom;
+    }
+
+    /**
+     * @see android.webkit.WebSettings#setMediaPlaybackRequiresUserGesture(boolean)
+     */
+    @Override
+    public void setMediaPlaybackRequiresUserGesture(boolean support) {
+        if (mMediaPlaybackRequiresUserGesture != support) {
+            mMediaPlaybackRequiresUserGesture = support;
+            postSync();
+        }
+    }
+
+    /**
+     * @see android.webkit.WebSettings#getMediaPlaybackRequiresUserGesture()
+     */
+    @Override
+    public boolean getMediaPlaybackRequiresUserGesture() {
+        return mMediaPlaybackRequiresUserGesture;
     }
 
     /**
@@ -627,34 +662,6 @@ public class WebSettingsClassic extends WebSettings {
     @Override
     public synchronized int getTextZoom() {
         return mTextSize;
-    }
-
-    /**
-     * @see android.webkit.WebSettings#setTextSize(android.webkit.WebSettingsClassic.TextSize)
-     */
-    @Override
-    public synchronized void setTextSize(TextSize t) {
-        setTextZoom(t.value);
-    }
-
-    /**
-     * @see android.webkit.WebSettings#getTextSize()
-     */
-    @Override
-    public synchronized TextSize getTextSize() {
-        TextSize closestSize = null;
-        int smallestDelta = Integer.MAX_VALUE;
-        for (TextSize size : TextSize.values()) {
-            int delta = Math.abs(mTextSize - size.value);
-            if (delta == 0) {
-                return size;
-            }
-            if (delta < smallestDelta) {
-                smallestDelta = delta;
-                closestSize = size;
-            }
-        }
-        return closestSize != null ? closestSize : TextSize.NORMAL;
     }
 
     /**
@@ -1115,6 +1122,7 @@ public class WebSettingsClassic extends WebSettings {
         if (mJavaScriptEnabled != flag) {
             mJavaScriptEnabled = flag;
             postSync();
+            mWebView.updateJavaScriptEnabled(flag);
         }
     }
 

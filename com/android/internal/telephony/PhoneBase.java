@@ -32,18 +32,24 @@ import android.os.RegistrantList;
 import android.os.SystemProperties;
 import android.preference.PreferenceManager;
 import android.provider.Settings;
+import android.telephony.CellInfo;
 import android.telephony.ServiceState;
+import android.telephony.SignalStrength;
 import android.text.TextUtils;
 import android.util.Log;
 
 import com.android.internal.R;
+import com.android.internal.telephony.IccCardApplicationStatus.AppState;
+import com.android.internal.telephony.IccCardApplicationStatus.AppType;
 import com.android.internal.telephony.gsm.UsimServiceTable;
 import com.android.internal.telephony.ims.IsimRecords;
 import com.android.internal.telephony.test.SimulatedRadioControl;
+import com.android.internal.telephony.uicc.UiccController;
 import com.android.internal.telephony.gsm.SIMRecords;
 
 import java.io.FileDescriptor;
 import java.io.PrintWriter;
+import java.util.List;
 import java.util.Locale;
 import java.util.concurrent.atomic.AtomicReference;
 
@@ -110,6 +116,7 @@ public abstract class PhoneBase extends Handler implements Phone {
     protected static final int EVENT_SET_NETWORK_AUTOMATIC          = 28;
     protected static final int EVENT_NEW_ICC_SMS                    = 29;
     protected static final int EVENT_ICC_RECORD_EVENTS              = 30;
+    protected static final int EVENT_ICC_CHANGED                    = 31;
 
     // Key used to read/write current CLIR setting
     public static final String CLIR_KEY = "clir_key";
@@ -126,10 +133,12 @@ public abstract class PhoneBase extends Handler implements Phone {
     int mCallRingDelay;
     public boolean mIsTheCurrentActivePhone = true;
     boolean mIsVoiceCapable = true;
-    public IccRecords mIccRecords;
-    protected AtomicReference<IccCard> mIccCard = new AtomicReference<IccCard>();
+    protected UiccController mUiccController = null;
+    public AtomicReference<IccRecords> mIccRecords = new AtomicReference<IccRecords>();
     public SmsStorageMonitor mSmsStorageMonitor;
     public SmsUsageMonitor mSmsUsageMonitor;
+    protected AtomicReference<UiccCardApplication> mUiccApplication =
+            new AtomicReference<UiccCardApplication>();
     public SMSDispatcher mSMS;
 
     /**
@@ -189,9 +198,10 @@ public abstract class PhoneBase extends Handler implements Phone {
     /**
      * Constructs a PhoneBase in normal (non-unit test) mode.
      *
-     * @param context Context object from hosting application
      * @param notifier An instance of DefaultPhoneNotifier,
+     * @param context Context object from hosting application
      * unless unit testing.
+     * @param ci the CommandsInterface
      */
     protected PhoneBase(PhoneNotifier notifier, Context context, CommandsInterface ci) {
         this(notifier, context, ci, false);
@@ -200,9 +210,10 @@ public abstract class PhoneBase extends Handler implements Phone {
     /**
      * Constructs a PhoneBase in normal (non-unit test) mode.
      *
-     * @param context Context object from hosting application
      * @param notifier An instance of DefaultPhoneNotifier,
+     * @param context Context object from hosting application
      * unless unit testing.
+     * @param ci is CommandsInterface
      * @param unitTestMode when true, prevents notifications
      * of state change events
      */
@@ -251,6 +262,8 @@ public abstract class PhoneBase extends Handler implements Phone {
         // Initialize device storage and outgoing SMS usage monitors for SMSDispatchers.
         mSmsStorageMonitor = new SmsStorageMonitor(this);
         mSmsUsageMonitor = new SmsUsageMonitor(context);
+        mUiccController = UiccController.getInstance();
+        mUiccController.registerForIccChanged(this, EVENT_ICC_CHANGED, null);
     }
 
     public void dispose() {
@@ -262,6 +275,7 @@ public abstract class PhoneBase extends Handler implements Phone {
             // Dispose the SMS usage and storage monitors
             mSmsStorageMonitor.dispose();
             mSmsUsageMonitor.dispose();
+            mUiccController.unregisterForIccChanged(this);
         }
     }
 
@@ -269,9 +283,10 @@ public abstract class PhoneBase extends Handler implements Phone {
         mSmsStorageMonitor = null;
         mSmsUsageMonitor = null;
         mSMS = null;
-        mIccRecords = null;
-        mIccCard.set(null);
+        mIccRecords.set(null);
+        mUiccApplication.set(null);
         mDataConnectionTracker = null;
+        mUiccController = null;
     }
 
     /**
@@ -290,9 +305,10 @@ public abstract class PhoneBase extends Handler implements Phone {
                 Log.d(LOG_TAG, "Event EVENT_CALL_RING Received state=" + getState());
                 ar = (AsyncResult)msg.obj;
                 if (ar.exception == null) {
-                    Phone.State state = getState();
+                    PhoneConstants.State state = getState();
                     if ((!mDoesRilSendMultipleCallRing)
-                            && ((state == Phone.State.RINGING) || (state == Phone.State.IDLE))) {
+                            && ((state == PhoneConstants.State.RINGING) ||
+                                    (state == PhoneConstants.State.IDLE))) {
                         mCallRingContinueToken += 1;
                         sendIncomingCallRingNotification(mCallRingContinueToken);
                     } else {
@@ -303,9 +319,13 @@ public abstract class PhoneBase extends Handler implements Phone {
 
             case EVENT_CALL_RING_CONTINUE:
                 Log.d(LOG_TAG, "Event EVENT_CALL_RING_CONTINUE Received stat=" + getState());
-                if (getState() == Phone.State.RINGING) {
+                if (getState() == PhoneConstants.State.RINGING) {
                     sendIncomingCallRingNotification(msg.arg1);
                 }
+                break;
+
+            case EVENT_ICC_CHANGED:
+                onUpdateIccAvailability();
                 break;
 
             default:
@@ -317,6 +337,9 @@ public abstract class PhoneBase extends Handler implements Phone {
     public Context getContext() {
         return mContext;
     }
+
+    // Will be called when icc changed
+    protected abstract void onUpdateIccAvailability();
 
     /**
      * Disables the DNS check (i.e., allows "0.0.0.0").
@@ -610,8 +633,8 @@ public abstract class PhoneBase extends Handler implements Phone {
 
                 if (!country.isEmpty()) {
                     try {
-                        Settings.Secure.getInt(mContext.getContentResolver(),
-                                Settings.Secure.WIFI_COUNTRY_CODE);
+                        Settings.Global.getInt(mContext.getContentResolver(),
+                                Settings.Global.WIFI_COUNTRY_CODE);
                     } catch (Settings.SettingNotFoundException e) {
                         // note this is not persisting
                         WifiManager wM = (WifiManager)
@@ -627,15 +650,15 @@ public abstract class PhoneBase extends Handler implements Phone {
     /**
      * Get state
      */
-    public abstract Phone.State getState();
+    public abstract PhoneConstants.State getState();
 
     /**
      * Retrieves the IccFileHandler of the Phone instance
      */
     public IccFileHandler getIccFileHandler(){
-        IccCard iccCard = mIccCard.get();
-        if (iccCard == null) return null;
-        return iccCard.getIccFileHandler();
+        UiccCardApplication uiccApplication = mUiccApplication.get();
+        if (uiccApplication == null) return null;
+        return uiccApplication.getIccFileHandler();
     }
 
     /*
@@ -659,29 +682,50 @@ public abstract class PhoneBase extends Handler implements Phone {
         return null;
     }
 
+    public AppType getCurrentUiccAppType() {
+        UiccCardApplication currentApp = mUiccApplication.get();
+        if (currentApp != null) {
+            return currentApp.getType();
+        }
+        return AppType.APPTYPE_UNKNOWN;
+    }
+
     @Override
     public IccCard getIccCard() {
-        return mIccCard.get();
+        return null;
+        //throw new Exception("getIccCard Shouldn't be called from PhoneBase");
     }
 
     @Override
     public String getIccSerialNumber() {
-        return mIccRecords.iccid;
+        IccRecords r = mIccRecords.get();
+        return (r != null) ? r.iccid : "";
     }
 
     @Override
     public boolean getIccRecordsLoaded() {
-        return mIccRecords.getRecordsLoaded();
+        IccRecords r = mIccRecords.get();
+        return (r != null) ? r.getRecordsLoaded() : false;
+    }
+
+    /**
+     * @return all available cell information or null if none.
+     */
+    @Override
+    public List<CellInfo> getAllCellInfo() {
+        return getServiceStateTracker().getAllCellInfo();
     }
 
     @Override
     public boolean getMessageWaitingIndicator() {
-        return mIccRecords.getVoiceMessageWaiting();
+        IccRecords r = mIccRecords.get();
+        return (r != null) ? r.getVoiceMessageWaiting() : false;
     }
 
     @Override
     public boolean getCallForwardingIndicator() {
-        return mIccRecords.getVoiceCallForwardingFlag();
+        IccRecords r = mIccRecords.get();
+        return (r != null) ? r.getVoiceCallForwardingFlag() : false;
     }
 
     /**
@@ -689,6 +733,19 @@ public abstract class PhoneBase extends Handler implements Phone {
      */
     public void queryCdmaRoamingPreference(Message response) {
         mCM.queryCdmaRoamingPreference(response);
+    }
+
+    /**
+     * Get the signal strength
+     */
+    @Override
+    public SignalStrength getSignalStrength() {
+        ServiceStateTracker sst = getServiceStateTracker();
+        if (sst == null) {
+            return new SignalStrength();
+        } else {
+            return sst.getSignalStrength();
+        }
     }
 
     /**
@@ -772,7 +829,7 @@ public abstract class PhoneBase extends Handler implements Phone {
     }
 
     public void notifyDataConnection(String reason, String apnType,
-            Phone.DataState state) {
+            PhoneConstants.DataState state) {
         mNotifier.notifyDataConnection(this, reason, apnType, state);
     }
 
@@ -789,6 +846,14 @@ public abstract class PhoneBase extends Handler implements Phone {
 
     public void notifyOtaspChanged(int otaspMode) {
         mNotifier.notifyOtaspChanged(this, otaspMode);
+    }
+
+    public void notifySignalStrength() {
+        mNotifier.notifySignalStrength(this);
+    }
+
+    public void notifyCellInfo(List<CellInfo> cellInfo) {
+        mNotifier.notifyCellInfo(this, cellInfo);
     }
 
     /**
@@ -1017,7 +1082,7 @@ public abstract class PhoneBase extends Handler implements Phone {
     }
 
     public boolean isDataConnectivityPossible() {
-        return isDataConnectivityPossible(Phone.APN_TYPE_DEFAULT);
+        return isDataConnectivityPossible(PhoneConstants.APN_TYPE_DEFAULT);
     }
 
     public boolean isDataConnectivityPossible(String apnType) {
@@ -1096,8 +1161,8 @@ public abstract class PhoneBase extends Handler implements Phone {
                 "called, CDMAPhone inactive.");
     }
 
-    public DataState getDataConnectionState() {
-        return getDataConnectionState(APN_TYPE_DEFAULT);
+    public PhoneConstants.DataState getDataConnectionState() {
+        return getDataConnectionState(PhoneConstants.APN_TYPE_DEFAULT);
     }
 
     /**
@@ -1135,7 +1200,10 @@ public abstract class PhoneBase extends Handler implements Phone {
      */
     @Override
     public void setVoiceMessageWaiting(int line, int countWaiting) {
-        mIccRecords.setVoiceMessageWaiting(line, countWaiting);
+        IccRecords r = mIccRecords.get();
+        if (r != null) {
+            r.setVoiceMessageWaiting(line, countWaiting);
+        }
     }
 
     /**
@@ -1144,7 +1212,8 @@ public abstract class PhoneBase extends Handler implements Phone {
      */
     @Override
     public UsimServiceTable getUsimServiceTable() {
-        return mIccRecords.getUsimServiceTable();
+        IccRecords r = mIccRecords.get();
+        return (r != null) ? r.getUsimServiceTable() : null;
     }
 
     public void dump(FileDescriptor fd, PrintWriter pw, String[] args) {
@@ -1157,8 +1226,8 @@ public abstract class PhoneBase extends Handler implements Phone {
         pw.println(" mCallRingDelay=" + mCallRingDelay);
         pw.println(" mIsTheCurrentActivePhone=" + mIsTheCurrentActivePhone);
         pw.println(" mIsVoiceCapable=" + mIsVoiceCapable);
-        pw.println(" mIccRecords=" + mIccRecords);
-        pw.println(" mIccCard=" + mIccCard.get());
+        pw.println(" mIccRecords=" + mIccRecords.get());
+        pw.println(" mUiccApplication=" + mUiccApplication.get());
         pw.println(" mSmsStorageMonitor=" + mSmsStorageMonitor);
         pw.println(" mSmsUsageMonitor=" + mSmsUsageMonitor);
         pw.println(" mSMS=" + mSMS);

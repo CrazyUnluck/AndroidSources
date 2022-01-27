@@ -28,15 +28,18 @@ import android.provider.Telephony;
 import android.util.Log;
 
 import com.android.internal.telephony.CommandsInterface;
-import com.android.internal.telephony.IccCard;
 import com.android.internal.telephony.OperatorInfo;
 import com.android.internal.telephony.Phone;
+import com.android.internal.telephony.PhoneConstants;
 import com.android.internal.telephony.PhoneNotifier;
 import com.android.internal.telephony.PhoneProxy;
 import com.android.internal.telephony.SMSDispatcher;
+import com.android.internal.telephony.UiccCardApplication;
 import com.android.internal.telephony.gsm.GsmSMSDispatcher;
+import com.android.internal.telephony.gsm.SIMRecords;
 import com.android.internal.telephony.gsm.SmsMessage;
 import com.android.internal.telephony.ims.IsimRecords;
+import com.android.internal.telephony.ims.IsimUiccRecords;
 import com.android.internal.telephony.uicc.UiccController;
 
 import java.io.FileDescriptor;
@@ -49,6 +52,12 @@ public class CDMALTEPhone extends CDMAPhone {
 
     /** Secondary SMSDispatcher for 3GPP format messages. */
     SMSDispatcher m3gppSMS;
+
+    /** CdmaLtePhone in addition to RuimRecords available from
+     * PhoneBase needs access to SIMRecords and IsimUiccRecords
+     */
+    private SIMRecords mSimRecords;
+    private IsimUiccRecords mIsimUiccRecords;
 
     /**
      * Small container class used to hold information relevant to
@@ -66,7 +75,6 @@ public class CDMALTEPhone extends CDMAPhone {
     public CDMALTEPhone(Context context, CommandsInterface ci, PhoneNotifier notifier) {
         super(context, ci, notifier, false);
         m3gppSMS = new GsmSMSDispatcher(this, mSmsStorageMonitor, mSmsUsageMonitor);
-        mIccRecords.registerForNewSms(this, EVENT_NEW_ICC_SMS, null);
     }
 
     @Override
@@ -88,10 +96,6 @@ public class CDMALTEPhone extends CDMAPhone {
 
     @Override
     protected void initSstIcc() {
-        mIccCard.set(UiccController.getInstance(this).getIccCard());
-        mIccRecords = mIccCard.get().getIccRecords();
-        // CdmaLteServiceStateTracker registers with IccCard to know
-        // when the card is ready. So create mIccCard before the ServiceStateTracker
         mSST = new CdmaLteServiceStateTracker(this);
     }
 
@@ -100,7 +104,6 @@ public class CDMALTEPhone extends CDMAPhone {
         synchronized(PhoneProxy.lockForRadioTechnologyChange) {
             super.dispose();
             m3gppSMS.dispose();
-            mIccRecords.unregisterForNewSms(this);
         }
     }
 
@@ -111,36 +114,37 @@ public class CDMALTEPhone extends CDMAPhone {
     }
 
     @Override
-    public DataState getDataConnectionState(String apnType) {
-        DataState ret = DataState.DISCONNECTED;
+    public PhoneConstants.DataState getDataConnectionState(String apnType) {
+        PhoneConstants.DataState ret = PhoneConstants.DataState.DISCONNECTED;
 
         if (mSST == null) {
             // Radio Technology Change is ongoing, dispose() and
             // removeReferences() have already been called
 
-            ret = DataState.DISCONNECTED;
+            ret = PhoneConstants.DataState.DISCONNECTED;
         } else if (mDataConnectionTracker.isApnTypeEnabled(apnType) == false) {
-            ret = DataState.DISCONNECTED;
+            ret = PhoneConstants.DataState.DISCONNECTED;
         } else {
             switch (mDataConnectionTracker.getState(apnType)) {
                 case FAILED:
                 case IDLE:
-                    ret = DataState.DISCONNECTED;
+                    ret = PhoneConstants.DataState.DISCONNECTED;
                     break;
 
                 case CONNECTED:
                 case DISCONNECTING:
-                    if (mCT.state != Phone.State.IDLE && !mSST.isConcurrentVoiceAndDataAllowed()) {
-                        ret = DataState.SUSPENDED;
+                    if (mCT.state != PhoneConstants.State.IDLE &&
+                            !mSST.isConcurrentVoiceAndDataAllowed()) {
+                        ret = PhoneConstants.DataState.SUSPENDED;
                     } else {
-                        ret = DataState.CONNECTED;
+                        ret = PhoneConstants.DataState.CONNECTED;
                     }
                     break;
 
                 case INITING:
                 case CONNECTING:
                 case SCANNING:
-                    ret = DataState.CONNECTING;
+                    ret = PhoneConstants.DataState.CONNECTING;
                     break;
             }
         }
@@ -203,11 +207,11 @@ public class CDMALTEPhone extends CDMAPhone {
 
     @Override
     public boolean updateCurrentCarrierInProvider() {
-        if (mIccRecords != null) {
+        if (mSimRecords != null) {
             try {
                 Uri uri = Uri.withAppendedPath(Telephony.Carriers.CONTENT_URI, "current");
                 ContentValues map = new ContentValues();
-                String operatorNumeric = mIccRecords.getOperatorNumeric();
+                String operatorNumeric = mSimRecords.getOperatorNumeric();
                 map.put(Telephony.Carriers.NUMERIC, operatorNumeric);
                 if (DBG) log("updateCurrentCarrierInProvider from UICC: numeric=" +
                         operatorNumeric);
@@ -225,7 +229,7 @@ public class CDMALTEPhone extends CDMAPhone {
     // return IMSI from USIM as subscriber ID.
     @Override
     public String getSubscriberId() {
-        return mIccRecords.getIMSI();
+        return (mSimRecords != null) ? mSimRecords.getIMSI() : "";
     }
 
     @Override
@@ -240,12 +244,12 @@ public class CDMALTEPhone extends CDMAPhone {
 
     @Override
     public IsimRecords getIsimRecords() {
-        return mIccRecords.getIsimRecords();
+        return mIsimUiccRecords;
     }
 
     @Override
     public String getMsisdn() {
-        return mIccRecords.getMsisdnNumber();
+        return (mSimRecords != null) ? mSimRecords.getMsisdnNumber() : null;
     }
 
     @Override
@@ -256,6 +260,44 @@ public class CDMALTEPhone extends CDMAPhone {
     @Override
     public void requestIsimAuthentication(String nonce, Message result) {
         mCM.requestIsimAuthentication(nonce, result);
+    }
+
+    @Override
+    protected void onUpdateIccAvailability() {
+        if (mUiccController == null ) {
+            return;
+        }
+
+        // Update IsimRecords
+        UiccCardApplication newUiccApplication =
+                mUiccController.getUiccCardApplication(UiccController.APP_FAM_IMS);
+        IsimUiccRecords newIsimUiccRecords = null;
+
+        if (newUiccApplication != null) {
+            newIsimUiccRecords = (IsimUiccRecords)newUiccApplication.getIccRecords();
+        }
+        mIsimUiccRecords = newIsimUiccRecords;
+
+        // Update UsimRecords
+        newUiccApplication = mUiccController.getUiccCardApplication(UiccController.APP_FAM_3GPP);
+        SIMRecords newSimRecords = null;
+        if (newUiccApplication != null) {
+            newSimRecords = (SIMRecords)newUiccApplication.getIccRecords();
+        }
+        if (mSimRecords != newSimRecords) {
+            if (mSimRecords != null) {
+                log("Removing stale SIMRecords object.");
+                mSimRecords.unregisterForNewSms(this);
+                mSimRecords = null;
+            }
+            if (newSimRecords != null) {
+                log("New SIMRecords found");
+                mSimRecords = newSimRecords;
+                mSimRecords.registerForNewSms(this, EVENT_NEW_ICC_SMS, null);
+            }
+        }
+
+        super.onUpdateIccAvailability();
     }
 
     @Override

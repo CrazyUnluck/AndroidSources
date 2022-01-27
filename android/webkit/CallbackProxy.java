@@ -71,7 +71,7 @@ class CallbackProxy extends Handler {
     // Start with 100 to indicate it is not in load for the empty page.
     private volatile int mLatestProgress = 100;
     // Back/Forward list
-    private final WebBackForwardList mBackForwardList;
+    private final WebBackForwardListClassic mBackForwardList;
     // Back/Forward list client
     private volatile WebBackForwardListClient mWebBackForwardListClient;
     // Used to call startActivity during url override.
@@ -117,12 +117,8 @@ class CallbackProxy extends Handler {
     private static final int ADD_HISTORY_ITEM                     = 135;
     private static final int HISTORY_INDEX_CHANGED                = 136;
     private static final int AUTH_CREDENTIALS                     = 137;
-    private static final int SET_INSTALLABLE_WEBAPP               = 138;
-    private static final int NOTIFY_SEARCHBOX_LISTENERS           = 139;
     private static final int AUTO_LOGIN                           = 140;
     private static final int CLIENT_CERT_REQUEST                  = 141;
-    private static final int SEARCHBOX_IS_SUPPORTED_CALLBACK      = 142;
-    private static final int SEARCHBOX_DISPATCH_COMPLETE_CALLBACK = 143;
     private static final int PROCEEDED_AFTER_SSL_ERROR            = 144;
 
     // Message triggered by the client to resume execution
@@ -188,7 +184,7 @@ class CallbackProxy extends Handler {
         // Used to start a default activity.
         mContext = context;
         mWebView = w;
-        mBackForwardList = new WebBackForwardList(this);
+        mBackForwardList = new WebBackForwardListClassic(this);
     }
 
     protected synchronized void blockMessages() {
@@ -249,7 +245,7 @@ class CallbackProxy extends Handler {
      * Get the Back/Forward list to return to the user or to update the cached
      * history list.
      */
-    public WebBackForwardList getBackForwardList() {
+    public WebBackForwardListClassic getBackForwardList() {
         return mBackForwardList;
     }
 
@@ -403,17 +399,18 @@ class CallbackProxy extends Handler {
                 break;
 
             case PROCEEDED_AFTER_SSL_ERROR:
-                if (mWebViewClient != null) {
-                    mWebViewClient.onProceededAfterSslError(mWebView.getWebView(),
+                if (mWebViewClient != null && mWebViewClient instanceof WebViewClientClassicExt) {
+                    ((WebViewClientClassicExt) mWebViewClient).onProceededAfterSslError(
+                            mWebView.getWebView(),
                             (SslError) msg.obj);
                 }
                 break;
 
             case CLIENT_CERT_REQUEST:
-                if (mWebViewClient != null) {
-                    HashMap<String, Object> map =
-                        (HashMap<String, Object>) msg.obj;
-                    mWebViewClient.onReceivedClientCertRequest(mWebView.getWebView(),
+                if (mWebViewClient != null  && mWebViewClient instanceof WebViewClientClassicExt) {
+                    HashMap<String, Object> map = (HashMap<String, Object>) msg.obj;
+                    ((WebViewClientClassicExt) mWebViewClient).onReceivedClientCertRequest(
+                            mWebView.getWebView(),
                             (ClientCertRequestHandler) map.get("handler"),
                             (String) map.get("host_and_port"));
                 }
@@ -452,10 +449,16 @@ class CallbackProxy extends Handler {
                     String contentDisposition =
                         msg.getData().getString("contentDisposition");
                     String mimetype = msg.getData().getString("mimetype");
+                    String referer = msg.getData().getString("referer");
                     Long contentLength = msg.getData().getLong("contentLength");
 
-                    mDownloadListener.onDownloadStart(url, userAgent,
-                            contentDisposition, mimetype, contentLength);
+                    if (mDownloadListener instanceof BrowserDownloadListener) {
+                        ((BrowserDownloadListener) mDownloadListener).onDownloadStart(url,
+                             userAgent, contentDisposition, mimetype, referer, contentLength);
+                    } else {
+                        mDownloadListener.onDownloadStart(url, userAgent,
+                             contentDisposition, mimetype, contentLength);
+                    }
                 }
                 break;
 
@@ -736,6 +739,14 @@ class CallbackProxy extends Handler {
                                                 res.cancel();
                                             }
                                         })
+                                .setOnCancelListener(
+                                        new DialogInterface.OnCancelListener() {
+                                            @Override
+                                            public void onCancel(
+                                                    DialogInterface dialog) {
+                                                res.cancel();
+                                            }
+                                        })
                                 .show();
                     }
                     receiver.setReady();
@@ -857,19 +868,6 @@ class CallbackProxy extends Handler {
                         host, realm, username, password);
                 break;
             }
-            case SET_INSTALLABLE_WEBAPP:
-                if (mWebChromeClient != null) {
-                    mWebChromeClient.setInstallableWebApp();
-                }
-                break;
-            case NOTIFY_SEARCHBOX_LISTENERS: {
-                SearchBoxImpl searchBox = (SearchBoxImpl) mWebView.getSearchBox();
-
-                @SuppressWarnings("unchecked")
-                List<String> suggestions = (List<String>) msg.obj;
-                searchBox.handleSuggestions(msg.getData().getString("query"), suggestions);
-                break;
-            }
             case AUTO_LOGIN: {
                 if (mWebViewClient != null) {
                     String realm = msg.getData().getString("realm");
@@ -878,19 +876,6 @@ class CallbackProxy extends Handler {
                     mWebViewClient.onReceivedLoginRequest(mWebView.getWebView(), realm,
                             account, args);
                 }
-                break;
-            }
-            case SEARCHBOX_IS_SUPPORTED_CALLBACK: {
-                SearchBoxImpl searchBox = (SearchBoxImpl) mWebView.getSearchBox();
-                Boolean supported = (Boolean) msg.obj;
-                searchBox.handleIsSupportedCallback(supported);
-                break;
-            }
-            case SEARCHBOX_DISPATCH_COMPLETE_CALLBACK: {
-                SearchBoxImpl searchBox = (SearchBoxImpl) mWebView.getSearchBox();
-                Boolean success = (Boolean) msg.obj;
-                searchBox.handleDispatchCompleteCallback(msg.getData().getString("function"),
-                        msg.getData().getInt("id"), success);
                 break;
             }
         }
@@ -1081,7 +1066,7 @@ class CallbackProxy extends Handler {
     }
 
     public void onProceededAfterSslError(SslError error) {
-        if (mWebViewClient == null) {
+        if (mWebViewClient == null || !(mWebViewClient instanceof WebViewClientClassicExt)) {
             return;
         }
         Message msg = obtainMessage(PROCEEDED_AFTER_SSL_ERROR);
@@ -1092,7 +1077,7 @@ class CallbackProxy extends Handler {
     public void onReceivedClientCertRequest(ClientCertRequestHandler handler, String host_and_port) {
         // Do an unsynchronized quick check to avoid posting if no callback has
         // been set.
-        if (mWebViewClient == null) {
+        if (mWebViewClient == null || !(mWebViewClient instanceof WebViewClientClassicExt)) {
             handler.cancel();
             return;
         }
@@ -1176,7 +1161,8 @@ class CallbackProxy extends Handler {
      * return false.
      */
     public boolean onDownloadStart(String url, String userAgent,
-            String contentDisposition, String mimetype, long contentLength) {
+            String contentDisposition, String mimetype, String referer,
+            long contentLength) {
         // Do an unsynchronized quick check to avoid posting if no callback has
         // been set.
         if (mDownloadListener == null) {
@@ -1189,6 +1175,7 @@ class CallbackProxy extends Handler {
         bundle.putString("url", url);
         bundle.putString("userAgent", userAgent);
         bundle.putString("mimetype", mimetype);
+        bundle.putString("referer", referer);
         bundle.putLong("contentLength", contentLength);
         bundle.putString("contentDisposition", contentDisposition);
         sendMessage(msg);
@@ -1301,7 +1288,7 @@ class CallbackProxy extends Handler {
     public void onReceivedIcon(Bitmap icon) {
         // The current item might be null if the icon was already stored in the
         // database and this is a new WebView.
-        WebHistoryItem i = mBackForwardList.getCurrentItem();
+        WebHistoryItemClassic i = mBackForwardList.getCurrentItem();
         if (i != null) {
             i.setFavicon(icon);
         }
@@ -1316,7 +1303,7 @@ class CallbackProxy extends Handler {
     /* package */ void onReceivedTouchIconUrl(String url, boolean precomposed) {
         // We should have a current item but we do not want to crash so check
         // for null.
-        WebHistoryItem i = mBackForwardList.getCurrentItem();
+        WebHistoryItemClassic i = mBackForwardList.getCurrentItem();
         if (i != null) {
             i.setTouchIconUrl(url, precomposed);
         }
@@ -1608,13 +1595,6 @@ class CallbackProxy extends Handler {
         sendMessage(msg);
     }
 
-    void setInstallableWebApp() {
-        if (mWebChromeClient == null) {
-            return;
-        }
-        sendMessage(obtainMessage(SET_INSTALLABLE_WEBAPP));
-    }
-
     boolean canShowAlertDialog() {
         // We can only display the alert dialog if mContext is
         // an Activity context.
@@ -1623,29 +1603,6 @@ class CallbackProxy extends Handler {
         // another Activity when the alert should be displayed?
         // See bug 3166409
         return mContext instanceof Activity;
-    }
-
-    void onSearchboxSuggestionsReceived(String query, List<String> suggestions) {
-        Message msg = obtainMessage(NOTIFY_SEARCHBOX_LISTENERS);
-        msg.obj = suggestions;
-        msg.getData().putString("query", query);
-
-        sendMessage(msg);
-    }
-
-    void onIsSupportedCallback(boolean isSupported) {
-        Message msg = obtainMessage(SEARCHBOX_IS_SUPPORTED_CALLBACK);
-        msg.obj = Boolean.valueOf(isSupported);
-        sendMessage(msg);
-    }
-
-    void onSearchboxDispatchCompleteCallback(String function, int id, boolean success) {
-        Message msg = obtainMessage(SEARCHBOX_DISPATCH_COMPLETE_CALLBACK);
-        msg.obj = Boolean.valueOf(success);
-        msg.getData().putString("function", function);
-        msg.getData().putInt("id", id);
-
-        sendMessage(msg);
     }
 
     private synchronized void sendMessageToUiThreadSync(Message msg) {

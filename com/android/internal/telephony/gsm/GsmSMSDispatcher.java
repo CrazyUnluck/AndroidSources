@@ -33,20 +33,19 @@ import android.telephony.gsm.GsmCellLocation;
 import android.util.Log;
 
 import com.android.internal.telephony.CommandsInterface;
+import com.android.internal.telephony.GsmAlphabet;
 import com.android.internal.telephony.IccUtils;
 import com.android.internal.telephony.PhoneBase;
+import com.android.internal.telephony.SmsConstants;
 import com.android.internal.telephony.SMSDispatcher;
 import com.android.internal.telephony.SmsHeader;
 import com.android.internal.telephony.SmsMessageBase;
-import com.android.internal.telephony.SmsMessageBase.TextEncodingDetails;
 import com.android.internal.telephony.SmsStorageMonitor;
 import com.android.internal.telephony.SmsUsageMonitor;
 import com.android.internal.telephony.TelephonyProperties;
 
 import java.util.HashMap;
 import java.util.Iterator;
-
-import static android.telephony.SmsMessage.MessageClass;
 
 public final class GsmSMSDispatcher extends SMSDispatcher {
     private static final String TAG = "GSM";
@@ -81,7 +80,7 @@ public final class GsmSMSDispatcher extends SMSDispatcher {
 
     @Override
     protected String getFormat() {
-        return android.telephony.SmsMessage.FORMAT_3GPP;
+        return SmsConstants.FORMAT_3GPP;
     }
 
     /**
@@ -142,7 +141,7 @@ public final class GsmSMSDispatcher extends SMSDispatcher {
                     PendingIntent intent = tracker.mDeliveryIntent;
                     Intent fillIn = new Intent();
                     fillIn.putExtra("pdu", IccUtils.hexStringToBytes(pduString));
-                    fillIn.putExtra("format", android.telephony.SmsMessage.FORMAT_3GPP);
+                    fillIn.putExtra("format", SmsConstants.FORMAT_3GPP);
                     try {
                         intent.send(mContext, Activity.RESULT_OK, fillIn);
                     } catch (CanceledException ex) {}
@@ -225,7 +224,7 @@ public final class GsmSMSDispatcher extends SMSDispatcher {
         }
 
         if (!mStorageMonitor.isStorageAvailable() &&
-                sms.getMessageClass() != MessageClass.CLASS_0) {
+                sms.getMessageClass() != SmsConstants.MessageClass.CLASS_0) {
             // It's a storable message and there's no storage available.  Bail.
             // (See TS 23.038 for a description of class 0 messages.)
             return Intents.RESULT_SMS_OUT_OF_MEMORY;
@@ -264,7 +263,7 @@ public final class GsmSMSDispatcher extends SMSDispatcher {
 
     /** {@inheritDoc} */
     @Override
-    protected TextEncodingDetails calculateLength(CharSequence messageBody,
+    protected GsmAlphabet.TextEncodingDetails calculateLength(CharSequence messageBody,
             boolean use7bitOnly) {
         return SmsMessage.calculateLength(messageBody, use7bitOnly);
     }
@@ -394,9 +393,17 @@ public final class GsmSMSDispatcher extends SMSDispatcher {
 
             SmsCbHeader header = new SmsCbHeader(receivedPdu);
             String plmn = SystemProperties.get(TelephonyProperties.PROPERTY_OPERATOR_NUMERIC);
-            GsmCellLocation cellLocation = (GsmCellLocation) mPhone.getCellLocation();
-            int lac = cellLocation.getLac();
-            int cid = cellLocation.getCid();
+            int lac = -1;
+            int cid = -1;
+            android.telephony.CellLocation cl = mPhone.getCellLocation();
+            // Check if cell location is GsmCellLocation.  This is required to support
+            // dual-mode devices such as CDMA/LTE devices that require support for
+            // both 3GPP and 3GPP2 format messages
+            if (cl instanceof GsmCellLocation) {
+                GsmCellLocation cellLocation = (GsmCellLocation)cl;
+                lac = cellLocation.getLac();
+                cid = cellLocation.getCid();
+            }
 
             SmsCbLocation location;
             switch (header.getGeographicalScope()) {

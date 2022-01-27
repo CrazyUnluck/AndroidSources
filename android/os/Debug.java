@@ -95,7 +95,7 @@ public final class Debug
      * Default trace file path and file
      */
     private static final String DEFAULT_TRACE_PATH_PREFIX =
-        Environment.getExternalStorageDirectory().getPath() + "/";
+        Environment.getLegacyExternalStorageDirectory().getPath() + "/";
     private static final String DEFAULT_TRACE_BODY = "dmtrace";
     private static final String DEFAULT_TRACE_EXTENSION = ".trace";
     private static final String DEFAULT_TRACE_FILE_PATH =
@@ -1358,6 +1358,23 @@ href="{@docRoot}guide/developing/tools/traceview.html">Traceview: A Graphical Lo
         StringBuffer sb = new StringBuffer();
         for (int i = 0; i < depth; i++) {
             sb.append(getCaller(callStack, i)).append(" ");
+        }
+        return sb.toString();
+    }
+
+    /**
+     * Like {@link #getCallers(int)}, but each location is append to the string
+     * as a new line with <var>linePrefix</var> in front of it.
+     * @param depth the number of levels to return, starting with the immediate caller.
+     * @param linePrefix prefix to put in front of each location.
+     * @return a string describing the call stack.
+     * {@hide}
+     */
+    public static String getCallers(final int depth, String linePrefix) {
+        final StackTraceElement[] callStack = Thread.currentThread().getStackTrace();
+        StringBuffer sb = new StringBuffer();
+        for (int i = 0; i < depth; i++) {
+            sb.append(linePrefix).append(getCaller(callStack, i)).append("\n");
         }
         return sb.toString();
     }

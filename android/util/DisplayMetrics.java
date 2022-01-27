@@ -79,11 +79,20 @@ public class DisplayMetrics {
     public static final int DENSITY_DEFAULT = DENSITY_MEDIUM;
 
     /**
-     * The device's density.
-     * @hide becase eventually this should be able to change while
-     * running, so shouldn't be a constant.
+     * Scaling factor to convert a density in DPI units to the density scale.
+     * @hide
      */
-    public static final int DENSITY_DEVICE = getDeviceDensity();
+    public static final float DENSITY_DEFAULT_SCALE = 1.0f / DENSITY_DEFAULT;
+
+    /**
+     * The device's density.
+     * @hide because eventually this should be able to change while
+     * running, so shouldn't be a constant.
+     * @deprecated There is no longer a static density; you can find the
+     * density for a display in {@link #densityDpi}.
+     */
+    @Deprecated
+    public static int DENSITY_DEVICE = getDeviceDensity();
 
     /**
      * The absolute width of the display in pixels.
@@ -150,6 +159,12 @@ public class DisplayMetrics {
      */
     public float noncompatDensity;
     /**
+     * The reported display density prior to any compatibility mode scaling
+     * being applied.
+     * @hide
+     */
+    public int noncompatDensityDpi;
+    /**
      * The reported scaled density prior to any compatibility mode scaling
      * being applied.
      * @hide
@@ -182,6 +197,7 @@ public class DisplayMetrics {
         noncompatWidthPixels = o.noncompatWidthPixels;
         noncompatHeightPixels = o.noncompatHeightPixels;
         noncompatDensity = o.noncompatDensity;
+        noncompatDensityDpi = o.noncompatDensityDpi;
         noncompatScaledDensity = o.noncompatScaledDensity;
         noncompatXdpi = o.noncompatXdpi;
         noncompatYdpi = o.noncompatYdpi;
@@ -190,13 +206,52 @@ public class DisplayMetrics {
     public void setToDefaults() {
         widthPixels = 0;
         heightPixels = 0;
-        density = DENSITY_DEVICE / (float) DENSITY_DEFAULT;
-        densityDpi = DENSITY_DEVICE;
+        density =  DENSITY_DEVICE / (float) DENSITY_DEFAULT;
+        densityDpi =  DENSITY_DEVICE;
         scaledDensity = density;
         xdpi = DENSITY_DEVICE;
         ydpi = DENSITY_DEVICE;
-        noncompatWidthPixels = 0;
-        noncompatHeightPixels = 0;
+        noncompatWidthPixels = widthPixels;
+        noncompatHeightPixels = heightPixels;
+        noncompatDensity = density;
+        noncompatDensityDpi = densityDpi;
+        noncompatScaledDensity = scaledDensity;
+        noncompatXdpi = xdpi;
+        noncompatYdpi = ydpi;
+    }
+
+    @Override
+    public boolean equals(Object o) {
+        return o instanceof DisplayMetrics && equals((DisplayMetrics)o);
+    }
+
+    /**
+     * Returns true if these display metrics equal the other display metrics.
+     *
+     * @param other The display metrics with which to compare.
+     * @return True if the display metrics are equal.
+     */
+    public boolean equals(DisplayMetrics other) {
+        return other != null
+                && widthPixels == other.widthPixels
+                && heightPixels == other.heightPixels
+                && density == other.density
+                && densityDpi == other.densityDpi
+                && scaledDensity == other.scaledDensity
+                && xdpi == other.xdpi
+                && ydpi == other.ydpi
+                && noncompatWidthPixels == other.noncompatWidthPixels
+                && noncompatHeightPixels == other.noncompatHeightPixels
+                && noncompatDensity == other.noncompatDensity
+                && noncompatDensityDpi == other.noncompatDensityDpi
+                && noncompatScaledDensity == other.noncompatScaledDensity
+                && noncompatXdpi == other.noncompatXdpi
+                && noncompatYdpi == other.noncompatYdpi;
+    }
+
+    @Override
+    public int hashCode() {
+        return widthPixels * heightPixels * densityDpi;
     }
 
     @Override

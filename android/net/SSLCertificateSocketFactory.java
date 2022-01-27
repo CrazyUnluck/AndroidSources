@@ -21,6 +21,7 @@ import android.util.Log;
 import java.io.IOException;
 import java.net.InetAddress;
 import java.net.Socket;
+import java.net.SocketException;
 import java.security.KeyManagementException;
 import java.security.cert.X509Certificate;
 import javax.net.SocketFactory;
@@ -300,9 +301,10 @@ public class SSLCertificateSocketFactory extends SSLSocketFactory {
      * null if no protocol was negotiated.
      *
      * @param socket a socket created by this factory.
+     * @throws IllegalArgumentException if the socket was not created by this factory.
      */
     public byte[] getNpnSelectedProtocol(Socket socket) {
-        return ((OpenSSLSocketImpl) socket).getNpnSelectedProtocol();
+        return castToOpenSSLSocket(socket).getNpnSelectedProtocol();
     }
 
     /**
@@ -316,6 +318,54 @@ public class SSLCertificateSocketFactory extends SSLSocketFactory {
         mInsecureFactory = null;
     }
 
+    /**
+     * Enables <a href="http://tools.ietf.org/html/rfc5077#section-3.2">session ticket</a>
+     * support on the given socket.
+     *
+     * @param socket a socket created by this factory
+     * @param useSessionTickets {@code true} to enable session ticket support on this socket.
+     * @throws IllegalArgumentException if the socket was not created by this factory.
+     */
+    public void setUseSessionTickets(Socket socket, boolean useSessionTickets) {
+        castToOpenSSLSocket(socket).setUseSessionTickets(useSessionTickets);
+    }
+
+    /**
+     * Turns on <a href="http://tools.ietf.org/html/rfc6066#section-3">Server
+     * Name Indication (SNI)</a> on a given socket.
+     *
+     * @param socket a socket created by this factory.
+     * @param hostName the desired SNI hostname, null to disable.
+     * @throws IllegalArgumentException if the socket was not created by this factory.
+     */
+    public void setHostname(Socket socket, String hostName) {
+        castToOpenSSLSocket(socket).setHostname(hostName);
+    }
+
+    /**
+     * Sets this socket's SO_SNDTIMEO write timeout in milliseconds.
+     * Use 0 for no timeout.
+     * To take effect, this option must be set before the blocking method was called.
+     *
+     * @param socket a socket created by this factory.
+     * @param timeout the desired write timeout in milliseconds.
+     * @throws IllegalArgumentException if the socket was not created by this factory.
+     *
+     * @hide
+     */
+    public void setSoWriteTimeout(Socket socket, int writeTimeoutMilliseconds)
+            throws SocketException {
+        castToOpenSSLSocket(socket).setSoWriteTimeout(writeTimeoutMilliseconds);
+    }
+
+    private static OpenSSLSocketImpl castToOpenSSLSocket(Socket socket) {
+        if (!(socket instanceof OpenSSLSocketImpl)) {
+            throw new IllegalArgumentException("Socket not created by this factory: "
+                    + socket);
+        }
+
+        return (OpenSSLSocketImpl) socket;
+    }
 
     /**
      * {@inheritDoc}

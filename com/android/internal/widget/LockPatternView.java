@@ -18,7 +18,6 @@ package com.android.internal.widget;
 
 
 import android.content.Context;
-import android.content.res.Resources;
 import android.content.res.TypedArray;
 import android.graphics.Bitmap;
 import android.graphics.BitmapFactory;
@@ -33,11 +32,9 @@ import android.os.Parcel;
 import android.os.Parcelable;
 import android.os.SystemClock;
 import android.util.AttributeSet;
-import android.util.Log;
 import android.view.HapticFeedbackConstants;
 import android.view.MotionEvent;
 import android.view.View;
-import android.view.accessibility.AccessibilityEvent;
 import android.view.accessibility.AccessibilityManager;
 
 import com.android.internal.R;
@@ -375,31 +372,31 @@ public class LockPatternView extends View {
     }
 
     private void notifyCellAdded() {
+        sendAccessEvent(R.string.lockscreen_access_pattern_cell_added);
         if (mOnPatternListener != null) {
             mOnPatternListener.onPatternCellAdded(mPattern);
         }
-        sendAccessEvent(R.string.lockscreen_access_pattern_cell_added);
     }
 
     private void notifyPatternStarted() {
+        sendAccessEvent(R.string.lockscreen_access_pattern_start);
         if (mOnPatternListener != null) {
             mOnPatternListener.onPatternStart();
         }
-        sendAccessEvent(R.string.lockscreen_access_pattern_start);
     }
 
     private void notifyPatternDetected() {
+        sendAccessEvent(R.string.lockscreen_access_pattern_detected);
         if (mOnPatternListener != null) {
             mOnPatternListener.onPatternDetected(mPattern);
         }
-        sendAccessEvent(R.string.lockscreen_access_pattern_detected);
     }
 
     private void notifyPatternCleared() {
+        sendAccessEvent(R.string.lockscreen_access_pattern_cleared);
         if (mOnPatternListener != null) {
             mOnPatternListener.onPatternCleared();
         }
-        sendAccessEvent(R.string.lockscreen_access_pattern_cleared);
     }
 
     /**
@@ -657,9 +654,11 @@ public class LockPatternView extends View {
                 handleActionMove(event);
                 return true;
             case MotionEvent.ACTION_CANCEL:
-                resetPattern();
-                mPatternInProgress = false;
-                notifyPatternCleared();
+                if (mPatternInProgress) {
+                    mPatternInProgress = false;
+                    resetPattern();
+                    notifyPatternCleared();
+                }
                 if (PROFILE_DRAWING) {
                     if (mDrawingProfilingStarted) {
                         Debug.stopMethodTracing();
@@ -799,9 +798,7 @@ public class LockPatternView extends View {
     }
 
     private void sendAccessEvent(int resId) {
-        setContentDescription(mContext.getString(resId));
-        sendAccessibilityEvent(AccessibilityEvent.TYPE_VIEW_SELECTED);
-        setContentDescription(null);
+        announceForAccessibility(mContext.getString(resId));
     }
 
     private void handleActionUp(MotionEvent event) {
@@ -828,7 +825,7 @@ public class LockPatternView extends View {
             mPatternInProgress = true;
             mPatternDisplayMode = DisplayMode.Correct;
             notifyPatternStarted();
-        } else {
+        } else if (mPatternInProgress) {
             mPatternInProgress = false;
             notifyPatternCleared();
         }

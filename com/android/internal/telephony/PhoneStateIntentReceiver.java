@@ -46,7 +46,7 @@ public final class PhoneStateIntentReceiver extends BroadcastReceiver {
 
     private static final int NOTIF_MAX      = 1 << 5;
 
-    Phone.State mPhoneState = Phone.State.IDLE;
+    PhoneConstants.State mPhoneState = PhoneConstants.State.IDLE;
     ServiceState mServiceState = new ServiceState();
     SignalStrength mSignalStrength = new SignalStrength();
 
@@ -78,7 +78,7 @@ public final class PhoneStateIntentReceiver extends BroadcastReceiver {
         mTarget = h;
     }
 
-    public Phone.State getPhoneState() {
+    public PhoneConstants.State getPhoneState() {
         if ((mWants & NOTIF_PHONE) == 0) {
             throw new RuntimeException
                 ("client must call notifyPhoneCallState(int)");
@@ -175,10 +175,10 @@ public final class PhoneStateIntentReceiver extends BroadcastReceiver {
                 }
             } else if (TelephonyManager.ACTION_PHONE_STATE_CHANGED.equals(action)) {
                 if (DBG) Log.d(LOG_TAG, "onReceiveIntent: ACTION_PHONE_STATE_CHANGED, state="
-                               + intent.getStringExtra(Phone.STATE_KEY));
-                String phoneState = intent.getStringExtra(Phone.STATE_KEY);
-                mPhoneState = (Phone.State) Enum.valueOf(
-                        Phone.State.class, phoneState);
+                               + intent.getStringExtra(PhoneConstants.STATE_KEY));
+                String phoneState = intent.getStringExtra(PhoneConstants.STATE_KEY);
+                mPhoneState = (PhoneConstants.State) Enum.valueOf(
+                        PhoneConstants.State.class, phoneState);
 
                 if (mTarget != null && getNotifyPhoneCallState()) {
                     Message message = Message.obtain(mTarget,

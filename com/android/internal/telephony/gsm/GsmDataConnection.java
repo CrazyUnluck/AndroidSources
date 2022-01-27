@@ -23,8 +23,8 @@ import android.text.TextUtils;
 
 import com.android.internal.telephony.DataConnection;
 import com.android.internal.telephony.DataConnectionTracker;
-import com.android.internal.telephony.Phone;
 import com.android.internal.telephony.PhoneBase;
+import com.android.internal.telephony.PhoneConstants;
 import com.android.internal.telephony.RILConstants;
 import com.android.internal.telephony.RetryManager;
 
@@ -56,10 +56,8 @@ public class GsmDataConnection extends DataConnection {
      */
     static GsmDataConnection makeDataConnection(PhoneBase phone, int id, RetryManager rm,
             DataConnectionTracker dct) {
-        synchronized (mCountLock) {
-            mCount += 1;
-        }
-        GsmDataConnection gsmDc = new GsmDataConnection(phone, "GsmDC-" + mCount, id, rm, dct);
+        GsmDataConnection gsmDc = new GsmDataConnection(phone,
+                "GsmDC-" + mCount.incrementAndGet(), id, rm, dct);
         gsmDc.start();
         if (DBG) gsmDc.log("Made " + gsmDc.getName());
         return gsmDc;
@@ -135,11 +133,11 @@ public class GsmDataConnection extends DataConnection {
             // Do not apply the race condition workaround for MMS APN
             // if Proxy is an IP-address.
             // Otherwise, the default APN will not be restored anymore.
-            if (!mApn.types[0].equals(Phone.APN_TYPE_MMS)
+            if (!mApn.types[0].equals(PhoneConstants.APN_TYPE_MMS)
                 || !isIpAddress(mApn.mmsProxy)) {
                 log(String.format(
                         "isDnsOk: return false apn.types[0]=%s APN_TYPE_MMS=%s isIpAddress(%s)=%s",
-                        mApn.types[0], Phone.APN_TYPE_MMS, mApn.mmsProxy,
+                        mApn.types[0], PhoneConstants.APN_TYPE_MMS, mApn.mmsProxy,
                         isIpAddress(mApn.mmsProxy)));
                 return false;
             }

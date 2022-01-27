@@ -41,12 +41,6 @@ public interface NetworkStateTracker {
      * -------------------------------------------------------------
      */
 
-    // Share the event space with ConnectivityService (which we can't see, but
-    // must send events to).  If you change these, change ConnectivityService
-    // too.
-    static final int MIN_NETWORK_STATE_TRACKER_EVENT = 1;
-    static final int MAX_NETWORK_STATE_TRACKER_EVENT = 100;
-
     /**
      * The network state has changed and the NetworkInfo object
      * contains the new state.
@@ -67,6 +61,12 @@ public interface NetworkStateTracker {
      * msg.obj = FeatureUser object
      */
     public static final int EVENT_RESTORE_DEFAULT_NETWORK = 6;
+
+    /**
+     * msg.what = EVENT_NETWORK_SUBTYPE_CHANGED
+     * msg.obj = NetworkInfo object
+     */
+    public static final int EVENT_NETWORK_SUBTYPE_CHANGED = 7;
 
     /**
      * -------------------------------------------------------------
@@ -121,6 +121,11 @@ public interface NetworkStateTracker {
      * @return {@code true} if we're connected or expect to be connected
      */
     public boolean reconnect();
+
+    /**
+     * Ready to switch on to the network after captive portal check
+     */
+    public void captivePortalCheckComplete();
 
     /**
      * Turn the wireless radio off for a network.

@@ -478,6 +478,9 @@ public class ProgressBar extends View {
             d.setCallback(this);
         }
         mIndeterminateDrawable = d;
+        if (mIndeterminateDrawable != null && canResolveLayoutDirection()) {
+            mIndeterminateDrawable.setLayoutDirection(getLayoutDirection());
+        }
         if (mIndeterminate) {
             mCurrentDrawable = d;
             postInvalidate();
@@ -517,6 +520,9 @@ public class ProgressBar extends View {
 
         if (d != null) {
             d.setCallback(this);
+            if (canResolveLayoutDirection()) {
+                d.setLayoutDirection(getLayoutDirection());
+            }
 
             // Make sure the ProgressBar is always tall enough
             int drawableHeight = d.getMinimumHeight();
@@ -557,6 +563,23 @@ public class ProgressBar extends View {
         super.jumpDrawablesToCurrentState();
         if (mProgressDrawable != null) mProgressDrawable.jumpToCurrentState();
         if (mIndeterminateDrawable != null) mIndeterminateDrawable.jumpToCurrentState();
+    }
+
+    /**
+     * @hide
+     */
+    @Override
+    public void onResolveDrawables(int layoutDirection) {
+        final Drawable d = mCurrentDrawable;
+        if (d != null) {
+            d.setLayoutDirection(layoutDirection);
+        }
+        if (mIndeterminateDrawable != null) {
+            mIndeterminateDrawable.setLayoutDirection(layoutDirection);
+        }
+        if (mProgressDrawable != null) {
+            mProgressDrawable.setLayoutDirection(layoutDirection);
+        }
     }
 
     @Override
@@ -648,6 +671,9 @@ public class ProgressBar extends View {
 
             if (d instanceof LayerDrawable) {
                 progressDrawable = ((LayerDrawable) d).findDrawableByLayerId(id);
+                if (progressDrawable != null && canResolveLayoutDirection()) {
+                    progressDrawable.setLayoutDirection(getLayoutDirection());
+                }
             }
 
             final int level = (int) (scale * MAX_LEVEL);
@@ -975,24 +1001,19 @@ public class ProgressBar extends View {
         }
     }
 
-    /**
-     * @hide
-     */
-    @Override
-    public int getResolvedLayoutDirection(Drawable who) {
-        return (who == mProgressDrawable || who == mIndeterminateDrawable) ?
-            getResolvedLayoutDirection() : super.getResolvedLayoutDirection(who);
-    }
-
     @Override
     protected void onSizeChanged(int w, int h, int oldw, int oldh) {
         updateDrawableBounds(w, h);
     }
 
     private void updateDrawableBounds(int w, int h) {
-        // onDraw will translate the canvas so we draw starting at 0,0
-        int right = w - mPaddingRight - mPaddingLeft;
-        int bottom = h - mPaddingBottom - mPaddingTop;
+        // onDraw will translate the canvas so we draw starting at 0,0.
+        // Subtract out padding for the purposes of the calculations below.
+        w -= mPaddingRight + mPaddingLeft;
+        h -= mPaddingTop + mPaddingBottom;
+
+        int right = w;
+        int bottom = h;
         int top = 0;
         int left = 0;
 
@@ -1019,6 +1040,11 @@ public class ProgressBar extends View {
                     }
                 }
             }
+            if (isLayoutRtl()) {
+                int tempLeft = left;
+                left = w - right;
+                right = w - tempLeft;
+            }
             mIndeterminateDrawable.setBounds(left, top, right, bottom);
         }
         
@@ -1036,7 +1062,12 @@ public class ProgressBar extends View {
             // Translate canvas so a indeterminate circular progress bar with padding
             // rotates properly in its animation
             canvas.save();
-            canvas.translate(mPaddingLeft, mPaddingTop);
+            if(isLayoutRtl()) {
+                canvas.translate(getWidth() - mPaddingRight, mPaddingTop);
+                canvas.scale(-1.0f, 1.0f);
+            } else {
+                canvas.translate(mPaddingLeft, mPaddingTop);
+            }
             long time = getDrawingTime();
             if (mHasAnimation) {
                 mAnimation.getTransformation(time, mTransformation);

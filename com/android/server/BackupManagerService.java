@@ -65,7 +65,9 @@ import android.os.Process;
 import android.os.RemoteException;
 import android.os.ServiceManager;
 import android.os.SystemClock;
+import android.os.UserHandle;
 import android.os.WorkSource;
+import android.os.Environment.UserEnvironment;
 import android.os.storage.IMountService;
 import android.provider.Settings;
 import android.util.EventLog;
@@ -131,7 +133,7 @@ import javax.crypto.spec.SecretKeySpec;
 
 class BackupManagerService extends IBackupManager.Stub {
     private static final String TAG = "BackupManagerService";
-    private static final boolean DEBUG = true;
+    private static final boolean DEBUG = false;
     private static final boolean MORE_DEBUG = false;
 
     // Name and current contents version of the full-backup manifest file
@@ -727,14 +729,14 @@ class BackupManagerService extends IBackupManager.Stub {
         final ContentResolver resolver = context.getContentResolver();
         boolean areEnabled = Settings.Secure.getInt(resolver,
                 Settings.Secure.BACKUP_ENABLED, 0) != 0;
-        mProvisioned = Settings.Secure.getInt(resolver,
-                Settings.Secure.DEVICE_PROVISIONED, 0) != 0;
+        mProvisioned = Settings.Global.getInt(resolver,
+                Settings.Global.DEVICE_PROVISIONED, 0) != 0;
         mAutoRestore = Settings.Secure.getInt(resolver,
                 Settings.Secure.BACKUP_AUTO_RESTORE, 1) != 0;
 
         mProvisionedObserver = new ProvisionedObserver(mBackupHandler);
         resolver.registerContentObserver(
-                Settings.Secure.getUriFor(Settings.Secure.DEVICE_PROVISIONED),
+                Settings.Global.getUriFor(Settings.Global.DEVICE_PROVISIONED),
                 false, mProvisionedObserver);
 
         // If Encrypted file systems is enabled or disabled, this call will return the
@@ -834,7 +836,8 @@ class BackupManagerService extends IBackupManager.Stub {
             if ((info.flags & ApplicationInfo.FLAG_SYSTEM) != 0) {
                 if (DEBUG) Slog.v(TAG, "Binding to Google transport");
                 Intent intent = new Intent().setComponent(transportComponent);
-                context.bindService(intent, mGoogleConnection, Context.BIND_AUTO_CREATE);
+                context.bindService(intent, mGoogleConnection, Context.BIND_AUTO_CREATE,
+                        UserHandle.USER_OWNER);
             } else {
                 Slog.w(TAG, "Possible Google transport spoof: ignoring " + info);
             }
@@ -1431,12 +1434,9 @@ class BackupManagerService extends IBackupManager.Stub {
                 set.add(pkg.packageName);
                 if (MORE_DEBUG) Slog.v(TAG, "Agent found; added");
 
-                // If we've never seen this app before, schedule a backup for it
-                if (!mEverStoredApps.contains(pkg.packageName)) {
-                    if (DEBUG) Slog.i(TAG, "New app " + pkg.packageName
-                            + " never backed up; scheduling");
-                    dataChangedImpl(pkg.packageName);
-                }
+                // Schedule a backup for it on general principles
+                if (DEBUG) Slog.i(TAG, "Scheduling backup for new app " + pkg.packageName);
+                dataChangedImpl(pkg.packageName);
             }
         }
     }
@@ -1469,9 +1469,12 @@ class BackupManagerService extends IBackupManager.Stub {
             // Found it.  Remove this one package from the bookkeeping, and
             // if it's the last participating app under this uid we drop the
             // (now-empty) set as well.
+            // Note that we deliberately leave it 'known' in the "ever backed up"
+            // bookkeeping so that its current-dataset data will be retrieved
+            // if the app is subsequently reinstalled
             if (MORE_DEBUG) Slog.v(TAG, "  removing participant " + packageName);
-            removeEverBackedUp(packageName);
             set.remove(packageName);
+            mPendingBackups.remove(packageName);
         }
     }
 
@@ -1623,6 +1626,7 @@ class BackupManagerService extends IBackupManager.Stub {
                         } catch (InterruptedException e) {
                             // just bail
                             if (DEBUG) Slog.w(TAG, "Interrupted: " + e);
+                            mActivityManager.clearPendingBackup();
                             return null;
                         }
                     }
@@ -1630,6 +1634,7 @@ class BackupManagerService extends IBackupManager.Stub {
                     // if we timed out with no connect, abort and move on
                     if (mConnecting == true) {
                         Slog.w(TAG, "Timeout waiting for agent " + app);
+                        mActivityManager.clearPendingBackup();
                         return null;
                     }
                     if (DEBUG) Slog.i(TAG, "got agent " + mConnectedAgent);
@@ -1662,8 +1667,7 @@ class BackupManagerService extends IBackupManager.Stub {
         synchronized(mClearDataLock) {
             mClearingData = true;
             try {
-                mActivityManager.clearApplicationUserData(packageName, observer,
-                        Binder.getOrigCallingUser());
+                mActivityManager.clearApplicationUserData(packageName, observer, 0);
             } catch (RemoteException e) {
                 // can't happen because the activity manager is in this process
             }
@@ -2450,6 +2454,21 @@ class BackupManagerService extends IBackupManager.Stub {
                 }
             }
 
+            // Cull any packages that run as system-domain uids but do not define their
+            // own backup agents
+            for (int i = 0; i < packagesToBackup.size(); ) {
+                PackageInfo pkg = packagesToBackup.get(i);
+                if ((pkg.applicationInfo.uid < Process.FIRST_APPLICATION_UID)
+                        && (pkg.applicationInfo.backupAgentName == null)) {
+                    if (MORE_DEBUG) {
+                        Slog.i(TAG, "... ignoring non-agent system package " + pkg.packageName);
+                    }
+                    packagesToBackup.remove(i);
+                } else {
+                    i++;
+                }
+            }
+
             FileOutputStream ofstream = new FileOutputStream(mOutputFile.getFileDescriptor());
             OutputStream out = null;
 
@@ -2720,9 +2739,13 @@ class BackupManagerService extends IBackupManager.Stub {
             FullBackup.backupToTar(pkg.packageName, FullBackup.APK_TREE_TOKEN, null,
                     apkDir, appSourceDir, output);
 
+            // TODO: migrate this to SharedStorageBackup, since AID_SYSTEM
+            // doesn't have access to external storage.
+
             // Save associated .obb content if it exists and we did save the apk
             // check for .obb and save those too
-            final File obbDir = Environment.getExternalStorageAppObbDirectory(pkg.packageName);
+            final UserEnvironment userEnv = new UserEnvironment(UserHandle.USER_OWNER);
+            final File obbDir = userEnv.getExternalStorageAppObbDirectory(pkg.packageName);
             if (obbDir != null) {
                 if (MORE_DEBUG) Log.i(TAG, "obb dir: " + obbDir.getAbsolutePath());
                 File[] obbFiles = obbDir.listFiles();
@@ -3664,29 +3687,37 @@ class BackupManagerService extends IBackupManager.Stub {
                                 // Fall through to IGNORE if the app explicitly disallows backup
                                 final int flags = pkgInfo.applicationInfo.flags;
                                 if ((flags & ApplicationInfo.FLAG_ALLOW_BACKUP) != 0) {
-                                    // Verify signatures against any installed version; if they
-                                    // don't match, then we fall though and ignore the data.  The
-                                    // signatureMatch() method explicitly ignores the signature
-                                    // check for packages installed on the system partition, because
-                                    // such packages are signed with the platform cert instead of
-                                    // the app developer's cert, so they're different on every
-                                    // device.
-                                    if (signaturesMatch(sigs, pkgInfo)) {
-                                        if (pkgInfo.versionCode >= version) {
-                                            Slog.i(TAG, "Sig + version match; taking data");
-                                            policy = RestorePolicy.ACCEPT;
+                                    // Restore system-uid-space packages only if they have
+                                    // defined a custom backup agent
+                                    if ((pkgInfo.applicationInfo.uid >= Process.FIRST_APPLICATION_UID)
+                                            || (pkgInfo.applicationInfo.backupAgentName != null)) {
+                                        // Verify signatures against any installed version; if they
+                                        // don't match, then we fall though and ignore the data.  The
+                                        // signatureMatch() method explicitly ignores the signature
+                                        // check for packages installed on the system partition, because
+                                        // such packages are signed with the platform cert instead of
+                                        // the app developer's cert, so they're different on every
+                                        // device.
+                                        if (signaturesMatch(sigs, pkgInfo)) {
+                                            if (pkgInfo.versionCode >= version) {
+                                                Slog.i(TAG, "Sig + version match; taking data");
+                                                policy = RestorePolicy.ACCEPT;
+                                            } else {
+                                                // The data is from a newer version of the app than
+                                                // is presently installed.  That means we can only
+                                                // use it if the matching apk is also supplied.
+                                                Slog.d(TAG, "Data version " + version
+                                                        + " is newer than installed version "
+                                                        + pkgInfo.versionCode + " - requiring apk");
+                                                policy = RestorePolicy.ACCEPT_IF_APK;
+                                            }
                                         } else {
-                                            // The data is from a newer version of the app than
-                                            // is presently installed.  That means we can only
-                                            // use it if the matching apk is also supplied.
-                                            Slog.d(TAG, "Data version " + version
-                                                    + " is newer than installed version "
-                                                    + pkgInfo.versionCode + " - requiring apk");
-                                            policy = RestorePolicy.ACCEPT_IF_APK;
+                                            Slog.w(TAG, "Restore manifest signatures do not match "
+                                                    + "installed application for " + info.packageName);
                                         }
                                     } else {
-                                        Slog.w(TAG, "Restore manifest signatures do not match "
-                                                + "installed application for " + info.packageName);
+                                        Slog.w(TAG, "Package " + info.packageName
+                                                + " is system level with no agent");
                                     }
                                 } else {
                                     if (DEBUG) Slog.i(TAG, "Restore manifest from "
@@ -4401,6 +4432,18 @@ class BackupManagerService extends IBackupManager.Stub {
                     return;
                 }
 
+                if (packageInfo.applicationInfo.backupAgentName == null
+                        || "".equals(packageInfo.applicationInfo.backupAgentName)) {
+                    if (DEBUG) {
+                        Slog.i(TAG, "Data exists for package " + packageName
+                                + " but app has no agent; skipping");
+                    }
+                    EventLog.writeEvent(EventLogTags.RESTORE_AGENT_FAILURE, packageName,
+                            "Package has no agent");
+                    executeNextState(RestoreState.RUNNING_QUEUE);
+                    return;
+                }
+
                 if (metaInfo.versionCode > packageInfo.versionCode) {
                     // Data is from a "newer" version of the app than we have currently
                     // installed.  If the app has not declared that it is prepared to
@@ -4845,6 +4888,18 @@ class BackupManagerService extends IBackupManager.Stub {
     // ----- IBackupManager binder interface -----
 
     public void dataChanged(final String packageName) {
+        final int callingUserHandle = UserHandle.getCallingUserId();
+        if (callingUserHandle != UserHandle.USER_OWNER) {
+            // App is running under a non-owner user profile.  For now, we do not back
+            // up data from secondary user profiles.
+            // TODO: backups for all user profiles.
+            if (MORE_DEBUG) {
+                Slog.v(TAG, "dataChanged(" + packageName + ") ignored because it's user "
+                        + callingUserHandle);
+            }
+            return;
+        }
+
         final HashSet<String> targets = dataChangedTargets(packageName);
         if (targets == null) {
             Slog.w(TAG, "dataChanged but no participant pkg='" + packageName + "'"
@@ -4927,7 +4982,7 @@ class BackupManagerService extends IBackupManager.Stub {
 
     boolean deviceIsProvisioned() {
         final ContentResolver resolver = mContext.getContentResolver();
-        return (Settings.Secure.getInt(resolver, Settings.Secure.DEVICE_PROVISIONED, 0) != 0);
+        return (Settings.Global.getInt(resolver, Settings.Global.DEVICE_PROVISIONED, 0) != 0);
     }
 
     // Run a *full* backup pass for the given package, writing the resulting data stream
@@ -4936,6 +4991,11 @@ class BackupManagerService extends IBackupManager.Stub {
     public void fullBackup(ParcelFileDescriptor fd, boolean includeApks, boolean includeShared,
             boolean doAllApps, boolean includeSystem, String[] pkgList) {
         mContext.enforceCallingPermission(android.Manifest.permission.BACKUP, "fullBackup");
+
+        final int callingUserHandle = UserHandle.getCallingUserId();
+        if (callingUserHandle != UserHandle.USER_OWNER) {
+            throw new IllegalStateException("Backup supported only for the device owner");
+        }
 
         // Validate
         if (!doAllApps) {
@@ -5000,6 +5060,11 @@ class BackupManagerService extends IBackupManager.Stub {
 
     public void fullRestore(ParcelFileDescriptor fd) {
         mContext.enforceCallingPermission(android.Manifest.permission.BACKUP, "fullRestore");
+
+        final int callingUserHandle = UserHandle.getCallingUserId();
+        if (callingUserHandle != UserHandle.USER_OWNER) {
+            throw new IllegalStateException("Restore supported only for the device owner");
+        }
 
         long oldId = Binder.clearCallingIdentity();
 
@@ -5375,7 +5440,8 @@ class BackupManagerService extends IBackupManager.Stub {
 
         long restoreSet = getAvailableRestoreToken(packageName);
         if (DEBUG) Slog.v(TAG, "restoreAtInstall pkg=" + packageName
-                + " token=" + Integer.toHexString(token));
+                + " token=" + Integer.toHexString(token)
+                + " restoreSet=" + Long.toHexString(restoreSet));
 
         if (mAutoRestore && mProvisioned && restoreSet != 0) {
             // okay, we're going to attempt a restore of this package from this restore set.

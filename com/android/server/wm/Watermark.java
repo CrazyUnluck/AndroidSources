@@ -35,6 +35,7 @@ import android.view.Surface.OutOfResourcesException;
  * Displays a watermark on top of the window manager's windows.
  */
 class Watermark {
+    final Display mDisplay;
     final String[] mTokens;
     final String mText;
     final Paint mTextPaint;
@@ -50,7 +51,7 @@ class Watermark {
     int mLastDH;
     boolean mDrawNeeded;
 
-    Watermark(DisplayMetrics dm, SurfaceSession session, String[] tokens) {
+    Watermark(Display display, DisplayMetrics dm, SurfaceSession session, String[] tokens) {
         if (false) {
             Log.i(WindowManagerService.TAG, "*********************** WATERMARK");
             for (int i=0; i<tokens.length; i++) {
@@ -58,6 +59,7 @@ class Watermark {
             }
         }
 
+        mDisplay = display;
         mTokens = tokens;
 
         StringBuilder builder = new StringBuilder(32);
@@ -111,8 +113,9 @@ class Watermark {
         mTextPaint.setShadowLayer(shadowRadius, shadowDx, shadowDy, shadowColor);
 
         try {
-            mSurface = new Surface(session, 0,
-                    "WatermarkSurface", -1, 1, 1, PixelFormat.TRANSLUCENT, 0);
+            mSurface = new Surface(session, "WatermarkSurface",
+                    1, 1, PixelFormat.TRANSLUCENT, Surface.HIDDEN);
+            mSurface.setLayerStack(mDisplay.getLayerStack());
             mSurface.setLayer(WindowManagerService.TYPE_LAYER_MULTIPLIER*100);
             mSurface.setPosition(0, 0);
             mSurface.show();

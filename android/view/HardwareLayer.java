@@ -19,6 +19,7 @@ package android.view;
 import android.graphics.Bitmap;
 import android.graphics.Canvas;
 import android.graphics.Matrix;
+import android.graphics.Paint;
 import android.graphics.Rect;
 
 /**
@@ -60,6 +61,14 @@ abstract class HardwareLayer {
         mHeight = height;
         mOpaque = isOpaque;
     }
+
+    /**
+     * Update the paint used when drawing this layer.
+     *
+     * @param paint The paint used when the layer is drawn into the destination canvas.
+     * @see View#setLayerPaint(android.graphics.Paint)
+     */
+    void setLayerPaint(Paint paint) {}
 
     /**
      * Returns the minimum width of the layer.
@@ -107,6 +116,13 @@ abstract class HardwareLayer {
     }
 
     /**
+     * Sets whether or not this layer should be considered opaque.
+     * 
+     * @param isOpaque True if the layer is opaque, false otherwise
+     */
+    abstract void setOpaque(boolean isOpaque);
+
+    /**
      * Indicates whether this layer can be rendered.
      * 
      * @return True if the layer can be rendered into, false otherwise
@@ -119,8 +135,9 @@ abstract class HardwareLayer {
      * 
      * @param width The new desired minimum width for this layer
      * @param height The new desired minimum height for this layer
+     * @return True if the resulting layer is valid, false otherwise
      */
-    abstract void resize(int width, int height);
+    abstract boolean resize(int width, int height);
 
     /**
      * Returns a hardware canvas that can be used to render onto
@@ -134,11 +151,6 @@ abstract class HardwareLayer {
      * Destroys resources without waiting for a GC. 
      */
     abstract void destroy();
-
-    /**
-     * Flush the render queue associated with this layer.
-     */
-    abstract void flush();
 
     /**
      * This must be invoked before drawing onto this layer.
@@ -191,5 +203,10 @@ abstract class HardwareLayer {
      *                    execute in this layer
      * @param dirtyRect The dirty region of the layer that needs to be redrawn
      */
-    abstract void redraw(DisplayList displayList, Rect dirtyRect);
+    abstract void redrawLater(DisplayList displayList, Rect dirtyRect);
+
+    /**
+     * Indicates that this layer has lost its underlying storage.
+     */
+    abstract void clearStorage();
 }

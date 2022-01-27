@@ -41,8 +41,8 @@ import android.widget.RemoteViews.RemoteView;
  * {@link android.widget.LinearLayout.LayoutParams LinearLayout.LayoutParams}.
  * The default orientation is horizontal.
  *
- * <p>See the <a href="{@docRoot}resources/tutorials/views/hello-linearlayout.html">Linear Layout
- * tutorial</a>.</p>
+ * <p>See the <a href="{@docRoot}guide/topics/ui/layout/linear.html">Linear Layout</a>
+ * guide.</p>
  *
  * <p>
  * Also see {@link LinearLayout.LayoutParams android.widget.LinearLayout.LayoutParams}
@@ -345,28 +345,42 @@ public class LinearLayout extends ViewGroup {
 
     void drawDividersHorizontal(Canvas canvas) {
         final int count = getVirtualChildCount();
+        final boolean isLayoutRtl = isLayoutRtl();
         for (int i = 0; i < count; i++) {
             final View child = getVirtualChildAt(i);
 
             if (child != null && child.getVisibility() != GONE) {
                 if (hasDividerBeforeChildAt(i)) {
                     final LayoutParams lp = (LayoutParams) child.getLayoutParams();
-                    final int left = child.getLeft() - lp.leftMargin - mDividerWidth;
-                    drawVerticalDivider(canvas, left);
+                    final int position;
+                    if (isLayoutRtl) {
+                        position = child.getRight() + lp.rightMargin;
+                    } else {
+                        position = child.getLeft() - lp.leftMargin - mDividerWidth;
+                    }
+                    drawVerticalDivider(canvas, position);
                 }
             }
         }
 
         if (hasDividerBeforeChildAt(count)) {
             final View child = getVirtualChildAt(count - 1);
-            int right = 0;
+            int position;
             if (child == null) {
-                right = getWidth() - getPaddingRight() - mDividerWidth;
+                if (isLayoutRtl) {
+                    position = getPaddingLeft();
+                } else {
+                    position = getWidth() - getPaddingRight() - mDividerWidth;
+                }
             } else {
                 final LayoutParams lp = (LayoutParams) child.getLayoutParams();
-                right = child.getRight() + lp.rightMargin;
+                if (isLayoutRtl) {
+                    position = child.getLeft() - lp.leftMargin - mDividerWidth;
+                } else {
+                    position = child.getRight() + lp.rightMargin;
+                }
             }
-            drawVerticalDivider(canvas, right);
+            drawVerticalDivider(canvas, position);
         }
     }
 
@@ -1481,7 +1495,7 @@ public class LinearLayout extends ViewGroup {
                 if (gravity < 0) {
                     gravity = minorGravity;
                 }
-                final int layoutDirection = getResolvedLayoutDirection();
+                final int layoutDirection = getLayoutDirection();
                 final int absoluteGravity = Gravity.getAbsoluteGravity(gravity, layoutDirection);
                 switch (absoluteGravity & Gravity.HORIZONTAL_GRAVITY_MASK) {
                     case Gravity.CENTER_HORIZONTAL:
@@ -1545,7 +1559,7 @@ public class LinearLayout extends ViewGroup {
         final int[] maxAscent = mMaxAscent;
         final int[] maxDescent = mMaxDescent;
 
-        final int layoutDirection = getResolvedLayoutDirection();
+        final int layoutDirection = getLayoutDirection();
         switch (Gravity.getAbsoluteGravity(majorGravity, layoutDirection)) {
             case Gravity.RIGHT:
                 // mTotalLength contains the padding already

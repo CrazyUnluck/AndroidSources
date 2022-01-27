@@ -17,6 +17,7 @@
 package com.android.server;
 
 import com.android.server.am.ActivityManagerService;
+import com.android.server.power.PowerManagerService;
 
 import android.app.AlarmManager;
 import android.app.PendingIntent;
@@ -25,6 +26,7 @@ import android.content.ContentResolver;
 import android.content.Context;
 import android.content.Intent;
 import android.content.IntentFilter;
+import android.os.BatteryManager;
 import android.os.Debug;
 import android.os.Handler;
 import android.os.Message;
@@ -32,7 +34,6 @@ import android.os.Process;
 import android.os.ServiceManager;
 import android.os.SystemClock;
 import android.os.SystemProperties;
-import android.provider.Settings;
 import android.util.EventLog;
 import android.util.Log;
 import android.util.Slog;
@@ -117,9 +118,7 @@ public class Watchdog extends Thread {
                 case MONITOR: {
                     // See if we should force a reboot.
                     int rebootInterval = mReqRebootInterval >= 0
-                            ? mReqRebootInterval : Settings.Secure.getInt(
-                            mResolver, Settings.Secure.REBOOT_INTERVAL,
-                            REBOOT_DEFAULT_INTERVAL);
+                            ? mReqRebootInterval : REBOOT_DEFAULT_INTERVAL;
                     if (mRebootInterval != rebootInterval) {
                         mRebootInterval = rebootInterval;
                         // We have been running long enough that a reboot can
@@ -225,9 +224,7 @@ public class Watchdog extends Thread {
 
     void checkReboot(boolean fromAlarm) {
         int rebootInterval = mReqRebootInterval >= 0 ? mReqRebootInterval
-                : Settings.Secure.getInt(
-                mResolver, Settings.Secure.REBOOT_INTERVAL,
-                REBOOT_DEFAULT_INTERVAL);
+                : REBOOT_DEFAULT_INTERVAL;
         mRebootInterval = rebootInterval;
         if (rebootInterval <= 0) {
             // No reboot interval requested.
@@ -237,17 +234,11 @@ public class Watchdog extends Thread {
         }
 
         long rebootStartTime = mReqRebootStartTime >= 0 ? mReqRebootStartTime
-                : Settings.Secure.getLong(
-                mResolver, Settings.Secure.REBOOT_START_TIME,
-                REBOOT_DEFAULT_START_TIME);
+                : REBOOT_DEFAULT_START_TIME;
         long rebootWindowMillis = (mReqRebootWindow >= 0 ? mReqRebootWindow
-                : Settings.Secure.getLong(
-                mResolver, Settings.Secure.REBOOT_WINDOW,
-                REBOOT_DEFAULT_WINDOW)) * 1000;
+                : REBOOT_DEFAULT_WINDOW) * 1000;
         long recheckInterval = (mReqRecheckInterval >= 0 ? mReqRecheckInterval
-                : Settings.Secure.getLong(
-                mResolver, Settings.Secure.MEMCHECK_RECHECK_INTERVAL,
-                MEMCHECK_DEFAULT_RECHECK_INTERVAL)) * 1000;
+                : MEMCHECK_DEFAULT_RECHECK_INTERVAL) * 1000;
 
         retrieveBrutalityAmount();
 
@@ -314,7 +305,7 @@ public class Watchdog extends Thread {
     void rebootSystem(String reason) {
         Slog.i(TAG, "Rebooting system because: " + reason);
         PowerManagerService pms = (PowerManagerService) ServiceManager.getService("power");
-        pms.reboot(reason);
+        pms.reboot(false, reason, false);
     }
 
     /**
@@ -324,13 +315,9 @@ public class Watchdog extends Thread {
      */
     void retrieveBrutalityAmount() {
         mMinScreenOff = (mReqMinScreenOff >= 0 ? mReqMinScreenOff
-                : Settings.Secure.getInt(
-                mResolver, Settings.Secure.MEMCHECK_MIN_SCREEN_OFF,
-                MEMCHECK_DEFAULT_MIN_SCREEN_OFF)) * 1000;
+                : MEMCHECK_DEFAULT_MIN_SCREEN_OFF) * 1000;
         mMinAlarm = (mReqMinNextAlarm >= 0 ? mReqMinNextAlarm
-                : Settings.Secure.getInt(
-                mResolver, Settings.Secure.MEMCHECK_MIN_ALARM,
-                MEMCHECK_DEFAULT_MIN_ALARM)) * 1000;
+                : MEMCHECK_DEFAULT_MIN_ALARM) * 1000;
     }
 
     /**
@@ -343,12 +330,12 @@ public class Watchdog extends Thread {
      * text of why it is not a good time.
      */
     String shouldWeBeBrutalLocked(long curTime) {
-        if (mBattery == null || !mBattery.isPowered()) {
+        if (mBattery == null || !mBattery.isPowered(BatteryManager.BATTERY_PLUGGED_ANY)) {
             return "battery";
         }
 
         if (mMinScreenOff >= 0 && (mPower == null ||
-                mPower.timeSinceScreenOn() < mMinScreenOff)) {
+                mPower.timeSinceScreenWasLastOn() < mMinScreenOff)) {
             return "screen";
         }
 

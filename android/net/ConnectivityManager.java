@@ -89,9 +89,19 @@ public class ConnectivityManager {
      *             should always obtain network information through
      *             {@link #getActiveNetworkInfo()} or
      *             {@link #getAllNetworkInfo()}.
+     * @see #EXTRA_NETWORK_TYPE
      */
     @Deprecated
     public static final String EXTRA_NETWORK_INFO = "networkInfo";
+
+    /**
+     * Network type which triggered a {@link #CONNECTIVITY_ACTION} broadcast.
+     * Can be used with {@link #getNetworkInfo(int)} to get {@link NetworkInfo}
+     * state based on the calling application.
+     *
+     * @see android.content.Intent#getIntExtra(String, int)
+     */
+    public static final String EXTRA_NETWORK_TYPE = "networkType";
 
     /**
      * The lookup key for a boolean that indicates whether a connect event
@@ -135,6 +145,28 @@ public class ConnectivityManager {
      * {@hide}
      */
     public static final String EXTRA_INET_CONDITION = "inetCondition";
+
+    /**
+     * Broadcast action to indicate the change of data activity status
+     * (idle or active) on a network in a recent period.
+     * The network becomes active when data transimission is started, or
+     * idle if there is no data transimition for a period of time.
+     * {@hide}
+     */
+    @SdkConstant(SdkConstantType.BROADCAST_INTENT_ACTION)
+    public static final String ACTION_DATA_ACTIVITY_CHANGE = "android.net.conn.DATA_ACTIVITY_CHANGE";
+    /**
+     * The lookup key for an enum that indicates the network device type on which this data activity
+     * change happens.
+     * {@hide}
+     */
+    public static final String EXTRA_DEVICE_TYPE = "deviceType";
+    /**
+     * The lookup key for a boolean that indicates the device is active or not. {@code true} means
+     * it is actively sending or receiving data and {@code false} means it is idle.
+     * {@hide}
+     */
+    public static final String EXTRA_IS_ACTIVE = "isActive";
 
     /**
      * Broadcast Action: The setting for background data usage has changed
@@ -297,6 +329,14 @@ public class ConnectivityManager {
     public static final int MAX_NETWORK_TYPE = TYPE_WIFI_P2P;
 
     public static final int DEFAULT_NETWORK_PREFERENCE = TYPE_WIFI;
+
+    /**
+     * Default value for {@link Settings.Global#CONNECTIVITY_CHANGE_DELAY} in
+     * milliseconds.
+     *
+     * @hide
+     */
+    public static final int CONNECTIVITY_CHANGE_DELAY_DEFAULT = 3000;
 
     private final IConnectivityManager mService;
 
@@ -880,4 +920,24 @@ public class ConnectivityManager {
             return false;
         }
     }
+
+    /** {@hide} */
+    public boolean updateLockdownVpn() {
+        try {
+            return mService.updateLockdownVpn();
+        } catch (RemoteException e) {
+            return false;
+        }
+    }
+
+    /**
+     * {@hide}
+     */
+    public void captivePortalCheckComplete(NetworkInfo info) {
+        try {
+            mService.captivePortalCheckComplete(info);
+        } catch (RemoteException e) {
+        }
+    }
+
 }

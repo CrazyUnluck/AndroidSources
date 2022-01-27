@@ -34,7 +34,9 @@ import android.graphics.RectF;
 import android.graphics.Region;
 import android.os.IBinder;
 import android.os.RemoteException;
+import android.os.UserHandle;
 import android.util.Slog;
+import android.view.DisplayInfo;
 import android.view.Gravity;
 import android.view.IApplicationToken;
 import android.view.IWindow;
@@ -46,6 +48,9 @@ import android.view.WindowManagerPolicy;
 
 import java.io.PrintWriter;
 import java.util.ArrayList;
+
+class WindowList extends ArrayList<WindowState> {
+}
 
 /**
  * A window in the window manager.
@@ -245,21 +250,31 @@ final class WindowState implements WindowManagerPolicy.WindowState {
     // Used to improve performance of toString()
     String mStringNameCache;
     CharSequence mLastTitle;
-    boolean mWasPaused;
+    boolean mWasExiting;
 
     final WindowStateAnimator mWinAnimator;
 
     boolean mHasSurface = false;
 
+    DisplayContent  mDisplayContent;
+
+    // UserId and appId of the owner. Don't display windows of non-current user.
+    int mOwnerUid;
+
+    /** When true this window can be displayed on screens owther than mOwnerUid's */
+    private boolean mShowToOwnerOnly;
+
     WindowState(WindowManagerService service, Session s, IWindow c, WindowToken token,
            WindowState attachedWindow, int seq, WindowManager.LayoutParams a,
-           int viewVisibility) {
+           int viewVisibility, final DisplayContent displayContent) {
         mService = service;
         mSession = s;
         mClient = c;
         mToken = token;
+        mOwnerUid = s.mUid;
         mAttrs.copyFrom(a);
         mViewVisibility = viewVisibility;
+        mDisplayContent = displayContent;
         mPolicy = mService.mPolicy;
         mContext = mService.mContext;
         DeathRecipient deathRecipient = new DeathRecipient();
@@ -267,7 +282,7 @@ final class WindowState implements WindowManagerPolicy.WindowState {
         mEnforceSizeCompat = (mAttrs.flags & FLAG_COMPATIBLE_WINDOW) != 0;
         if (WindowManagerService.localLOGV) Slog.v(
             TAG, "Window " + this + " client=" + c.asBinder()
-            + " token=" + token + " (" + mAttrs.token + ")");
+            + " token=" + token + " (" + mAttrs.token + ")" + " params=" + a);
         try {
             c.asBinder().linkToDeath(deathRecipient, 0);
         } catch (RemoteException e) {
@@ -317,9 +332,6 @@ final class WindowState implements WindowManagerPolicy.WindowState {
             mIsFloatingLayer = mIsImWindow || mIsWallpaper;
         }
 
-        mWinAnimator = new WindowStateAnimator(service, this, mAttachedWindow);
-        mWinAnimator.mAlpha = a.alpha;
-
         WindowState appWin = this;
         while (appWin.mAttachedWindow != null) {
             appWin = appWin.mAttachedWindow;
@@ -335,6 +347,9 @@ final class WindowState implements WindowManagerPolicy.WindowState {
         mRootToken = appToken;
         mAppToken = appToken.appWindowToken;
 
+        mWinAnimator = new WindowStateAnimator(this);
+        mWinAnimator.mAlpha = a.alpha;
+
         mRequestedWidth = 0;
         mRequestedHeight = 0;
         mLastRequestedWidth = 0;
@@ -343,7 +358,8 @@ final class WindowState implements WindowManagerPolicy.WindowState {
         mYOffset = 0;
         mLayer = 0;
         mInputWindowHandle = new InputWindowHandle(
-                mAppToken != null ? mAppToken.mInputApplicationHandle : null, this);
+                mAppToken != null ? mAppToken.mInputApplicationHandle : null, this,
+                displayContent.getDisplayId());
     }
 
     void attach() {
@@ -479,8 +495,9 @@ final class WindowState implements WindowManagerPolicy.WindowState {
         }
 
         if (mIsWallpaper && (fw != frame.width() || fh != frame.height())) {
-            mService.updateWallpaperOffsetLocked(this,
-                    mService.mAppDisplayWidth, mService.mAppDisplayHeight, false);
+            final DisplayInfo displayInfo = mDisplayContent.getDisplayInfo();
+            mService.updateWallpaperOffsetLocked(this, displayInfo.appWidth, displayInfo.appHeight,
+                    false);
         }
 
         if (WindowManagerService.localLOGV) {
@@ -494,6 +511,21 @@ final class WindowState implements WindowManagerPolicy.WindowState {
                         + " vi=" + visibleInsets.toShortString());
             //}
         }
+    }
+
+    MagnificationSpec getWindowMagnificationSpecLocked() {
+        MagnificationSpec spec = mDisplayContent.mMagnificationSpec;
+        if (spec != null && !spec.isNop()) {
+            if (mAttachedWindow != null) {
+                if (!mPolicy.canMagnifyWindowLw(mAttachedWindow.mAttrs)) {
+                    return null;
+                }
+            }
+            if (!mPolicy.canMagnifyWindowLw(mAttrs)) {
+                return null;
+            }
+        }
+        return spec;
     }
 
     @Override
@@ -541,9 +573,11 @@ final class WindowState implements WindowManagerPolicy.WindowState {
         return mAttrs;
     }
 
+    @Override
     public boolean getNeedsMenuLw(WindowManagerPolicy.WindowState bottom) {
         int index = -1;
         WindowState ws = this;
+        WindowList windows = getWindowList();
         while (true) {
             if ((ws.mAttrs.privateFlags
                     & WindowManager.LayoutParams.PRIVATE_FLAG_SET_NEEDS_MENU_KEY) != 0) {
@@ -558,28 +592,35 @@ final class WindowState implements WindowManagerPolicy.WindowState {
             // look behind it.
             // First, we may need to determine the starting position.
             if (index < 0) {
-                index = mService.mWindows.indexOf(ws);
+                index = windows.indexOf(ws);
             }
             index--;
             if (index < 0) {
                 return false;
             }
-            ws = mService.mWindows.get(index);
+            ws = windows.get(index);
         }
     }
 
+    @Override
     public int getSystemUiVisibility() {
         return mSystemUiVisibility;
     }
 
+    @Override
     public int getSurfaceLayer() {
         return mLayer;
     }
 
+    @Override
     public IApplicationToken getAppToken() {
         return mAppToken != null ? mAppToken.appToken : null;
     }
-    
+
+    public int getDisplayId() {
+        return mDisplayContent.getDisplayId();
+    }
+
     public long getInputDispatchingTimeoutNanos() {
         return mAppToken != null
                 ? mAppToken.inputDispatchingTimeoutNanos
@@ -612,6 +653,7 @@ final class WindowState implements WindowManagerPolicy.WindowState {
      * surface, or we are in the process of running an exit animation
      * that will remove the surface, or its app token has been hidden.
      */
+    @Override
     public boolean isVisibleLw() {
         final AppWindowToken atoken = mAppToken;
         return mHasSurface && mPolicyVisibility && !mAttachedHidden
@@ -627,6 +669,7 @@ final class WindowState implements WindowManagerPolicy.WindowState {
      * for this "hidden behind keyguard" state rather than overloading
      * mPolicyVisibility.  Ungh.
      */
+    @Override
     public boolean isVisibleOrBehindKeyguardLw() {
         if (mRootToken.waitingToShow &&
                 mService.mNextAppTransition != WindowManagerPolicy.TRANSIT_UNSET) {
@@ -745,22 +788,26 @@ final class WindowState implements WindowManagerPolicy.WindowState {
      * Like isOnScreen, but returns false if the surface hasn't yet
      * been drawn.
      */
+    @Override
     public boolean isDisplayedLw() {
         final AppWindowToken atoken = mAppToken;
         return isDrawnLw() && mPolicyVisibility
             && ((!mAttachedHidden &&
                     (atoken == null || !atoken.hiddenRequested))
-                    || mWinAnimator.mAnimating);
+                        || mWinAnimator.mAnimating
+                        || (atoken != null && atoken.mAppAnimator.animation != null));
     }
 
     /**
      * Return true if this window (or a window it is attached to, but not
      * considering its app token) is currently animating.
      */
+    @Override
     public boolean isAnimatingLw() {
         return mWinAnimator.mAnimation != null;
     }
 
+    @Override
     public boolean isGoneForLayoutLw() {
         final AppWindowToken atoken = mAppToken;
         return mViewVisibility == View.GONE
@@ -809,6 +856,18 @@ final class WindowState implements WindowManagerPolicy.WindowState {
                 mFrame.right >= screenWidth && mFrame.bottom >= screenHeight;
     }
 
+    boolean isConfigChanged() {
+        return mConfiguration != mService.mCurConfiguration
+                && (mConfiguration == null
+                        || (mConfiguration.diff(mService.mCurConfiguration) != 0));
+    }
+
+    boolean isConfigDiff(int mask) {
+        return mConfiguration != mService.mCurConfiguration
+                && mConfiguration != null
+                && (mConfiguration.diff(mService.mCurConfiguration) & mask) != 0;
+    }
+
     void removeLocked() {
         disposeInputChannel();
         
@@ -816,8 +875,8 @@ final class WindowState implements WindowManagerPolicy.WindowState {
             if (WindowManagerService.DEBUG_ADD_REMOVE) Slog.v(TAG, "Removing " + this + " from " + mAttachedWindow);
             mAttachedWindow.mChildWindows.remove(this);
         }
-        mWinAnimator.destroyDeferredSurfaceLocked();
-        mWinAnimator.destroySurfaceLocked();
+        mWinAnimator.destroyDeferredSurfaceLocked(false);
+        mWinAnimator.destroySurfaceLocked(false);
         mSession.windowRemovedLocked();
         try {
             mClient.asBinder().unlinkToDeath(mDeathRecipient, 0);
@@ -884,6 +943,11 @@ final class WindowState implements WindowManagerPolicy.WindowState {
     }
 
     boolean showLw(boolean doAnimation, boolean requestAnim) {
+        if (isHiddenFromUserLocked()) {
+            Slog.w(TAG, "current user violation " + mService.mCurrentUserId + " trying to display "
+                    + this + ", type " + mAttrs.type + ", belonging to " + mOwnerUid);
+            return false;
+        }
         if (mPolicyVisibility && mPolicyVisibilityAfterAnim) {
             // Already showing.
             return false;
@@ -907,7 +971,7 @@ final class WindowState implements WindowManagerPolicy.WindowState {
             mWinAnimator.applyAnimationLocked(WindowManagerPolicy.TRANSIT_ENTER, true);
         }
         if (requestAnim) {
-            mService.scheduleAnimationLocked();
+            mService.updateLayoutToAnimationLocked();
         }
         return true;
     }
@@ -950,7 +1014,7 @@ final class WindowState implements WindowManagerPolicy.WindowState {
             }
         }
         if (requestAnim) {
-            mService.scheduleAnimationLocked();
+            mService.updateLayoutToAnimationLocked();
         }
         return true;
     }
@@ -958,6 +1022,42 @@ final class WindowState implements WindowManagerPolicy.WindowState {
     @Override
     public boolean isAlive() {
         return mClient.asBinder().isBinderAlive();
+    }
+
+    boolean isClosing() {
+        return mExiting || (mService.mClosingApps.contains(mAppToken));
+    }
+
+    @Override
+    public boolean isDefaultDisplay() {
+        return mDisplayContent.isDefaultDisplay;
+    }
+
+    public void setShowToOwnerOnlyLocked(boolean showToOwnerOnly) {
+        mShowToOwnerOnly = showToOwnerOnly;
+    }
+
+    boolean isHiddenFromUserLocked() {
+        // Attached windows are evaluated based on the window that they are attached to.
+        WindowState win = this;
+        while (win.mAttachedWindow != null) {
+            win = win.mAttachedWindow;
+        }
+        if (win.mAttrs.type < WindowManager.LayoutParams.FIRST_SYSTEM_WINDOW
+                && win.mAppToken != null && win.mAppToken.showWhenLocked) {
+            // Save some cycles by not calling getDisplayInfo unless it is an application
+            // window intended for all users.
+            final DisplayInfo displayInfo = win.mDisplayContent.getDisplayInfo();
+            if (win.mFrame.left <= 0 && win.mFrame.top <= 0
+                    && win.mFrame.right >= displayInfo.appWidth
+                    && win.mFrame.bottom >= displayInfo.appHeight) {
+                // Is a fullscreen window, like the clock alarm. Show to everyone.
+                return false;
+            }
+        }
+
+        return win.mShowToOwnerOnly
+                && UserHandle.getUserId(win.mOwnerUid) != mService.mCurrentUserId;
     }
 
     private static void applyInsets(Region outRegion, Rect frame, Rect inset) {
@@ -988,9 +1088,16 @@ final class WindowState implements WindowManagerPolicy.WindowState {
         }
     }
 
+    WindowList getWindowList() {
+        return mDisplayContent.getWindowList();
+    }
+
     void dump(PrintWriter pw, String prefix, boolean dumpAll) {
-        pw.print(prefix); pw.print("mSession="); pw.print(mSession);
+        pw.print(prefix); pw.print("mDisplayId="); pw.print(mDisplayContent.getDisplayId());
+                pw.print(" mSession="); pw.print(mSession);
                 pw.print(" mClient="); pw.println(mClient.asBinder());
+        pw.print(prefix); pw.print("mOwnerUid="); pw.print(mOwnerUid);
+                pw.print(" mShowToOwnerOnly="); pw.println(mShowToOwnerOnly);
         pw.print(prefix); pw.print("mAttrs="); pw.println(mAttrs);
         pw.print(prefix); pw.print("Requested w="); pw.print(mRequestedWidth);
                 pw.print(" h="); pw.print(mRequestedHeight);
@@ -1060,11 +1167,15 @@ final class WindowState implements WindowManagerPolicy.WindowState {
             if (mTouchableInsets != 0 || mGivenInsetsPending) {
                 pw.print(prefix); pw.print("mTouchableInsets="); pw.print(mTouchableInsets);
                         pw.print(" mGivenInsetsPending="); pw.println(mGivenInsetsPending);
+                Region region = new Region();
+                getTouchableRegion(region);
+                pw.print(prefix); pw.print("touchable region="); pw.println(region);
             }
             pw.print(prefix); pw.print("mConfiguration="); pw.println(mConfiguration);
         }
         pw.print(prefix); pw.print("mHasSurface="); pw.print(mHasSurface);
-                pw.print(" mShownFrame="); mShownFrame.printShortString(pw); pw.println();
+                pw.print(" mShownFrame="); mShownFrame.printShortString(pw);
+                pw.print(" isReadyForDisplay()="); pw.println(isReadyForDisplay());
         if (dumpAll) {
             pw.print(prefix); pw.print("mFrame="); mFrame.printShortString(pw);
                     pw.print(" last="); mLastFrame.printShortString(pw);
@@ -1095,7 +1206,8 @@ final class WindowState implements WindowManagerPolicy.WindowState {
                     pw.print(" visible="); mLastVisibleInsets.printShortString(pw);
                     pw.println();
         }
-        mWinAnimator.dump(pw, prefix, dumpAll);
+        pw.print(prefix); pw.print(mWinAnimator); pw.println(":");
+        mWinAnimator.dump(pw, prefix + "  ", dumpAll);
         if (mExiting || mRemoveOnExit || mDestroying || mRemoved) {
             pw.print(prefix); pw.print("mExiting="); pw.print(mExiting);
                     pw.print(" mRemoveOnExit="); pw.print(mRemoveOnExit);
@@ -1130,11 +1242,12 @@ final class WindowState implements WindowManagerPolicy.WindowState {
     @Override
     public String toString() {
         if (mStringNameCache == null || mLastTitle != mAttrs.getTitle()
-                || mWasPaused != mToken.paused) {
+                || mWasExiting != mExiting) {
             mLastTitle = mAttrs.getTitle();
-            mWasPaused = mToken.paused;
+            mWasExiting = mExiting;
             mStringNameCache = "Window{" + Integer.toHexString(System.identityHashCode(this))
-                    + " " + mLastTitle + " paused=" + mWasPaused + "}";
+                    + " u" + UserHandle.getUserId(mSession.mUid)
+                    + " " + mLastTitle + (mExiting ? " EXITING}" : "}");
         }
         return mStringNameCache;
     }

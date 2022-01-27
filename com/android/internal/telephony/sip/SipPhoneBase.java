@@ -24,6 +24,7 @@ import android.os.Message;
 import android.os.Registrant;
 import android.os.RegistrantList;
 import android.os.SystemProperties;
+import android.telephony.CellInfo;
 import android.telephony.CellLocation;
 import android.telephony.ServiceState;
 import android.telephony.SignalStrength;
@@ -41,6 +42,7 @@ import com.android.internal.telephony.MmiCode;
 import com.android.internal.telephony.OperatorInfo;
 import com.android.internal.telephony.Phone;
 import com.android.internal.telephony.PhoneBase;
+import com.android.internal.telephony.PhoneConstants;
 import com.android.internal.telephony.PhoneNotifier;
 import com.android.internal.telephony.PhoneSubInfo;
 import com.android.internal.telephony.TelephonyProperties;
@@ -53,7 +55,7 @@ abstract class SipPhoneBase extends PhoneBase {
     private static final String LOG_TAG = "SipPhone";
 
     private RegistrantList mRingbackRegistrants = new RegistrantList();
-    private State state = State.IDLE;
+    private PhoneConstants.State state = PhoneConstants.State.IDLE;
 
     public SipPhoneBase(Context context, PhoneNotifier notifier) {
         super(notifier, context, new SipCommandInterface(context), false);
@@ -119,16 +121,24 @@ abstract class SipPhoneBase extends PhoneBase {
         return s;
     }
 
+    /**
+     * @return all available cell information or null if none.
+     */
+    @Override
+    public List<CellInfo> getAllCellInfo() {
+        return getServiceStateTracker().getAllCellInfo();
+    }
+
     public CellLocation getCellLocation() {
         return null;
     }
 
-    public State getState() {
+    public PhoneConstants.State getState() {
         return state;
     }
 
     public int getPhoneType() {
-        return Phone.PHONE_TYPE_SIP;
+        return PhoneConstants.PHONE_TYPE_SIP;
     }
 
     public SignalStrength getSignalStrength() {
@@ -147,12 +157,12 @@ abstract class SipPhoneBase extends PhoneBase {
         return new ArrayList<MmiCode>(0);
     }
 
-    public DataState getDataConnectionState() {
-        return DataState.DISCONNECTED;
+    public PhoneConstants.DataState getDataConnectionState() {
+        return PhoneConstants.DataState.DISCONNECTED;
     }
 
-    public DataState getDataConnectionState(String apnType) {
-        return DataState.DISCONNECTED;
+    public PhoneConstants.DataState getDataConnectionState(String apnType) {
+        return PhoneConstants.DataState.DISCONNECTED;
     }
 
     public DataActivityState getDataActivityState() {
@@ -445,20 +455,24 @@ abstract class SipPhoneBase extends PhoneBase {
     }
 
     void updatePhoneState() {
-        State oldState = state;
+        PhoneConstants.State oldState = state;
 
         if (getRingingCall().isRinging()) {
-            state = State.RINGING;
+            state = PhoneConstants.State.RINGING;
         } else if (getForegroundCall().isIdle()
                 && getBackgroundCall().isIdle()) {
-            state = State.IDLE;
+            state = PhoneConstants.State.IDLE;
         } else {
-            state = State.OFFHOOK;
+            state = PhoneConstants.State.OFFHOOK;
         }
 
         if (state != oldState) {
             Log.d(LOG_TAG, " ^^^ new phone state: " + state);
             notifyPhoneStateChanged();
         }
+    }
+
+    @Override
+    protected void onUpdateIccAvailability() {
     }
 }

@@ -17,11 +17,11 @@
 package android.text;
 
 
-import android.util.LocaleUtil;
 import android.view.View;
 
 /**
  * Some objects that implement TextDirectionHeuristic.
+ *
  * @hide
  */
 public class TextDirectionHeuristics {
@@ -241,7 +241,7 @@ public class TextDirectionHeuristics {
 
         @Override
         protected boolean defaultIsRtl() {
-            final int dir = LocaleUtil.getLayoutDirectionFromLocale(java.util.Locale.getDefault());
+            final int dir = TextUtils.getLayoutDirectionFromLocale(java.util.Locale.getDefault());
             return (dir == View.LAYOUT_DIRECTION_RTL);
         }
 

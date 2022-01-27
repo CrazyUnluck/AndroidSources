@@ -44,6 +44,8 @@ public class BordeauxManagerService {
     static private final String TAG = "BordeauxMangerService";
     static private IBordeauxService mService = null;
     static private ILearning_StochasticLinearRanker mRanker = null;
+    static private IAggregatorManager mAggregatorManager = null;
+    static private IPredictor mPredictor = null;
     static private ILearning_MulticlassPA mClassifier = null;
     static private boolean mStarted = false;
 
@@ -70,6 +72,33 @@ public class BordeauxManagerService {
     static public synchronized IBordeauxService getService(Context context) {
         if (mService == null) bindServices(context);
         return mService;
+    }
+
+    static public synchronized IAggregatorManager getAggregatorManager(Context context) {
+        if (mService == null) {
+            bindServices(context);
+            return null;
+        }
+        try {
+            mAggregatorManager = IAggregatorManager.Stub.asInterface(
+                    mService.getAggregatorManager());
+        } catch (RemoteException e) {
+            mAggregatorManager = null;
+        }
+        return mAggregatorManager;
+    }
+
+    static public synchronized IPredictor getPredictor(Context context, String name) {
+        if (mService == null) {
+            bindServices(context);
+            return null;
+        }
+        try {
+            mPredictor = IPredictor.Stub.asInterface(mService.getPredictor(name));
+        } catch (RemoteException e) {
+            mPredictor = null;
+        }
+        return mPredictor;
     }
 
     static public synchronized ILearning_StochasticLinearRanker
