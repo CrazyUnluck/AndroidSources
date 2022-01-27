@@ -24,12 +24,16 @@ import android.content.res.TypedArray;
 import android.graphics.drawable.Drawable;
 import android.os.Build;
 import android.os.Bundle;
+import android.support.annotation.NonNull;
 import android.support.v4.app.ActionBarDrawerToggle;
-import android.support.v4.app.NavUtils;
 import android.support.v7.appcompat.R;
+import android.support.v7.internal.app.WindowCallback;
 import android.support.v7.internal.view.SupportMenuInflater;
 import android.support.v7.view.ActionMode;
+import android.support.v7.widget.Toolbar;
+import android.util.AttributeSet;
 import android.util.Log;
+import android.view.KeyEvent;
 import android.view.Menu;
 import android.view.MenuInflater;
 import android.view.MenuItem;
@@ -39,20 +43,11 @@ import android.view.ViewGroup;
 abstract class ActionBarActivityDelegate {
 
     static final String METADATA_UI_OPTIONS = "android.support.UI_OPTIONS";
-    static final String UIOPTION_SPLIT_ACTION_BAR_WHEN_NARROW = "splitActionBarWhenNarrow";
 
     private static final String TAG = "ActionBarActivityDelegate";
 
     static ActionBarActivityDelegate createDelegate(ActionBarActivity activity) {
-        if (Build.VERSION.SDK_INT >= 20) {
-            return new ActionBarActivityDelegateApi20(activity);
-        } else if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.JELLY_BEAN_MR2) {
-            return new ActionBarActivityDelegateJBMR2(activity);
-        } else if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.JELLY_BEAN) {
-            return new ActionBarActivityDelegateJB(activity);
-        } else if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.ICE_CREAM_SANDWICH) {
-            return new ActionBarActivityDelegateICS(activity);
-        } else if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.HONEYCOMB) {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.HONEYCOMB) {
             return new ActionBarActivityDelegateHC(activity);
         } else {
             return new ActionBarActivityDelegateBase(activity);
@@ -68,32 +63,74 @@ abstract class ActionBarActivityDelegate {
     boolean mHasActionBar;
     // true if this activity's action bar overlays other activity content.
     boolean mOverlayActionBar;
+    // true if this any action modes should overlay the activity content
+    boolean mOverlayActionMode;
+    // true if this activity is floating (e.g. Dialog)
+    boolean mIsFloating;
+    // The default window callback
+    final WindowCallback mDefaultWindowCallback = new WindowCallback() {
+        @Override
+        public boolean onMenuItemSelected(int featureId, MenuItem menuItem) {
+            return mActivity.onMenuItemSelected(featureId, menuItem);
+        }
 
-    private boolean mEnableDefaultActionBarUp;
+        @Override
+        public boolean onCreatePanelMenu(int featureId, Menu menu) {
+            return mActivity.superOnCreatePanelMenu(featureId, menu);
+        }
+
+        @Override
+        public boolean onPreparePanel(int featureId, View menuView, Menu menu) {
+            return mActivity.superOnPreparePanel(featureId, menuView, menu);
+        }
+
+        @Override
+        public void onPanelClosed(int featureId, Menu menu) {
+            mActivity.onPanelClosed(featureId, menu);
+        }
+
+        @Override
+        public boolean onMenuOpened(int featureId, Menu menu) {
+            return mActivity.onMenuOpened(featureId, menu);
+        }
+
+        @Override
+        public ActionMode startActionMode(ActionMode.Callback callback) {
+            return startSupportActionModeFromWindow(callback);
+        }
+
+        @Override
+        public View onCreatePanelView(int featureId) {
+            return null;
+        }
+    };
+    // The fake window callback we're currently using
+    private WindowCallback mWindowCallback;
+    private boolean mIsDestroyed;
 
     ActionBarActivityDelegate(ActionBarActivity activity) {
         mActivity = activity;
+        mWindowCallback = mDefaultWindowCallback;
     }
 
     abstract ActionBar createSupportActionBar();
 
     final ActionBar getSupportActionBar() {
-        // The Action Bar should be lazily created as mHasActionBar or mOverlayActionBar
+        // The Action Bar should be lazily created as hasActionBar
         // could change after onCreate
-        if (mHasActionBar || mOverlayActionBar) {
+        if (mHasActionBar) {
             if (mActionBar == null) {
                 mActionBar = createSupportActionBar();
-
-                if (mEnableDefaultActionBarUp) {
-                    mActionBar.setDisplayHomeAsUpEnabled(true);
-                }
             }
-        } else {
-            // If we're not set to have a Action Bar, null it just in case it's been set
-            mActionBar = null;
         }
         return mActionBar;
     }
+
+    protected final void setSupportActionBar(ActionBar actionBar) {
+        mActionBar = actionBar;
+    }
+
+    abstract void setSupportActionBar(Toolbar toolbar);
 
     MenuInflater getMenuInflater() {
         if (mMenuInflater == null) {
@@ -103,25 +140,19 @@ abstract class ActionBarActivityDelegate {
     }
 
     void onCreate(Bundle savedInstanceState) {
-        TypedArray a = mActivity.obtainStyledAttributes(R.styleable.ActionBarWindow);
+        TypedArray a = mActivity.obtainStyledAttributes(R.styleable.Theme);
 
-        if (!a.hasValue(R.styleable.ActionBarWindow_windowActionBar)) {
+        if (!a.hasValue(R.styleable.Theme_windowActionBar)) {
             a.recycle();
             throw new IllegalStateException(
                     "You need to use a Theme.AppCompat theme (or descendant) with this activity.");
         }
 
-        mHasActionBar = a.getBoolean(R.styleable.ActionBarWindow_windowActionBar, false);
-        mOverlayActionBar = a.getBoolean(R.styleable.ActionBarWindow_windowActionBarOverlay, false);
+        mHasActionBar = a.getBoolean(R.styleable.Theme_windowActionBar, false);
+        mOverlayActionBar = a.getBoolean(R.styleable.Theme_windowActionBarOverlay, false);
+        mOverlayActionMode = a.getBoolean(R.styleable.Theme_windowActionModeOverlay, false);
+        mIsFloating = a.getBoolean(R.styleable.Theme_android_windowIsFloating, false);
         a.recycle();
-
-        if (NavUtils.getParentActivityName(mActivity) != null) {
-            if (mActionBar == null) {
-                mEnableDefaultActionBarUp = true;
-            } else {
-                mActionBar.setDisplayHomeAsUpEnabled(true);
-            }
-        }
     }
 
     abstract void onConfigurationChanged(Configuration newConfig);
@@ -149,6 +180,10 @@ abstract class ActionBarActivityDelegate {
 
     abstract boolean onPreparePanel(int featureId, View view, Menu menu);
 
+    abstract void onPanelClosed(int featureId, Menu menu);
+
+    abstract boolean onMenuOpened(int featureId, Menu menu);
+
     boolean onPrepareOptionsPanel(View view, Menu menu) {
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.JELLY_BEAN) {
             // Call straight through to onPrepareOptionsMenu, bypassing super.onPreparePanel().
@@ -160,8 +195,6 @@ abstract class ActionBarActivityDelegate {
     }
 
     abstract boolean onCreatePanelMenu(int featureId, Menu menu);
-
-    abstract boolean onMenuItemSelected(int featureId, MenuItem item);
 
     abstract boolean onBackPressed();
 
@@ -175,7 +208,17 @@ abstract class ActionBarActivityDelegate {
 
     abstract void setSupportProgress(int progress);
 
+    boolean onKeyDown(int keyCode, KeyEvent event) {
+        return false;
+    }
+
+    abstract boolean onKeyShortcut(int keyCode, KeyEvent event);
+
     final ActionBarDrawerToggle.Delegate getDrawerToggleDelegate() {
+        return new ActionBarDrawableToggleImpl();
+    }
+
+    final android.support.v7.app.ActionBarDrawerToggle.Delegate getV7DrawerToggleDelegate() {
         return new ActionBarDrawableToggleImpl();
     }
 
@@ -183,7 +226,7 @@ abstract class ActionBarActivityDelegate {
 
     abstract void onContentChanged();
 
-    protected final String getUiOptionsFromMetadata() {
+    final String getUiOptionsFromMetadata() {
         try {
             PackageManager pm = mActivity.getPackageManager();
             ActivityInfo info = pm.getActivityInfo(mActivity.getComponentName(),
@@ -202,24 +245,38 @@ abstract class ActionBarActivityDelegate {
     }
 
     protected final Context getActionBarThemedContext() {
-        Context context = mActivity;
+        Context context = null;
 
-        // If we have an action bar, initialize the menu with a context themed from it.
+        // If we have an action bar, let it return a themed context
         ActionBar ab = getSupportActionBar();
         if (ab != null) {
             context = ab.getThemedContext();
         }
+
+        if (context == null) {
+            context = mActivity;
+        }
         return context;
     }
 
-    private class ActionBarDrawableToggleImpl implements ActionBarDrawerToggle.Delegate {
+    abstract View createView(String name, @NonNull AttributeSet attrs);
+
+
+    private class ActionBarDrawableToggleImpl implements
+            android.support.v7.app.ActionBarDrawerToggle.Delegate,
+            ActionBarDrawerToggle.Delegate {
         @Override
         public Drawable getThemeUpIndicator() {
-            final TypedArray a = mActivity
+            final TypedArray a = ActionBarActivityDelegate.this.getActionBarThemedContext()
                     .obtainStyledAttributes(new int[]{ getHomeAsUpIndicatorAttrId() });
             final Drawable result = a.getDrawable(0);
             a.recycle();
             return result;
+        }
+
+        @Override
+        public Context getActionBarThemedContext() {
+            return ActionBarActivityDelegate.this.getActionBarThemedContext();
         }
 
         @Override
@@ -238,5 +295,26 @@ abstract class ActionBarActivityDelegate {
                 ab.setHomeActionContentDescription(contentDescRes);
             }
         }
+    }
+
+    abstract ActionMode startSupportActionModeFromWindow(ActionMode.Callback callback);
+
+    final void setWindowCallback(WindowCallback callback) {
+        if (callback == null) {
+            throw new IllegalArgumentException("callback can not be null");
+        }
+        mWindowCallback = callback;
+    }
+
+    final WindowCallback getWindowCallback() {
+        return mWindowCallback;
+    }
+
+    final void destroy() {
+        mIsDestroyed = true;
+    }
+
+    final boolean isDestroyed() {
+        return mIsDestroyed;
     }
 }

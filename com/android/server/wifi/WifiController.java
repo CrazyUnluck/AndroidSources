@@ -30,7 +30,6 @@ import android.net.wifi.WifiManager;
 import static android.net.wifi.WifiManager.WIFI_MODE_FULL;
 import static android.net.wifi.WifiManager.WIFI_MODE_FULL_HIGH_PERF;
 import static android.net.wifi.WifiManager.WIFI_MODE_SCAN_ONLY;
-import android.net.wifi.WifiStateMachine;
 import android.os.Handler;
 import android.os.Looper;
 import android.os.Message;
@@ -42,7 +41,7 @@ import android.util.Slog;
 import com.android.internal.util.Protocol;
 import com.android.internal.util.State;
 import com.android.internal.util.StateMachine;
-import com.android.server.wifi.WifiService.LockList;
+import com.android.server.wifi.WifiServiceImpl.LockList;
 
 import java.io.FileDescriptor;
 import java.io.PrintWriter;
@@ -129,7 +128,7 @@ class WifiController extends StateMachine {
     private NoLockHeldState mNoLockHeldState = new NoLockHeldState();
     private EcmState mEcmState = new EcmState();
 
-    WifiController(Context context, WifiService service, Looper looper) {
+    WifiController(Context context, WifiServiceImpl service, Looper looper) {
         super(TAG, looper);
         mContext = context;
         mWifiStateMachine = service.mWifiStateMachine;
@@ -161,7 +160,7 @@ class WifiController extends StateMachine {
                 ", isWifiEnabled = " + isWifiEnabled +
                 ", isScanningAvailable = " + isScanningAlwaysAvailable);
 
-        if (isWifiEnabled && isScanningAlwaysAvailable) {
+        if (isScanningAlwaysAvailable) {
             setInitialState(mStaDisabledWithScanState);
         } else {
             setInitialState(mApStaDisabledState);
@@ -419,6 +418,8 @@ class WifiController extends StateMachine {
                         } else {
                             checkLocksAndTransitionWhenDeviceIdle();
                         }
+                    } else if (mSettingsStore.isScanAlwaysAvailable()) {
+                        transitionTo(mStaDisabledWithScanState);
                     }
                     break;
                 case CMD_SCAN_ALWAYS_MODE_CHANGED:

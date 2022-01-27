@@ -44,6 +44,8 @@ import android.provider.Settings;
 import android.sax.Element;
 import android.sax.ElementListener;
 import android.sax.RootElement;
+import android.system.ErrnoException;
+import android.system.Os;
 import android.text.TextUtils;
 import android.util.Log;
 import android.util.Xml;
@@ -55,12 +57,10 @@ import java.io.FileInputStream;
 import java.io.IOException;
 import java.io.InputStreamReader;
 import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.HashSet;
 import java.util.Iterator;
 import java.util.Locale;
-
-import libcore.io.ErrnoException;
-import libcore.io.Libcore;
 
 /**
  * Internal service helper that no-one should use directly.
@@ -1129,7 +1129,7 @@ public class MediaScanner
                         if (path != null && path.startsWith("/")) {
                             boolean exists = false;
                             try {
-                                exists = Libcore.os.access(path, libcore.io.OsConstants.F_OK);
+                                exists = Os.access(path, android.system.OsConstants.F_OK);
                             } catch (ErrnoException e1) {
                             }
                             if (!exists && !MtpConstants.isAbstractObject(format)) {
@@ -1185,6 +1185,7 @@ public class MediaScanner
         HashSet<String> existingFiles = new HashSet<String>();
         String directory = "/sdcard/DCIM/.thumbnails";
         String [] files = (new File(directory)).list();
+        Cursor c = null;
         if (files == null)
             files = new String[0];
 
@@ -1194,7 +1195,7 @@ public class MediaScanner
         }
 
         try {
-            Cursor c = mMediaProvider.query(
+            c = mMediaProvider.query(
                     mPackageName,
                     mThumbsUri,
                     new String [] { "_data" },
@@ -1219,11 +1220,12 @@ public class MediaScanner
             }
 
             Log.v(TAG, "/pruneDeadThumbnailFiles... " + c);
+        } catch (RemoteException e) {
+            // We will soon be killed...
+        } finally {
             if (c != null) {
                 c.close();
             }
-        } catch (RemoteException e) {
-            // We will soon be killed...
         }
     }
 
@@ -1278,6 +1280,14 @@ public class MediaScanner
         // allow GC to clean up
         mPlayLists = null;
         mMediaProvider = null;
+    }
+
+    private void releaseResources() {
+        // release the DrmManagerClient resources
+        if (mDrmManagerClient != null) {
+            mDrmManagerClient.release();
+            mDrmManagerClient = null;
+        }
     }
 
     private void initialize(String volumeName) {
@@ -1340,6 +1350,8 @@ public class MediaScanner
             Log.e(TAG, "UnsupportedOperationException in MediaScanner.scan()", e);
         } catch (RemoteException e) {
             Log.e(TAG, "RemoteException in MediaScanner.scan()", e);
+        } finally {
+            releaseResources();
         }
     }
 
@@ -1363,6 +1375,8 @@ public class MediaScanner
         } catch (RemoteException e) {
             Log.e(TAG, "RemoteException in MediaScanner.scanFile()", e);
             return null;
+        } finally {
+            releaseResources();
         }
     }
 
@@ -1400,27 +1414,60 @@ public class MediaScanner
         return false;
     }
 
-    public static boolean isNoMediaPath(String path) {
-        if (path == null) return false;
+    private static HashMap<String,String> mNoMediaPaths = new HashMap<String,String>();
+    private static HashMap<String,String> mMediaPaths = new HashMap<String,String>();
 
-        // return true if file or any parent directory has name starting with a dot
-        if (path.indexOf("/.") >= 0) return true;
-
-        // now check to see if any parent directories have a ".nomedia" file
-        // start from 1 so we don't bother checking in the root directory
-        int offset = 1;
-        while (offset >= 0) {
-            int slashIndex = path.indexOf('/', offset);
-            if (slashIndex > offset) {
-                slashIndex++; // move past slash
-                File file = new File(path.substring(0, slashIndex) + ".nomedia");
-                if (file.exists()) {
-                    // we have a .nomedia in one of the parent directories
-                    return true;
-                }
+    /* MediaProvider calls this when a .nomedia file is added or removed */
+    public static void clearMediaPathCache(boolean clearMediaPaths, boolean clearNoMediaPaths) {
+        synchronized (MediaScanner.class) {
+            if (clearMediaPaths) {
+                mMediaPaths.clear();
             }
-            offset = slashIndex;
+            if (clearNoMediaPaths) {
+                mNoMediaPaths.clear();
+            }
         }
+    }
+
+    public static boolean isNoMediaPath(String path) {
+        if (path == null) {
+            return false;
+        }
+        // return true if file or any parent directory has name starting with a dot
+        if (path.indexOf("/.") >= 0) {
+            return true;
+        }
+
+        int firstSlash = path.lastIndexOf('/');
+        if (firstSlash <= 0) {
+            return false;
+        }
+        String parent = path.substring(0,  firstSlash);
+
+        synchronized (MediaScanner.class) {
+            if (mNoMediaPaths.containsKey(parent)) {
+                return true;
+            } else if (!mMediaPaths.containsKey(parent)) {
+                // check to see if any parent directories have a ".nomedia" file
+                // start from 1 so we don't bother checking in the root directory
+                int offset = 1;
+                while (offset >= 0) {
+                    int slashIndex = path.indexOf('/', offset);
+                    if (slashIndex > offset) {
+                        slashIndex++; // move past slash
+                        File file = new File(path.substring(0, slashIndex) + ".nomedia");
+                        if (file.exists()) {
+                            // we have a .nomedia in one of the parent directories
+                            mNoMediaPaths.put(parent, "");
+                            return true;
+                        }
+                    }
+                    offset = slashIndex;
+                }
+                mMediaPaths.put(parent, "");
+            }
+        }
+
         return isNoMediaFile(path);
     }
 
@@ -1477,6 +1524,7 @@ public class MediaScanner
             if (fileList != null) {
                 fileList.close();
             }
+            releaseResources();
         }
     }
 

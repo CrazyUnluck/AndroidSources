@@ -15,33 +15,38 @@
  */
 package java.nio;
 
+import android.system.ErrnoException;
+import android.system.StructPollfd;
 import java.io.FileDescriptor;
+import java.io.InterruptedIOException;
 import java.io.IOException;
 import java.nio.channels.ClosedSelectorException;
 import java.nio.channels.IllegalSelectorException;
-import java.nio.channels.SelectableChannel;
 import java.nio.channels.SelectionKey;
-import static java.nio.channels.SelectionKey.*;
 import java.nio.channels.Selector;
-import java.nio.channels.SocketChannel;
 import java.nio.channels.spi.AbstractSelectableChannel;
 import java.nio.channels.spi.AbstractSelectionKey;
 import java.nio.channels.spi.AbstractSelector;
 import java.nio.channels.spi.SelectorProvider;
-import java.util.Arrays;
 import java.util.Collection;
 import java.util.Collections;
 import java.util.HashSet;
 import java.util.Iterator;
 import java.util.Set;
 import java.util.UnsafeArrayList;
-import libcore.io.ErrnoException;
 import libcore.io.IoBridge;
 import libcore.io.IoUtils;
 import libcore.io.Libcore;
-import libcore.io.StructPollfd;
-import libcore.util.EmptyArray;
-import static libcore.io.OsConstants.*;
+
+import static android.system.OsConstants.EINTR;
+import static android.system.OsConstants.POLLERR;
+import static android.system.OsConstants.POLLHUP;
+import static android.system.OsConstants.POLLIN;
+import static android.system.OsConstants.POLLOUT;
+import static java.nio.channels.SelectionKey.OP_ACCEPT;
+import static java.nio.channels.SelectionKey.OP_CONNECT;
+import static java.nio.channels.SelectionKey.OP_READ;
+import static java.nio.channels.SelectionKey.OP_WRITE;
 
 /*
  * Default implementation of java.nio.channels.Selector
@@ -255,7 +260,7 @@ final class SelectorImpl extends AbstractSelector {
 
             int ops = key.interestOpsNoCheck();
             int selectedOps = 0;
-            if ((pollFd.revents & POLLHUP) != 0) {
+            if ((pollFd.revents & POLLHUP) != 0 || (pollFd.revents & POLLERR) != 0) {
                 // If there was an error condition, we definitely want to wake listeners,
                 // regardless of what they're waiting for. Failure is always interesting.
                 selectedOps |= ops;
@@ -321,6 +326,7 @@ final class SelectorImpl extends AbstractSelector {
         try {
             Libcore.os.write(wakeupOut, new byte[] { 1 }, 0, 1);
         } catch (ErrnoException ignored) {
+        } catch (InterruptedIOException ignored) {
         }
         return this;
     }

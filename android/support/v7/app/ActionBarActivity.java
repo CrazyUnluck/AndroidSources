@@ -17,11 +17,13 @@
 package android.support.v7.app;
 
 import android.app.Activity;
+import android.content.Context;
 import android.content.Intent;
 import android.content.res.Configuration;
-import android.os.Build;
 import android.os.Bundle;
 import android.support.annotation.LayoutRes;
+import android.support.annotation.NonNull;
+import android.support.annotation.Nullable;
 import android.support.v4.app.ActionBarDrawerToggle;
 import android.support.v4.app.ActivityCompat;
 import android.support.v4.app.FragmentActivity;
@@ -29,9 +31,11 @@ import android.support.v4.app.NavUtils;
 import android.support.v4.app.TaskStackBuilder;
 import android.support.v4.view.WindowCompat;
 import android.support.v7.view.ActionMode;
+import android.support.v7.widget.Toolbar;
+import android.util.AttributeSet;
+import android.view.KeyEvent;
 import android.view.Menu;
 import android.view.MenuInflater;
-import android.view.MenuItem;
 import android.view.View;
 import android.view.ViewGroup;
 import android.view.Window;
@@ -53,8 +57,10 @@ import android.view.Window;
  * </div>
  */
 public class ActionBarActivity extends FragmentActivity implements ActionBar.Callback,
-        TaskStackBuilder.SupportParentable, ActionBarDrawerToggle.DelegateProvider {
-    ActionBarActivityDelegate mImpl;
+        TaskStackBuilder.SupportParentable, ActionBarDrawerToggle.DelegateProvider,
+        android.support.v7.app.ActionBarDrawerToggle.TmpDelegateProvider {
+
+    private ActionBarActivityDelegate mDelegate;
 
     /**
      * Support library version of {@link Activity#getActionBar}.
@@ -64,63 +70,81 @@ public class ActionBarActivity extends FragmentActivity implements ActionBar.Cal
      * @return The Activity's ActionBar, or null if it does not have one.
      */
     public ActionBar getSupportActionBar() {
-        return mImpl.getSupportActionBar();
+        return getDelegate().getSupportActionBar();
+    }
+
+    /**
+     * Set a {@link android.widget.Toolbar Toolbar} to act as the {@link ActionBar} for this
+     * Activity window.
+     *
+     * <p>When set to a non-null value the {@link #getActionBar()} method will return
+     * an {@link ActionBar} object that can be used to control the given toolbar as if it were
+     * a traditional window decor action bar. The toolbar's menu will be populated with the
+     * Activity's options menu and the navigation button will be wired through the standard
+     * {@link android.R.id#home home} menu select action.</p>
+     *
+     * <p>In order to use a Toolbar within the Activity's window content the application
+     * must not request the window feature {@link Window#FEATURE_ACTION_BAR FEATURE_ACTION_BAR}.</p>
+     *
+     * @param toolbar Toolbar to set as the Activity's action bar
+     */
+    public void setSupportActionBar(@Nullable Toolbar toolbar) {
+        getDelegate().setSupportActionBar(toolbar);
     }
 
     @Override
     public MenuInflater getMenuInflater() {
-        return mImpl.getMenuInflater();
+        return getDelegate().getMenuInflater();
     }
 
     @Override
     public void setContentView(@LayoutRes int layoutResID) {
-        mImpl.setContentView(layoutResID);
+        getDelegate().setContentView(layoutResID);
     }
 
     @Override
     public void setContentView(View view) {
-        mImpl.setContentView(view);
+        getDelegate().setContentView(view);
     }
 
     @Override
     public void setContentView(View view, ViewGroup.LayoutParams params) {
-        mImpl.setContentView(view, params);
+        getDelegate().setContentView(view, params);
     }
 
     @Override
     public void addContentView(View view, ViewGroup.LayoutParams params) {
-        mImpl.addContentView(view, params);
+        getDelegate().addContentView(view, params);
     }
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
-        mImpl = ActionBarActivityDelegate.createDelegate(this);
         super.onCreate(savedInstanceState);
-        mImpl.onCreate(savedInstanceState);
+        getDelegate().onCreate(savedInstanceState);
     }
 
     @Override
     public void onConfigurationChanged(Configuration newConfig) {
         super.onConfigurationChanged(newConfig);
-        mImpl.onConfigurationChanged(newConfig);
+        getDelegate().onConfigurationChanged(newConfig);
     }
 
     @Override
     protected void onStop() {
         super.onStop();
-        mImpl.onStop();
+        getDelegate().onStop();
     }
 
     @Override
     protected void onPostResume() {
         super.onPostResume();
-        mImpl.onPostResume();
+        getDelegate().onPostResume();
     }
 
     @Override
     public View onCreatePanelView(int featureId) {
         if (featureId == Window.FEATURE_OPTIONS_PANEL) {
-            return mImpl.onCreatePanelView(featureId);
+            return getDelegate().onCreatePanelView(featureId);
         } else {
             return super.onCreatePanelView(featureId);
         }
@@ -128,7 +152,7 @@ public class ActionBarActivity extends FragmentActivity implements ActionBar.Cal
 
     @Override
     public final boolean onMenuItemSelected(int featureId, android.view.MenuItem item) {
-        if (mImpl.onMenuItemSelected(featureId, item)) {
+        if (super.onMenuItemSelected(featureId, item)) {
             return true;
         }
 
@@ -141,9 +165,15 @@ public class ActionBarActivity extends FragmentActivity implements ActionBar.Cal
     }
 
     @Override
+    protected void onDestroy() {
+        super.onDestroy();
+        getDelegate().destroy();
+    }
+
+    @Override
     protected void onTitleChanged(CharSequence title, int color) {
         super.onTitleChanged(title, color);
-        mImpl.onTitleChanged(title);
+        getDelegate().onTitleChanged(title);
     }
 
     /**
@@ -161,16 +191,19 @@ public class ActionBarActivity extends FragmentActivity implements ActionBar.Cal
      * @see android.view.Window#requestFeature
      */
     public boolean supportRequestWindowFeature(int featureId) {
-        return mImpl.supportRequestWindowFeature(featureId);
+        return getDelegate().supportRequestWindowFeature(featureId);
     }
 
     @Override
     public void supportInvalidateOptionsMenu() {
-        // Only call up to super on ICS+
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.ICE_CREAM_SANDWICH) {
-            super.supportInvalidateOptionsMenu();
-        }
-        mImpl.supportInvalidateOptionsMenu();
+        getDelegate().supportInvalidateOptionsMenu();
+    }
+
+    /**
+     * @hide
+     */
+    public void invalidateOptionsMenu() {
+        getDelegate().supportInvalidateOptionsMenu();
     }
 
     /**
@@ -192,17 +225,27 @@ public class ActionBarActivity extends FragmentActivity implements ActionBar.Cal
     }
 
     public ActionMode startSupportActionMode(ActionMode.Callback callback) {
-        return mImpl.startSupportActionMode(callback);
+        return getDelegate().startSupportActionMode(callback);
     }
 
     @Override
     public boolean onCreatePanelMenu(int featureId, Menu menu) {
-        return mImpl.onCreatePanelMenu(featureId, menu);
+        return getDelegate().onCreatePanelMenu(featureId, menu);
     }
 
     @Override
     public boolean onPreparePanel(int featureId, View view, Menu menu) {
-        return mImpl.onPreparePanel(featureId, view, menu);
+        return getDelegate().onPreparePanel(featureId, view, menu);
+    }
+
+    @Override
+    public void onPanelClosed(int featureId, Menu menu) {
+        getDelegate().onPanelClosed(featureId, menu);
+    }
+
+    @Override
+    public boolean onMenuOpened(int featureId, Menu menu) {
+        return getDelegate().onMenuOpened(featureId, menu);
     }
 
     /**
@@ -210,7 +253,7 @@ public class ActionBarActivity extends FragmentActivity implements ActionBar.Cal
      */
     @Override
     protected boolean onPrepareOptionsPanel(View view, Menu menu) {
-        return mImpl.onPrepareOptionsPanel(view, menu);
+        return getDelegate().onPrepareOptionsPanel(view, menu);
     }
 
     void superSetContentView(int resId) {
@@ -241,13 +284,17 @@ public class ActionBarActivity extends FragmentActivity implements ActionBar.Cal
         return super.onPrepareOptionsPanel(view, menu);
     }
 
-    boolean superOnMenuItemSelected(int featureId, MenuItem menuItem) {
-        return super.onMenuItemSelected(featureId, menuItem);
+    void superOnPanelClosed(int featureId, Menu menu) {
+        super.onPanelClosed(featureId, menu);
+    }
+
+    boolean superOnMenuOpened(int featureId, Menu menu) {
+        return super.onMenuOpened(featureId, menu);
     }
 
     @Override
     public void onBackPressed() {
-        if (!mImpl.onBackPressed()) {
+        if (!getDelegate().onBackPressed()) {
             super.onBackPressed();
         }
     }
@@ -263,7 +310,7 @@ public class ActionBarActivity extends FragmentActivity implements ActionBar.Cal
      * @param visible Whether to show the progress bars in the title.
      */
     public void setSupportProgressBarVisibility(boolean visible) {
-        mImpl.setSupportProgressBarVisibility(visible);
+        getDelegate().setSupportProgressBarVisibility(visible);
     }
 
     /**
@@ -277,7 +324,7 @@ public class ActionBarActivity extends FragmentActivity implements ActionBar.Cal
      * @param visible Whether to show the progress bars in the title.
      */
     public void setSupportProgressBarIndeterminateVisibility(boolean visible) {
-        mImpl.setSupportProgressBarIndeterminateVisibility(visible);
+        getDelegate().setSupportProgressBarIndeterminateVisibility(visible);
     }
 
     /**
@@ -292,7 +339,7 @@ public class ActionBarActivity extends FragmentActivity implements ActionBar.Cal
      * @param indeterminate Whether the horizontal progress bar should be indeterminate.
      */
     public void setSupportProgressBarIndeterminate(boolean indeterminate) {
-        mImpl.setSupportProgressBarIndeterminate(indeterminate);
+        getDelegate().setSupportProgressBarIndeterminate(indeterminate);
     }
 
     /**
@@ -308,7 +355,7 @@ public class ActionBarActivity extends FragmentActivity implements ActionBar.Cal
      *            bar will be completely filled and will fade out.
      */
     public void setSupportProgress(int progress) {
-        mImpl.setSupportProgress(progress);
+        getDelegate().setSupportProgress(progress);
     }
 
     /**
@@ -454,14 +501,37 @@ public class ActionBarActivity extends FragmentActivity implements ActionBar.Cal
 
     @Override
     public final ActionBarDrawerToggle.Delegate getDrawerToggleDelegate() {
-        return mImpl.getDrawerToggleDelegate();
+        return getDelegate().getDrawerToggleDelegate();
+    }
+
+    @Nullable
+    @Override
+    /**
+     * Temporary method until ActionBarDrawerToggle transition from v4 to v7 is complete.
+     */
+    public android.support.v7.app.ActionBarDrawerToggle.Delegate getV7DrawerToggleDelegate() {
+        return getDelegate().getV7DrawerToggleDelegate();
+    }
+
+    @Override
+    public boolean onKeyShortcut(int keyCode, KeyEvent event) {
+        return getDelegate().onKeyShortcut(keyCode, event);
+    }
+
+    @Override
+    public boolean onKeyDown(int keyCode, KeyEvent event) {
+        // First let the Activity try and handle it (for back, etc)
+        if (super.onKeyDown(keyCode, event)) {
+            return true;
+        }
+        return getDelegate().onKeyDown(keyCode, event);
     }
 
     /**
      * Use {@link #onSupportContentChanged()} instead.
      */
     public final void onContentChanged() {
-        mImpl.onContentChanged();
+        getDelegate().onContentChanged();
     }
 
     /**
@@ -469,5 +539,23 @@ public class ActionBarActivity extends FragmentActivity implements ActionBar.Cal
      * @see android.app.Activity#onContentChanged()
      */
     public void onSupportContentChanged() {
+    }
+
+    @Override
+    public View onCreateView(String name, @NonNull Context context, @NonNull AttributeSet attrs) {
+        // Allow super (FragmentActivity) to try and create a view first
+        final View result = super.onCreateView(name, context, attrs);
+        if (result != null) {
+            return result;
+        }
+        // If we reach here super didn't create a View, so let our delegate attempt it
+        return getDelegate().createView(name, attrs);
+    }
+
+    private ActionBarActivityDelegate getDelegate() {
+        if (mDelegate == null) {
+            mDelegate = ActionBarActivityDelegate.createDelegate(this);
+        }
+        return mDelegate;
     }
 }

@@ -50,8 +50,19 @@ public class SystemServiceManager {
      * @return The service instance.
      */
     @SuppressWarnings("unchecked")
-    public SystemService startService(String className) throws ClassNotFoundException {
-        return startService((Class<SystemService>) Class.forName(className));
+    public SystemService startService(String className) {
+        final Class<SystemService> serviceClass;
+        try {
+            serviceClass = (Class<SystemService>)Class.forName(className);
+        } catch (ClassNotFoundException ex) {
+            Slog.i(TAG, "Starting " + className);
+            throw new RuntimeException("Failed to create service " + className
+                    + ": service class not found, usually indicates that the caller should "
+                    + "have called PackageManager.hasSystemFeature() to check whether the "
+                    + "feature is available on this device before trying to start the "
+                    + "services that implement it", ex);
+        }
+        return startService(serviceClass);
     }
 
     /**
@@ -127,6 +138,58 @@ public class SystemServiceManager {
                         + service.getClass().getName()
                         + ": onBootPhase threw an exception during phase "
                         + mCurrentPhase, ex);
+            }
+        }
+    }
+
+    public void startUser(final int userHandle) {
+        final int serviceLen = mServices.size();
+        for (int i = 0; i < serviceLen; i++) {
+            final SystemService service = mServices.get(i);
+            try {
+                service.onStartUser(userHandle);
+            } catch (Exception ex) {
+                Slog.wtf(TAG, "Failure reporting start of user " + userHandle
+                        + " to service " + service.getClass().getName(), ex);
+            }
+        }
+    }
+
+    public void switchUser(final int userHandle) {
+        final int serviceLen = mServices.size();
+        for (int i = 0; i < serviceLen; i++) {
+            final SystemService service = mServices.get(i);
+            try {
+                service.onSwitchUser(userHandle);
+            } catch (Exception ex) {
+                Slog.wtf(TAG, "Failure reporting switch of user " + userHandle
+                        + " to service " + service.getClass().getName(), ex);
+            }
+        }
+    }
+
+    public void stopUser(final int userHandle) {
+        final int serviceLen = mServices.size();
+        for (int i = 0; i < serviceLen; i++) {
+            final SystemService service = mServices.get(i);
+            try {
+                service.onStopUser(userHandle);
+            } catch (Exception ex) {
+                Slog.wtf(TAG, "Failure reporting stop of user " + userHandle
+                        + " to service " + service.getClass().getName(), ex);
+            }
+        }
+    }
+
+    public void cleanupUser(final int userHandle) {
+        final int serviceLen = mServices.size();
+        for (int i = 0; i < serviceLen; i++) {
+            final SystemService service = mServices.get(i);
+            try {
+                service.onCleanupUser(userHandle);
+            } catch (Exception ex) {
+                Slog.wtf(TAG, "Failure reporting cleanup of user " + userHandle
+                        + " to service " + service.getClass().getName(), ex);
             }
         }
     }

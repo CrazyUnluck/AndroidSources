@@ -17,6 +17,8 @@ package android.support.test.internal.runner;
 
 import android.app.Instrumentation;
 import android.os.Bundle;
+import android.support.test.filters.RequiresDevice;
+import android.support.test.filters.SdkSuppress;
 import android.support.test.internal.runner.ClassPathScanner.ChainedClassNameFilter;
 import android.support.test.internal.runner.ClassPathScanner.ExcludePackageNameFilter;
 import android.support.test.internal.runner.ClassPathScanner.ExternalClassNameFilter;
@@ -27,12 +29,13 @@ import android.test.suitebuilder.annotation.SmallTest;
 import android.test.suitebuilder.annotation.Suppress;
 import android.util.Log;
 
-
 import org.junit.runner.Computer;
 import org.junit.runner.Description;
 import org.junit.runner.Request;
 import org.junit.runner.Runner;
 import org.junit.runner.manipulation.Filter;
+import org.junit.runner.manipulation.NoTestsRemainException;
+import org.junit.runner.notification.RunNotifier;
 import org.junit.runners.model.InitializationError;
 
 import java.io.IOException;
@@ -41,7 +44,9 @@ import java.lang.annotation.Annotation;
 import java.util.Arrays;
 import java.util.Collection;
 import java.util.Collections;
+import java.util.HashMap;
 import java.util.HashSet;
+import java.util.Map;
 import java.util.Set;
 import java.util.regex.Pattern;
 
@@ -57,24 +62,52 @@ public class TestRequestBuilder {
     public static final String MEDIUM_SIZE = "medium";
     public static final String SMALL_SIZE = "small";
 
+    static final String EMULATOR_HARDWARE = "goldfish";
+
     private String[] mApkPaths;
     private TestLoader mTestLoader;
-    private Filter mFilter = new AnnotationExclusionFilter(Suppress.class);
-    private PrintStream mWriter;
+    private ClassAndMethodFilter mClassMethodFilter = new ClassAndMethodFilter();
+    private Filter mFilter = new AnnotationExclusionFilter(Suppress.class)
+            .intersect(new SdkSuppressFilter())
+            .intersect(new RequiresDeviceFilter())
+            .intersect(mClassMethodFilter);
     private boolean mSkipExecution = false;
     private String mTestPackageName = null;
+    private final DeviceBuild mDeviceBuild;
 
     /**
-     * Filter that only runs tests whose method or class has been annotated with given filter.
+     * Accessor interface for retrieving device build properties.
+     * <p/>
+     * Used so unit tests can mock calls
      */
-    private static class AnnotationInclusionFilter extends Filter {
+    static interface DeviceBuild {
+        /**
+         * Returns the SDK API level for current device.
+         */
+        int getSdkVersionInt();
 
-        private final Class<? extends Annotation> mAnnotationClass;
+        /**
+         * Returns the hardware type of the current device.
+         */
+        String getHardware();
+    }
 
-        AnnotationInclusionFilter(Class<? extends Annotation> annotation) {
-            mAnnotationClass = annotation;
+    private static class DeviceBuildImpl implements DeviceBuild {
+        @Override
+        public int getSdkVersionInt() {
+            return android.os.Build.VERSION.SDK_INT;
         }
 
+        @Override
+        public String getHardware() {
+            return android.os.Build.HARDWARE;
+        }
+    }
+
+    /**
+     * Helper parent class for {@link Filter} that allows suites to run if any child matches.
+     */
+    private abstract static class ParentFilter extends Filter {
         /**
          * {@inheritDoc}
          */
@@ -99,6 +132,27 @@ public class TestRequestBuilder {
          * @param description the {@link Description} describing the test
          * @return <code>true</code> if matched
          */
+        protected abstract boolean evaluateTest(Description description);
+    }
+
+    /**
+     * Filter that only runs tests whose method or class has been annotated with given filter.
+     */
+    private static class AnnotationInclusionFilter extends ParentFilter {
+
+        private final Class<? extends Annotation> mAnnotationClass;
+
+        AnnotationInclusionFilter(Class<? extends Annotation> annotation) {
+            mAnnotationClass = annotation;
+        }
+
+        /**
+         * Determine if given test description matches filter.
+         *
+         * @param description the {@link Description} describing the test
+         * @return <code>true</code> if matched
+         */
+        @Override
         protected boolean evaluateTest(Description description) {
             return description.getAnnotation(mAnnotationClass) != null ||
                     description.getTestClass().isAnnotationPresent(mAnnotationClass);
@@ -156,7 +210,7 @@ public class TestRequestBuilder {
     /**
      * Filter out tests whose method or class has been annotated with given filter.
      */
-    private static class AnnotationExclusionFilter extends Filter {
+    private static class AnnotationExclusionFilter extends ParentFilter {
 
         private final Class<? extends Annotation> mAnnotationClass;
 
@@ -164,20 +218,99 @@ public class TestRequestBuilder {
             mAnnotationClass = annotation;
         }
 
-        /**
-         * {@inheritDoc}
-         */
         @Override
-        public boolean shouldRun(Description description) {
+        protected boolean evaluateTest(Description description) {
             final Class<?> testClass = description.getTestClass();
             if ((testClass != null && testClass.isAnnotationPresent(mAnnotationClass))
                     || (description.getAnnotation(mAnnotationClass) != null)) {
                 return false;
             }
-            if (description.isTest() ) {
-                return true;
+            return true;
+        }
+
+        /**
+         * {@inheritDoc}
+         */
+        @Override
+        public String describe() {
+            return String.format("not annotation %s", mAnnotationClass.getName());
+        }
+    }
+
+    private class SdkSuppressFilter extends ParentFilter {
+
+        @Override
+        protected boolean evaluateTest(Description description) {
+            final SdkSuppress s = getAnnotationForTest(description);
+            if (s != null && getDeviceSdkInt() < s.minSdkVersion()) {
+                return false;
             }
-            // this is a suite, explicitly check if any children want to run
+            return true;
+        }
+
+        private SdkSuppress getAnnotationForTest(Description description) {
+            final SdkSuppress s = description.getAnnotation(SdkSuppress.class);
+            if (s != null) {
+                return s;
+            }
+            final Class<?> testClass = description.getTestClass();
+            if (testClass != null) {
+                return testClass.getAnnotation(SdkSuppress.class);
+            }
+            return null;
+        }
+
+        /**
+         * {@inheritDoc}
+         */
+        @Override
+        public String describe() {
+            return String.format("skip tests annotated with SdkSuppress if necessary");
+        }
+    }
+
+    /**
+     * Class that filters out tests annotated with {@link RequiresDevice} when running on emulator
+     */
+    private class RequiresDeviceFilter extends AnnotationExclusionFilter {
+
+        RequiresDeviceFilter() {
+            super(RequiresDevice.class);
+        }
+
+        @Override
+        protected boolean evaluateTest(Description description) {
+            if (!super.evaluateTest(description)) {
+                // annotation is present - check if device is an emulator
+                return !EMULATOR_HARDWARE.equals(getDeviceHardware());
+            }
+            return true;
+        }
+
+        /**
+         * {@inheritDoc}
+         */
+        @Override
+        public String describe() {
+            return String.format("skip tests annotated with RequiresDevice if necessary");
+        }
+    }
+
+    private static class ShardingFilter extends Filter {
+        private final int mNumShards;
+        private final int mShardIndex;
+
+        ShardingFilter(int numShards, int shardIndex) {
+            mNumShards = numShards;
+            mShardIndex = shardIndex;
+        }
+
+        @Override
+        public boolean shouldRun(Description description) {
+            if (description.isTest()) {
+                return (Math.abs(description.hashCode()) % mNumShards) == mShardIndex;
+            }
+            // this is a suite, explicitly check if any children should run
             for (Description each : description.getChildren()) {
                 if (shouldRun(each)) {
                     return true;
@@ -192,11 +325,57 @@ public class TestRequestBuilder {
          */
         @Override
         public String describe() {
-            return String.format("not annotation %s", mAnnotationClass.getName());
+            return String.format("Shard %s of %s shards", mShardIndex, mNumShards);
+        }
+    }
+
+    /**
+     * A {@link Request} that doesn't report an error if all tests are filtered out. Done for
+     * consistency with InstrumentationTestRunner.
+     */
+    private static class LenientFilterRequest extends Request {
+        private final Request mRequest;
+        private final Filter mFilter;
+
+        public LenientFilterRequest(Request classRequest, Filter filter) {
+            mRequest = classRequest;
+            mFilter = filter;
+        }
+
+        @Override
+        public Runner getRunner() {
+            try {
+                Runner runner = mRequest.getRunner();
+                mFilter.apply(runner);
+                return runner;
+            } catch (NoTestsRemainException e) {
+                // don't treat filtering out all tests as an error
+                return new BlankRunner();
+            }
+        }
+    }
+
+    /**
+     * A {@link Runner} that doesn't do anything
+     */
+    private static class BlankRunner extends Runner {
+        @Override
+        public Description getDescription() {
+            return Description.createSuiteDescription("no tests found");
+        }
+
+        @Override
+        public void run(RunNotifier notifier) {
+            // do nothing
         }
     }
 
     public TestRequestBuilder(PrintStream writer, String... apkPaths) {
+        this(new DeviceBuildImpl(), writer, apkPaths);
+    }
+
+    TestRequestBuilder(DeviceBuild deviceBuildAccessor, PrintStream writer, String... apkPaths) {
+        mDeviceBuild = deviceBuildAccessor;
         mApkPaths = apkPaths;
         mTestLoader = new TestLoader(writer);
     }
@@ -218,44 +397,101 @@ public class TestRequestBuilder {
     public void addTestMethod(String testClassName, String testMethodName) {
         Class<?> clazz = mTestLoader.loadClass(testClassName);
         if (clazz != null) {
-            mFilter = mFilter.intersect(matchParameterizedMethod(
-                    Description.createTestDescription(clazz, testMethodName)));
+            mClassMethodFilter.add(testClassName, testMethodName);
         }
     }
 
     /**
-     * A filter to get around the fact that parameterized tests append "[#]" at
-     * the end of the method names. For instance, "getFoo" would become
-     * "getFoo[0]".
+     * A {@link Filter} to support the ability to filter out multiple classes#methodes combinations.
      */
-    private static Filter matchParameterizedMethod(final Description target) {
-        return new Filter() {
-            Pattern pat = Pattern.compile(target.getMethodName() + "(\\[[0-9]+\\])?");
+    private static class ClassAndMethodFilter extends Filter {
 
-            @Override
-            public boolean shouldRun(Description desc) {
-                if (desc.isTest()) {
-                    return target.getClassName().equals(desc.getClassName())
-                            && isMatch(desc.getMethodName());
+        private Map<String, MethodFilter> mClassMethodFilterMap
+                = new HashMap<String, MethodFilter>();
+
+        @Override
+        public boolean shouldRun(Description description) {
+            if (mClassMethodFilterMap.isEmpty()) {
+                return true;
+            }
+            if (description.isTest()) {
+                MethodFilter mf = mClassMethodFilterMap.get(description.getClassName());
+                if (mf != null) {
+                    return mf.shouldRun(description);
                 }
-
-                for (Description child : desc.getChildren()) {
+            } else {
+                // Check all children, if any
+                for (Description child : description.getChildren()) {
                     if (shouldRun(child)) {
                         return true;
                     }
                 }
-                return false;
             }
+            return false;
+        }
 
-            private boolean isMatch(String first) {
-                return pat.matcher(first).matches();
-            }
+        @Override
+        public String describe() {
+            return "Class and method filter";
+        }
 
-            @Override
-            public String describe() {
-                return String.format("Method %s", target.getDisplayName());
+        public void add(String className, String methodName) {
+            MethodFilter mf = mClassMethodFilterMap.get(className);
+            if (mf == null) {
+                mf = new MethodFilter(className);
+                mClassMethodFilterMap.put(className, mf);
             }
-        };
+            mf.add(methodName);
+        }
+    }
+
+    /**
+     * A {@link Filter} used to filter out desired test methods from a given class
+     */
+    private static class MethodFilter extends Filter {
+
+        private final String mClassName;
+        private Set<String> mMethodNames = new HashSet<String>();
+
+        /**
+         * Constructs a method filter for a given class
+         * @param className  name of the class the method belongs to
+         */
+        public MethodFilter(String className) {
+            mClassName = className;
+        }
+
+        @Override
+        public String describe() {
+            return "Method filter for " + mClassName + " class";
+        }
+
+        @Override
+        public boolean shouldRun(Description description) {
+            if (description.isTest()) {
+                String methodName = description.getMethodName();
+                // Parameterized tests append "[#]" at the end of the method names.
+                // For instance, "getFoo" would become "getFoo[0]".
+                methodName = stripParameterizedSuffix(methodName);
+                return mMethodNames.contains(methodName);
+            }
+            // At this point, this could only be a description of this filter
+            return true;
+
+        }
+
+        // Strips out the parameterized suffix if it exists
+        private String stripParameterizedSuffix(String name) {
+            Pattern suffixPattern = Pattern.compile(".+(\\[[0-9]+\\])$");
+            if (suffixPattern.matcher(name).matches()) {
+                name = name.substring(0, name.lastIndexOf('['));
+            }
+            return name;
+        }
+
+        public void add(String methodName) {
+            mMethodNames.add(methodName);
+        }
     }
 
     /**
@@ -306,6 +542,10 @@ public class TestRequestBuilder {
         }
     }
 
+    public void addShardingFilter(int numShards, int shardIndex) {
+        mFilter = mFilter.intersect(new ShardingFilter(numShards, shardIndex));
+    }
+
     /**
      * Build a request that will generate test started and test ended events, but will skip actual
      * test execution.
@@ -328,7 +568,7 @@ public class TestRequestBuilder {
 
         Request request = classes(instr, bundle, mSkipExecution, new Computer(),
                 mTestLoader.getLoadedClasses().toArray(new Class[0]));
-        return new TestRequest(mTestLoader.getLoadFailures(), request.filterWith(mFilter));
+        return new TestRequest(mTestLoader.getLoadFailures(), new LenientFilterRequest(request, mFilter));
     }
 
     /**
@@ -338,6 +578,7 @@ public class TestRequestBuilder {
      * @param instr the {@link Instrumentation} to inject into any tests that require it
      * @param bundle the {@link Bundle} of command line args to inject into any tests that require
      *         it
+     * @param skipExecution whether or not to skip actual test execution
      * @param computer Helps construct Runners from classes
      * @param classes the classes containing the tests
      * @return a <code>Request</code> that will cause all tests in the classes to be run
@@ -345,8 +586,7 @@ public class TestRequestBuilder {
     private static Request classes(Instrumentation instr, Bundle bundle, boolean skipExecution,
             Computer computer, Class<?>... classes) {
         try {
-            AndroidRunnerBuilder builder = new AndroidRunnerBuilder(true, instr, bundle,
-                    skipExecution);
+            AndroidRunnerBuilder builder = new AndroidRunnerBuilder(instr, bundle, skipExecution);
             Runner suite = computer.getSuite(builder, classes);
             return Request.runner(suite);
         } catch (InitializationError e) {
@@ -378,13 +618,13 @@ public class TestRequestBuilder {
             filter.addAll(new ExcludePackageNameFilter("junit"),
                     new ExcludePackageNameFilter("org.junit"),
                     new ExcludePackageNameFilter("org.hamcrest"),
-                    new ExcludePackageNameFilter("com.android.test.runner.junit3"));
+                    // always skip AndroidTestSuite
+                    new ExcludePackageNameFilter("android.support.test.internal.runner.junit3"));
         }
 
         try {
             return scanner.getClassPathEntries(filter);
         } catch (IOException e) {
-            mWriter.println("failed to scan classes");
             Log.e(LOG_TAG, "Failed to scan classes", e);
         }
         return Collections.emptyList();
@@ -410,5 +650,13 @@ public class TestRequestBuilder {
             Log.e(LOG_TAG, String.format("Class %s is not an annotation", className));
         }
         return null;
+    }
+
+    private int getDeviceSdkInt() {
+        return mDeviceBuild.getSdkVersionInt();
+    }
+
+    private String getDeviceHardware() {
+        return mDeviceBuild.getHardware();
     }
 }

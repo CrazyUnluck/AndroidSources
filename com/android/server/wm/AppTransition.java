@@ -17,8 +17,9 @@
 package com.android.server.wm;
 
 import android.content.Context;
+import android.content.res.Configuration;
 import android.graphics.Bitmap;
-import android.graphics.Point;
+import android.graphics.Rect;
 import android.os.Debug;
 import android.os.Handler;
 import android.os.IRemoteCallback;
@@ -28,9 +29,10 @@ import android.view.animation.AlphaAnimation;
 import android.view.animation.Animation;
 import android.view.animation.AnimationSet;
 import android.view.animation.AnimationUtils;
+import android.view.animation.ClipRectAnimation;
 import android.view.animation.Interpolator;
 import android.view.animation.ScaleAnimation;
-
+import android.view.animation.TranslateAnimation;
 import com.android.internal.util.DumpUtils.Dump;
 import com.android.server.AttributeCache;
 import com.android.server.wm.WindowManagerService.H;
@@ -43,6 +45,8 @@ import static com.android.internal.R.styleable.WindowAnimation_activityCloseEnte
 import static com.android.internal.R.styleable.WindowAnimation_activityCloseExitAnimation;
 import static com.android.internal.R.styleable.WindowAnimation_taskOpenEnterAnimation;
 import static com.android.internal.R.styleable.WindowAnimation_taskOpenExitAnimation;
+import static com.android.internal.R.styleable.WindowAnimation_launchTaskBehindTargetAnimation;
+import static com.android.internal.R.styleable.WindowAnimation_launchTaskBehindSourceAnimation;
 import static com.android.internal.R.styleable.WindowAnimation_taskCloseEnterAnimation;
 import static com.android.internal.R.styleable.WindowAnimation_taskCloseExitAnimation;
 import static com.android.internal.R.styleable.WindowAnimation_taskToFrontEnterAnimation;
@@ -69,49 +73,51 @@ public class AppTransition implements Dump {
             WindowManagerService.DEBUG_APP_TRANSITIONS;
     private static final boolean DEBUG_ANIM = WindowManagerService.DEBUG_ANIM;
 
-    /** Bit mask that is set for all enter transition. */
-    public static final int TRANSIT_ENTER_MASK = 0x1000;
-
-    /** Bit mask that is set for all exit transitions. */
-    public static final int TRANSIT_EXIT_MASK = 0x2000;
 
     /** Not set up for a transition. */
     public static final int TRANSIT_UNSET = -1;
     /** No animation for transition. */
     public static final int TRANSIT_NONE = 0;
     /** A window in a new activity is being opened on top of an existing one in the same task. */
-    public static final int TRANSIT_ACTIVITY_OPEN = 6 | TRANSIT_ENTER_MASK;
+    public static final int TRANSIT_ACTIVITY_OPEN = 6;
     /** The window in the top-most activity is being closed to reveal the
      * previous activity in the same task. */
-    public static final int TRANSIT_ACTIVITY_CLOSE = 7 | TRANSIT_EXIT_MASK;
+    public static final int TRANSIT_ACTIVITY_CLOSE = 7;
     /** A window in a new task is being opened on top of an existing one
      * in another activity's task. */
-    public static final int TRANSIT_TASK_OPEN = 8 | TRANSIT_ENTER_MASK;
+    public static final int TRANSIT_TASK_OPEN = 8;
     /** A window in the top-most activity is being closed to reveal the
      * previous activity in a different task. */
-    public static final int TRANSIT_TASK_CLOSE = 9 | TRANSIT_EXIT_MASK;
+    public static final int TRANSIT_TASK_CLOSE = 9;
     /** A window in an existing task is being displayed on top of an existing one
      * in another activity's task. */
-    public static final int TRANSIT_TASK_TO_FRONT = 10 | TRANSIT_ENTER_MASK;
+    public static final int TRANSIT_TASK_TO_FRONT = 10;
     /** A window in an existing task is being put below all other tasks. */
-    public static final int TRANSIT_TASK_TO_BACK = 11 | TRANSIT_EXIT_MASK;
+    public static final int TRANSIT_TASK_TO_BACK = 11;
     /** A window in a new activity that doesn't have a wallpaper is being opened on top of one that
      * does, effectively closing the wallpaper. */
-    public static final int TRANSIT_WALLPAPER_CLOSE = 12 | TRANSIT_EXIT_MASK;
+    public static final int TRANSIT_WALLPAPER_CLOSE = 12;
     /** A window in a new activity that does have a wallpaper is being opened on one that didn't,
      * effectively opening the wallpaper. */
-    public static final int TRANSIT_WALLPAPER_OPEN = 13 | TRANSIT_ENTER_MASK;
+    public static final int TRANSIT_WALLPAPER_OPEN = 13;
     /** A window in a new activity is being opened on top of an existing one, and both are on top
      * of the wallpaper. */
-    public static final int TRANSIT_WALLPAPER_INTRA_OPEN = 14 | TRANSIT_ENTER_MASK;
+    public static final int TRANSIT_WALLPAPER_INTRA_OPEN = 14;
     /** The window in the top-most activity is being closed to reveal the previous activity, and
      * both are on top of the wallpaper. */
-    public static final int TRANSIT_WALLPAPER_INTRA_CLOSE = 15 | TRANSIT_EXIT_MASK;
+    public static final int TRANSIT_WALLPAPER_INTRA_CLOSE = 15;
+    /** A window in a new task is being opened behind an existing one in another activity's task.
+     * The new window will show briefly and then be gone. */
+    public static final int TRANSIT_TASK_OPEN_BEHIND = 16;
 
+    /** Fraction of animation at which the recents thumbnail stays completely transparent */
+    private static final float RECENTS_THUMBNAIL_FADEIN_FRACTION = 0.7f;
     /** Fraction of animation at which the recents thumbnail becomes completely transparent */
-    private static final float RECENTS_THUMBNAIL_FADEOUT_FRACTION = 0.25f;
+    private static final float RECENTS_THUMBNAIL_FADEOUT_FRACTION = 0.3f;
 
-    private static final long DEFAULT_APP_TRANSITION_DURATION = 250;
+    private static final int DEFAULT_APP_TRANSITION_DURATION = 250;
+    private static final int THUMBNAIL_APP_TRANSITION_DURATION = 300;
+    private static final int THUMBNAIL_APP_TRANSITION_ALPHA_DURATION = 325;
 
     private final Context mContext;
     private final Handler mH;
@@ -123,7 +129,15 @@ public class AppTransition implements Dump {
     private static final int NEXT_TRANSIT_TYPE_SCALE_UP = 2;
     private static final int NEXT_TRANSIT_TYPE_THUMBNAIL_SCALE_UP = 3;
     private static final int NEXT_TRANSIT_TYPE_THUMBNAIL_SCALE_DOWN = 4;
+    private static final int NEXT_TRANSIT_TYPE_THUMBNAIL_ASPECT_SCALE_UP = 5;
+    private static final int NEXT_TRANSIT_TYPE_THUMBNAIL_ASPECT_SCALE_DOWN = 6;
     private int mNextAppTransitionType = NEXT_TRANSIT_TYPE_NONE;
+
+    // These are the possible states for the enter/exit activities during a thumbnail transition
+    private static final int THUMBNAIL_TRANSITION_ENTER_SCALE_UP = 0;
+    private static final int THUMBNAIL_TRANSITION_EXIT_SCALE_UP = 1;
+    private static final int THUMBNAIL_TRANSITION_ENTER_SCALE_DOWN = 2;
+    private static final int THUMBNAIL_TRANSITION_EXIT_SCALE_DOWN = 3;
 
     private String mNextAppTransitionPackage;
     private Bitmap mNextAppTransitionThumbnail;
@@ -136,6 +150,10 @@ public class AppTransition implements Dump {
     private int mNextAppTransitionStartY;
     private int mNextAppTransitionStartWidth;
     private int mNextAppTransitionStartHeight;
+    private Rect mNextAppTransitionInsets = new Rect();
+
+    private Rect mTmpFromClipRect = new Rect();
+    private Rect mTmpToClipRect = new Rect();
 
     private final static int APP_STATE_IDLE = 0;
     private final static int APP_STATE_READY = 1;
@@ -145,7 +163,9 @@ public class AppTransition implements Dump {
 
     private final int mConfigShortAnimTime;
     private final Interpolator mDecelerateInterpolator;
-    private final Interpolator mThumbnailFadeoutInterpolator;
+    private final Interpolator mThumbnailFadeInInterpolator;
+    private final Interpolator mThumbnailFadeOutInterpolator;
+    private final Interpolator mThumbnailFastOutSlowInInterpolator;
 
     private int mCurrentUserId = 0;
 
@@ -156,14 +176,27 @@ public class AppTransition implements Dump {
                 com.android.internal.R.integer.config_shortAnimTime);
         mDecelerateInterpolator = AnimationUtils.loadInterpolator(context,
                 com.android.internal.R.interpolator.decelerate_cubic);
-        mThumbnailFadeoutInterpolator = new Interpolator() {
+        mThumbnailFastOutSlowInInterpolator = AnimationUtils.loadInterpolator(context,
+                com.android.internal.R.interpolator.fast_out_slow_in);
+        mThumbnailFadeInInterpolator = new Interpolator() {
+            @Override
+            public float getInterpolation(float input) {
+                // Linear response for first fraction, then complete after that.
+                if (input < RECENTS_THUMBNAIL_FADEIN_FRACTION) {
+                    return 0f;
+                }
+                return (input - RECENTS_THUMBNAIL_FADEIN_FRACTION) /
+                        (1f - RECENTS_THUMBNAIL_FADEIN_FRACTION);
+            }
+        };
+        mThumbnailFadeOutInterpolator = new Interpolator() {
             @Override
             public float getInterpolation(float input) {
                 // Linear response for first fraction, then complete after that.
                 if (input < RECENTS_THUMBNAIL_FADEOUT_FRACTION) {
                     return input / RECENTS_THUMBNAIL_FADEOUT_FRACTION;
                 }
-                return 1.0f;
+                return 1f;
             }
         };
     }
@@ -217,9 +250,23 @@ public class AppTransition implements Dump {
         return mNextAppTransitionThumbnail;
     }
 
-    void getStartingPoint(Point outPoint) {
-        outPoint.x = mNextAppTransitionStartX;
-        outPoint.y = mNextAppTransitionStartY;
+    /** Returns whether the next thumbnail transition is aspect scaled up. */
+    boolean isNextThumbnailTransitionAspectScaled() {
+        return mNextAppTransitionType == NEXT_TRANSIT_TYPE_THUMBNAIL_ASPECT_SCALE_UP ||
+                mNextAppTransitionType == NEXT_TRANSIT_TYPE_THUMBNAIL_ASPECT_SCALE_DOWN;
+    }
+
+    /** Returns whether the next thumbnail transition is scaling up. */
+    boolean isNextThumbnailTransitionScaleUp() {
+        return mNextAppTransitionScaleUp;
+    }
+
+    int getStartingX() {
+        return mNextAppTransitionStartX;
+    }
+
+    int getStartingY() {
+        return mNextAppTransitionStartY;
     }
 
     void prepare() {
@@ -281,7 +328,7 @@ public class AppTransition implements Dump {
         return null;
     }
 
-    Animation loadAnimation(WindowManager.LayoutParams lp, int animAttr) {
+    Animation loadAnimationAttr(WindowManager.LayoutParams lp, int animAttr) {
         int anim = 0;
         Context context = mContext;
         if (animAttr >= 0) {
@@ -297,7 +344,19 @@ public class AppTransition implements Dump {
         return null;
     }
 
-    private Animation loadAnimation(String packageName, int resId) {
+    Animation loadAnimationRes(WindowManager.LayoutParams lp, int resId) {
+        Context context = mContext;
+        if (resId >= 0) {
+            AttributeCache.Entry ent = getCachedAnimations(lp);
+            if (ent != null) {
+                context = ent.context;
+            }
+            return AnimationUtils.loadAnimation(context, resId);
+        }
+        return null;
+    }
+
+    private Animation loadAnimationRes(String packageName, int resId) {
         int anim = 0;
         Context context = mContext;
         if (resId >= 0) {
@@ -344,7 +403,7 @@ public class AppTransition implements Dump {
             scale.setInterpolator(mDecelerateInterpolator);
 
             Animation alpha = new AlphaAnimation(0, 1);
-            alpha.setInterpolator(mThumbnailFadeoutInterpolator);
+            alpha.setInterpolator(mThumbnailFadeOutInterpolator);
 
             AnimationSet set = new AnimationSet(false);
             set.addAnimation(scale);
@@ -384,54 +443,322 @@ public class AppTransition implements Dump {
         return a;
     }
 
-    Animation createThumbnailAnimationLocked(int transit, boolean enter, boolean thumb,
-                                    int appWidth, int appHeight) {
+    /**
+     * Prepares the specified animation with a standard duration, interpolator, etc.
+     */
+    Animation prepareThumbnailAnimationWithDuration(Animation a, int appWidth, int appHeight,
+            int duration, Interpolator interpolator) {
+        if (duration > 0) {
+            a.setDuration(duration);
+        }
+        a.setFillAfter(true);
+        a.setInterpolator(interpolator);
+        a.initialize(appWidth, appHeight, appWidth, appHeight);
+        return a;
+    }
+
+    /**
+     * Prepares the specified animation with a standard duration, interpolator, etc.
+     */
+    Animation prepareThumbnailAnimation(Animation a, int appWidth, int appHeight, int transit) {
+        // Pick the desired duration.  If this is an inter-activity transition,
+        // it  is the standard duration for that.  Otherwise we use the longer
+        // task transition duration.
+        final int duration;
+        switch (transit) {
+            case TRANSIT_ACTIVITY_OPEN:
+            case TRANSIT_ACTIVITY_CLOSE:
+                duration = mConfigShortAnimTime;
+                break;
+            default:
+                duration = DEFAULT_APP_TRANSITION_DURATION;
+                break;
+        }
+        return prepareThumbnailAnimationWithDuration(a, appWidth, appHeight, duration,
+                mDecelerateInterpolator);
+    }
+
+    /**
+     * Return the current thumbnail transition state.
+     */
+    int getThumbnailTransitionState(boolean enter) {
+        if (enter) {
+            if (mNextAppTransitionScaleUp) {
+                return THUMBNAIL_TRANSITION_ENTER_SCALE_UP;
+            } else {
+                return THUMBNAIL_TRANSITION_ENTER_SCALE_DOWN;
+            }
+        } else {
+            if (mNextAppTransitionScaleUp) {
+                return THUMBNAIL_TRANSITION_EXIT_SCALE_UP;
+            } else {
+                return THUMBNAIL_TRANSITION_EXIT_SCALE_DOWN;
+            }
+        }
+    }
+
+    /**
+     * This animation runs for the thumbnail that gets cross faded with the enter/exit activity
+     * when a thumbnail is specified with the activity options.
+     */
+    Animation createThumbnailAspectScaleAnimationLocked(int appWidth, int appHeight,
+            int deviceWidth, int transit) {
         Animation a;
         final int thumbWidthI = mNextAppTransitionThumbnail.getWidth();
         final float thumbWidth = thumbWidthI > 0 ? thumbWidthI : 1;
         final int thumbHeightI = mNextAppTransitionThumbnail.getHeight();
         final float thumbHeight = thumbHeightI > 0 ? thumbHeightI : 1;
-        if (thumb) {
-            // Animation for zooming thumbnail from its initial size to
-            // filling the screen.
-            if (mNextAppTransitionScaleUp) {
-                float scaleW = appWidth / thumbWidth;
-                float scaleH = appHeight / thumbHeight;
-                Animation scale = new ScaleAnimation(1, scaleW, 1, scaleH,
-                        computePivot(mNextAppTransitionStartX, 1 / scaleW),
-                        computePivot(mNextAppTransitionStartY, 1 / scaleH));
-                scale.setInterpolator(mDecelerateInterpolator);
 
-                Animation alpha = new AlphaAnimation(1, 0);
-                alpha.setInterpolator(mThumbnailFadeoutInterpolator);
+        float scaleW = deviceWidth / thumbWidth;
+        float unscaledWidth = deviceWidth;
+        float unscaledHeight = thumbHeight * scaleW;
+        float unscaledStartY = mNextAppTransitionStartY - (unscaledHeight - thumbHeight) / 2f;
+        if (mNextAppTransitionScaleUp) {
+            // Animation up from the thumbnail to the full screen
+            Animation scale = new ScaleAnimation(1f, scaleW, 1f, scaleW,
+                    mNextAppTransitionStartX + (thumbWidth / 2f),
+                    mNextAppTransitionStartY + (thumbHeight / 2f));
+            scale.setInterpolator(mThumbnailFastOutSlowInInterpolator);
+            scale.setDuration(THUMBNAIL_APP_TRANSITION_DURATION);
+            Animation alpha = new AlphaAnimation(1, 0);
+            alpha.setInterpolator(mThumbnailFadeOutInterpolator);
+            alpha.setDuration(THUMBNAIL_APP_TRANSITION_ALPHA_DURATION);
+            Animation translate = new TranslateAnimation(0, 0, 0, -unscaledStartY +
+                    mNextAppTransitionInsets.top);
+            translate.setInterpolator(mThumbnailFastOutSlowInInterpolator);
+            translate.setDuration(THUMBNAIL_APP_TRANSITION_DURATION);
 
-                // This AnimationSet uses the Interpolators assigned above.
-                AnimationSet set = new AnimationSet(false);
-                set.addAnimation(scale);
-                set.addAnimation(alpha);
+            // This AnimationSet uses the Interpolators assigned above.
+            AnimationSet set = new AnimationSet(false);
+            set.addAnimation(scale);
+            set.addAnimation(alpha);
+            set.addAnimation(translate);
+            a = set;
+        } else {
+            // Animation down from the full screen to the thumbnail
+            Animation scale = new ScaleAnimation(scaleW, 1f, scaleW, 1f,
+                    mNextAppTransitionStartX + (thumbWidth / 2f),
+                    mNextAppTransitionStartY + (thumbHeight / 2f));
+            scale.setInterpolator(mThumbnailFastOutSlowInInterpolator);
+            scale.setDuration(THUMBNAIL_APP_TRANSITION_DURATION);
+            Animation alpha = new AlphaAnimation(0f, 1f);
+            alpha.setInterpolator(mThumbnailFadeInInterpolator);
+            alpha.setDuration(THUMBNAIL_APP_TRANSITION_ALPHA_DURATION);
+            Animation translate = new TranslateAnimation(0, 0, -unscaledStartY +
+                    mNextAppTransitionInsets.top, 0);
+            translate.setInterpolator(mThumbnailFastOutSlowInInterpolator);
+            translate.setDuration(THUMBNAIL_APP_TRANSITION_DURATION);
+
+            // This AnimationSet uses the Interpolators assigned above.
+            AnimationSet set = new AnimationSet(false);
+            set.addAnimation(scale);
+            set.addAnimation(alpha);
+            set.addAnimation(translate);
+            a = set;
+
+        }
+        return prepareThumbnailAnimationWithDuration(a, appWidth, appHeight, 0,
+                mThumbnailFastOutSlowInInterpolator);
+    }
+
+    /**
+     * This alternate animation is created when we are doing a thumbnail transition, for the
+     * activity that is leaving, and the activity that is entering.
+     */
+    Animation createAspectScaledThumbnailEnterExitAnimationLocked(int thumbTransitState,
+            int appWidth, int appHeight, int orientation, int transit, Rect containingFrame,
+            Rect contentInsets, boolean isFullScreen) {
+        Animation a;
+        final int thumbWidthI = mNextAppTransitionStartWidth;
+        final float thumbWidth = thumbWidthI > 0 ? thumbWidthI : 1;
+        final int thumbHeightI = mNextAppTransitionStartHeight;
+        final float thumbHeight = thumbHeightI > 0 ? thumbHeightI : 1;
+
+        // Used for the ENTER_SCALE_UP and EXIT_SCALE_DOWN transitions
+        float scale = 1f;
+        int scaledTopDecor = 0;
+
+        switch (thumbTransitState) {
+            case THUMBNAIL_TRANSITION_ENTER_SCALE_UP: {
+                // App window scaling up to become full screen
+                if (orientation == Configuration.ORIENTATION_PORTRAIT) {
+                    // In portrait, we scale the width and clip to the top/left square
+                    scale = thumbWidth / appWidth;
+                    scaledTopDecor = (int) (scale * contentInsets.top);
+                    int unscaledThumbHeight = (int) (thumbHeight / scale);
+                    mTmpFromClipRect.set(containingFrame);
+                    if (isFullScreen) {
+                        mTmpFromClipRect.top = contentInsets.top;
+                    }
+                    mTmpFromClipRect.bottom = (mTmpFromClipRect.top + unscaledThumbHeight);
+                    mTmpToClipRect.set(containingFrame);
+                } else {
+                    // In landscape, we scale the height and clip to the top/left square
+                    scale = thumbHeight / (appHeight - contentInsets.top);
+                    scaledTopDecor = (int) (scale * contentInsets.top);
+                    int unscaledThumbWidth = (int) (thumbWidth / scale);
+                    int unscaledThumbHeight = (int) (thumbHeight / scale);
+                    mTmpFromClipRect.set(containingFrame);
+                    if (isFullScreen) {
+                        mTmpFromClipRect.top = contentInsets.top;
+                        mTmpFromClipRect.bottom = (mTmpFromClipRect.top + unscaledThumbHeight);
+                    }
+                    mTmpFromClipRect.right = (mTmpFromClipRect.left + unscaledThumbWidth);
+                    mTmpToClipRect.set(containingFrame);
+                }
+                mNextAppTransitionInsets.set(contentInsets);
+
+                Animation scaleAnim = new ScaleAnimation(scale, 1, scale, 1,
+                        computePivot(mNextAppTransitionStartX, scale),
+                        computePivot(mNextAppTransitionStartY, scale));
+                Animation clipAnim = new ClipRectAnimation(mTmpFromClipRect, mTmpToClipRect);
+                Animation translateAnim = new TranslateAnimation(0, 0, -scaledTopDecor, 0);
+
+                AnimationSet set = new AnimationSet(true);
+                set.addAnimation(clipAnim);
+                set.addAnimation(scaleAnim);
+                set.addAnimation(translateAnim);
                 a = set;
-            } else {
-                float scaleW = appWidth / thumbWidth;
-                float scaleH = appHeight / thumbHeight;
-                a = new ScaleAnimation(scaleW, 1, scaleH, 1,
-                        computePivot(mNextAppTransitionStartX, 1 / scaleW),
-                        computePivot(mNextAppTransitionStartY, 1 / scaleH));
+                break;
             }
-        } else if (enter) {
-            // Entering app zooms out from the center of the thumbnail.
-            if (mNextAppTransitionScaleUp) {
+            case THUMBNAIL_TRANSITION_EXIT_SCALE_UP: {
+                // Previous app window during the scale up
+                if (transit == TRANSIT_WALLPAPER_INTRA_OPEN) {
+                    // Fade out the source activity if we are animating to a wallpaper
+                    // activity.
+                    a = new AlphaAnimation(1, 0);
+                } else {
+                    a = new AlphaAnimation(1, 1);
+                }
+                break;
+            }
+            case THUMBNAIL_TRANSITION_ENTER_SCALE_DOWN: {
+                // Target app window during the scale down
+                if (transit == TRANSIT_WALLPAPER_INTRA_OPEN) {
+                    // Fade in the destination activity if we are animating from a wallpaper
+                    // activity.
+                    a = new AlphaAnimation(0, 1);
+                } else {
+                    a = new AlphaAnimation(1, 1);
+                }
+                break;
+            }
+            case THUMBNAIL_TRANSITION_EXIT_SCALE_DOWN: {
+                // App window scaling down from full screen
+                if (orientation == Configuration.ORIENTATION_PORTRAIT) {
+                    // In portrait, we scale the width and clip to the top/left square
+                    scale = thumbWidth / appWidth;
+                    scaledTopDecor = (int) (scale * contentInsets.top);
+                    int unscaledThumbHeight = (int) (thumbHeight / scale);
+                    mTmpFromClipRect.set(containingFrame);
+                    mTmpToClipRect.set(containingFrame);
+                    if (isFullScreen) {
+                        mTmpToClipRect.top = contentInsets.top;
+                    }
+                    mTmpToClipRect.bottom = (mTmpToClipRect.top + unscaledThumbHeight);
+                } else {
+                    // In landscape, we scale the height and clip to the top/left square
+                    scale = thumbHeight / (appHeight - contentInsets.top);
+                    scaledTopDecor = (int) (scale * contentInsets.top);
+                    int unscaledThumbWidth = (int) (thumbWidth / scale);
+                    int unscaledThumbHeight = (int) (thumbHeight / scale);
+                    mTmpFromClipRect.set(containingFrame);
+                    mTmpToClipRect.set(containingFrame);
+                    if (isFullScreen) {
+                        mTmpToClipRect.top = contentInsets.top;
+                        mTmpToClipRect.bottom = (mTmpToClipRect.top + unscaledThumbHeight);
+                    }
+                    mTmpToClipRect.right = (mTmpToClipRect.left + unscaledThumbWidth);
+                }
+                mNextAppTransitionInsets.set(contentInsets);
+
+                Animation scaleAnim = new ScaleAnimation(1, scale, 1, scale,
+                        computePivot(mNextAppTransitionStartX, scale),
+                        computePivot(mNextAppTransitionStartY, scale));
+                Animation clipAnim = new ClipRectAnimation(mTmpFromClipRect, mTmpToClipRect);
+                Animation translateAnim = new TranslateAnimation(0, 0, 0, -scaledTopDecor);
+
+                AnimationSet set = new AnimationSet(true);
+                set.addAnimation(clipAnim);
+                set.addAnimation(scaleAnim);
+                set.addAnimation(translateAnim);
+
+                a = set;
+                a.setZAdjustment(Animation.ZORDER_TOP);
+                break;
+            }
+            default:
+                throw new RuntimeException("Invalid thumbnail transition state");
+        }
+
+        return prepareThumbnailAnimationWithDuration(a, appWidth, appHeight,
+                THUMBNAIL_APP_TRANSITION_DURATION, mThumbnailFastOutSlowInInterpolator);
+    }
+
+    /**
+     * This animation runs for the thumbnail that gets cross faded with the enter/exit activity
+     * when a thumbnail is specified with the activity options.
+     */
+    Animation createThumbnailScaleAnimationLocked(int appWidth, int appHeight, int transit) {
+        Animation a;
+        final int thumbWidthI = mNextAppTransitionThumbnail.getWidth();
+        final float thumbWidth = thumbWidthI > 0 ? thumbWidthI : 1;
+        final int thumbHeightI = mNextAppTransitionThumbnail.getHeight();
+        final float thumbHeight = thumbHeightI > 0 ? thumbHeightI : 1;
+
+        if (mNextAppTransitionScaleUp) {
+            // Animation for the thumbnail zooming from its initial size to the full screen
+            float scaleW = appWidth / thumbWidth;
+            float scaleH = appHeight / thumbHeight;
+            Animation scale = new ScaleAnimation(1, scaleW, 1, scaleH,
+                    computePivot(mNextAppTransitionStartX, 1 / scaleW),
+                    computePivot(mNextAppTransitionStartY, 1 / scaleH));
+            scale.setInterpolator(mDecelerateInterpolator);
+
+            Animation alpha = new AlphaAnimation(1, 0);
+            alpha.setInterpolator(mThumbnailFadeOutInterpolator);
+
+            // This AnimationSet uses the Interpolators assigned above.
+            AnimationSet set = new AnimationSet(false);
+            set.addAnimation(scale);
+            set.addAnimation(alpha);
+            a = set;
+        } else {
+            // Animation for the thumbnail zooming down from the full screen to its final size
+            float scaleW = appWidth / thumbWidth;
+            float scaleH = appHeight / thumbHeight;
+            a = new ScaleAnimation(scaleW, 1, scaleH, 1,
+                    computePivot(mNextAppTransitionStartX, 1 / scaleW),
+                    computePivot(mNextAppTransitionStartY, 1 / scaleH));
+        }
+
+        return prepareThumbnailAnimation(a, appWidth, appHeight, transit);
+    }
+
+    /**
+     * This animation is created when we are doing a thumbnail transition, for the activity that is
+     * leaving, and the activity that is entering.
+     */
+    Animation createThumbnailEnterExitAnimationLocked(int thumbTransitState, int appWidth,
+                                                    int appHeight, int transit) {
+        Animation a;
+        final int thumbWidthI = mNextAppTransitionThumbnail.getWidth();
+        final float thumbWidth = thumbWidthI > 0 ? thumbWidthI : 1;
+        final int thumbHeightI = mNextAppTransitionThumbnail.getHeight();
+        final float thumbHeight = thumbHeightI > 0 ? thumbHeightI : 1;
+
+        switch (thumbTransitState) {
+            case THUMBNAIL_TRANSITION_ENTER_SCALE_UP: {
+                // Entering app scales up with the thumbnail
                 float scaleW = thumbWidth / appWidth;
                 float scaleH = thumbHeight / appHeight;
                 a = new ScaleAnimation(scaleW, 1, scaleH, 1,
                         computePivot(mNextAppTransitionStartX, scaleW),
                         computePivot(mNextAppTransitionStartY, scaleH));
-            } else {
-                // noop animation
-                a = new AlphaAnimation(1, 1);
+                break;
             }
-        } else {
-            // Exiting app
-            if (mNextAppTransitionScaleUp) {
+            case THUMBNAIL_TRANSITION_EXIT_SCALE_UP: {
+                // Exiting app while the thumbnail is scaling up should fade or stay in place
                 if (transit == TRANSIT_WALLPAPER_INTRA_OPEN) {
                     // Fade out while bringing up selected activity. This keeps the
                     // current activity from showing through a launching wallpaper
@@ -441,7 +768,16 @@ public class AppTransition implements Dump {
                     // noop animation
                     a = new AlphaAnimation(1, 1);
                 }
-            } else {
+                break;
+            }
+            case THUMBNAIL_TRANSITION_ENTER_SCALE_DOWN: {
+                // Entering the other app, it should just be visible while we scale the thumbnail
+                // down above it
+                a = new AlphaAnimation(1, 1);
+                break;
+            }
+            case THUMBNAIL_TRANSITION_EXIT_SCALE_DOWN: {
+                // Exiting the current app, the app should scale down with the thumbnail
                 float scaleW = thumbWidth / appWidth;
                 float scaleH = thumbHeight / appHeight;
                 Animation scale = new ScaleAnimation(1, scaleW, 1, scaleH,
@@ -455,35 +791,42 @@ public class AppTransition implements Dump {
                 set.addAnimation(alpha);
                 set.setZAdjustment(Animation.ZORDER_TOP);
                 a = set;
+                break;
             }
+            default:
+                throw new RuntimeException("Invalid thumbnail transition state");
         }
 
-        // Pick the desired duration.  If this is an inter-activity transition,
-        // it  is the standard duration for that.  Otherwise we use the longer
-        // task transition duration.
-        final long duration;
-        switch (transit) {
-            case TRANSIT_ACTIVITY_OPEN:
-            case TRANSIT_ACTIVITY_CLOSE:
-                duration = mConfigShortAnimTime;
-                break;
-            default:
-                duration = DEFAULT_APP_TRANSITION_DURATION;
-                break;
-        }
-        a.setDuration(duration);
-        a.setFillAfter(true);
-        a.setInterpolator(mDecelerateInterpolator);
-        a.initialize(appWidth, appHeight, appWidth, appHeight);
-        return a;
+        return prepareThumbnailAnimation(a, appWidth, appHeight, transit);
     }
 
 
     Animation loadAnimation(WindowManager.LayoutParams lp, int transit, boolean enter,
-                            int appWidth, int appHeight) {
+            int appWidth, int appHeight, int orientation, Rect containingFrame, Rect contentInsets,
+            boolean isFullScreen, boolean isVoiceInteraction) {
         Animation a;
-        if (mNextAppTransitionType == NEXT_TRANSIT_TYPE_CUSTOM) {
-            a = loadAnimation(mNextAppTransitionPackage, enter ?
+        if (isVoiceInteraction && (transit == TRANSIT_ACTIVITY_OPEN
+                || transit == TRANSIT_TASK_OPEN
+                || transit == TRANSIT_TASK_TO_FRONT)) {
+            a = loadAnimationRes(lp, enter
+                    ? com.android.internal.R.anim.voice_activity_open_enter
+                    : com.android.internal.R.anim.voice_activity_open_exit);
+            if (DEBUG_APP_TRANSITIONS || DEBUG_ANIM) Slog.v(TAG,
+                    "applyAnimation voice:"
+                    + " anim=" + a + " transit=" + transit + " isEntrance=" + enter
+                    + " Callers=" + Debug.getCallers(3));
+        } else if (isVoiceInteraction && (transit == TRANSIT_ACTIVITY_CLOSE
+                || transit == TRANSIT_TASK_CLOSE
+                || transit == TRANSIT_TASK_TO_BACK)) {
+            a = loadAnimationRes(lp, enter
+                    ? com.android.internal.R.anim.voice_activity_close_enter
+                    : com.android.internal.R.anim.voice_activity_close_exit);
+            if (DEBUG_APP_TRANSITIONS || DEBUG_ANIM) Slog.v(TAG,
+                    "applyAnimation voice:"
+                    + " anim=" + a + " transit=" + transit + " isEntrance=" + enter
+                    + " Callers=" + Debug.getCallers(3));
+        } else if (mNextAppTransitionType == NEXT_TRANSIT_TYPE_CUSTOM) {
+            a = loadAnimationRes(mNextAppTransitionPackage, enter ?
                     mNextAppTransitionEnter : mNextAppTransitionExit);
             if (DEBUG_APP_TRANSITIONS || DEBUG_ANIM) Slog.v(TAG,
                     "applyAnimation:"
@@ -501,10 +844,26 @@ public class AppTransition implements Dump {
                 mNextAppTransitionType == NEXT_TRANSIT_TYPE_THUMBNAIL_SCALE_DOWN) {
             mNextAppTransitionScaleUp =
                     (mNextAppTransitionType == NEXT_TRANSIT_TYPE_THUMBNAIL_SCALE_UP);
-            a = createThumbnailAnimationLocked(transit, enter, false, appWidth, appHeight);
+            a = createThumbnailEnterExitAnimationLocked(getThumbnailTransitionState(enter),
+                    appWidth, appHeight, transit);
             if (DEBUG_APP_TRANSITIONS || DEBUG_ANIM) {
                 String animName = mNextAppTransitionScaleUp ?
                         "ANIM_THUMBNAIL_SCALE_UP" : "ANIM_THUMBNAIL_SCALE_DOWN";
+                Slog.v(TAG, "applyAnimation:"
+                        + " anim=" + a + " nextAppTransition=" + animName
+                        + " transit=" + transit + " isEntrance=" + enter
+                        + " Callers=" + Debug.getCallers(3));
+            }
+        } else if (mNextAppTransitionType == NEXT_TRANSIT_TYPE_THUMBNAIL_ASPECT_SCALE_UP ||
+                mNextAppTransitionType == NEXT_TRANSIT_TYPE_THUMBNAIL_ASPECT_SCALE_DOWN) {
+            mNextAppTransitionScaleUp =
+                    (mNextAppTransitionType == NEXT_TRANSIT_TYPE_THUMBNAIL_ASPECT_SCALE_UP);
+            a = createAspectScaledThumbnailEnterExitAnimationLocked(
+                    getThumbnailTransitionState(enter), appWidth, appHeight, orientation,
+                    transit, containingFrame, contentInsets, isFullScreen);
+            if (DEBUG_APP_TRANSITIONS || DEBUG_ANIM) {
+                String animName = mNextAppTransitionScaleUp ?
+                        "ANIM_THUMBNAIL_ASPECT_SCALE_UP" : "ANIM_THUMBNAIL_ASPECT_SCALE_DOWN";
                 Slog.v(TAG, "applyAnimation:"
                         + " anim=" + a + " nextAppTransition=" + animName
                         + " transit=" + transit + " isEntrance=" + enter
@@ -563,8 +922,12 @@ public class AppTransition implements Dump {
                             ? WindowAnimation_wallpaperIntraCloseEnterAnimation
                             : WindowAnimation_wallpaperIntraCloseExitAnimation;
                     break;
+                case TRANSIT_TASK_OPEN_BEHIND:
+                    animAttr = enter
+                            ? WindowAnimation_launchTaskBehindSourceAnimation
+                            : WindowAnimation_launchTaskBehindTargetAnimation;
             }
-            a = animAttr != 0 ? loadAnimation(lp, animAttr) : null;
+            a = animAttr != 0 ? loadAnimationAttr(lp, animAttr) : null;
             if (DEBUG_APP_TRANSITIONS || DEBUG_ANIM) Slog.v(TAG,
                     "applyAnimation:"
                     + " anim=" + a
@@ -629,6 +992,25 @@ public class AppTransition implements Dump {
         }
     }
 
+    void overridePendingAppTransitionAspectScaledThumb(Bitmap srcThumb, int startX, int startY,
+            int targetWidth, int targetHeight, IRemoteCallback startedCallback, boolean scaleUp) {
+        if (isTransitionSet()) {
+            mNextAppTransitionType = scaleUp ? NEXT_TRANSIT_TYPE_THUMBNAIL_ASPECT_SCALE_UP
+                    : NEXT_TRANSIT_TYPE_THUMBNAIL_ASPECT_SCALE_DOWN;
+            mNextAppTransitionPackage = null;
+            mNextAppTransitionThumbnail = srcThumb;
+            mNextAppTransitionScaleUp = scaleUp;
+            mNextAppTransitionStartX = startX;
+            mNextAppTransitionStartY = startY;
+            mNextAppTransitionStartWidth = targetWidth;
+            mNextAppTransitionStartHeight = targetHeight;
+            postAnimationCallback();
+            mNextAppTransitionCallback = startedCallback;
+        } else {
+            postAnimationCallback();
+        }
+    }
+
     @Override
     public String toString() {
         return "mNextAppTransition=0x" + Integer.toHexString(mNextAppTransition);
@@ -647,9 +1029,6 @@ public class AppTransition implements Dump {
             }
             case TRANSIT_NONE: {
                 return "TRANSIT_NONE";
-            }
-            case TRANSIT_EXIT_MASK: {
-                return "TRANSIT_EXIT_MASK";
             }
             case TRANSIT_ACTIVITY_OPEN: {
                 return "TRANSIT_ACTIVITY_OPEN";
@@ -680,6 +1059,9 @@ public class AppTransition implements Dump {
             }
             case TRANSIT_WALLPAPER_INTRA_CLOSE: {
                 return "TRANSIT_WALLPAPER_INTRA_CLOSE";
+            }
+            case TRANSIT_TASK_OPEN_BEHIND: {
+                return "TRANSIT_TASK_OPEN_BEHIND";
             }
             default: {
                 return "<UNKNOWN>";
@@ -714,6 +1096,10 @@ public class AppTransition implements Dump {
                 return "NEXT_TRANSIT_TYPE_THUMBNAIL_SCALE_UP";
             case NEXT_TRANSIT_TYPE_THUMBNAIL_SCALE_DOWN:
                 return "NEXT_TRANSIT_TYPE_THUMBNAIL_SCALE_DOWN";
+            case NEXT_TRANSIT_TYPE_THUMBNAIL_ASPECT_SCALE_UP:
+                return "NEXT_TRANSIT_TYPE_THUMBNAIL_ASPECT_SCALE_UP";
+            case NEXT_TRANSIT_TYPE_THUMBNAIL_ASPECT_SCALE_DOWN:
+                return "NEXT_TRANSIT_TYPE_THUMBNAIL_ASPECT_SCALE_DOWN";
             default:
                 return "unknown type=" + mNextAppTransitionType;
         }
@@ -746,12 +1132,18 @@ public class AppTransition implements Dump {
                 break;
             case NEXT_TRANSIT_TYPE_THUMBNAIL_SCALE_UP:
             case NEXT_TRANSIT_TYPE_THUMBNAIL_SCALE_DOWN:
+            case NEXT_TRANSIT_TYPE_THUMBNAIL_ASPECT_SCALE_UP:
+            case NEXT_TRANSIT_TYPE_THUMBNAIL_ASPECT_SCALE_DOWN:
                 pw.print("  mNextAppTransitionThumbnail=");
                         pw.print(mNextAppTransitionThumbnail);
                         pw.print(" mNextAppTransitionStartX=");
                         pw.print(mNextAppTransitionStartX);
                         pw.print(" mNextAppTransitionStartY=");
                         pw.println(mNextAppTransitionStartY);
+                        pw.print(" mNextAppTransitionStartWidth=");
+                        pw.print(mNextAppTransitionStartWidth);
+                        pw.print(" mNextAppTransitionStartHeight=");
+                        pw.println(mNextAppTransitionStartHeight);
                 pw.print("  mNextAppTransitionScaleUp="); pw.println(mNextAppTransitionScaleUp);
                 break;
         }

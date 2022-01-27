@@ -39,8 +39,6 @@ import android.util.TypedValue;
  */
 public class Resources_Theme_Delegate {
 
-    // Resource identifier for the theme.
-    int mThemeResId;
     // Whether to use the Theme.mThemeResId as primary theme.
     boolean force;
 
@@ -99,11 +97,18 @@ public class Resources_Theme_Delegate {
         return found;
     }
 
+    @LayoutlibDelegate
+    /*package*/ static TypedArray resolveAttributes(Resources thisResources, Theme thisTheme,
+            int[] values, int[] attrs) {
+        // FIXME
+        return null;
+    }
+
     // ---- private helper methods ----
 
     private static boolean setupResources(Theme thisTheme) {
         Resources_Theme_Delegate themeDelegate = sManager.getDelegate(thisTheme.getNativeTheme());
-        StyleResourceValue style = resolveStyle(themeDelegate.mThemeResId);
+        StyleResourceValue style = resolveStyle(thisTheme.getAppliedStyleResId());
         if (style != null) {
             RenderSessionImpl.getCurrentContext().getRenderResources()
                     .applyStyle(style, themeDelegate.force);

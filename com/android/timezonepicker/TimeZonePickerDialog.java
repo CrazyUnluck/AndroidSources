@@ -27,6 +27,8 @@ import android.view.WindowManager;
 
 public class TimeZonePickerDialog extends DialogFragment implements
         TimeZonePickerView.OnTimeZoneSetListener {
+    public static final String TAG = TimeZonePickerDialog.class.getSimpleName();
+
     public static final String BUNDLE_START_TIME_MILLIS = "bundle_event_start_time";
     public static final String BUNDLE_TIME_ZONE = "bundle_event_time_zone";
 

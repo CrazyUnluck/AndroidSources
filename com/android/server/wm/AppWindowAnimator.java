@@ -17,6 +17,7 @@
 package com.android.server.wm;
 
 import android.graphics.Matrix;
+import android.os.RemoteException;
 import android.util.Slog;
 import android.util.TimeUtils;
 import android.view.Display;
@@ -63,8 +64,17 @@ public class AppWindowAnimator {
     int thumbnailX;
     int thumbnailY;
     int thumbnailLayer;
+    int thumbnailForceAboveLayer;
     Animation thumbnailAnimation;
     final Transformation thumbnailTransformation = new Transformation();
+    // This flag indicates that the destruction of the thumbnail surface is synchronized with
+    // another animation, so do not pre-emptively destroy the thumbnail surface when the animation
+    // completes
+    boolean deferThumbnailDestruction;
+    // This is the thumbnail surface that has been bestowed upon this animator, and when the
+    // surface for this animator's animation is complete, we will destroy the thumbnail surface
+    // as well.  Do not animate or do anything with this surface.
+    SurfaceControl deferredThumbnail;
 
     /** WindowStateAnimator from mAppAnimator.allAppWindows as of last performLayout */
     ArrayList<WindowStateAnimator> mAllAppWinAnimators = new ArrayList<WindowStateAnimator>();
@@ -87,7 +97,7 @@ public class AppWindowAnimator {
             anim.initialize(width, height, width, height);
         }
         anim.restrictDuration(WindowManagerService.MAX_ANIMATION_DURATION);
-        anim.scaleCurrentDuration(mService.mTransitionAnimationScale);
+        anim.scaleCurrentDuration(mService.getTransitionAnimationScaleLocked());
         int zorder = anim.getZAdjustment();
         int adj = 0;
         if (zorder == Animation.ZORDER_TOP) {
@@ -104,6 +114,10 @@ public class AppWindowAnimator {
         transformation.clear();
         transformation.setAlpha(mAppToken.isVisible() ? 1 : 0);
         hasTransformation = true;
+
+        if (!mAppToken.appFullscreen) {
+            anim.setBackgroundColor(0);
+        }
     }
 
     public void setDummyAnimation() {
@@ -120,7 +134,9 @@ public class AppWindowAnimator {
             animation = null;
             animating = true;
         }
-        clearThumbnail();
+        if (!deferThumbnailDestruction) {
+            clearThumbnail();
+        }
         if (mAppToken.deferClearAllDrawn) {
             mAppToken.allDrawn = false;
             mAppToken.deferClearAllDrawn = false;
@@ -131,6 +147,13 @@ public class AppWindowAnimator {
         if (thumbnail != null) {
             thumbnail.destroy();
             thumbnail = null;
+        }
+    }
+
+    public void clearDeferredThumbnail() {
+        if (deferredThumbnail != null) {
+            deferredThumbnail.destroy();
+            deferredThumbnail = null;
         }
     }
 
@@ -183,10 +206,14 @@ public class AppWindowAnimator {
                 + "][" + tmpFloats[Matrix.MSKEW_X]
                 + "," + tmpFloats[Matrix.MSCALE_Y] + "]", null);
         thumbnail.setAlpha(thumbnailTransformation.getAlpha());
-        // The thumbnail is layered below the window immediately above this
-        // token's anim layer.
-        thumbnail.setLayer(thumbnailLayer + WindowManagerService.WINDOW_LAYER_MULTIPLIER
-                - WindowManagerService.LAYER_OFFSET_THUMBNAIL);
+        if (thumbnailForceAboveLayer > 0) {
+            thumbnail.setLayer(thumbnailForceAboveLayer + 1);
+        } else {
+            // The thumbnail is layered below the window immediately above this
+            // token's anim layer.
+            thumbnail.setLayer(thumbnailLayer + WindowManagerService.WINDOW_LAYER_MULTIPLIER
+                    - WindowManagerService.LAYER_OFFSET_THUMBNAIL);
+        }
         thumbnail.setMatrix(tmpFloats[Matrix.MSCALE_X], tmpFloats[Matrix.MSKEW_Y],
                 tmpFloats[Matrix.MSKEW_X], tmpFloats[Matrix.MSCALE_Y]);
     }
@@ -201,7 +228,9 @@ public class AppWindowAnimator {
             TAG, "Stepped animation in " + mAppToken + ": more=" + more + ", xform=" + transformation);
         if (!more) {
             animation = null;
-            clearThumbnail();
+            if (!deferThumbnailDestruction) {
+                clearThumbnail();
+            }
             if (WindowManagerService.DEBUG_ANIM) Slog.v(
                 TAG, "Finished animation in " + mAppToken + " @ " + currentTime);
         }
@@ -227,7 +256,8 @@ public class AppWindowAnimator {
                 if (!animating) {
                     if (WindowManagerService.DEBUG_ANIM) Slog.v(
                         TAG, "Starting animation in " + mAppToken +
-                        " @ " + currentTime + " scale=" + mService.mTransitionAnimationScale
+                        " @ " + currentTime + " scale="
+                        + mService.getTransitionAnimationScaleLocked()
                         + " allDrawn=" + mAppToken.allDrawn + " animating=" + animating);
                     animation.setStartTime(currentTime);
                     animating = true;
@@ -280,9 +310,28 @@ public class AppWindowAnimator {
 
         final int N = mAllAppWinAnimators.size();
         for (int i=0; i<N; i++) {
-            mAllAppWinAnimators.get(i).finishExit();
+            final WindowStateAnimator winAnim = mAllAppWinAnimators.get(i);
+            if (mAppToken.mLaunchTaskBehind) {
+                winAnim.mWin.mExiting = true;
+            }
+            winAnim.finishExit();
         }
-        mAppToken.updateReportedVisibilityLocked();
+        if (mAppToken.mLaunchTaskBehind) {
+            try {
+                mService.mActivityManager.notifyLaunchTaskBehindComplete(mAppToken.token);
+            } catch (RemoteException e) {
+            }
+            mAppToken.mLaunchTaskBehind = false;
+        } else {
+            mAppToken.updateReportedVisibilityLocked();
+            if (mAppToken.mEnteringAnimation) {
+                mAppToken.mEnteringAnimation = false;
+                try {
+                    mService.mActivityManager.notifyEnterAnimationComplete(mAppToken.token);
+                } catch (RemoteException e) {
+                }
+            }
+        }
 
         return false;
     }

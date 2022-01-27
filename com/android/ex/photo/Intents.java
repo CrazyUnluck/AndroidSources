@@ -21,6 +21,7 @@ import android.app.Activity;
 import android.content.ContentProvider;
 import android.content.Context;
 import android.content.Intent;
+import android.net.Uri;
 
 import com.android.ex.photo.fragments.PhotoViewFragment;
 
@@ -68,7 +69,20 @@ public class Intents {
      * @return The intent builder
      */
     public static PhotoViewIntentBuilder newPhotoViewFragmentIntentBuilder(Context context) {
-        return new PhotoViewIntentBuilder(context, PhotoViewFragment.class);
+        return newPhotoViewFragmentIntentBuilder(context, PhotoViewFragment.class);
+    }
+
+    /**
+     * Gets a photo view intent builder to display the photo view fragment with a custom fragment
+     * subclass.
+     *
+     * @param context The context
+     * @param clazz Subclass of PhotoViewFragment to use
+     * @return The intent builder
+     */
+    public static PhotoViewIntentBuilder newPhotoViewFragmentIntentBuilder(Context context,
+            Class<? extends PhotoViewFragment> clazz) {
+        return new PhotoViewIntentBuilder(context, clazz);
     }
 
     /** Gets a new photo view intent builder */
@@ -247,7 +261,7 @@ public class Intents {
         public Intent build() {
             mIntent.setAction(Intent.ACTION_VIEW);
 
-            mIntent.setFlags(Intent.FLAG_ACTIVITY_CLEAR_WHEN_TASK_RESET);
+            mIntent.setFlags(Intent.FLAG_ACTIVITY_NEW_DOCUMENT);
 
             if (mPhotoIndex != null) {
                 mIntent.putExtra(EXTRA_PHOTO_INDEX, (int) mPhotoIndex);
@@ -264,6 +278,7 @@ public class Intents {
 
             if (mPhotosUri != null) {
                 mIntent.putExtra(EXTRA_PHOTOS_URI, mPhotosUri);
+                mIntent.setData(Uri.parse(mPhotosUri));
             }
 
             if (mResolvedPhotoUri != null) {
@@ -282,9 +297,7 @@ public class Intents {
                 mIntent.putExtra(EXTRA_MAX_INITIAL_SCALE, mMaxInitialScale);
             }
 
-            if (mWatchNetwork == true) {
-                mIntent.putExtra(EXTRA_WATCH_NETWORK, true);
-            }
+            mIntent.putExtra(EXTRA_WATCH_NETWORK, mWatchNetwork);
 
             mIntent.putExtra(EXTRA_SCALE_UP_ANIMATION, mScaleAnimation);
             if (mScaleAnimation) {

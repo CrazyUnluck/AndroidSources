@@ -24,9 +24,8 @@ import com.android.ide.common.rendering.api.RenderResources;
 import com.android.ide.common.rendering.api.ResourceValue;
 import com.android.ide.common.rendering.api.SessionParams;
 import com.android.internal.R;
-import com.android.internal.app.ActionBarImpl;
+import com.android.internal.app.WindowDecorActionBar;
 import com.android.internal.view.menu.MenuBuilder;
-import com.android.internal.view.menu.MenuBuilderAccessor;
 import com.android.internal.view.menu.MenuItemImpl;
 import com.android.internal.widget.ActionBarAccessor;
 import com.android.internal.widget.ActionBarContainer;
@@ -96,7 +95,7 @@ public class ActionBarLayout extends LinearLayout {
         // Inflate action bar layout.
         LayoutInflater.from(context).inflate(R.layout.screen_action_bar, this,
                 true /*attachToRoot*/);
-        mActionBar = new ActionBarImpl(this);
+        mActionBar = new WindowDecorActionBar(this);
 
         // Set contexts.
         mBridgeContext = context;
@@ -167,7 +166,7 @@ public class ActionBarLayout extends LinearLayout {
             // Set action bar to be split, if needed.
             ActionBarContainer splitView = (ActionBarContainer) findViewById(R.id.split_action_bar);
             mActionBarView.setSplitView(splitView);
-            mActionBarView.setSplitActionBar(mSplit);
+            mActionBarView.setSplitToolbar(mSplit);
 
             inflateMenus();
         }
@@ -295,7 +294,7 @@ public class ActionBarLayout extends LinearLayout {
             return false;
         }
         // Copied from android.widget.ActionMenuPresenter.updateMenuView()
-        ArrayList<MenuItemImpl> menus = MenuBuilderAccessor.getNonActionItems(mMenuBuilder);
+        ArrayList<MenuItemImpl> menus = mMenuBuilder.getNonActionItems();
         if (ActionBarAccessor.getActionMenuPresenter(mActionBarView).isOverflowReserved() &&
                 menus != null) {
             final int count = menus.size();

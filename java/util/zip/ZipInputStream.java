@@ -22,6 +22,7 @@ import java.io.InputStream;
 import java.io.PushbackInputStream;
 import java.nio.ByteOrder;
 import java.nio.charset.ModifiedUtf8;
+import java.nio.charset.StandardCharsets;
 import java.util.Arrays;
 import libcore.io.Memory;
 import libcore.io.Streams;
@@ -84,12 +85,14 @@ public class ZipInputStream extends InflaterInputStream implements ZipConstants 
 
     private final CRC32 crc = new CRC32();
 
-    private byte[] nameBuf = new byte[256];
+    private byte[] stringBytesBuf = new byte[256];
 
-    private char[] charBuf = new char[256];
+    private char[] stringCharBuf = new char[256];
 
     /**
      * Constructs a new {@code ZipInputStream} to read zip entries from the given input stream.
+     *
+     * <p>UTF-8 is used to decode all strings in the file.
      */
     public ZipInputStream(InputStream stream) {
         super(new PushbackInputStream(stream, BUF_SIZE), new Inflater(true));
@@ -249,14 +252,8 @@ public class ZipInputStream extends InflaterInputStream implements ZipConstants 
         }
         int extraLength = peekShort(LOCEXT - LOCVER);
 
-        if (nameLength > nameBuf.length) {
-            nameBuf = new byte[nameLength];
-            // The bytes are modified UTF-8, so the number of chars will always be less than or
-            // equal to the number of bytes. It's fine if this buffer is too long.
-            charBuf = new char[nameLength];
-        }
-        Streams.readFully(in, nameBuf, 0, nameLength);
-        currentEntry = createZipEntry(ModifiedUtf8.decode(nameBuf, charBuf, 0, nameLength));
+        String name = readString(nameLength);
+        currentEntry = createZipEntry(name);
         currentEntry.time = ceLastModifiedTime;
         currentEntry.modDate = ceLastModifiedDate;
         currentEntry.setMethod(ceCompressionMethod);
@@ -271,6 +268,22 @@ public class ZipInputStream extends InflaterInputStream implements ZipConstants 
             currentEntry.setExtra(extraData);
         }
         return currentEntry;
+    }
+
+    /**
+     * Reads bytes from the current stream position returning the string representation.
+     */
+    private String readString(int byteLength) throws IOException {
+        if (byteLength > stringBytesBuf.length) {
+            stringBytesBuf = new byte[byteLength];
+        }
+        Streams.readFully(in, stringBytesBuf, 0, byteLength);
+        // The number of chars will always be less than or equal to the number of bytes. It's
+        // fine if this buffer is too long.
+        if (byteLength > stringCharBuf.length) {
+            stringCharBuf = new char[byteLength];
+        }
+        return ModifiedUtf8.decode(stringBytesBuf, stringCharBuf, 0, byteLength);
     }
 
     private int peekShort(int offset) {

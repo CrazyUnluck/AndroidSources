@@ -32,6 +32,7 @@ import java.util.Iterator;
 import java.util.LinkedHashMap;
 import libcore.io.BufferIterator;
 import libcore.io.HeapBufferIterator;
+import libcore.io.IoUtils;
 import libcore.io.Streams;
 
 /**
@@ -108,6 +109,9 @@ public class ZipFile implements Closeable, ZipConstants {
 
     /**
      * Constructs a new {@code ZipFile} allowing read access to the contents of the given file.
+     *
+     * <p>UTF-8 is used to decode all comments and entry names in the file.
+     *
      * @throws ZipException if a zip error occurs.
      * @throws IOException if an {@code IOException} occurs.
      */
@@ -117,6 +121,9 @@ public class ZipFile implements Closeable, ZipConstants {
 
     /**
      * Constructs a new {@code ZipFile} allowing read access to the contents of the given file.
+     *
+     * <p>UTF-8 is used to decode all comments and entry names in the file.
+     *
      * @throws IOException if an IOException occurs.
      */
     public ZipFile(String name) throws IOException {
@@ -125,9 +132,11 @@ public class ZipFile implements Closeable, ZipConstants {
 
     /**
      * Constructs a new {@code ZipFile} allowing access to the given file.
-     * The {@code mode} must be either {@code OPEN_READ} or {@code OPEN_READ|OPEN_DELETE}.
      *
-     * <p>If the {@code OPEN_DELETE} flag is supplied, the file will be deleted at or before the
+     * <p>UTF-8 is used to decode all comments and entry names in the file.
+     *
+     * <p>The {@code mode} must be either {@code OPEN_READ} or {@code OPEN_READ|OPEN_DELETE}.
+     * If the {@code OPEN_DELETE} flag is supplied, the file will be deleted at or before the
      * time that the {@code ZipFile} is closed (the contents will remain accessible until
      * this {@code ZipFile} is closed); it also calls {@code File.deleteOnExit}.
      *
@@ -148,7 +157,19 @@ public class ZipFile implements Closeable, ZipConstants {
 
         raf = new RandomAccessFile(filename, "r");
 
-        readCentralDir();
+        // Make sure to close the RandomAccessFile if reading the central directory fails.
+        boolean mustCloseFile = true;
+        try {
+            readCentralDir();
+
+            // Read succeeded so do not close the underlying RandomAccessFile.
+            mustCloseFile = false;
+        } finally {
+            if (mustCloseFile) {
+                IoUtils.closeQuietly(raf);
+            }
+        }
+
         guard.open("close");
     }
 
@@ -357,6 +378,9 @@ public class ZipFile implements Closeable, ZipConstants {
 
         raf.seek(0);
         final int headerMagic = Integer.reverseBytes(raf.readInt());
+        if (headerMagic == ENDSIG) {
+            throw new ZipException("Empty zip archive not supported");
+        }
         if (headerMagic != LOCSIG) {
             throw new ZipException("Not a zip archive");
         }
@@ -411,7 +435,7 @@ public class ZipFile implements Closeable, ZipConstants {
         BufferedInputStream bufferedStream = new BufferedInputStream(rafStream, 4096);
         byte[] hdrBuf = new byte[CENHDR]; // Reuse the same buffer for each entry.
         for (int i = 0; i < numEntries; ++i) {
-            ZipEntry newEntry = new ZipEntry(hdrBuf, bufferedStream);
+            ZipEntry newEntry = new ZipEntry(hdrBuf, bufferedStream, StandardCharsets.UTF_8);
             if (newEntry.localHeaderRelOffset >= centralDirOffset) {
                 throw new ZipException("Local file header offset is after central directory");
             }

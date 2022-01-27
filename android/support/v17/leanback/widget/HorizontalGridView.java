@@ -27,6 +27,7 @@ import android.graphics.Shader;
 import android.support.v17.leanback.R;
 import android.support.v7.widget.RecyclerView;
 import android.util.AttributeSet;
+import android.util.TypedValue;
 import android.view.View;
 
 /**
@@ -66,16 +67,27 @@ public class HorizontalGridView extends BaseGridView {
     protected void initAttributes(Context context, AttributeSet attrs) {
         initBaseGridViewAttributes(context, attrs);
         TypedArray a = context.obtainStyledAttributes(attrs, R.styleable.lbHorizontalGridView);
-        setRowHeight(a.getDimensionPixelSize(R.styleable.lbHorizontalGridView_rowHeight, 0));
+        setRowHeight(a);
         setNumRows(a.getInt(R.styleable.lbHorizontalGridView_numberOfRows, 1));
         a.recycle();
-        setWillNotDraw(false);
+        updateLayerType();
         mTempPaint = new Paint();
         mTempPaint.setXfermode(new PorterDuffXfermode(PorterDuff.Mode.DST_IN));
     }
 
+    void setRowHeight(TypedArray array) {
+        TypedValue typedValue = array.peekValue(R.styleable.lbHorizontalGridView_rowHeight);
+        int size;
+        if (typedValue != null && typedValue.type == TypedValue.TYPE_DIMENSION) {
+            size = array.getDimensionPixelSize(R.styleable.lbHorizontalGridView_rowHeight, 0);
+        } else {
+            size = array.getInt(R.styleable.lbHorizontalGridView_rowHeight, 0);
+        }
+        setRowHeight(size);
+    }
+
     /**
-     * Set the number of rows.
+     * Set the number of rows.  Defaults to one.
      */
     public void setNumRows(int numRows) {
         mLayoutManager.setNumRows(numRows);
@@ -84,6 +96,9 @@ public class HorizontalGridView extends BaseGridView {
 
     /**
      * Set the row height.
+     *
+     * @param height May be WRAP_CONTENT, or a size in pixels. If zero,
+     * row height will be fixed based on number of rows and view height.
      */
     public void setRowHeight(int height) {
         mLayoutManager.setRowHeight(height);
@@ -101,6 +116,7 @@ public class HorizontalGridView extends BaseGridView {
                 mTempBitmapLow = null;
             }
             invalidate();
+            updateLayerType();
         }
     }
 
@@ -166,6 +182,7 @@ public class HorizontalGridView extends BaseGridView {
                 mTempBitmapHigh = null;
             }
             invalidate();
+            updateLayerType();
         }
     }
 
@@ -264,17 +281,18 @@ public class HorizontalGridView extends BaseGridView {
         if (mTempBitmapHigh == null
                 || mTempBitmapHigh.getWidth() != mHighFadeShaderLength
                 || mTempBitmapHigh.getHeight() != getHeight()) {
-            if (mTempBitmapLow != null
+            // TODO: fix logic for sharing mTempBitmapLow
+            if (false && mTempBitmapLow != null
                     && mTempBitmapLow.getWidth() == mHighFadeShaderLength
                     && mTempBitmapLow.getHeight() == getHeight()) {
                 // share same bitmap for low edge fading and high edge fading.
                 mTempBitmapHigh = mTempBitmapLow;
             } else {
-                mTempBitmapLow = Bitmap.createBitmap(mHighFadeShaderLength, getHeight(),
+                mTempBitmapHigh = Bitmap.createBitmap(mHighFadeShaderLength, getHeight(),
                         Bitmap.Config.ARGB_8888);
             }
         }
-        return mTempBitmapLow;
+        return mTempBitmapHigh;
     }
 
     @Override
@@ -298,8 +316,8 @@ public class HorizontalGridView extends BaseGridView {
 
         // draw not-fade content
         int save = canvas.save();
-        canvas.clipRect(lowEdge + mLowFadeShaderLength, 0,
-                highEdge - mHighFadeShaderLength, getHeight());
+        canvas.clipRect(lowEdge + (mFadingLowEdge ? mLowFadeShaderLength : 0), 0,
+                highEdge - (mFadingHighEdge ? mHighFadeShaderLength : 0), getHeight());
         super.draw(canvas);
         canvas.restoreToCount(save);
 
@@ -345,6 +363,23 @@ public class HorizontalGridView extends BaseGridView {
             canvas.translate(highEdge - mHighFadeShaderLength, 0);
             canvas.drawBitmap(tempBitmap, mTempRect, mTempRect, null);
             canvas.translate(-(highEdge - mHighFadeShaderLength), 0);
+        }
+    }
+
+    /**
+     * Updates the layer type for this view.
+     * If fading edges are needed, use a hardware layer.  This works around the problem
+     * that when a child invalidates itself (for example has an animated background),
+     * the parent view must also be invalidated to refresh the display list which
+     * updates the the caching bitmaps used to draw the fading edges.
+     */
+    private void updateLayerType() {
+        if (mFadingLowEdge || mFadingHighEdge) {
+            setLayerType(View.LAYER_TYPE_HARDWARE, null);
+            setWillNotDraw(false);
+        } else {
+            setLayerType(View.LAYER_TYPE_NONE, null);
+            setWillNotDraw(true);
         }
     }
 }

@@ -28,29 +28,28 @@ import android.view.animation.AccelerateDecelerateInterpolator;
 import android.view.animation.Animation;
 import android.view.animation.DecelerateInterpolator;
 import android.view.animation.Transformation;
+import android.widget.FrameLayout;
 
 import java.util.ArrayList;
 
 /**
- * A card style layout that arranges its children in a vertical column according
- * to the card type set for the parent and the card view type property set for
- * these children. A BaseCardView can have from 1 to 3 card areas, depending
- * on the chosen card type. Children are assigned to these areas according to
- * the view type indicated by their layout parameters. The card type defines
- * when these card areas are visible or not, and how they animate inside the
- * parent card. These transitions are triggered when the card changes state. A
- * card has 2 sets of states: Activated(true/false), and Selected(true/false).
- * These states, combined with the card type chosen, determine what areas of the
- * card are visible depending on the current state. They card type also
- * determines the animations that are triggered when transitioning between
- * states. The card states are set by calling {@link #setActivated(boolean)
- * setActivated()} and {@link #setSelected(boolean) setSelected()}.
+ * A card style layout that responds to certain state changes. It arranges its
+ * children in a vertical column, with different regions becoming visible at
+ * different times.
+ *
  * <p>
- * See {@link BaseCardView.LayoutParams BaseCardView.LayoutParams} for
- * layout attributes.
+ * A BaseCardView will draw its children based on its type, the region
+ * visibilities of the child types, and the state of the widget. A child may be
+ * marked as belonging to one of three regions: main, info, or extra. The main
+ * region is always visible, while the info and extra regions can be set to
+ * display based on the activated or selected state of the View. The card states
+ * are set by calling {@link #setActivated(boolean) setActivated} and
+ * {@link #setSelected(boolean) setSelected}.
+ * <p>
+ * See {@link BaseCardView.LayoutParams} for layout attributes.
  * </p>
  */
-public class BaseCardView extends ViewGroup {
+public class BaseCardView extends FrameLayout {
     private static final String TAG = "BaseCardView";
     private static final boolean DEBUG = false;
 
@@ -64,34 +63,29 @@ public class BaseCardView extends ViewGroup {
     public static final int CARD_TYPE_MAIN_ONLY = 0;
 
     /**
-     * A Card type with 2 layout areas: A main area, always visible, and an info
-     * area, which is only visible when the card is set to its Active state. The
-     * info area fades in over the main area, and does not cause the card height
-     * to change.
+     * A Card type with 2 layout areas: A main area which is always visible, and
+     * an info area that fades in over the main area when it is visible.
+     * The card height will not change.
      *
      * @see #getCardType()
      */
     public static final int CARD_TYPE_INFO_OVER = 1;
 
     /**
-     * A Card type with 2 layout areas: A main area, always visible, and an info
-     * area, which is only visible when the card is set to its Active state. The
-     * info area appears below the main area, causing the total card height to
-     * change when the card switches between Active and Inactive states.
+     * A Card type with 2 layout areas: A main area which is always visible, and
+     * an info area that appears below the main area. When the info area is visible
+     * the total card height will change.
      *
      * @see #getCardType()
      */
     public static final int CARD_TYPE_INFO_UNDER = 2;
 
     /**
-     * A Card type with 3 layout areas: A main area, always visible; an info
-     * area, which is only visible when the card is set to its Active state; and
-     * an extra area, which only becomes visible when the card is set to
-     * Selected state. The info area appears below the main area, causing the
-     * total card height to change when the card switches between Active and
-     * Inactive states. The extra area only appears if the card stays in its
-     * Selected state for a certain (small) amount of time. It animates in at
-     * the bottom of the card, shifting up the info view. This does not affect
+     * A Card type with 3 layout areas: A main area which is always visible; an
+     * info area which will appear below the main area, and an extra area that
+     * only appears after a short delay. The info area appears below the main
+     * area, causing the total card height to change. The extra area animates in
+     * at the bottom of the card, shifting up the info view without affecting
      * the card height.
      *
      * @see #getCardType()
@@ -134,6 +128,9 @@ public class BaseCardView extends ViewGroup {
     private float mInfoVisFraction;
     private float mInfoAlpha = 1.0f;
     private Animation mAnim;
+
+    private final static int[] LB_PRESSED_STATE_SET = new int[]{
+        android.R.attr.state_pressed};
 
     private final Runnable mAnimationTrigger = new Runnable() {
         @Override
@@ -252,6 +249,14 @@ public class BaseCardView extends ViewGroup {
         return mCardType;
     }
 
+    /**
+     * Sets the visibility of the info region of the card.
+     *
+     * @param visibility The region visibility to use for the info region. Must
+     *     be one of {@link #CARD_REGION_VISIBLE_ALWAYS},
+     *     {@link #CARD_REGION_VISIBLE_SELECTED}, or
+     *     {@link #CARD_REGION_VISIBLE_ACTIVATED}.
+     */
     public void setInfoVisibility(int visibility) {
         if (mInfoVisibility != visibility) {
             mInfoVisibility = visibility;
@@ -264,10 +269,21 @@ public class BaseCardView extends ViewGroup {
         }
     }
 
+    /**
+     * Returns the visibility of the info region of the card.
+     */
     public int getInfoVisibility() {
         return mInfoVisibility;
     }
 
+    /**
+     * Sets the visibility of the extra region of the card.
+     *
+     * @param visibility The region visibility to use for the extra region. Must
+     *     be one of {@link #CARD_REGION_VISIBLE_ALWAYS},
+     *     {@link #CARD_REGION_VISIBLE_SELECTED}, or
+     *     {@link #CARD_REGION_VISIBLE_ACTIVATED}.
+     */
     public void setExtraVisibility(int visibility) {
         if (mExtraVisibility != visibility) {
             mExtraVisibility = visibility;
@@ -275,6 +291,9 @@ public class BaseCardView extends ViewGroup {
         }
     }
 
+    /**
+     * Returns the visibility of the extra region of the card.
+     */
     public int getExtraVisibility() {
         return mExtraVisibility;
     }
@@ -339,6 +358,8 @@ public class BaseCardView extends ViewGroup {
                 state = View.combineMeasuredStates(state, mainView.getMeasuredState());
             }
         }
+        setPivotX(mMeasuredWidth / 2);
+        setPivotY(mainHeight / 2);
 
 
         // The MAIN area determines the card width
@@ -448,6 +469,8 @@ public class BaseCardView extends ViewGroup {
                 }
             }
         }
+        // Force update drawable bounds.
+        onSizeChanged(0, 0, right - left, bottom - top);
     }
 
     @Override
@@ -517,6 +540,32 @@ public class BaseCardView extends ViewGroup {
             }
         }
 
+    }
+
+    @Override
+    protected int[] onCreateDrawableState(int extraSpace) {
+        // filter out focus states,  since leanback does not fade foreground on focus.
+        final int[] s = super.onCreateDrawableState(extraSpace);
+        final int N = s.length;
+        boolean pressed = false;
+        boolean enabled = false;
+        for (int i = 0; i < N; i++) {
+            if (s[i] == android.R.attr.state_pressed) {
+                pressed = true;
+            }
+            if (s[i] == android.R.attr.state_enabled) {
+                enabled = true;
+            }
+        }
+        if (pressed && enabled) {
+            return View.PRESSED_ENABLED_STATE_SET;
+        } else if (pressed) {
+            return LB_PRESSED_STATE_SET;
+        } else if (enabled) {
+            return View.ENABLED_STATE_SET;
+        } else {
+            return View.EMPTY_STATE_SET;
+        }
     }
 
     private void applyActiveState(boolean active) {
@@ -740,7 +789,7 @@ public class BaseCardView extends ViewGroup {
     /**
      * Per-child layout information associated with BaseCardView.
      */
-    public static class LayoutParams extends ViewGroup.LayoutParams {
+    public static class LayoutParams extends FrameLayout.LayoutParams {
         public static final int VIEW_TYPE_MAIN = 0;
         public static final int VIEW_TYPE_INFO = 1;
         public static final int VIEW_TYPE_EXTRA = 2;

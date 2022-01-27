@@ -120,6 +120,17 @@ public class ContentSettingsAdapter extends android.webkit.WebSettings {
     }
 
     @Override
+    public void setAcceptThirdPartyCookies(boolean accept) {
+        if (DebugFlags.TRACE_API) Log.d(LOGTAG, "setAcceptThirdPartyCookies=" + accept);
+        mAwSettings.setAcceptThirdPartyCookies(accept);
+    }
+
+    @Override
+    public boolean getAcceptThirdPartyCookies() {
+        return mAwSettings.getAcceptThirdPartyCookies();
+    }
+
+    @Override
     public void setEnableSmoothTransition(boolean enable) {
         // Intentional no-op.
     }
@@ -583,5 +594,25 @@ public class ContentSettingsAdapter extends android.webkit.WebSettings {
     @Override
     public boolean getMediaPlaybackRequiresUserGesture() {
         return mAwSettings.getMediaPlaybackRequiresUserGesture();
+    }
+
+//    @Override
+    public void setMixedContentMode(int mode) {
+        mAwSettings.setMixedContentMode(mode);
+    }
+
+//    @Override
+    public int getMixedContentMode() {
+        return mAwSettings.getMixedContentMode();
+    }
+
+//    @Override
+    public void setVideoOverlayForEmbeddedEncryptedVideoEnabled(boolean flag) {
+        mAwSettings.setVideoOverlayForEmbeddedVideoEnabled(flag);
+    }
+
+//    @Override
+    public boolean getVideoOverlayForEmbeddedEncryptedVideoEnabled() {
+        return mAwSettings.getVideoOverlayForEmbeddedVideoEnabled();
     }
 }

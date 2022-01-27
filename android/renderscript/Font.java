@@ -17,7 +17,6 @@
 package android.renderscript;
 
 import java.io.File;
-import java.io.IOException;
 import java.io.InputStream;
 import java.util.HashMap;
 import java.util.Map;
@@ -26,8 +25,6 @@ import android.os.Environment;
 
 import android.content.res.AssetManager;
 import android.content.res.Resources;
-import android.util.Log;
-import android.util.TypedValue;
 
 /**
  * @hide
@@ -114,10 +111,10 @@ public class Font extends BaseObj {
 
         FontFamily serifFamily = new FontFamily();
         serifFamily.mNames = sSerifNames;
-        serifFamily.mNormalFileName = "DroidSerif-Regular.ttf";
-        serifFamily.mBoldFileName = "DroidSerif-Bold.ttf";
-        serifFamily.mItalicFileName = "DroidSerif-Italic.ttf";
-        serifFamily.mBoldItalicFileName = "DroidSerif-BoldItalic.ttf";
+        serifFamily.mNormalFileName = "NotoSerif-Regular.ttf";
+        serifFamily.mBoldFileName = "NotoSerif-Bold.ttf";
+        serifFamily.mItalicFileName = "NotoSerif-Italic.ttf";
+        serifFamily.mBoldItalicFileName = "NotoSerif-BoldItalic.ttf";
         addFamilyToMap(serifFamily);
 
         FontFamily monoFamily = new FontFamily();
@@ -151,7 +148,7 @@ public class Font extends BaseObj {
         return "DroidSans.ttf";
     }
 
-    Font(int id, RenderScript rs) {
+    Font(long id, RenderScript rs) {
         super(id, rs);
     }
 
@@ -162,7 +159,7 @@ public class Font extends BaseObj {
     static public Font createFromFile(RenderScript rs, Resources res, String path, float pointSize) {
         rs.validate();
         int dpi = res.getDisplayMetrics().densityDpi;
-        int fontId = rs.nFontCreateFromFile(path, pointSize, dpi);
+        long fontId = rs.nFontCreateFromFile(path, pointSize, dpi);
 
         if(fontId == 0) {
             throw new RSRuntimeException("Unable to create font from file " + path);
@@ -187,7 +184,7 @@ public class Font extends BaseObj {
         AssetManager mgr = res.getAssets();
         int dpi = res.getDisplayMetrics().densityDpi;
 
-        int fontId = rs.nFontCreateFromAsset(mgr, path, pointSize, dpi);
+        long fontId = rs.nFontCreateFromAsset(mgr, path, pointSize, dpi);
         if(fontId == 0) {
             throw new RSRuntimeException("Unable to create font from asset " + path);
         }
@@ -211,9 +208,9 @@ public class Font extends BaseObj {
 
         int dpi = res.getDisplayMetrics().densityDpi;
 
-        int fontId = 0;
+        long fontId = 0;
         if (is instanceof AssetManager.AssetInputStream) {
-            int asset = ((AssetManager.AssetInputStream) is).getAssetInt();
+            long asset = ((AssetManager.AssetInputStream) is).getNativeAsset();
             fontId = rs.nFontCreateFromAssetStream(name, pointSize, dpi, asset);
         } else {
             throw new RSRuntimeException("Unsupported asset stream created");

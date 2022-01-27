@@ -19,9 +19,10 @@ import android.graphics.Rect;
 import android.support.v17.leanback.R;
 import android.support.v7.widget.RecyclerView;
 import android.util.AttributeSet;
+import android.view.Gravity;
+import android.view.KeyEvent;
+import android.view.MotionEvent;
 import android.view.View;
-import android.view.ViewGroup;
-import android.view.animation.Interpolator;
 
 /**
  * Base class for vertically and horizontally scrolling lists. The items come
@@ -102,7 +103,72 @@ abstract class BaseGridView extends RecyclerView {
      */
     public final static float ITEM_ALIGN_OFFSET_PERCENT_DISABLED = -1;
 
+    /**
+     * Dont save states of any child views.
+     */
+    public static final int SAVE_NO_CHILD = 0;
+
+    /**
+     * Only save on screen child views, the states are lost when they become off screen.
+     */
+    public static final int SAVE_ON_SCREEN_CHILD = 1;
+
+    /**
+     * Save on screen views plus save off screen child views states up to
+     * {@link #getSaveChildrenLimitNumber()}.
+     */
+    public static final int SAVE_LIMITED_CHILD = 2;
+
+    /**
+     * Save on screen views plus save off screen child views without any limitation.
+     * This might cause out of memory, only use it when you are dealing with limited data.
+     */
+    public static final int SAVE_ALL_CHILD = 3;
+
+    /**
+     * Listener for intercepting touch dispatch events.
+     */
+    public interface OnTouchInterceptListener {
+        /**
+         * Returns true if the touch dispatch event should be consumed.
+         */
+        public boolean onInterceptTouchEvent(MotionEvent event);
+    }
+
+    /**
+     * Listener for intercepting generic motion dispatch events.
+     */
+    public interface OnMotionInterceptListener {
+        /**
+         * Returns true if the touch dispatch event should be consumed.
+         */
+        public boolean onInterceptMotionEvent(MotionEvent event);
+    }
+
+    /**
+     * Listener for intercepting key dispatch events.
+     */
+    public interface OnKeyInterceptListener {
+        /**
+         * Returns true if the key dispatch event should be consumed.
+         */
+        public boolean onInterceptKeyEvent(KeyEvent event);
+    }
+
     protected final GridLayoutManager mLayoutManager;
+
+    /**
+     * Animate layout changes from a child resizing or adding/removing a child.
+     */
+    private boolean mAnimateChildLayout = true;
+
+    private boolean mHasOverlappingRendering = true;
+
+    private RecyclerView.ItemAnimator mSavedItemAnimator;
+
+    private OnTouchInterceptListener mOnTouchInterceptListener;
+    private OnMotionInterceptListener mOnMotionInterceptListener;
+    private OnKeyInterceptListener mOnKeyInterceptListener;
 
     public BaseGridView(Context context, AttributeSet attrs, int defStyle) {
         super(context, attrs, defStyle);
@@ -111,6 +177,8 @@ abstract class BaseGridView extends RecyclerView {
         setDescendantFocusability(FOCUS_AFTER_DESCENDANTS);
         setHasFixedSize(true);
         setChildrenDrawingOrderEnabled(true);
+        setWillNotDraw(true);
+        setOverScrollMode(View.OVER_SCROLL_NEVER);
     }
 
     protected void initBaseGridViewAttributes(Context context, AttributeSet attrs) {
@@ -122,6 +190,9 @@ abstract class BaseGridView extends RecyclerView {
                 a.getDimensionPixelSize(R.styleable.lbBaseGridView_verticalMargin, 0));
         mLayoutManager.setHorizontalMargin(
                 a.getDimensionPixelSize(R.styleable.lbBaseGridView_horizontalMargin, 0));
+        if (a.hasValue(R.styleable.lbBaseGridView_android_gravity)) {
+            setGravity(a.getInt(R.styleable.lbBaseGridView_android_gravity, Gravity.NO_GRAVITY));
+        }
         a.recycle();
     }
 
@@ -248,6 +319,24 @@ abstract class BaseGridView extends RecyclerView {
     }
 
     /**
+     * Set to true if include padding in calculating item align offset.
+     *
+     * @param withPadding When it is true: we include left/top padding for positive
+     *          item offset, include right/bottom padding for negative item offset.
+     */
+    public void setItemAlignmentOffsetWithPadding(boolean withPadding) {
+        mLayoutManager.setItemAlignmentOffsetWithPadding(withPadding);
+        requestLayout();
+    }
+
+    /**
+     * Returns true if include padding in calculating item align offset.
+     */
+    public boolean isItemAlignmentOffsetWithPadding() {
+        return mLayoutManager.isItemAlignmentOffsetWithPadding();
+    }
+
+    /**
      * Set offset percent for item alignment in addition to {@link
      * #getItemAlignmentOffset()}.
      *
@@ -327,7 +416,11 @@ abstract class BaseGridView extends RecyclerView {
 
     /**
      * Register a callback to be invoked when an item in BaseGridView has
-     * been selected.
+     * been selected.  Note that the listener may be invoked when there is a
+     * layout pending on the view, affording the listener an opportunity to
+     * adjust the upcoming layout based on the selection state.
+     *
+     * @param listener The listener to be invoked.
      */
     public void setOnChildSelectedListener(OnChildSelectedListener listener) {
         mLayoutManager.setOnChildSelectedListener(listener);
@@ -361,7 +454,15 @@ abstract class BaseGridView extends RecyclerView {
      * <p><i>Unstable API, might change later.</i>
      */
     public void setAnimateChildLayout(boolean animateChildLayout) {
-        mLayoutManager.setAnimateChildLayout(animateChildLayout);
+        if (mAnimateChildLayout != animateChildLayout) {
+            mAnimateChildLayout = animateChildLayout;
+            if (!mAnimateChildLayout) {
+                mSavedItemAnimator = getItemAnimator();
+                super.setItemAnimator(null);
+            } else {
+                super.setItemAnimator(mSavedItemAnimator);
+            }
+        }
     }
 
     /**
@@ -370,43 +471,7 @@ abstract class BaseGridView extends RecyclerView {
      * <p><i>Unstable API, might change later.</i>
      */
     public boolean isChildLayoutAnimated() {
-        return mLayoutManager.isChildLayoutAnimated();
-    }
-
-    /**
-     * Set an interpolator for the animation when a child changes size or when 
-     * adding or removing a child.
-     * <p><i>Unstable API, might change later.</i>
-     */
-    public void setChildLayoutAnimationInterpolator(Interpolator interpolator) {
-        mLayoutManager.setChildLayoutAnimationInterpolator(interpolator);
-    }
-
-    /**
-     * Get the interpolator for the animation when a child changes size or when
-     * adding or removing a child.
-     * <p><i>Unstable API, might change later.</i>
-     */
-    public Interpolator getChildLayoutAnimationInterpolator() {
-        return mLayoutManager.getChildLayoutAnimationInterpolator();
-    }
-
-    /**
-     * Set the duration of the animation when a child changes size or when 
-     * adding or removing a child.
-     * <p><i>Unstable API, might change later.</i>
-     */
-    public void setChildLayoutAnimationDuration(long duration) {
-        mLayoutManager.setChildLayoutAnimationDuration(duration);
-    }
-
-    /**
-     * Get the duration of the animation when a child changes size or when 
-     * adding or removing a child.
-     * <p><i>Unstable API, might change later.</i>
-     */
-    public long getChildLayoutAnimationDuration() {
-        return mLayoutManager.getChildLayoutAnimationDuration();
+        return mAnimateChildLayout;
     }
 
     /**
@@ -418,12 +483,6 @@ abstract class BaseGridView extends RecyclerView {
     public void setGravity(int gravity) {
         mLayoutManager.setGravity(gravity);
         requestLayout();
-    }
-
-    @Override
-    public void setDescendantFocusability (int focusability) {
-        // enforce FOCUS_AFTER_DESCENDANTS
-        super.setDescendantFocusability(FOCUS_AFTER_DESCENDANTS);
     }
 
     @Override
@@ -467,4 +526,165 @@ abstract class BaseGridView extends RecyclerView {
         return mLayoutManager.isFocusSearchDisabled();
     }
 
+    /**
+     * Enable or disable layout.  All children will be removed when layout is
+     * disabled.
+     */
+    public void setLayoutEnabled(boolean layoutEnabled) {
+        mLayoutManager.setLayoutEnabled(layoutEnabled);
+    }
+
+    /**
+     * Change and override children's visibility.
+     */
+    public void setChildrenVisibility(int visibility) {
+        mLayoutManager.setChildrenVisibility(visibility);
+    }
+
+    /**
+     * Enable or disable pruning child.  Disable is useful during transition.
+     */
+    public void setPruneChild(boolean pruneChild) {
+        mLayoutManager.setPruneChild(pruneChild);
+    }
+
+    /**
+     * Enable or disable scrolling.  Disable is useful during transition.
+     */
+    public void setScrollEnabled(boolean scrollEnabled) {
+        mLayoutManager.setScrollEnabled(scrollEnabled);
+    }
+
+    /**
+     * Returns true if scrolling is enabled.
+     */
+    public boolean isScrollEnabled() {
+        return mLayoutManager.isScrollEnabled();
+    }
+
+    /**
+     * Returns true if the view at the given position has a same row sibling
+     * in front of it.
+     *
+     * @param position Position in adapter.
+     */
+    public boolean hasPreviousViewInSameRow(int position) {
+        return mLayoutManager.hasPreviousViewInSameRow(position);
+    }
+
+    /**
+     * Enable or disable the default "focus draw at last" order rule.
+     */
+    public void setFocusDrawingOrderEnabled(boolean enabled) {
+        super.setChildrenDrawingOrderEnabled(enabled);
+    }
+
+    /**
+     * Returns true if default "focus draw at last" order rule is enabled.
+     */
+    public boolean isFocusDrawingOrderEnabled() {
+        return super.isChildrenDrawingOrderEnabled();
+    }
+
+    /**
+     * Sets the touch intercept listener.
+     */
+    public void setOnTouchInterceptListener(OnTouchInterceptListener listener) {
+        mOnTouchInterceptListener = listener;
+    }
+
+    /**
+     * Sets the generic motion intercept listener.
+     */
+    public void setOnMotionInterceptListener(OnMotionInterceptListener listener) {
+        mOnMotionInterceptListener = listener;
+    }
+
+    /**
+     * Sets the key intercept listener.
+     */
+    public void setOnKeyInterceptListener(OnKeyInterceptListener listener) {
+        mOnKeyInterceptListener = listener;
+    }
+
+    @Override
+    public boolean dispatchKeyEvent(KeyEvent event) {
+        if (mOnKeyInterceptListener != null) {
+            if (mOnKeyInterceptListener.onInterceptKeyEvent(event)) {
+                return true;
+            }
+        }
+        return super.dispatchKeyEvent(event);
+    }
+
+    @Override
+    public boolean dispatchTouchEvent(MotionEvent event) {
+        if (mOnTouchInterceptListener != null) {
+            if (mOnTouchInterceptListener.onInterceptTouchEvent(event)) {
+                return true;
+            }
+        }
+        return super.dispatchTouchEvent(event);
+    }
+
+    @Override
+    public boolean dispatchGenericFocusedEvent(MotionEvent event) {
+        if (mOnMotionInterceptListener != null) {
+            if (mOnMotionInterceptListener.onInterceptMotionEvent(event)) {
+                return true;
+            }
+        }
+        return super.dispatchGenericFocusedEvent(event);
+    }
+
+    /**
+     * @return policy for saving children.  One of {@link #SAVE_NO_CHILD}
+     * {@link #SAVE_ON_SCREEN_CHILD} {@link #SAVE_LIMITED_CHILD} {@link #SAVE_ALL_CHILD}.
+     */
+    public final int getSaveChildrenPolicy() {
+        return mLayoutManager.mChildrenStates.getSavePolicy();
+    }
+
+    /**
+     * @return The limit number when {@link #getSaveChildrenPolicy()} is
+     *         {@link #SAVE_LIMITED_CHILD}
+     */
+    public final int getSaveChildrenLimitNumber() {
+        return mLayoutManager.mChildrenStates.getLimitNumber();
+    }
+
+    /**
+     * Set policy for saving children.
+     * @param savePolicy One of {@link #SAVE_NO_CHILD} {@link #SAVE_ON_SCREEN_CHILD}
+     * {@link #SAVE_LIMITED_CHILD} {@link #SAVE_ALL_CHILD}.
+     */
+    public final void setSaveChildrenPolicy(int savePolicy) {
+        mLayoutManager.mChildrenStates.setSavePolicy(savePolicy);
+    }
+
+    /**
+     * Set limit number when {@link #getSaveChildrenPolicy()} is {@link #SAVE_LIMITED_CHILD}.
+     */
+    public final void setSaveChildrenLimitNumber(int limitNumber) {
+        mLayoutManager.mChildrenStates.setLimitNumber(limitNumber);
+    }
+
+    /**
+     * Set the factor by which children should be laid out beyond the view bounds
+     * in the direction of orientation.  1.0 disables over reach.
+     *
+     * @param fraction fraction of over reach
+     */
+    public final void setPrimaryOverReach(float fraction) {
+        mLayoutManager.setPrimaryOverReach(fraction);
+    }
+
+    @Override
+    public boolean hasOverlappingRendering() {
+        return mHasOverlappingRendering;
+    }
+
+    public void setHasOverlappingRendering(boolean hasOverlapping) {
+        mHasOverlappingRendering = hasOverlapping;
+    }
 }

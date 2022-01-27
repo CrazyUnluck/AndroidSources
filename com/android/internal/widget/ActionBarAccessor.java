@@ -16,7 +16,7 @@
 
 package com.android.internal.widget;
 
-import com.android.internal.view.menu.ActionMenuPresenter;
+import android.widget.ActionMenuPresenter;
 
 /**
  * To access non public members of AbsActionBarView

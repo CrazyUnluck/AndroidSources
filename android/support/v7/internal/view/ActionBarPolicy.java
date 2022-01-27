@@ -20,7 +20,9 @@ import android.content.Context;
 import android.content.res.Resources;
 import android.content.res.TypedArray;
 import android.os.Build;
+import android.support.v4.view.ViewConfigurationCompat;
 import android.support.v7.appcompat.R;
+import android.view.ViewConfiguration;
 
 /**
  * Allows components to query for various configuration policy decisions about how the action bar
@@ -45,8 +47,11 @@ public class ActionBarPolicy {
     }
 
     public boolean showsOverflowMenuButton() {
-        // Only show overflow on HC+ devices
-        return Build.VERSION.SDK_INT >= Build.VERSION_CODES.HONEYCOMB;
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.KITKAT) {
+            return true;
+        } else {
+            return !ViewConfigurationCompat.hasPermanentMenuKey(ViewConfiguration.get(mContext));
+        }
     }
 
     public int getEmbeddedMenuWidthLimit() {
@@ -54,6 +59,11 @@ public class ActionBarPolicy {
     }
 
     public boolean hasEmbeddedTabs() {
+        final int targetSdk = mContext.getApplicationInfo().targetSdkVersion;
+        if (targetSdk >= Build.VERSION_CODES.JELLY_BEAN) {
+            return mContext.getResources().getBoolean(R.bool.abc_action_bar_embed_tabs);
+        }
+
         // The embedded tabs policy changed in Jellybean; give older apps the old policy
         // so they get what they expect.
         return mContext.getResources().getBoolean(R.bool.abc_action_bar_embed_tabs_pre_jb);
@@ -76,7 +86,8 @@ public class ActionBarPolicy {
     public boolean enableHomeButtonByDefault() {
         // Older apps get the home button interaction enabled by default.
         // Newer apps need to enable it explicitly.
-        return mContext.getApplicationInfo().targetSdkVersion < 14; // ICE_CREAM_SANDWICH
+        return mContext.getApplicationInfo().targetSdkVersion <
+                Build.VERSION_CODES.ICE_CREAM_SANDWICH;
     }
 
     public int getStackedTabMaxWidth() {

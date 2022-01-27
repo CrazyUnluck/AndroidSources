@@ -33,13 +33,13 @@ public class MainActivity extends Activity {
         final RecipientEditTextView emailRetv =
                 (RecipientEditTextView) findViewById(R.id.email_retv);
         emailRetv.setTokenizer(new Rfc822Tokenizer());
-        emailRetv.setAdapter(new BaseRecipientAdapter(this) { });
+        emailRetv.setAdapter(new BaseRecipientAdapter(this));
 
         final RecipientEditTextView phoneRetv =
                 (RecipientEditTextView) findViewById(R.id.phone_retv);
         phoneRetv.setTokenizer(new MultiAutoCompleteTextView.CommaTokenizer());
         phoneRetv.setAdapter(
-                new BaseRecipientAdapter(BaseRecipientAdapter.QUERY_TYPE_PHONE, this) { });
+                new BaseRecipientAdapter(BaseRecipientAdapter.QUERY_TYPE_PHONE, this));
     }
 
 }

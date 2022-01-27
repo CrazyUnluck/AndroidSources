@@ -3,7 +3,11 @@ package com.android.ex.chips;
 import android.content.Context;
 import android.graphics.Bitmap;
 import android.graphics.BitmapFactory;
+import android.graphics.drawable.StateListDrawable;
 import android.net.Uri;
+import android.support.annotation.DrawableRes;
+import android.support.annotation.IdRes;
+import android.support.annotation.LayoutRes;
 import android.text.TextUtils;
 import android.text.util.Rfc822Tokenizer;
 import android.view.LayoutInflater;
@@ -28,8 +32,13 @@ public class DropdownChipLayouter {
         SINGLE_RECIPIENT
     }
 
+    public interface ChipDeleteListener {
+        void onChipDelete();
+    }
+
     private final LayoutInflater mInflater;
     private final Context mContext;
+    private ChipDeleteListener mDeleteListener;
     private Query mQuery;
 
     public DropdownChipLayouter(LayoutInflater inflater, Context context) {
@@ -39,6 +48,10 @@ public class DropdownChipLayouter {
 
     public void setQuery(Query query) {
         mQuery = query;
+    }
+
+    public void setDeleteListener(ChipDeleteListener listener) {
+        mDeleteListener = listener;
     }
 
 
@@ -57,6 +70,15 @@ public class DropdownChipLayouter {
      */
     public View bindView(View convertView, ViewGroup parent, RecipientEntry entry, int position,
         AdapterType type, String constraint) {
+        return bindView(convertView, parent, entry, position, type, constraint, null);
+    }
+
+    /**
+     * See {@link #bindView(View, ViewGroup, RecipientEntry, int, AdapterType, String)}
+     * @param deleteDrawable
+     */
+    public View bindView(View convertView, ViewGroup parent, RecipientEntry entry, int position,
+            AdapterType type, String constraint, StateListDrawable deleteDrawable) {
         // Default to show all the information
         String displayName = entry.getDisplayName();
         String destination = entry.getDestination();
@@ -84,6 +106,11 @@ public class DropdownChipLayouter {
                     displayName = null;
                     showImage = false;
                 }
+
+                // For BASE_RECIPIENT set all top dividers except for the first one to be GONE.
+                if (viewHolder.topDivider != null) {
+                    viewHolder.topDivider.setVisibility(position == 0 ? View.VISIBLE : View.GONE);
+                }
                 break;
             case RECIPIENT_ALTERNATES:
                 if (position != 0) {
@@ -101,28 +128,29 @@ public class DropdownChipLayouter {
         bindTextToView(destination, viewHolder.destinationView);
         bindTextToView(destinationType, viewHolder.destinationTypeView);
         bindIconToView(showImage, entry, viewHolder.imageView, type);
+        bindDrawableToDeleteView(deleteDrawable, viewHolder.deleteView);
 
         return itemView;
     }
 
     /**
-     * Returns a new view with {@link #getItemLayoutResId()}.
+     * Returns a new view with {@link #getItemLayoutResId(AdapterType)}.
      */
-    public View newView() {
-        return mInflater.inflate(getItemLayoutResId(), null);
+    public View newView(AdapterType type) {
+        return mInflater.inflate(getItemLayoutResId(type), null);
     }
 
     /**
      * Returns the same view, or inflates a new one if the given view was null.
      */
     protected View reuseOrInflateView(View convertView, ViewGroup parent, AdapterType type) {
-        int itemLayout = getItemLayoutResId();
+        int itemLayout = getItemLayoutResId(type);
         switch (type) {
             case BASE_RECIPIENT:
             case RECIPIENT_ALTERNATES:
                 break;
             case SINGLE_RECIPIENT:
-                itemLayout = getAlternateItemLayoutResId();
+                itemLayout = getAlternateItemLayoutResId(type);
                 break;
         }
         return convertView != null ? convertView : mInflater.inflate(itemLayout, parent, false);
@@ -186,6 +214,27 @@ public class DropdownChipLayouter {
         }
     }
 
+    protected void bindDrawableToDeleteView(final StateListDrawable drawable, ImageView view) {
+        if (view == null) {
+            return;
+        }
+        if (drawable == null) {
+            view.setVisibility(View.GONE);
+        }
+
+        view.setImageDrawable(drawable);
+        if (mDeleteListener != null) {
+            view.setOnClickListener(new View.OnClickListener() {
+                @Override
+                public void onClick(View view) {
+                    if (drawable.getCurrent() != null) {
+                        mDeleteListener.onChipDelete();
+                    }
+                }
+            });
+        }
+    }
+
     protected CharSequence getDestinationType(RecipientEntry entry) {
         return mQuery.getTypeLabel(mContext.getResources(), entry.getDestinationType(),
             entry.getDestinationLabel()).toString().toUpperCase();
@@ -198,8 +247,15 @@ public class DropdownChipLayouter {
      * (for photo). Ids for those should be available via {@link #getDisplayNameResId()},
      * {@link #getDestinationResId()}, and {@link #getPhotoResId()}.
      */
-    protected int getItemLayoutResId() {
-        return R.layout.chips_recipient_dropdown_item;
+    protected @LayoutRes int getItemLayoutResId(AdapterType type) {
+        switch (type) {
+            case BASE_RECIPIENT:
+                return R.layout.chips_autocomplete_recipient_dropdown_item;
+            case RECIPIENT_ALTERNATES:
+                return R.layout.chips_recipient_dropdown_item;
+            default:
+                return R.layout.chips_recipient_dropdown_item;
+        }
     }
 
     /**
@@ -209,15 +265,22 @@ public class DropdownChipLayouter {
      * (for photo). Ids for those should be available via {@link #getDisplayNameResId()},
      * {@link #getDestinationResId()}, and {@link #getPhotoResId()}.
      */
-    protected int getAlternateItemLayoutResId() {
-        return R.layout.chips_alternate_item;
+    protected @LayoutRes int getAlternateItemLayoutResId(AdapterType type) {
+        switch (type) {
+            case BASE_RECIPIENT:
+                return R.layout.chips_autocomplete_recipient_dropdown_item;
+            case RECIPIENT_ALTERNATES:
+                return R.layout.chips_recipient_dropdown_item;
+            default:
+                return R.layout.chips_recipient_dropdown_item;
+        }
     }
 
     /**
      * Returns a resource ID representing an image which should be shown when ther's no relevant
      * photo is available.
      */
-    protected int getDefaultPhotoResId() {
+    protected @DrawableRes int getDefaultPhotoResId() {
         return R.drawable.ic_contact_picture;
     }
 
@@ -225,7 +288,7 @@ public class DropdownChipLayouter {
      * Returns an id for TextView in an item View for showing a display name. By default
      * {@link android.R.id#title} is returned.
      */
-    protected int getDisplayNameResId() {
+    protected @IdRes int getDisplayNameResId() {
         return android.R.id.title;
     }
 
@@ -234,7 +297,7 @@ public class DropdownChipLayouter {
      * (an email address or a phone number).
      * By default {@link android.R.id#text1} is returned.
      */
-    protected int getDestinationResId() {
+    protected @IdRes int getDestinationResId() {
         return android.R.id.text1;
     }
 
@@ -242,7 +305,7 @@ public class DropdownChipLayouter {
      * Returns an id for TextView in an item View for showing the type of the destination.
      * By default {@link android.R.id#text2} is returned.
      */
-    protected int getDestinationTypeResId() {
+    protected @IdRes int getDestinationTypeResId() {
         return android.R.id.text2;
     }
 
@@ -250,9 +313,15 @@ public class DropdownChipLayouter {
      * Returns an id for ImageView in an item View for showing photo image for a person. In default
      * {@link android.R.id#icon} is returned.
      */
-    protected int getPhotoResId() {
+    protected @IdRes int getPhotoResId() {
         return android.R.id.icon;
     }
+
+    /**
+     * Returns an id for ImageView in an item View for showing the delete button. In default
+     * {@link android.R.id#icon1} is returned.
+     */
+    protected @IdRes int getDeleteResId() { return android.R.id.icon1; }
 
     /**
      * A holder class the view. Uses the getters in DropdownChipLayouter to find the id of the
@@ -263,12 +332,16 @@ public class DropdownChipLayouter {
         public final TextView destinationView;
         public final TextView destinationTypeView;
         public final ImageView imageView;
+        public final ImageView deleteView;
+        public final View topDivider;
 
         public ViewHolder(View view) {
             displayNameView = (TextView) view.findViewById(getDisplayNameResId());
             destinationView = (TextView) view.findViewById(getDestinationResId());
             destinationTypeView = (TextView) view.findViewById(getDestinationTypeResId());
             imageView = (ImageView) view.findViewById(getPhotoResId());
+            deleteView = (ImageView) view.findViewById(getDeleteResId());
+            topDivider = view.findViewById(R.id.chip_autocomplete_top_divider);
         }
     }
 }

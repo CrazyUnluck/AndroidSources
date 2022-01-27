@@ -16,10 +16,6 @@
 
 package android.renderscript;
 
-import android.content.Context;
-import android.content.res.Resources;
-import android.util.Log;
-
 /**
  * Intrinsic Gausian blur filter. Applies a gaussian blur of the
  * specified radius to all elements of an allocation.
@@ -30,7 +26,7 @@ public final class ScriptIntrinsicBlur extends ScriptIntrinsic {
     private final float[] mValues = new float[9];
     private Allocation mInput;
 
-    private ScriptIntrinsicBlur(int id, RenderScript rs) {
+    private ScriptIntrinsicBlur(long id, RenderScript rs) {
         super(id, rs);
     }
 
@@ -49,7 +45,7 @@ public final class ScriptIntrinsicBlur extends ScriptIntrinsic {
         if ((!e.isCompatible(Element.U8_4(rs))) && (!e.isCompatible(Element.U8(rs)))) {
             throw new RSIllegalArgumentException("Unsuported element type.");
         }
-        int id = rs.nScriptIntrinsicCreate(5, e.getID(rs));
+        long id = rs.nScriptIntrinsicCreate(5, e.getID(rs));
         ScriptIntrinsicBlur sib = new ScriptIntrinsicBlur(id, rs);
         sib.setRadius(5.f);
         return sib;
@@ -88,8 +84,21 @@ public final class ScriptIntrinsicBlur extends ScriptIntrinsic {
      *             type.
      */
     public void forEach(Allocation aout) {
-        forEach(0, null, aout, null);
+        forEach(0, (Allocation) null, aout, null);
     }
+
+    /**
+     * Apply the filter to the input and save to the specified
+     * allocation.
+     *
+     * @param aout Output allocation. Must match creation element
+     *             type.
+     * @param opt LaunchOptions for clipping
+     */
+    public void forEach(Allocation aout, Script.LaunchOptions opt) {
+        forEach(0, (Allocation) null, aout, null, opt);
+    }
+
 
     /**
      * Get a KernelID for this intrinsic kernel.
@@ -109,4 +118,3 @@ public final class ScriptIntrinsicBlur extends ScriptIntrinsic {
         return createFieldID(1, null);
     }
 }
-

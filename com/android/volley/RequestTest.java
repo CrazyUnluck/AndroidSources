@@ -51,13 +51,41 @@ public class RequestTest extends TestCase {
     private class TestRequest extends Request<Object> {
         private Priority mPriority = Priority.NORMAL;
         public TestRequest(Priority priority) {
-            super("", null);
+            super(Request.Method.GET, "", null);
             mPriority = priority;
         }
 
         @Override
         public Priority getPriority() {
             return mPriority;
+        }
+
+        @Override
+        protected void deliverResponse(Object response) {
+        }
+
+        @Override
+        protected Response<Object> parseNetworkResponse(NetworkResponse response) {
+            return null;
+        }
+    }
+
+    public void testUrlParsing() {
+        UrlParseRequest nullUrl = new UrlParseRequest(null);
+        assertEquals(0, nullUrl.getTrafficStatsTag());
+        UrlParseRequest emptyUrl = new UrlParseRequest("");
+        assertEquals(0, emptyUrl.getTrafficStatsTag());
+        UrlParseRequest noHost = new UrlParseRequest("http:///");
+        assertEquals(0, noHost.getTrafficStatsTag());
+        UrlParseRequest badProtocol = new UrlParseRequest("bad:http://foo");
+        assertEquals(0, badProtocol.getTrafficStatsTag());
+        UrlParseRequest goodProtocol = new UrlParseRequest("http://foo");
+        assertFalse(0 == goodProtocol.getTrafficStatsTag());
+    }
+
+    private class UrlParseRequest extends Request<Object> {
+        public UrlParseRequest(String url) {
+            super(Request.Method.GET, url, null);
         }
 
         @Override

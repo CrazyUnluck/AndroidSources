@@ -18,6 +18,7 @@ package android.support.v7.internal.view.menu;
 
 import android.content.Context;
 import android.graphics.drawable.Drawable;
+import android.support.v4.content.ContextCompat;
 import android.view.Menu;
 import android.view.MenuItem;
 import android.view.SubMenu;
@@ -30,7 +31,6 @@ import android.view.View;
  * @hide
  */
 public class SubMenuBuilder extends MenuBuilder implements SubMenu {
-
     private MenuBuilder mParentMenu;
     private MenuItemImpl mItem;
 
@@ -74,12 +74,13 @@ public class SubMenuBuilder extends MenuBuilder implements SubMenu {
         mParentMenu.setCallback(callback);
     }
 
+    @Override
     public MenuBuilder getRootMenu() {
         return mParentMenu;
     }
 
     @Override
-    public boolean dispatchMenuItemSelected(MenuBuilder menu, MenuItem item) {
+    boolean dispatchMenuItemSelected(MenuBuilder menu, MenuItem item) {
         return super.dispatchMenuItemSelected(menu, item) ||
                 mParentMenu.dispatchMenuItemSelected(menu, item);
     }
@@ -100,7 +101,7 @@ public class SubMenuBuilder extends MenuBuilder implements SubMenu {
     }
 
     public SubMenu setHeaderIcon(int iconRes) {
-        super.setHeaderIconInt(getContext().getResources().getDrawable(iconRes));
+        super.setHeaderIconInt(ContextCompat.getDrawable(getContext(), iconRes));
         return this;
     }
 
@@ -117,10 +118,6 @@ public class SubMenuBuilder extends MenuBuilder implements SubMenu {
     public SubMenu setHeaderView(View view) {
         super.setHeaderViewInt(view);
         return this;
-    }
-
-    @Override
-    public void clearHeader() {
     }
 
     @Override

@@ -34,6 +34,7 @@ import android.app.AppGlobals;
 import android.app.Notification;
 import android.app.NotificationManager;
 import android.app.PendingIntent;
+import android.app.admin.DevicePolicyManager;
 import android.content.BroadcastReceiver;
 import android.content.ComponentName;
 import android.content.ContentValues;
@@ -76,6 +77,7 @@ import com.android.internal.R;
 import com.android.internal.util.ArrayUtils;
 import com.android.internal.util.IndentingPrintWriter;
 import com.android.server.FgThread;
+
 import com.google.android.collect.Lists;
 import com.google.android.collect.Sets;
 
@@ -108,7 +110,7 @@ public class AccountManagerService
 
     private static final int TIMEOUT_DELAY_MS = 1000 * 60;
     private static final String DATABASE_NAME = "accounts.db";
-    private static final int DATABASE_VERSION = 5;
+    private static final int DATABASE_VERSION = 6;
 
     private final Context mContext;
 
@@ -129,6 +131,7 @@ public class AccountManagerService
     private static final String ACCOUNTS_TYPE = "type";
     private static final String ACCOUNTS_TYPE_COUNT = "count(type)";
     private static final String ACCOUNTS_PASSWORD = "password";
+    private static final String ACCOUNTS_PREVIOUS_NAME = "previous_name";
 
     private static final String TABLE_AUTHTOKENS = "authtokens";
     private static final String AUTHTOKENS_ID = "_id";
@@ -195,6 +198,20 @@ public class AccountManagerService
         /** protected by the {@link #cacheLock} */
         private final HashMap<Account, HashMap<String, String>> authTokenCache =
                 new HashMap<Account, HashMap<String, String>>();
+        /**
+         * protected by the {@link #cacheLock}
+         *
+         * Caches the previous names associated with an account. Previous names
+         * should be cached because we expect that when an Account is renamed,
+         * many clients will receive a LOGIN_ACCOUNTS_CHANGED broadcast and
+         * want to know if the accounts they care about have been renamed.
+         *
+         * The previous names are wrapped in an {@link AtomicReference} so that
+         * we can distinguish between those accounts with no previous names and
+         * those whose previous names haven't been cached (yet).
+         */
+        private final HashMap<Account, AtomicReference<String>> previousNameCache =
+                new HashMap<Account, AtomicReference<String>>();
 
         UserAccounts(Context context, int userId) {
             this.userId = userId;
@@ -248,7 +265,11 @@ public class AccountManagerService
         mContext.registerReceiver(new BroadcastReceiver() {
             @Override
             public void onReceive(Context context1, Intent intent) {
-                purgeOldGrantsAll();
+                // Don't delete accounts when updating a authenticator's
+                // package.
+                if (!intent.getBooleanExtra(Intent.EXTRA_REPLACING, false)) {
+                    purgeOldGrantsAll();
+                }
             }
         }, intentFilter);
 
@@ -516,6 +537,57 @@ public class AccountManagerService
     }
 
     @Override
+    public String getPreviousName(Account account) {
+        if (Log.isLoggable(TAG, Log.VERBOSE)) {
+            Log.v(TAG, "getPreviousName: " + account
+                    + ", caller's uid " + Binder.getCallingUid()
+                    + ", pid " + Binder.getCallingPid());
+        }
+        if (account == null) throw new IllegalArgumentException("account is null");
+        UserAccounts accounts = getUserAccountsForCaller();
+        long identityToken = clearCallingIdentity();
+        try {
+            return readPreviousNameInternal(accounts, account);
+        } finally {
+            restoreCallingIdentity(identityToken);
+        }
+    }
+
+    private String readPreviousNameInternal(UserAccounts accounts, Account account) {
+        if  (account == null) {
+            return null;
+        }
+        synchronized (accounts.cacheLock) {
+            AtomicReference<String> previousNameRef = accounts.previousNameCache.get(account);
+            if (previousNameRef == null) {
+                final SQLiteDatabase db = accounts.openHelper.getReadableDatabase();
+                Cursor cursor = db.query(
+                        TABLE_ACCOUNTS,
+                        new String[]{ ACCOUNTS_PREVIOUS_NAME },
+                        ACCOUNTS_NAME + "=? AND " + ACCOUNTS_TYPE+ "=?",
+                        new String[] { account.name, account.type },
+                        null,
+                        null,
+                        null);
+                try {
+                    if (cursor.moveToNext()) {
+                        String previousName = cursor.getString(0);
+                        previousNameRef = new AtomicReference<String>(previousName);
+                        accounts.previousNameCache.put(account, previousNameRef);
+                        return previousName;
+                    } else {
+                        return null;
+                    }
+                } finally {
+                    cursor.close();
+                }
+            } else {
+                return previousNameRef.get();
+            }
+        }
+    }
+
+    @Override
     public String getUserData(Account account, String key) {
         if (Log.isLoggable(TAG, Log.VERBOSE)) {
             Log.v(TAG, "getUserData: " + account
@@ -536,13 +608,16 @@ public class AccountManagerService
     }
 
     @Override
-    public AuthenticatorDescription[] getAuthenticatorTypes() {
+    public AuthenticatorDescription[] getAuthenticatorTypes(int userId) {
         if (Log.isLoggable(TAG, Log.VERBOSE)) {
             Log.v(TAG, "getAuthenticatorTypes: "
+                    + "for user id " + userId
                     + "caller's uid " + Binder.getCallingUid()
                     + ", pid " + Binder.getCallingPid());
         }
-        final int userId = UserHandle.getCallingUserId();
+        // Only allow the system process to read accounts of other users
+        enforceCrossUserPermission(userId, "User " + UserHandle.getCallingUserId()
+                + " trying get authenticator types for " + userId);
         final long identityToken = clearCallingIdentity();
         try {
             Collection<AccountAuthenticatorCache.ServiceInfo<AuthenticatorDescription>>
@@ -558,6 +633,16 @@ public class AccountManagerService
             return types;
         } finally {
             restoreCallingIdentity(identityToken);
+        }
+    }
+
+    private void enforceCrossUserPermission(int userId, String errorMessage) {
+        if (userId != UserHandle.getCallingUserId()
+                && Binder.getCallingUid() != Process.myUid()
+                && mContext.checkCallingOrSelfPermission(
+                    android.Manifest.permission.INTERACT_ACROSS_USERS_FULL)
+                    != PackageManager.PERMISSION_GRANTED) {
+            throw new SecurityException(errorMessage);
         }
     }
 
@@ -845,6 +930,119 @@ public class AccountManagerService
     }
 
     @Override
+    public void renameAccount(
+            IAccountManagerResponse response, Account accountToRename, String newName) {
+        if (Log.isLoggable(TAG, Log.VERBOSE)) {
+            Log.v(TAG, "renameAccount: " + accountToRename + " -> " + newName
+                + ", caller's uid " + Binder.getCallingUid()
+                + ", pid " + Binder.getCallingPid());
+        }
+        if (accountToRename == null) throw new IllegalArgumentException("account is null");
+        checkAuthenticateAccountsPermission(accountToRename);
+        UserAccounts accounts = getUserAccountsForCaller();
+        long identityToken = clearCallingIdentity();
+        try {
+            Account resultingAccount = renameAccountInternal(accounts, accountToRename, newName);
+            Bundle result = new Bundle();
+            result.putString(AccountManager.KEY_ACCOUNT_NAME, resultingAccount.name);
+            result.putString(AccountManager.KEY_ACCOUNT_TYPE, resultingAccount.type);
+            try {
+                response.onResult(result);
+            } catch (RemoteException e) {
+                Log.w(TAG, e.getMessage());
+            }
+        } finally {
+            restoreCallingIdentity(identityToken);
+        }
+    }
+
+    private Account renameAccountInternal(
+            UserAccounts accounts, Account accountToRename, String newName) {
+        Account resultAccount = null;
+        /*
+         * Cancel existing notifications. Let authenticators
+         * re-post notifications as required. But we don't know if
+         * the authenticators have bound their notifications to
+         * now stale account name data.
+         *
+         * With a rename api, we might not need to do this anymore but it
+         * shouldn't hurt.
+         */
+        cancelNotification(
+                getSigninRequiredNotificationId(accounts, accountToRename),
+                 new UserHandle(accounts.userId));
+        synchronized(accounts.credentialsPermissionNotificationIds) {
+            for (Pair<Pair<Account, String>, Integer> pair:
+                    accounts.credentialsPermissionNotificationIds.keySet()) {
+                if (accountToRename.equals(pair.first.first)) {
+                    int id = accounts.credentialsPermissionNotificationIds.get(pair);
+                    cancelNotification(id, new UserHandle(accounts.userId));
+                }
+            }
+        }
+        synchronized (accounts.cacheLock) {
+            final SQLiteDatabase db = accounts.openHelper.getWritableDatabase();
+            db.beginTransaction();
+            boolean isSuccessful = false;
+            Account renamedAccount = new Account(newName, accountToRename.type);
+            try {
+                final ContentValues values = new ContentValues();
+                values.put(ACCOUNTS_NAME, newName);
+                values.put(ACCOUNTS_PREVIOUS_NAME, accountToRename.name);
+                final long accountId = getAccountIdLocked(db, accountToRename);
+                if (accountId >= 0) {
+                    final String[] argsAccountId = { String.valueOf(accountId) };
+                    db.update(TABLE_ACCOUNTS, values, ACCOUNTS_ID + "=?", argsAccountId);
+                    db.setTransactionSuccessful();
+                    isSuccessful = true;
+                }
+            } finally {
+                db.endTransaction();
+                if (isSuccessful) {
+                    /*
+                     * Database transaction was successful. Clean up cached
+                     * data associated with the account in the user profile.
+                     */
+                    insertAccountIntoCacheLocked(accounts, renamedAccount);
+                    /*
+                     * Extract the data and token caches before removing the
+                     * old account to preserve the user data associated with
+                     * the account.
+                     */
+                    HashMap<String, String> tmpData = accounts.userDataCache.get(accountToRename);
+                    HashMap<String, String> tmpTokens = accounts.authTokenCache.get(accountToRename);
+                    removeAccountFromCacheLocked(accounts, accountToRename);
+                    /*
+                     * Update the cached data associated with the renamed
+                     * account.
+                     */
+                    accounts.userDataCache.put(renamedAccount, tmpData);
+                    accounts.authTokenCache.put(renamedAccount, tmpTokens);
+                    accounts.previousNameCache.put(
+                          renamedAccount,
+                          new AtomicReference<String>(accountToRename.name));
+                    resultAccount = renamedAccount;
+
+                    if (accounts.userId == UserHandle.USER_OWNER) {
+                        /*
+                         * Owner's account was renamed, rename the account for
+                         * those users with which the account was shared.
+                         */
+                        List<UserInfo> users = mUserManager.getUsers(true);
+                        for (UserInfo user : users) {
+                            if (!user.isPrimary() && user.isRestricted()) {
+                                renameSharedAccountAsUser(accountToRename, newName, user.id);
+                            }
+                        }
+                    }
+                    sendAccountsChangedBroadcast(accounts.userId);
+                }
+            }
+        }
+        return resultAccount;
+    }
+
+    @Override
     public void removeAccount(IAccountManagerResponse response, Account account) {
         if (Log.isLoggable(TAG, Log.VERBOSE)) {
             Log.v(TAG, "removeAccount: " + account
@@ -857,14 +1055,82 @@ public class AccountManagerService
         checkManageAccountsPermission();
         UserHandle user = Binder.getCallingUserHandle();
         UserAccounts accounts = getUserAccountsForCaller();
-        if (!canUserModifyAccounts(Binder.getCallingUid())) {
+        int userId = Binder.getCallingUserHandle().getIdentifier();
+        if (!canUserModifyAccounts(userId)) {
             try {
+                // TODO: This should be ERROR_CODE_USER_RESTRICTED instead. See http://b/16322768
                 response.onError(AccountManager.ERROR_CODE_UNSUPPORTED_OPERATION,
                         "User cannot modify accounts");
             } catch (RemoteException re) {
             }
+            return;
+        }
+        if (!canUserModifyAccountsForType(userId, account.type)) {
+            try {
+                response.onError(AccountManager.ERROR_CODE_MANAGEMENT_DISABLED_FOR_ACCOUNT_TYPE,
+                        "User cannot modify accounts of this type (policy).");
+            } catch (RemoteException re) {
+            }
+            return;
         }
 
+        long identityToken = clearCallingIdentity();
+
+        cancelNotification(getSigninRequiredNotificationId(accounts, account), user);
+        synchronized (accounts.credentialsPermissionNotificationIds) {
+            for (Pair<Pair<Account, String>, Integer> pair:
+                accounts.credentialsPermissionNotificationIds.keySet()) {
+                if (account.equals(pair.first.first)) {
+                    int id = accounts.credentialsPermissionNotificationIds.get(pair);
+                    cancelNotification(id, user);
+                }
+            }
+        }
+
+        try {
+            new RemoveAccountSession(accounts, response, account).bind();
+        } finally {
+            restoreCallingIdentity(identityToken);
+        }
+    }
+
+    @Override
+    public void removeAccountAsUser(IAccountManagerResponse response, Account account,
+            int userId) {
+        if (Log.isLoggable(TAG, Log.VERBOSE)) {
+            Log.v(TAG, "removeAccount: " + account
+                    + ", response " + response
+                    + ", caller's uid " + Binder.getCallingUid()
+                    + ", pid " + Binder.getCallingPid()
+                    + ", for user id " + userId);
+        }
+        if (response == null) throw new IllegalArgumentException("response is null");
+        if (account == null) throw new IllegalArgumentException("account is null");
+
+        // Only allow the system process to modify accounts of other users
+        enforceCrossUserPermission(userId, "User " + UserHandle.getCallingUserId()
+                    + " trying to remove account for " + userId);
+        checkManageAccountsPermission();
+
+        UserAccounts accounts = getUserAccounts(userId);
+        if (!canUserModifyAccounts(userId)) {
+            try {
+                response.onError(AccountManager.ERROR_CODE_USER_RESTRICTED,
+                        "User cannot modify accounts");
+            } catch (RemoteException re) {
+            }
+            return;
+        }
+        if (!canUserModifyAccountsForType(userId, account.type)) {
+            try {
+                response.onError(AccountManager.ERROR_CODE_MANAGEMENT_DISABLED_FOR_ACCOUNT_TYPE,
+                        "User cannot modify accounts of this type (policy).");
+            } catch (RemoteException re) {
+            }
+            return;
+        }
+
+        UserHandle user = new UserHandle(userId);
         long identityToken = clearCallingIdentity();
 
         cancelNotification(getSigninRequiredNotificationId(accounts, account), user);
@@ -1438,7 +1704,10 @@ public class AccountManagerService
             subtitle = titleAndSubtitle.substring(index + 1);
         }
         UserHandle user = new UserHandle(userId);
-        n.setLatestEventInfo(mContext, title, subtitle,
+        Context contextForUser = getContextForUser(user);
+        n.color = contextForUser.getResources().getColor(
+                com.android.internal.R.color.system_notification_accent_color);
+        n.setLatestEventInfo(contextForUser, title, subtitle,
                 PendingIntent.getActivityAsUser(mContext, 0, intent,
                         PendingIntent.FLAG_CANCEL_CURRENT, null, user));
         installNotification(getCredentialPermissionNotificationId(
@@ -1511,20 +1780,24 @@ public class AccountManagerService
         checkManageAccountsPermission();
 
         // Is user disallowed from modifying accounts?
-        if (!canUserModifyAccounts(Binder.getCallingUid())) {
+        int userId = Binder.getCallingUserHandle().getIdentifier();
+        if (!canUserModifyAccounts(userId)) {
             try {
                 response.onError(AccountManager.ERROR_CODE_USER_RESTRICTED,
                         "User is not allowed to add an account!");
             } catch (RemoteException re) {
             }
-            Intent cantAddAccount = new Intent(mContext, CantAddAccountActivity.class);
-            cantAddAccount.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
-            long identityToken = clearCallingIdentity();
+            showCantAddAccount(AccountManager.ERROR_CODE_USER_RESTRICTED, userId);
+            return;
+        }
+        if (!canUserModifyAccountsForType(userId, accountType)) {
             try {
-                mContext.startActivityAsUser(cantAddAccount, UserHandle.CURRENT);
-            } finally {
-                restoreCallingIdentity(identityToken);
+                response.onError(AccountManager.ERROR_CODE_MANAGEMENT_DISABLED_FOR_ACCOUNT_TYPE,
+                        "User cannot modify accounts of this type (policy).");
+            } catch (RemoteException re) {
             }
+            showCantAddAccount(AccountManager.ERROR_CODE_MANAGEMENT_DISABLED_FOR_ACCOUNT_TYPE,
+                    userId);
             return;
         }
 
@@ -1561,18 +1834,99 @@ public class AccountManagerService
     }
 
     @Override
+    public void addAccountAsUser(final IAccountManagerResponse response, final String accountType,
+            final String authTokenType, final String[] requiredFeatures,
+            final boolean expectActivityLaunch, final Bundle optionsIn, int userId) {
+        if (Log.isLoggable(TAG, Log.VERBOSE)) {
+            Log.v(TAG, "addAccount: accountType " + accountType
+                    + ", response " + response
+                    + ", authTokenType " + authTokenType
+                    + ", requiredFeatures " + stringArrayToString(requiredFeatures)
+                    + ", expectActivityLaunch " + expectActivityLaunch
+                    + ", caller's uid " + Binder.getCallingUid()
+                    + ", pid " + Binder.getCallingPid()
+                    + ", for user id " + userId);
+        }
+        if (response == null) throw new IllegalArgumentException("response is null");
+        if (accountType == null) throw new IllegalArgumentException("accountType is null");
+        checkManageAccountsPermission();
+
+        // Only allow the system process to add accounts of other users
+        enforceCrossUserPermission(userId, "User " + UserHandle.getCallingUserId()
+                    + " trying to add account for " + userId);
+
+        // Is user disallowed from modifying accounts?
+        if (!canUserModifyAccounts(userId)) {
+            try {
+                response.onError(AccountManager.ERROR_CODE_USER_RESTRICTED,
+                        "User is not allowed to add an account!");
+            } catch (RemoteException re) {
+            }
+            showCantAddAccount(AccountManager.ERROR_CODE_USER_RESTRICTED, userId);
+            return;
+        }
+        if (!canUserModifyAccountsForType(userId, accountType)) {
+            try {
+                response.onError(AccountManager.ERROR_CODE_MANAGEMENT_DISABLED_FOR_ACCOUNT_TYPE,
+                        "User cannot modify accounts of this type (policy).");
+            } catch (RemoteException re) {
+            }
+            showCantAddAccount(AccountManager.ERROR_CODE_MANAGEMENT_DISABLED_FOR_ACCOUNT_TYPE,
+                    userId);
+            return;
+        }
+
+        UserAccounts accounts = getUserAccounts(userId);
+        final int pid = Binder.getCallingPid();
+        final int uid = Binder.getCallingUid();
+        final Bundle options = (optionsIn == null) ? new Bundle() : optionsIn;
+        options.putInt(AccountManager.KEY_CALLER_UID, uid);
+        options.putInt(AccountManager.KEY_CALLER_PID, pid);
+
+        long identityToken = clearCallingIdentity();
+        try {
+            new Session(accounts, response, accountType, expectActivityLaunch,
+                    true /* stripAuthTokenFromResult */) {
+                @Override
+                public void run() throws RemoteException {
+                    mAuthenticator.addAccount(this, mAccountType, authTokenType, requiredFeatures,
+                            options);
+                }
+
+                @Override
+                protected String toDebugString(long now) {
+                    return super.toDebugString(now) + ", addAccount"
+                            + ", accountType " + accountType
+                            + ", requiredFeatures "
+                            + (requiredFeatures != null
+                              ? TextUtils.join(",", requiredFeatures)
+                              : null);
+                }
+            }.bind();
+        } finally {
+            restoreCallingIdentity(identityToken);
+        }
+    }
+
+    private void showCantAddAccount(int errorCode, int userId) {
+        Intent cantAddAccount = new Intent(mContext, CantAddAccountActivity.class);
+        cantAddAccount.putExtra(CantAddAccountActivity.EXTRA_ERROR_CODE, errorCode);
+        cantAddAccount.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
+        long identityToken = clearCallingIdentity();
+        try {
+            mContext.startActivityAsUser(cantAddAccount, new UserHandle(userId));
+        } finally {
+            restoreCallingIdentity(identityToken);
+        }
+    }
+
+    @Override
     public void confirmCredentialsAsUser(IAccountManagerResponse response,
             final Account account, final Bundle options, final boolean expectActivityLaunch,
             int userId) {
         // Only allow the system process to read accounts of other users
-        if (userId != UserHandle.getCallingUserId()
-                && Binder.getCallingUid() != Process.myUid()
-                && mContext.checkCallingOrSelfPermission(
-                    android.Manifest.permission.INTERACT_ACROSS_USERS_FULL)
-                    != PackageManager.PERMISSION_GRANTED) {
-            throw new SecurityException("User " + UserHandle.getCallingUserId()
+        enforceCrossUserPermission(userId, "User " + UserHandle.getCallingUserId()
                     + " trying to confirm account credentials for " + userId);
-        }
 
         if (Log.isLoggable(TAG, Log.VERBOSE)) {
             Log.v(TAG, "confirmCredentials: " + account
@@ -1893,6 +2247,26 @@ public class AccountManagerService
             return false;
         }
         return true;
+    }
+
+    @Override
+    public boolean renameSharedAccountAsUser(Account account, String newName, int userId) {
+        userId = handleIncomingUser(userId);
+        UserAccounts accounts = getUserAccounts(userId);
+        SQLiteDatabase db = accounts.openHelper.getWritableDatabase();
+        final ContentValues values = new ContentValues();
+        values.put(ACCOUNTS_NAME, newName);
+        values.put(ACCOUNTS_PREVIOUS_NAME, account.name);
+        int r = db.update(
+                TABLE_SHARED_ACCOUNTS,
+                values,
+                ACCOUNTS_NAME + "=? AND " + ACCOUNTS_TYPE+ "=?",
+                new String[] { account.name, account.type });
+        if (r > 0) {
+            // Recursively rename the account.
+            renameAccountInternal(accounts, account, newName);
+        }
+        return r > 0;
     }
 
     @Override
@@ -2392,6 +2766,7 @@ public class AccountManagerService
                     + ACCOUNTS_NAME + " TEXT NOT NULL, "
                     + ACCOUNTS_TYPE + " TEXT NOT NULL, "
                     + ACCOUNTS_PASSWORD + " TEXT, "
+                    + ACCOUNTS_PREVIOUS_NAME + " TEXT, "
                     + "UNIQUE(" + ACCOUNTS_NAME + "," + ACCOUNTS_TYPE + "))");
 
             db.execSQL("CREATE TABLE " + TABLE_AUTHTOKENS + " (  "
@@ -2425,6 +2800,10 @@ public class AccountManagerService
                     + ACCOUNTS_NAME + " TEXT NOT NULL, "
                     + ACCOUNTS_TYPE + " TEXT NOT NULL, "
                     + "UNIQUE(" + ACCOUNTS_NAME + "," + ACCOUNTS_TYPE + "))");
+        }
+
+        private void addOldAccountNameColumn(SQLiteDatabase db) {
+            db.execSQL("ALTER TABLE " + TABLE_ACCOUNTS + " ADD COLUMN " + ACCOUNTS_PREVIOUS_NAME);
         }
 
         private void createAccountsDeletionTrigger(SQLiteDatabase db) {
@@ -2474,6 +2853,11 @@ public class AccountManagerService
 
             if (oldVersion == 4) {
                 createSharedAccountsTable(db);
+                oldVersion++;
+            }
+
+            if (oldVersion == 5) {
+                addOldAccountNameColumn(db);
                 oldVersion++;
             }
 
@@ -2591,9 +2975,12 @@ public class AccountManagerService
                 Notification n = new Notification(android.R.drawable.stat_sys_warning, null,
                         0 /* when */);
                 UserHandle user = new UserHandle(userId);
+                Context contextForUser = getContextForUser(user);
                 final String notificationTitleFormat =
-                        mContext.getText(R.string.notification_title).toString();
-                n.setLatestEventInfo(mContext,
+                        contextForUser.getText(R.string.notification_title).toString();
+                n.color = contextForUser.getResources().getColor(
+                        com.android.internal.R.color.system_notification_accent_color);
+                n.setLatestEventInfo(contextForUser,
                         String.format(notificationTitleFormat, account.name),
                         message, PendingIntent.getActivityAsUser(
                         mContext, 0, intent, PendingIntent.FLAG_CANCEL_CURRENT,
@@ -2757,11 +3144,23 @@ public class AccountManagerService
                 Manifest.permission.USE_CREDENTIALS);
     }
 
-    private boolean canUserModifyAccounts(int callingUid) {
-        if (callingUid != Process.myUid()) {
-            if (getUserManager().getUserRestrictions(
-                    new UserHandle(UserHandle.getUserId(callingUid)))
-                    .getBoolean(UserManager.DISALLOW_MODIFY_ACCOUNTS)) {
+    private boolean canUserModifyAccounts(int userId) {
+        if (getUserManager().getUserRestrictions(new UserHandle(userId))
+                .getBoolean(UserManager.DISALLOW_MODIFY_ACCOUNTS)) {
+            return false;
+        }
+        return true;
+    }
+
+    private boolean canUserModifyAccountsForType(int userId, String accountType) {
+        DevicePolicyManager dpm = (DevicePolicyManager) mContext
+                .getSystemService(Context.DEVICE_POLICY_SERVICE);
+        String[] typesArray = dpm.getAccountTypesWithManagementDisabledAsUser(userId);
+        if (typesArray == null) {
+            return true;
+        }
+        for (String forbiddenType : typesArray) {
+            if (forbiddenType.equals(accountType)) {
                 return false;
             }
         }
@@ -2876,6 +3275,7 @@ public class AccountManagerService
         }
         accounts.userDataCache.remove(account);
         accounts.authTokenCache.remove(account);
+        accounts.previousNameCache.remove(account);
     }
 
     /**
@@ -3085,5 +3485,14 @@ public class AccountManagerService
             cursor.close();
         }
         return authTokensForAccount;
+    }
+
+    private Context getContextForUser(UserHandle user) {
+        try {
+            return mContext.createPackageContextAsUser(mContext.getPackageName(), 0, user);
+        } catch (NameNotFoundException e) {
+            // Default to mContext, not finding the package system is running as is unlikely.
+            return mContext;
+        }
     }
 }

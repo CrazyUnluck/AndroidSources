@@ -21,11 +21,10 @@ import android.net.LocalSocket;
 import android.os.Process;
 import android.os.SELinux;
 import android.os.SystemProperties;
+import android.system.ErrnoException;
+import android.system.Os;
 import android.util.Log;
-
 import dalvik.system.PathClassLoader;
-import dalvik.system.Zygote;
-
 import java.io.BufferedReader;
 import java.io.DataInputStream;
 import java.io.DataOutputStream;
@@ -35,11 +34,11 @@ import java.io.FileOutputStream;
 import java.io.IOException;
 import java.io.InputStreamReader;
 import java.io.PrintStream;
+import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
-
-import libcore.io.ErrnoException;
 import libcore.io.IoUtils;
-import libcore.io.Libcore;
+import android.os.SystemClock;
+import android.util.Slog;
 
 /**
  * A connection that can make spawn requests.
@@ -60,7 +59,7 @@ class ZygoteConnection {
     private static final int CONNECTION_TIMEOUT_MILLIS = 1000;
 
     /** max number of arguments that a connection can specify */
-    private static final int MAX_ZYGOTE_ARGC=1024;
+    private static final int MAX_ZYGOTE_ARGC = 1024;
 
     /**
      * The command socket.
@@ -74,15 +73,18 @@ class ZygoteConnection {
     private final BufferedReader mSocketReader;
     private final Credentials peer;
     private final String peerSecurityContext;
+    private final String abiList;
 
     /**
      * Constructs instance from connected socket.
      *
      * @param socket non-null; connected socket
+     * @param abiList non-null; a list of ABIs this zygote supports.
      * @throws IOException
      */
-    ZygoteConnection(LocalSocket socket) throws IOException {
+    ZygoteConnection(LocalSocket socket, String abiList) throws IOException {
         mSocket = socket;
+        this.abiList = abiList;
 
         mSocketOutStream
                 = new DataOutputStream(socket.getOutputStream());
@@ -91,7 +93,7 @@ class ZygoteConnection {
                 new InputStreamReader(socket.getInputStream()), 256);
 
         mSocket.setSoTimeout(CONNECTION_TIMEOUT_MILLIS);
-                
+
         try {
             peer = mSocket.getPeerCredentials();
         } catch (IOException ex) {
@@ -103,49 +105,24 @@ class ZygoteConnection {
     }
 
     /**
+     * Temporary hack: check time since start time and log if over a fixed threshold.
+     *
+     */
+    private void checkTime(long startTime, String where) {
+        long now = SystemClock.elapsedRealtime();
+        if ((now-startTime) > 1000) {
+            // If we are taking more than a second, log about it.
+            Slog.w(TAG, "Slow operation: " + (now-startTime) + "ms so far, now at " + where);
+        }
+    }
+
+    /**
      * Returns the file descriptor of the associated socket.
      *
      * @return null-ok; file descriptor
      */
-    FileDescriptor getFileDesciptor() {
+    FileDescriptor getFileDescriptor() {
         return mSocket.getFileDescriptor();
-    }
-
-    /**
-     * Reads start commands from an open command socket.
-     * Start commands are presently a pair of newline-delimited lines
-     * indicating a) class to invoke main() on b) nice name to set argv[0] to.
-     * Continues to read commands and forkAndSpecialize children until
-     * the socket is closed. This method is used in ZYGOTE_FORK_MODE
-     *
-     * @throws ZygoteInit.MethodAndArgsCaller trampoline to invoke main()
-     * method in child process
-     */
-    void run() throws ZygoteInit.MethodAndArgsCaller {
-
-        int loopCount = ZygoteInit.GC_LOOP_COUNT;
-
-        while (true) {
-            /*
-             * Call gc() before we block in readArgumentList().
-             * It's work that has to be done anyway, and it's better
-             * to avoid making every child do it.  It will also
-             * madvise() any free memory as a side-effect.
-             *
-             * Don't call it every time, because walking the entire
-             * heap is a lot of overhead to free a few hundred bytes.
-             */
-            if (loopCount <= 0) {
-                ZygoteInit.gc();
-                loopCount = ZygoteInit.GC_LOOP_COUNT;
-            } else {
-                loopCount--;
-            }
-
-            if (runOnce()) {
-                break;
-            }
-        }
     }
 
     /**
@@ -168,6 +145,8 @@ class ZygoteConnection {
         Arguments parsedArgs = null;
         FileDescriptor[] descriptors;
 
+        long startTime = SystemClock.elapsedRealtime();
+
         try {
             args = readArgumentList();
             descriptors = mSocket.getAncillaryFileDescriptors();
@@ -177,6 +156,7 @@ class ZygoteConnection {
             return true;
         }
 
+        checkTime(startTime, "zygoteConnection.runOnce: readArgumentList");
         if (args == null) {
             // EOF reached.
             closeSocket();
@@ -197,19 +177,29 @@ class ZygoteConnection {
 
         try {
             parsedArgs = new Arguments(args);
+
+            if (parsedArgs.abiListQuery) {
+                return handleAbiListQuery();
+            }
+
             if (parsedArgs.permittedCapabilities != 0 || parsedArgs.effectiveCapabilities != 0) {
                 throw new ZygoteSecurityException("Client may not specify capabilities: " +
                         "permitted=0x" + Long.toHexString(parsedArgs.permittedCapabilities) +
                         ", effective=0x" + Long.toHexString(parsedArgs.effectiveCapabilities));
             }
 
+
             applyUidSecurityPolicy(parsedArgs, peer, peerSecurityContext);
             applyRlimitSecurityPolicy(parsedArgs, peer, peerSecurityContext);
             applyInvokeWithSecurityPolicy(parsedArgs, peer, peerSecurityContext);
             applyseInfoSecurityPolicy(parsedArgs, peer, peerSecurityContext);
 
+            checkTime(startTime, "zygoteConnection.runOnce: apply security policies");
+
             applyDebuggerSystemProperty(parsedArgs);
             applyInvokeWithSystemProperty(parsedArgs);
+
+            checkTime(startTime, "zygoteConnection.runOnce: apply security policies");
 
             int[][] rlimits = null;
 
@@ -218,15 +208,46 @@ class ZygoteConnection {
             }
 
             if (parsedArgs.runtimeInit && parsedArgs.invokeWith != null) {
-                FileDescriptor[] pipeFds = Libcore.os.pipe();
+                FileDescriptor[] pipeFds = Os.pipe();
                 childPipeFd = pipeFds[1];
                 serverPipeFd = pipeFds[0];
                 ZygoteInit.setCloseOnExec(serverPipeFd, true);
             }
 
+            /**
+             * In order to avoid leaking descriptors to the Zygote child,
+             * the native code must close the two Zygote socket descriptors
+             * in the child process before it switches from Zygote-root to
+             * the UID and privileges of the application being launched.
+             *
+             * In order to avoid "bad file descriptor" errors when the
+             * two LocalSocket objects are closed, the Posix file
+             * descriptors are released via a dup2() call which closes
+             * the socket and substitutes an open descriptor to /dev/null.
+             */
+
+            int [] fdsToClose = { -1, -1 };
+
+            FileDescriptor fd = mSocket.getFileDescriptor();
+
+            if (fd != null) {
+                fdsToClose[0] = fd.getInt$();
+            }
+
+            fd = ZygoteInit.getServerSocketFileDescriptor();
+
+            if (fd != null) {
+                fdsToClose[1] = fd.getInt$();
+            }
+
+            fd = null;
+
+            checkTime(startTime, "zygoteConnection.runOnce: preForkAndSpecialize");
             pid = Zygote.forkAndSpecialize(parsedArgs.uid, parsedArgs.gid, parsedArgs.gids,
                     parsedArgs.debugFlags, rlimits, parsedArgs.mountExternal, parsedArgs.seInfo,
-                    parsedArgs.niceName);
+                    parsedArgs.niceName, fdsToClose, parsedArgs.instructionSet,
+                    parsedArgs.appDataDir);
+            checkTime(startTime, "zygoteConnection.runOnce: postForkAndSpecialize");
         } catch (IOException ex) {
             logAndPrintError(newStderr, "Exception creating pipe", ex);
         } catch (ErrnoException ex) {
@@ -257,6 +278,18 @@ class ZygoteConnection {
         } finally {
             IoUtils.closeQuietly(childPipeFd);
             IoUtils.closeQuietly(serverPipeFd);
+        }
+    }
+
+    private boolean handleAbiListQuery() {
+        try {
+            final byte[] abiListBytes = abiList.getBytes(StandardCharsets.US_ASCII);
+            mSocketOutStream.writeInt(abiListBytes.length);
+            mSocketOutStream.write(abiListBytes);
+            return false;
+        } catch (IOException ioe) {
+            Log.e(TAG, "Error writing to command socket", ioe);
+            return true;
         }
     }
 
@@ -303,6 +336,7 @@ class ZygoteConnection {
      *      [--] &lt;args for RuntimeInit &gt;
      *   <li> If <code>--runtime-init</code> is absent:
      *      [--] &lt;classname&gt; [args...]
+     *   <li> --instruction-set=<i>instruction-set-string</i> which instruction set to use/emulate.
      * </ul>
      */
     static class Arguments {
@@ -359,6 +393,22 @@ class ZygoteConnection {
          * (or after a '--')
          */
         String remainingArgs[];
+
+        /**
+         * Whether the current arguments constitute an ABI list query.
+         */
+        boolean abiListQuery;
+
+        /**
+         * The instruction set to use, or null when not important.
+         */
+        String instructionSet;
+
+        /**
+         * The app data directory. May be null, e.g., for the system server. Note that this might
+         * not be reliable in the case of process-sharing apps.
+         */
+        String appDataDir;
 
         /**
          * Constructs instance and parses args
@@ -513,6 +563,12 @@ class ZygoteConnection {
                     mountExternal = Zygote.MOUNT_EXTERNAL_MULTIUSER;
                 } else if (arg.equals("--mount-external-multiuser-all")) {
                     mountExternal = Zygote.MOUNT_EXTERNAL_MULTIUSER_ALL;
+                } else if (arg.equals("--query-abi-list")) {
+                    abiListQuery = true;
+                } else if (arg.startsWith("--instruction-set=")) {
+                    instructionSet = arg.substring(arg.indexOf('=') + 1);
+                } else if (arg.startsWith("--app-data-dir=")) {
+                    appDataDir = arg.substring(arg.indexOf('=') + 1);
                 } else {
                     break;
                 }
@@ -564,7 +620,7 @@ class ZygoteConnection {
         }
 
         // See bug 1092107: large argc can be used for a DOS attack
-        if (argc > MAX_ZYGOTE_ARGC) {   
+        if (argc > MAX_ZYGOTE_ARGC) {
             throw new IOException("max arg count exceeded");
         }
 
@@ -581,7 +637,7 @@ class ZygoteConnection {
     }
 
     /**
-     * Applies zygote security policy per bugs #875058 and #1082165. 
+     * Applies zygote security policy per bugs #875058 and #1082165.
      * Based on the credentials of the process issuing a zygote command:
      * <ol>
      * <li> uid 0 (root) may specify any uid, gid, and setgroups() list
@@ -612,7 +668,7 @@ class ZygoteConnection {
             /* In normal operation, SYSTEM_UID can only specify a restricted
              * set of UIDs. In factory test mode, SYSTEM_UID may specify any uid.
              */
-            uidRestricted  
+            uidRestricted
                  = !(factoryTest.equals("1") || factoryTest.equals("2"));
 
             if (uidRestricted
@@ -779,7 +835,7 @@ class ZygoteConnection {
     /**
      * Applies invoke-with system properties to the zygote arguments.
      *
-     * @param parsedArgs non-null; zygote args
+     * @param args non-null; zygote args
      */
     public static void applyInvokeWithSystemProperty(Arguments args) {
         if (args.invokeWith == null && args.niceName != null) {
@@ -814,6 +870,12 @@ class ZygoteConnection {
             FileDescriptor[] descriptors, FileDescriptor pipeFd, PrintStream newStderr)
             throws ZygoteInit.MethodAndArgsCaller {
 
+        /**
+         * By the time we get here, the native code has closed the two actual Zygote
+         * socket connections, and substituted /dev/null in their place.  The LocalSocket
+         * objects still need to be closed properly.
+         */
+
         closeSocket();
         ZygoteInit.closeServerSocket();
 
@@ -842,7 +904,7 @@ class ZygoteConnection {
                         pipeFd, parsedArgs.remainingArgs);
             } else {
                 RuntimeInit.zygoteInit(parsedArgs.targetSdkVersion,
-                        parsedArgs.remainingArgs);
+                        parsedArgs.remainingArgs, null /* classLoader */);
             }
         } else {
             String className;
@@ -942,7 +1004,7 @@ class ZygoteConnection {
             mSocketOutStream.writeInt(pid);
             mSocketOutStream.writeBoolean(usingWrapper);
         } catch (IOException ex) {
-            Log.e(TAG, "Error reading from command socket", ex);
+            Log.e(TAG, "Error writing to command socket", ex);
             return true;
         }
 

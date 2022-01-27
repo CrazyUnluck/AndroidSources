@@ -62,16 +62,14 @@ public class DateFormatSymbols implements Serializable, Cloneable {
     transient LocaleData localeData;
 
     // Localized display names.
-    String[][] zoneStrings;
-    // Has the user called setZoneStrings?
-    transient boolean customZoneStrings;
+    private String[][] zoneStrings;
 
-    /**
-     * Locale, necessary to lazily load time zone strings. We force the time
-     * zone names to load upon serialization, so this will never be needed
-     * post deserialization.
+    /*
+     * Locale, necessary to lazily load time zone strings. Added to the serialized form for
+     * Android's L release. May be null if the object was deserialized using data from older
+     * releases. See b/16502916.
      */
-    transient final Locale locale;
+    private final Locale locale;
 
     /**
      * Gets zone strings, initializing them if necessary. Does not create
@@ -102,7 +100,7 @@ public class DateFormatSymbols implements Serializable, Cloneable {
      *            the locale.
      */
     public DateFormatSymbols(Locale locale) {
-        this.locale = locale;
+        this.locale = LocaleData.mapInvalidAndNullLocales(locale);
         this.localPatternChars = SimpleDateFormat.PATTERN_CHARS;
 
         this.localeData = LocaleData.get(locale);
@@ -152,6 +150,12 @@ public class DateFormatSymbols implements Serializable, Cloneable {
 
     private void readObject(ObjectInputStream ois) throws IOException, ClassNotFoundException {
         ois.defaultReadObject();
+
+        Locale locale = this.locale;
+        if (locale == null) {
+            // Before the L release Android did not serialize the locale. Handle its absence.
+            locale = Locale.getDefault();
+        }
         this.localeData = LocaleData.get(locale);
     }
 
@@ -215,7 +219,6 @@ public class DateFormatSymbols implements Serializable, Cloneable {
         // 'zoneStrings' is so large, we just print a representative value.
         return getClass().getName() +
                 "[amPmStrings=" + Arrays.toString(ampms) +
-                ",customZoneStrings=" + customZoneStrings +
                 ",eras=" + Arrays.toString(eras) +
                 ",localPatternChars=" + localPatternChars +
                 ",months=" + Arrays.toString(months) +
@@ -483,6 +486,25 @@ public class DateFormatSymbols implements Serializable, Cloneable {
             }
         }
         this.zoneStrings = clone2dStringArray(zoneStrings);
-        this.customZoneStrings = true;
+    }
+
+    /**
+     * Returns the display name of the timezone specified. Returns null if no name was found in the
+     * zone strings.
+     *
+     * @param daylight whether to return the daylight savings or the standard name
+     * @param style one of the {@link TimeZone} styles such as {@link TimeZone#SHORT}
+     *
+     * @hide used internally
+     */
+    String getTimeZoneDisplayName(TimeZone tz, boolean daylight, int style) {
+        if (style != TimeZone.SHORT && style != TimeZone.LONG) {
+            throw new IllegalArgumentException("Bad style: " + style);
+        }
+
+        // If custom zone strings have been set with setZoneStrings() we use those. Otherwise we
+        // use the ones from LocaleData.
+        String[][] zoneStrings = internalZoneStrings();
+        return TimeZoneNames.getDisplayName(zoneStrings, tz.getID(), daylight, style);
     }
 }

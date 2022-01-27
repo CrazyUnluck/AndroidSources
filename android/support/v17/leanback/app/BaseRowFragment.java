@@ -35,6 +35,8 @@ abstract class BaseRowFragment extends Fragment {
     private PresenterSelector mPresenterSelector;
     private ItemBridgeAdapter mBridgeAdapter;
     private int mSelectedPosition = -1;
+    protected int mReparentHeaderId;
+    protected boolean mInTransition;
 
     abstract protected int getLayoutResourceId();
 
@@ -49,9 +51,15 @@ abstract class BaseRowFragment extends Fragment {
     }
 
     @Override
-    public View onCreateView(LayoutInflater inflater, ViewGroup container, Bundle savedInstanceState) {
-        mVerticalGridView = (VerticalGridView) inflater.inflate(getLayoutResourceId(), container, false);
-        return mVerticalGridView;
+    public View onCreateView(LayoutInflater inflater, ViewGroup container,
+            Bundle savedInstanceState) {
+        View view = inflater.inflate(getLayoutResourceId(), container, false);
+        mVerticalGridView = findGridViewFromRoot(view);
+        return view;
+    }
+
+    protected VerticalGridView findGridViewFromRoot(View view) {
+        return (VerticalGridView) view;
     }
 
     @Override
@@ -142,6 +150,47 @@ abstract class BaseRowFragment extends Fragment {
             return ((ListRow) row).getAdapter().get(position);
         } else {
             return null;
+        }
+    }
+
+    void setReparentHeaderId(int reparentId) {
+        mReparentHeaderId = reparentId;
+    }
+
+    void onTransitionStart() {
+        mInTransition = true;
+        if (mVerticalGridView != null) {
+            mVerticalGridView.setAnimateChildLayout(false);
+            mVerticalGridView.setPruneChild(false);
+            mVerticalGridView.setFocusSearchDisabled(true);
+        }
+    }
+
+    void onTransitionEnd() {
+        if (mVerticalGridView != null) {
+            mVerticalGridView.setAnimateChildLayout(true);
+            mVerticalGridView.setPruneChild(true);
+            mVerticalGridView.setFocusSearchDisabled(false);
+        }
+        mInTransition = false;
+    }
+
+    void setItemAlignment() {
+        if (mVerticalGridView != null) {
+            // align the top edge of item
+            mVerticalGridView.setItemAlignmentOffset(0);
+            mVerticalGridView.setItemAlignmentOffsetPercent(
+                    VerticalGridView.ITEM_ALIGN_OFFSET_PERCENT_DISABLED);
+        }
+    }
+
+    void setWindowAlignmentFromTop(int alignedTop) {
+        if (mVerticalGridView != null) {
+            // align to a fixed position from top
+            mVerticalGridView.setWindowAlignmentOffset(alignedTop);
+            mVerticalGridView.setWindowAlignmentOffsetPercent(
+                    VerticalGridView.WINDOW_ALIGN_OFFSET_PERCENT_DISABLED);
+            mVerticalGridView.setWindowAlignment(VerticalGridView.WINDOW_ALIGN_NO_EDGE);
         }
     }
 }

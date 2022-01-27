@@ -27,12 +27,11 @@ import android.content.pm.PackageManager;
 import android.content.res.Resources;
 import android.hardware.usb.UsbManager;
 import android.net.ConnectivityManager;
-import android.net.IConnectivityManager;
-import android.net.INetworkManagementEventObserver;
 import android.net.INetworkStatsService;
 import android.net.InterfaceConfiguration;
 import android.net.LinkAddress;
 import android.net.LinkProperties;
+import android.net.Network;
 import android.net.NetworkInfo;
 import android.net.NetworkUtils;
 import android.net.RouteInfo;
@@ -52,13 +51,13 @@ import com.android.internal.util.State;
 import com.android.internal.util.StateMachine;
 import com.android.server.IoThread;
 import com.android.server.net.BaseNetworkObserver;
-import com.google.android.collect.Lists;
 
 import java.io.FileDescriptor;
 import java.io.PrintWriter;
 import java.net.InetAddress;
 import java.net.Inet4Address;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.Collection;
 import java.util.HashMap;
 import java.util.Iterator;
@@ -97,7 +96,6 @@ public class Tethering extends BaseNetworkObserver {
 
     private final INetworkManagementService mNMService;
     private final INetworkStatsService mStatsService;
-    private final IConnectivityManager mConnService;
     private Looper mLooper;
 
     private HashMap<String, TetherInterfaceSM> mIfaces; // all tethered/tetherable ifaces
@@ -111,13 +109,14 @@ public class Tethering extends BaseNetworkObserver {
     // Wifi is 192.168.43.1 and 255.255.255.0
     // BT is limited to max default of 5 connections. 192.168.44.1 to 192.168.48.1
     // with 255.255.255.0
+    // P2P is 192.168.49.1 and 255.255.255.0
 
     private String[] mDhcpRange;
     private static final String[] DHCP_DEFAULT_RANGE = {
         "192.168.42.2", "192.168.42.254", "192.168.43.2", "192.168.43.254",
         "192.168.44.2", "192.168.44.254", "192.168.45.2", "192.168.45.254",
         "192.168.46.2", "192.168.46.254", "192.168.47.2", "192.168.47.254",
-        "192.168.48.2", "192.168.48.254",
+        "192.168.48.2", "192.168.48.254", "192.168.49.2", "192.168.49.254",
     };
 
     private String[] mDefaultDnsServers;
@@ -133,11 +132,10 @@ public class Tethering extends BaseNetworkObserver {
                                          // when RNDIS is enabled
 
     public Tethering(Context context, INetworkManagementService nmService,
-            INetworkStatsService statsService, IConnectivityManager connService, Looper looper) {
+            INetworkStatsService statsService, Looper looper) {
         mContext = context;
         mNMService = nmService;
         mStatsService = statsService;
-        mConnService = connService;
         mLooper = looper;
 
         mPublicSync = new Object();
@@ -175,6 +173,12 @@ public class Tethering extends BaseNetworkObserver {
         mDefaultDnsServers = new String[2];
         mDefaultDnsServers[0] = DNS_DEFAULT_SERVER1;
         mDefaultDnsServers[1] = DNS_DEFAULT_SERVER2;
+    }
+
+    // We can't do this once in the Tethering() constructor and cache the value, because the
+    // CONNECTIVITY_SERVICE is registered only after the Tethering() constructor has completed.
+    private ConnectivityManager getConnectivityManager() {
+        return (ConnectivityManager) mContext.getSystemService(Context.CONNECTIVITY_SERVICE);
     }
 
     void updateConfiguration() {
@@ -368,11 +372,7 @@ public class Tethering extends BaseNetworkObserver {
     // TODO - move all private methods used only by the state machine into the state machine
     // to clarify what needs synchronized protection.
     private void sendTetherStateChangedBroadcast() {
-        try {
-            if (!mConnService.isTetheringSupported()) return;
-        } catch (RemoteException e) {
-            return;
-        }
+        if (!getConnectivityManager().isTetheringSupported()) return;
 
         ArrayList<String> availableList = new ArrayList<String>();
         ArrayList<String> activeList = new ArrayList<String>();
@@ -472,7 +472,11 @@ public class Tethering extends BaseNetworkObserver {
         mTetheredNotification.defaults &= ~Notification.DEFAULT_SOUND;
         mTetheredNotification.flags = Notification.FLAG_ONGOING_EVENT;
         mTetheredNotification.tickerText = title;
+        mTetheredNotification.visibility = Notification.VISIBILITY_PUBLIC;
+        mTetheredNotification.color = mContext.getResources().getColor(
+                com.android.internal.R.color.system_notification_accent_color);
         mTetheredNotification.setLatestEventInfo(mContext, title, message, pi);
+        mTetheredNotification.category = Notification.CATEGORY_STATUS;
 
         notificationManager.notifyAsUser(null, mTetheredNotification.icon,
                 mTetheredNotification, UserHandle.ALL);
@@ -489,8 +493,10 @@ public class Tethering extends BaseNetworkObserver {
     }
 
     private class StateReceiver extends BroadcastReceiver {
+        @Override
         public void onReceive(Context content, Intent intent) {
             String action = intent.getAction();
+            if (action == null) { return; }
             if (action.equals(UsbManager.ACTION_USB_STATE)) {
                 synchronized (Tethering.this.mPublicSync) {
                     boolean usbConnected = intent.getBooleanExtra(UsbManager.USB_CONNECTED, false);
@@ -699,6 +705,10 @@ public class Tethering extends BaseNetworkObserver {
         return retVal;
     }
 
+    public String[] getTetheredDhcpRanges() {
+        return mDhcpRange;
+    }
+
     public String[] getErroredIfaces() {
         ArrayList<String> list = new ArrayList<String>();
         synchronized (mPublicSync) {
@@ -715,14 +725,6 @@ public class Tethering extends BaseNetworkObserver {
             retVal[i] = list.get(i);
         }
         return retVal;
-    }
-
-    //TODO: Temporary handling upstream change triggered without
-    //      CONNECTIVITY_ACTION. Only to accomodate interface
-    //      switch during HO.
-    //      @see bug/4455071
-    public void handleTetherIfaceChange() {
-        mTetherMasterSM.sendMessage(TetherMasterSM.CMD_UPSTREAM_CHANGED);
     }
 
     class TetherInterfaceSM extends StateMachine {
@@ -742,7 +744,7 @@ public class Tethering extends BaseNetworkObserver {
         static final int CMD_IP_FORWARDING_ENABLE_ERROR  =  7;
         // notification from the master SM that it had trouble disabling IP Forwarding
         static final int CMD_IP_FORWARDING_DISABLE_ERROR =  8;
-        // notification from the master SM that it had trouble staring tethering
+        // notification from the master SM that it had trouble starting tethering
         static final int CMD_START_TETHERING_ERROR       =  9;
         // notification from the master SM that it had trouble stopping tethering
         static final int CMD_STOP_TETHERING_ERROR        = 10;
@@ -1189,11 +1191,8 @@ public class Tethering extends BaseNetworkObserver {
                 int result = PhoneConstants.APN_REQUEST_FAILED;
                 String enableString = enableString(apnType);
                 if (enableString == null) return false;
-                try {
-                    result = mConnService.startUsingNetworkFeature(ConnectivityManager.TYPE_MOBILE,
-                            enableString, new Binder());
-                } catch (Exception e) {
-                }
+                result = getConnectivityManager().startUsingNetworkFeature(
+                        ConnectivityManager.TYPE_MOBILE, enableString);
                 switch (result) {
                 case PhoneConstants.APN_ALREADY_ACTIVE:
                 case PhoneConstants.APN_REQUEST_STARTED:
@@ -1214,12 +1213,8 @@ public class Tethering extends BaseNetworkObserver {
                 // ignore pending renewal requests
                 ++mCurrentConnectionSequence;
                 if (mMobileApnReserved != ConnectivityManager.TYPE_NONE) {
-                    try {
-                        mConnService.stopUsingNetworkFeature(ConnectivityManager.TYPE_MOBILE,
-                                enableString(mMobileApnReserved));
-                    } catch (Exception e) {
-                        return false;
-                    }
+                    getConnectivityManager().stopUsingNetworkFeature(
+                            ConnectivityManager.TYPE_MOBILE, enableString(mMobileApnReserved));
                     mMobileApnReserved = ConnectivityManager.TYPE_NONE;
                 }
                 return true;
@@ -1241,12 +1236,6 @@ public class Tethering extends BaseNetworkObserver {
                         transitionTo(mStartTetheringErrorState);
                         return false;
                     }
-                }
-                try {
-                    mNMService.setDnsForwarders(mDefaultDnsServers);
-                } catch (Exception e) {
-                    transitionTo(mSetDnsForwardersErrorState);
-                    return false;
                 }
                 return true;
             }
@@ -1282,10 +1271,8 @@ public class Tethering extends BaseNetworkObserver {
                     }
 
                     for (Integer netType : mUpstreamIfaceTypes) {
-                        NetworkInfo info = null;
-                        try {
-                            info = mConnService.getNetworkInfo(netType.intValue());
-                        } catch (RemoteException e) { }
+                        NetworkInfo info =
+                                getConnectivityManager().getNetworkInfo(netType.intValue());
                         if ((info != null) && info.isConnected()) {
                             upType = netType.intValue();
                             break;
@@ -1323,10 +1310,8 @@ public class Tethering extends BaseNetworkObserver {
                         sendMessageDelayed(CMD_RETRY_UPSTREAM, UPSTREAM_SETTLE_TIME_MS);
                     }
                 } else {
-                    LinkProperties linkProperties = null;
-                    try {
-                        linkProperties = mConnService.getLinkProperties(upType);
-                    } catch (RemoteException e) { }
+                    LinkProperties linkProperties =
+                            getConnectivityManager().getLinkProperties(upType);
                     if (linkProperties != null) {
                         // Find the interface with the default IPv4 route. It may be the
                         // interface described by linkProperties, or one of the interfaces
@@ -1344,7 +1329,7 @@ public class Tethering extends BaseNetworkObserver {
 
                     if (iface != null) {
                         String[] dnsServers = mDefaultDnsServers;
-                        Collection<InetAddress> dnses = linkProperties.getDnses();
+                        Collection<InetAddress> dnses = linkProperties.getDnsServers();
                         if (dnses != null) {
                             // we currently only handle IPv4
                             ArrayList<InetAddress> v4Dnses =
@@ -1359,8 +1344,17 @@ public class Tethering extends BaseNetworkObserver {
                             }
                         }
                         try {
-                            mNMService.setDnsForwarders(dnsServers);
+                            Network network = getConnectivityManager().getNetworkForType(upType);
+                            if (network == null) {
+                                Log.e(TAG, "No Network for upstream type " + upType + "!");
+                            }
+                            if (VDBG) {
+                                Log.d(TAG, "Setting DNS forwarders: Network=" + network +
+                                       ", dnsServers=" + Arrays.toString(dnsServers));
+                            }
+                            mNMService.setDnsForwarders(network, dnsServers);
                         } catch (Exception e) {
+                            Log.e(TAG, "Setting DNS forwarders failed!");
                             transitionTo(mSetDnsForwardersErrorState);
                         }
                     }

@@ -229,6 +229,9 @@ public class MulticastSocket extends DatagramSocket {
 
     private void checkJoinOrLeave(InetAddress groupAddr) throws IOException {
         checkOpen();
+        if (groupAddr == null) {
+            throw new IllegalArgumentException("groupAddress == null");
+        }
         if (!groupAddr.isMulticastAddress()) {
             throw new IOException("Not a multicast group: " + groupAddr);
         }
@@ -351,7 +354,8 @@ public class MulticastSocket extends DatagramSocket {
     /**
      * Disables multicast loopback if {@code disable == true}.
      * See {@link SocketOptions#IP_MULTICAST_LOOP}, and note that the sense of this is the
-     * opposite of the underlying Unix {@code IP_MULTICAST_LOOP}.
+     * opposite of the underlying Unix {@code IP_MULTICAST_LOOP}: true means disabled, false
+     * means enabled.
      *
      * @throws SocketException if an error occurs.
      */

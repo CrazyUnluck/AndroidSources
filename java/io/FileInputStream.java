@@ -19,15 +19,13 @@ package java.io;
 
 import dalvik.system.CloseGuard;
 
-import java.nio.NioUtils;
+import android.system.ErrnoException;
 import java.nio.channels.FileChannel;
-import java.util.Arrays;
-import libcore.io.ErrnoException;
+import java.nio.NioUtils;
 import libcore.io.IoBridge;
-import libcore.io.IoUtils;
 import libcore.io.Libcore;
 import libcore.io.Streams;
-import static libcore.io.OsConstants.*;
+import static android.system.OsConstants.*;
 
 /**
  * An input stream that reads bytes from a file.
@@ -118,7 +116,7 @@ public class FileInputStream extends InputStream {
                 channel.close();
             }
             if (shouldClose) {
-                IoUtils.close(fd);
+                IoBridge.closeAndSignalBlockedThreads(fd);
             } else {
                 // An owned fd has been invalidated by IoUtils.close, but
                 // we need to explicitly stop using an unowned fd (http://b/4361076).

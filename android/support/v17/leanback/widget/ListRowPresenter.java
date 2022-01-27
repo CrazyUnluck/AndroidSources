@@ -13,20 +13,14 @@
  */
 package android.support.v17.leanback.widget;
 
-import java.util.ArrayList;
-
 import android.content.Context;
 import android.content.res.TypedArray;
-import android.graphics.Canvas;
 import android.support.v17.leanback.R;
 import android.support.v17.leanback.graphics.ColorOverlayDimmer;
-import android.support.v17.leanback.widget.Presenter.ViewHolder;
-import android.support.v7.widget.RecyclerView;
-import android.util.AttributeSet;
+import android.util.Log;
 import android.view.View;
 import android.view.ViewGroup;
 import android.view.ViewGroup.LayoutParams;
-import android.widget.FrameLayout;
 
 /**
  * ListRowPresenter renders {@link ListRow} using a
@@ -58,13 +52,19 @@ public class ListRowPresenter extends RowPresenter {
         final HorizontalGridView mGridView;
         final ItemBridgeAdapter mItemBridgeAdapter = new ItemBridgeAdapter();
         final HorizontalHoverCardSwitcher mHoverCardViewSwitcher = new HorizontalHoverCardSwitcher();
-        final ColorOverlayDimmer mColorDimmer;
+        final int mPaddingTop;
+        final int mPaddingBottom;
+        final int mPaddingLeft;
+        final int mPaddingRight;
 
         public ViewHolder(View rootView, HorizontalGridView gridView, ListRowPresenter p) {
             super(rootView);
             mGridView = gridView;
             mListRowPresenter = p;
-            mColorDimmer = ColorOverlayDimmer.createDefault(rootView.getContext());
+            mPaddingTop = mGridView.getPaddingTop();
+            mPaddingBottom = mGridView.getPaddingBottom();
+            mPaddingLeft = mGridView.getPaddingLeft();
+            mPaddingRight = mGridView.getPaddingRight();
         }
 
         public final ListRowPresenter getListRowPresenter() {
@@ -74,12 +74,23 @@ public class ListRowPresenter extends RowPresenter {
         public final HorizontalGridView getGridView() {
             return mGridView;
         }
+
+        public final ItemBridgeAdapter getBridgeAdapter() {
+            return mItemBridgeAdapter;
+        }
     }
 
+    private int mRowHeight;
+    private int mExpandedRowHeight;
     private PresenterSelector mHoverCardPresenterSelector;
     private int mZoomFactor;
     private boolean mShadowEnabled = true;
     private int mBrowseRowsFadingEdgeLength = -1;
+    private boolean mRoundedCornersEnabled = true;
+
+    private static int sSelectedRowTopPadding;
+    private static int sExpandedSelectedRowTopPadding;
+    private static int sExpandedRowNoHovercardBottomPadding;
 
     /**
      * Constructs a ListRowPresenter with defaults.
@@ -103,6 +114,43 @@ public class ListRowPresenter extends RowPresenter {
     }
 
     /**
+     * Sets the row height for rows created by this Presenter. Rows
+     * created before calling this method will not be updated.
+     *
+     * @param rowHeight Row height in pixels, or WRAP_CONTENT, or 0
+     * to use the default height.
+     */
+    public void setRowHeight(int rowHeight) {
+        mRowHeight = rowHeight;
+    }
+
+    /**
+     * Returns the row height for list rows created by this Presenter.
+     */
+    public int getRowHeight() {
+        return mRowHeight;
+    }
+
+    /**
+     * Sets the expanded row height for rows created by this Presenter.
+     * If not set, expanded rows have the same height as unexpanded
+     * rows.
+     *
+     * @param rowHeight The row height in to use when the row is expanded,
+     *        in pixels, or WRAP_CONTENT, or 0 to use the default.
+     */
+    public void setExpandedRowHeight(int rowHeight) {
+        mExpandedRowHeight = rowHeight;
+    }
+
+    /**
+     * Returns the expanded row height for rows created by this Presenter.
+     */
+    public int getExpandedRowHeight() {
+        return mExpandedRowHeight != 0 ? mExpandedRowHeight : mRowHeight;
+    }
+
+    /**
      * Returns the zoom factor used for focus highlighting.
      */
     public final int getZoomFactor() {
@@ -115,7 +163,9 @@ public class ListRowPresenter extends RowPresenter {
             ShadowOverlayContainer wrapper = new ShadowOverlayContainer(root.getContext());
             wrapper.setLayoutParams(
                     new LayoutParams(LayoutParams.WRAP_CONTENT, LayoutParams.WRAP_CONTENT));
-            wrapper.initialize(needsDefaultShadow(), needsDefaultListSelectEffect());
+            wrapper.initialize(needsDefaultShadow(),
+                    needsDefaultListSelectEffect(),
+                    areChildRoundedCornersEnabled());
             return wrapper;
         }
         @Override
@@ -128,7 +178,8 @@ public class ListRowPresenter extends RowPresenter {
     protected void initializeRowViewHolder(RowPresenter.ViewHolder holder) {
         super.initializeRowViewHolder(holder);
         final ViewHolder rowViewHolder = (ViewHolder) holder;
-        if (needsDefaultListSelectEffect() || needsDefaultShadow()) {
+        if (needsDefaultListSelectEffect() || needsDefaultShadow()
+                || areChildRoundedCornersEnabled()) {
             rowViewHolder.mItemBridgeAdapter.setWrapper(mCardWrapper);
         }
         if (needsDefaultListSelectEffect()) {
@@ -138,7 +189,9 @@ public class ListRowPresenter extends RowPresenter {
                 ((ViewGroup) rowViewHolder.mContainerViewHolder.view).setClipChildren(false);
             }
         }
-        FocusHighlightHelper.setupBrowseItemFocusHighlight(rowViewHolder.mItemBridgeAdapter, mZoomFactor);
+        FocusHighlightHelper.setupBrowseItemFocusHighlight(rowViewHolder.mItemBridgeAdapter,
+                mZoomFactor, false);
+        rowViewHolder.mGridView.setFocusDrawingOrderEnabled(!isUsingZOrder());
         rowViewHolder.mGridView.setOnChildSelectedListener(
                 new OnChildSelectedListener() {
             @Override
@@ -149,20 +202,32 @@ public class ListRowPresenter extends RowPresenter {
         rowViewHolder.mItemBridgeAdapter.setAdapterListener(
                 new ItemBridgeAdapter.AdapterListener() {
             @Override
-            public void onCreate(final ItemBridgeAdapter.ViewHolder viewHolder) {
+            public void onBind(final ItemBridgeAdapter.ViewHolder viewHolder) {
                 // Only when having an OnItemClickListner, we will attach the OnClickListener.
-                if (getOnItemClickedListener() != null) {
+                if (getOnItemClickedListener() != null || getOnItemViewClickedListener() != null) {
                     viewHolder.mHolder.view.setOnClickListener(new View.OnClickListener() {
                         @Override
                         public void onClick(View v) {
                             ItemBridgeAdapter.ViewHolder ibh = (ItemBridgeAdapter.ViewHolder)
-                                    rowViewHolder.mGridView.getChildViewHolder(viewHolder.itemView);
+                                    rowViewHolder.mGridView
+                                            .getChildViewHolder(viewHolder.itemView);
                             if (getOnItemClickedListener() != null) {
                                 getOnItemClickedListener().onItemClicked(ibh.mItem,
                                         (ListRow) rowViewHolder.mRow);
                             }
+                            if (getOnItemViewClickedListener() != null) {
+                                getOnItemViewClickedListener().onItemClicked(viewHolder.mHolder,
+                                        ibh.mItem, rowViewHolder, (ListRow) rowViewHolder.mRow);
+                            }
                         }
                     });
+                }
+            }
+
+            @Override
+            public void onUnbind(ItemBridgeAdapter.ViewHolder viewHolder) {
+                if (getOnItemClickedListener() != null || getOnItemViewClickedListener() != null) {
+                    viewHolder.mHolder.view.setOnClickListener(null);
                 }
             }
 
@@ -172,6 +237,12 @@ public class ListRowPresenter extends RowPresenter {
                     int dimmedColor = rowViewHolder.mColorDimmer.getPaint().getColor();
                     ((ShadowOverlayContainer) viewHolder.itemView).setOverlayColor(dimmedColor);
                 }
+                viewHolder.itemView.setActivated(rowViewHolder.mExpanded);
+            }
+
+            @Override
+            public void onAddPresenter(Presenter presenter, int type) {
+                rowViewHolder.getGridView().getRecycledViewPool().setMaxRecycledViews(type, 24);
             }
         });
     }
@@ -207,6 +278,10 @@ public class ListRowPresenter extends RowPresenter {
             if (mHoverCardPresenterSelector != null) {
                 rowViewHolder.mHoverCardViewSwitcher.unselect();
             }
+            if (getOnItemViewSelectedListener() != null) {
+                getOnItemViewSelectedListener().onItemSelected(null, null,
+                        rowViewHolder, rowViewHolder.mRow);
+            }
             if (getOnItemSelectedListener() != null) {
                 getOnItemSelectedListener().onItemSelected(null, rowViewHolder.mRow);
             }
@@ -215,22 +290,76 @@ public class ListRowPresenter extends RowPresenter {
                 rowViewHolder.mHoverCardViewSwitcher.select(rowViewHolder.mGridView, view,
                         ibh.mItem);
             }
+            if (getOnItemViewSelectedListener() != null) {
+                getOnItemViewSelectedListener().onItemSelected(ibh.mHolder, ibh.mItem,
+                        rowViewHolder, rowViewHolder.mRow);
+            }
             if (getOnItemSelectedListener() != null) {
                 getOnItemSelectedListener().onItemSelected(ibh.mItem, rowViewHolder.mRow);
             }
         }
     }
 
+    private static void initStatics(Context context) {
+        if (sSelectedRowTopPadding == 0) {
+            sSelectedRowTopPadding = context.getResources().getDimensionPixelSize(
+                    R.dimen.lb_browse_selected_row_top_padding);
+            sExpandedSelectedRowTopPadding = context.getResources().getDimensionPixelSize(
+                    R.dimen.lb_browse_expanded_selected_row_top_padding);
+            sExpandedRowNoHovercardBottomPadding = context.getResources().getDimensionPixelSize(
+                    R.dimen.lb_browse_expanded_row_no_hovercard_bottom_padding);
+        }
+    }
+
+    private int getSpaceUnderBaseline(ListRowPresenter.ViewHolder vh) {
+        RowHeaderPresenter.ViewHolder headerViewHolder = vh.getHeaderViewHolder();
+        if (headerViewHolder != null) {
+            if (getHeaderPresenter() != null) {
+                return getHeaderPresenter().getSpaceUnderBaseline(headerViewHolder);
+            }
+            return headerViewHolder.view.getPaddingBottom();
+        }
+        return 0;
+    }
+
+    private void setVerticalPadding(ListRowPresenter.ViewHolder vh) {
+        int paddingTop, paddingBottom;
+        // Note: sufficient bottom padding needed for card shadows.
+        if (vh.isExpanded()) {
+            int headerSpaceUnderBaseline = getSpaceUnderBaseline(vh);
+            if (DEBUG) Log.v(TAG, "headerSpaceUnderBaseline " + headerSpaceUnderBaseline);
+            paddingTop = (vh.isSelected() ? sExpandedSelectedRowTopPadding : vh.mPaddingTop) -
+                    headerSpaceUnderBaseline;
+            paddingBottom = mHoverCardPresenterSelector == null ?
+                    sExpandedRowNoHovercardBottomPadding : vh.mPaddingBottom;
+        } else if (vh.isSelected()) {
+            paddingTop = sSelectedRowTopPadding - vh.mPaddingBottom;
+            paddingBottom = sSelectedRowTopPadding;
+        } else {
+            paddingTop = 0;
+            paddingBottom = vh.mPaddingBottom;
+        }
+        vh.getGridView().setPadding(vh.mPaddingLeft, paddingTop, vh.mPaddingRight,
+                paddingBottom);
+    }
+
     @Override
     protected RowPresenter.ViewHolder createRowViewHolder(ViewGroup parent) {
+        initStatics(parent.getContext());
         ListRowView rowView = new ListRowView(parent.getContext());
         setupFadingEffect(rowView);
+        if (mRowHeight != 0) {
+            rowView.getGridView().setRowHeight(mRowHeight);
+        }
         return new ViewHolder(rowView, rowView.getGridView(), this);
     }
 
     @Override
     protected void onRowViewSelected(RowPresenter.ViewHolder holder, boolean selected) {
-        updateFooterViewSwitcher((ViewHolder) holder);
+        super.onRowViewSelected(holder, selected);
+        ViewHolder vh = (ViewHolder) holder;
+        setVerticalPadding(vh);
+        updateFooterViewSwitcher(vh);
     }
 
     /*
@@ -248,7 +377,7 @@ public class ListRowPresenter extends RowPresenter {
             selectChildView(vh, ibh == null ? null : ibh.itemView);
         } else {
             if (mHoverCardPresenterSelector != null) {
-                vh.mHoverCardViewSwitcher.clear();
+                vh.mHoverCardViewSwitcher.unselect();
             }
         }
     }
@@ -270,7 +399,11 @@ public class ListRowPresenter extends RowPresenter {
     protected void onRowViewExpanded(RowPresenter.ViewHolder holder, boolean expanded) {
         super.onRowViewExpanded(holder, expanded);
         ViewHolder vh = (ViewHolder) holder;
-        vh.getGridView().setFadingLeftEdge(!expanded);
+        if (getRowHeight() != getExpandedRowHeight()) {
+            int newHeight = expanded ? getExpandedRowHeight() : getRowHeight();
+            vh.getGridView().setRowHeight(newHeight);
+        }
+        setVerticalPadding(vh);
         updateFooterViewSwitcher(vh);
     }
 
@@ -279,14 +412,15 @@ public class ListRowPresenter extends RowPresenter {
         super.onBindRowViewHolder(holder, item);
         ViewHolder vh = (ViewHolder) holder;
         ListRow rowItem = (ListRow) item;
-        vh.mItemBridgeAdapter.clear();
         vh.mItemBridgeAdapter.setAdapter(rowItem.getAdapter());
         vh.mGridView.setAdapter(vh.mItemBridgeAdapter);
     }
 
     @Override
     protected void onUnbindRowViewHolder(RowPresenter.ViewHolder holder) {
-        ((ViewHolder) holder).mGridView.setAdapter(null);
+        ViewHolder vh = (ViewHolder) holder;
+        vh.mGridView.setAdapter(null);
+        vh.mItemBridgeAdapter.clear();
         super.onUnbindRowViewHolder(holder);
     }
 
@@ -319,6 +453,15 @@ public class ListRowPresenter extends RowPresenter {
     }
 
     /**
+     * Returns true if SDK >= L, where Z shadow is enabled so that Z order is enabled
+     * on each child of horizontal list.   If subclass returns false in isUsingDefaultShadow()
+     * and does not use Z-shadow on SDK >= L, it should override isUsingZOrder() return false.
+     */
+    public boolean isUsingZOrder() {
+        return ShadowHelper.getInstance().usesZShadow();
+    }
+
+    /**
      * Enable or disable child shadow.
      * This is not only for enable/disable default shadow implementation but also subclass must
      * respect this flag.
@@ -334,6 +477,21 @@ public class ListRowPresenter extends RowPresenter {
      */
     public final boolean getShadowEnabled() {
         return mShadowEnabled;
+    }
+
+    /**
+     * Enables or disabled rounded corners on children of this row.
+     * Supported on Android SDK >= L.
+     */
+    public final void enableChildRoundedCorners(boolean enable) {
+        mRoundedCornersEnabled = enable;
+    }
+
+    /**
+     * Returns true if rounded corners are enabled for children of this row.
+     */
+    public final boolean areChildRoundedCornersEnabled() {
+        return mRoundedCornersEnabled;
     }
 
     final boolean needsDefaultShadow() {
@@ -362,7 +520,6 @@ public class ListRowPresenter extends RowPresenter {
         super.onSelectLevelChanged(holder);
         if (needsDefaultListSelectEffect()) {
             ViewHolder vh = (ViewHolder) holder;
-            vh.mColorDimmer.setActiveLevel(holder.mSelectLevel);
             int dimmedColor = vh.mColorDimmer.getPaint().getColor();
             for (int i = 0, count = vh.mGridView.getChildCount(); i < count; i++) {
                 ShadowOverlayContainer wrapper = (ShadowOverlayContainer) vh.mGridView.getChildAt(i);
@@ -372,6 +529,12 @@ public class ListRowPresenter extends RowPresenter {
                 vh.mGridView.invalidate();
             }
         }
+    }
+
+    @Override
+    public void freeze(RowPresenter.ViewHolder holder, boolean freeze) {
+        ViewHolder vh = (ViewHolder) holder;
+        vh.mGridView.setScrollEnabled(!freeze);
     }
 
 }

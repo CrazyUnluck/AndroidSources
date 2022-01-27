@@ -78,6 +78,14 @@ public class StringCaseMappingBenchmark extends SimpleBenchmark {
         }
     }
 
+    // toUpperCase for Greek is an extra-hard case that uses icu4c's Transliterator.
+    public void timeToUpperCase_el_GR(int reps) {
+        Locale el_GR = new Locale("el", "GR");
+        for (int i = 0; i < reps; ++i) {
+            s.value.toUpperCase(el_GR);
+        }
+    }
+
     public void timeToLowerCase_US(int reps) {
         for (int i = 0; i < reps; ++i) {
             s.value.toUpperCase(Locale.US);
@@ -98,13 +106,13 @@ public class StringCaseMappingBenchmark extends SimpleBenchmark {
 
     public void timeToUpperCase_ICU(int reps) {
         for (int i = 0; i < reps; ++i) {
-            libcore.icu.ICU.toUpperCase(s.value, Locale.US.toString());
+            libcore.icu.ICU.toUpperCase(s.value, Locale.US);
         }
     }
 
     public void timeToLowerCase_ICU(int reps) {
         for (int i = 0; i < reps; ++i) {
-            libcore.icu.ICU.toLowerCase(s.value, Locale.US.toString());
+            libcore.icu.ICU.toLowerCase(s.value, Locale.US);
         }
     }
 

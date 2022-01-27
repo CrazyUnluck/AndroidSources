@@ -20,14 +20,15 @@ import android.os.Bundle;
 
 import junit.framework.TestCase;
 
+import org.junit.internal.builders.JUnit3Builder;
 import org.junit.runner.Runner;
 import org.junit.runners.model.RunnerBuilder;
 
 /**
  * A {@link RunnerBuilder} that will build customized runners needed for specialized Android
- * {@link TestCase}s.
+ * {@link TestCase}s and to support {@link android.test.suitebuilder.annotation}s.
  */
-public class AndroidJUnit3Builder extends RunnerBuilder {
+public class AndroidJUnit3Builder extends JUnit3Builder {
 
     private Instrumentation mInstr;
     private boolean mSkipExecution;
@@ -41,32 +42,17 @@ public class AndroidJUnit3Builder extends RunnerBuilder {
 
     @Override
     public Runner runnerForClass(Class<?> testClass) throws Throwable {
-        if (mSkipExecution && isJUnit3TestCase(testClass)) {
-            return new NonExecutingJUnit3ClassRunner(testClass);
-        } else if (isAndroidTestCase(testClass)) {
-            return new AndroidJUnit3ClassRunner(testClass, mBundle, mInstr);
-        } else if (isInstrumentationTestCase(testClass)) {
-            return new AndroidJUnit3ClassRunner(testClass, mBundle, mInstr);
-        } else if (isBundleTest(testClass)) {
-            return new AndroidJUnit3ClassRunner(testClass, mBundle, mInstr);
+        if (isJUnit3Test(testClass)) {
+            if (mSkipExecution) {
+                return new JUnit38ClassRunner(new NoExecTestSuite(testClass));
+            } else {
+                return new JUnit38ClassRunner(new AndroidTestSuite(testClass, mBundle, mInstr));
+            }
         }
         return null;
     }
 
-    boolean isJUnit3TestCase(Class<?> testClass) {
+    boolean isJUnit3Test(Class<?> testClass) {
         return junit.framework.TestCase.class.isAssignableFrom(testClass);
     }
-
-    boolean isAndroidTestCase(Class<?> testClass) {
-        return android.test.AndroidTestCase.class.isAssignableFrom(testClass);
-    }
-
-    boolean isInstrumentationTestCase(Class<?> testClass) {
-        return android.test.InstrumentationTestCase.class.isAssignableFrom(testClass);
-    }
-
-    boolean isBundleTest(Class<?> testClass) {
-       return android.support.test.BundleTest.class.isAssignableFrom(testClass);
-    }
-
 }

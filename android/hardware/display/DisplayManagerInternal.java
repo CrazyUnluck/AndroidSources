@@ -19,6 +19,7 @@ package android.hardware.display;
 import android.hardware.SensorManager;
 import android.os.Handler;
 import android.os.PowerManager;
+import android.view.Display;
 import android.view.DisplayInfo;
 
 /**
@@ -105,21 +106,30 @@ public abstract class DisplayManagerInternal {
     public abstract void performTraversalInTransactionFromWindowManager();
 
     /**
-     * Tells the display manager whether there is interesting unique content on the
-     * specified logical display.  This is used to control automatic mirroring.
+     * Tells the display manager about properties of the display that depend on the windows on it.
+     * This includes whether there is interesting unique content on the specified logical display,
+     * and whether the one of the windows has a preferred refresh rate.
      * <p>
      * If the display has unique content, then the display manager arranges for it
      * to be presented on a physical display if appropriate.  Otherwise, the display manager
      * may choose to make the physical display mirror some other logical display.
      * </p>
      *
+     * <p>
+     * If one of the windows on the display has a preferred refresh rate that's supported by the
+     * display, then the display manager will request its use.
+     * </p>
+     *
      * @param displayId The logical display id to update.
-     * @param hasContent True if the logical display has content.
+     * @param hasContent True if the logical display has content. This is used to control automatic
+     * mirroring.
+     * @param requestedRefreshRate The preferred refresh rate for the top-most visible window that
+     * has a preference.
      * @param inTraversal True if called from WindowManagerService during a window traversal
      * prior to call to performTraversalInTransactionFromWindowManager.
      */
-    public abstract void setDisplayHasContent(int displayId, boolean hasContent,
-            boolean inTraversal);
+    public abstract void setDisplayProperties(int displayId, boolean hasContent,
+            float requestedRefreshRate, boolean inTraversal);
 
     /**
      * Describes the requested power state of the display.
@@ -132,13 +142,19 @@ public abstract class DisplayManagerInternal {
      * have to micro-manage screen off animations, auto-brightness and other effects.
      */
     public static final class DisplayPowerRequest {
-        public static final int SCREEN_STATE_OFF = 0;
-        public static final int SCREEN_STATE_DOZE = 1;
-        public static final int SCREEN_STATE_DIM = 2;
-        public static final int SCREEN_STATE_BRIGHT = 3;
+        // Policy: Turn screen off as if the user pressed the power button
+        // including playing a screen off animation if applicable.
+        public static final int POLICY_OFF = 0;
+        // Policy: Enable dozing and always-on display functionality.
+        public static final int POLICY_DOZE = 1;
+        // Policy: Make the screen dim when the user activity timeout is
+        // about to expire.
+        public static final int POLICY_DIM = 2;
+        // Policy: Make the screen bright as usual.
+        public static final int POLICY_BRIGHT = 3;
 
-        // The requested minimum screen power state: off, doze, dim or bright.
-        public int screenState;
+        // The basic overall policy to apply: off, doze, dim or bright.
+        public int policy;
 
         // If true, the proximity sensor overrides the screen state when an object is
         // nearby, turning it off temporarily until the object is moved away.
@@ -156,6 +172,9 @@ public abstract class DisplayManagerInternal {
         // If true, enables automatic brightness control.
         public boolean useAutoBrightness;
 
+        //If true, scales the brightness to half of desired.
+        public boolean lowPowerMode;
+
         // If true, prevents the screen from completely turning on if it is currently off.
         // The display does not enter a "ready" state if this flag is true and screen on is
         // blocked.  The window manager policy blocks screen on while it prepares the keyguard to
@@ -166,43 +185,39 @@ public abstract class DisplayManagerInternal {
         // visible to the user.
         public boolean blockScreenOn;
 
+        // Overrides the policy for adjusting screen brightness and state while dozing.
+        public int dozeScreenBrightness;
+        public int dozeScreenState;
+
         public DisplayPowerRequest() {
-            screenState = SCREEN_STATE_BRIGHT;
+            policy = POLICY_BRIGHT;
             useProximitySensor = false;
             screenBrightness = PowerManager.BRIGHTNESS_ON;
             screenAutoBrightnessAdjustment = 0.0f;
             useAutoBrightness = false;
             blockScreenOn = false;
+            dozeScreenBrightness = PowerManager.BRIGHTNESS_DEFAULT;
+            dozeScreenState = Display.STATE_UNKNOWN;
         }
 
         public DisplayPowerRequest(DisplayPowerRequest other) {
             copyFrom(other);
         }
 
-        // Returns true if we want the screen on in any mode, including doze.
-        public boolean wantScreenOnAny() {
-            return screenState != SCREEN_STATE_OFF;
-        }
-
-        // Returns true if we want the screen on in a normal mode, excluding doze.
-        // This is usually what we want to tell the rest of the system.  For compatibility
-        // reasons, we pretend the screen is off when dozing.
-        public boolean wantScreenOnNormal() {
-            return screenState == SCREEN_STATE_DIM || screenState == SCREEN_STATE_BRIGHT;
-        }
-
-        public boolean wantLightSensorEnabled() {
-            // Specifically, we don't want the light sensor while dozing.
-            return useAutoBrightness && wantScreenOnNormal();
+        public boolean isBrightOrDim() {
+            return policy == POLICY_BRIGHT || policy == POLICY_DIM;
         }
 
         public void copyFrom(DisplayPowerRequest other) {
-            screenState = other.screenState;
+            policy = other.policy;
             useProximitySensor = other.useProximitySensor;
             screenBrightness = other.screenBrightness;
             screenAutoBrightnessAdjustment = other.screenAutoBrightnessAdjustment;
             useAutoBrightness = other.useAutoBrightness;
             blockScreenOn = other.blockScreenOn;
+            lowPowerMode = other.lowPowerMode;
+            dozeScreenBrightness = other.dozeScreenBrightness;
+            dozeScreenState = other.dozeScreenState;
         }
 
         @Override
@@ -213,12 +228,15 @@ public abstract class DisplayManagerInternal {
 
         public boolean equals(DisplayPowerRequest other) {
             return other != null
-                    && screenState == other.screenState
+                    && policy == other.policy
                     && useProximitySensor == other.useProximitySensor
                     && screenBrightness == other.screenBrightness
                     && screenAutoBrightnessAdjustment == other.screenAutoBrightnessAdjustment
                     && useAutoBrightness == other.useAutoBrightness
-                    && blockScreenOn == other.blockScreenOn;
+                    && blockScreenOn == other.blockScreenOn
+                    && lowPowerMode == other.lowPowerMode
+                    && dozeScreenBrightness == other.dozeScreenBrightness
+                    && dozeScreenState == other.dozeScreenState;
         }
 
         @Override
@@ -228,12 +246,30 @@ public abstract class DisplayManagerInternal {
 
         @Override
         public String toString() {
-            return "screenState=" + screenState
+            return "policy=" + policyToString(policy)
                     + ", useProximitySensor=" + useProximitySensor
                     + ", screenBrightness=" + screenBrightness
                     + ", screenAutoBrightnessAdjustment=" + screenAutoBrightnessAdjustment
                     + ", useAutoBrightness=" + useAutoBrightness
-                    + ", blockScreenOn=" + blockScreenOn;
+                    + ", blockScreenOn=" + blockScreenOn
+                    + ", lowPowerMode=" + lowPowerMode
+                    + ", dozeScreenBrightness=" + dozeScreenBrightness
+                    + ", dozeScreenState=" + Display.stateToString(dozeScreenState);
+        }
+
+        public static String policyToString(int policy) {
+            switch (policy) {
+                case POLICY_OFF:
+                    return "OFF";
+                case POLICY_DOZE:
+                    return "DOZE";
+                case POLICY_DIM:
+                    return "DIM";
+                case POLICY_BRIGHT:
+                    return "BRIGHT";
+                default:
+                    return Integer.toString(policy);
+            }
         }
     }
 

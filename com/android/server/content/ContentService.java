@@ -19,11 +19,13 @@ package com.android.server.content;
 import android.Manifest;
 import android.accounts.Account;
 import android.app.ActivityManager;
+import android.content.ComponentName;
 import android.content.ContentResolver;
 import android.content.Context;
 import android.content.IContentService;
 import android.content.ISyncStatusObserver;
 import android.content.PeriodicSync;
+import android.content.pm.PackageManager;
 import android.content.SyncAdapterType;
 import android.content.SyncInfo;
 import android.content.SyncRequest;
@@ -41,7 +43,6 @@ import android.os.SystemProperties;
 import android.os.UserHandle;
 import android.text.TextUtils;
 import android.util.Log;
-import android.util.Pair;
 import android.util.Slog;
 import android.util.SparseIntArray;
 
@@ -171,11 +172,8 @@ public final class ContentService extends IContentService.Stub {
             throw new IllegalArgumentException("You must pass a valid uri and observer");
         }
 
-        final int callingUser = UserHandle.getCallingUserId();
-        if (callingUser != userHandle) {
-            mContext.enforceCallingOrSelfPermission(Manifest.permission.INTERACT_ACROSS_USERS_FULL,
-                    "no permission to observe other users' provider view");
-        }
+        enforceCrossUserPermission(userHandle,
+                "no permission to observe other users' provider view");
 
         if (userHandle < 0) {
             if (userHandle == UserHandle.USER_CURRENT) {
@@ -229,7 +227,7 @@ public final class ContentService extends IContentService.Stub {
         // Notify for any user other than the caller's own requires permission.
         final int callingUserHandle = UserHandle.getCallingUserId();
         if (userHandle != callingUserHandle) {
-            mContext.enforceCallingOrSelfPermission(Manifest.permission.INTERACT_ACROSS_USERS_FULL,
+            mContext.enforceCallingOrSelfPermission(Manifest.permission.INTERACT_ACROSS_USERS,
                     "no permission to notify other users");
         }
 
@@ -257,7 +255,7 @@ public final class ContentService extends IContentService.Stub {
             for (int i=0; i<numCalls; i++) {
                 ObserverCall oc = calls.get(i);
                 try {
-                    oc.mObserver.onChange(oc.mSelfChange, uri);
+                    oc.mObserver.onChange(oc.mSelfChange, uri, userHandle);
                     if (Log.isLoggable(TAG, Log.VERBOSE)) {
                         Log.v(TAG, "Notified " + oc.mObserver + " of " + "update at " + uri);
                     }
@@ -315,7 +313,6 @@ public final class ContentService extends IContentService.Stub {
         }
     }
 
-    @Override
     public void requestSync(Account account, String authority, Bundle extras) {
         ContentResolver.validateSyncExtrasBundle(extras);
         int userId = UserHandle.getCallingUserId();
@@ -345,47 +342,51 @@ public final class ContentService extends IContentService.Stub {
      * Depending on the request, we enqueue to suit in the SyncManager.
      * @param request The request object. Validation of this object is done by its builder.
      */
-    @Override
     public void sync(SyncRequest request) {
-        Bundle extras = request.getBundle();
-        long flextime = request.getSyncFlexTime();
-        long runAtTime = request.getSyncRunTime();
-        int userId = UserHandle.getCallingUserId();
-        int uId = Binder.getCallingUid();
+        syncAsUser(request, UserHandle.getCallingUserId());
+    }
 
+    /**
+     * If the user id supplied is different to the calling user, the caller must hold the
+     * INTERACT_ACROSS_USERS_FULL permission.
+     */
+    public void syncAsUser(SyncRequest request, int userId) {
+        enforceCrossUserPermission(userId, "no permission to request sync as user: " + userId);
+        int callerUid = Binder.getCallingUid();
         // This makes it so that future permission checks will be in the context of this
         // process rather than the caller's process. We will restore this before returning.
         long identityToken = clearCallingIdentity();
         try {
             SyncManager syncManager = getSyncManager();
-            if (syncManager != null) {
-                if (request.hasAuthority()) {
-                    // Sync Adapter registered with the system - old API.
-                    final  Account account = request.getAccount();
-                    final String provider = request.getProvider();
-                    if (request.isPeriodic()) {
-                        mContext.enforceCallingOrSelfPermission(
-                                Manifest.permission.WRITE_SYNC_SETTINGS,
-                                "no permission to write the sync settings");
-                        if (runAtTime < 60) {
-                            Slog.w(TAG, "Requested poll frequency of " + runAtTime
-                                    + " seconds being rounded up to 60 seconds.");
-                            runAtTime = 60;
-                        }
-                        PeriodicSync syncToAdd =
-                                new PeriodicSync(account, provider, extras, runAtTime, flextime);
-                        getSyncManager().getSyncStorageEngine().addPeriodicSync(syncToAdd, userId);
-                    } else {
-                        long beforeRuntimeMillis = (flextime) * 1000;
-                        long runtimeMillis = runAtTime * 1000;
-                        syncManager.scheduleSync(
-                                account, userId, uId, provider, extras,
-                                beforeRuntimeMillis, runtimeMillis,
-                                false /* onlyThoseWithUnknownSyncableState */);
-                    }
-                } else {
-                    Log.w(TAG, "Unrecognised sync parameters, doing nothing.");
+            if (syncManager == null) {
+                return;
+            }
+
+            Bundle extras = request.getBundle();
+            long flextime = request.getSyncFlexTime();
+            long runAtTime = request.getSyncRunTime();
+            if (request.isPeriodic()) {
+                mContext.enforceCallingOrSelfPermission(
+                        Manifest.permission.WRITE_SYNC_SETTINGS,
+                        "no permission to write the sync settings");
+                SyncStorageEngine.EndPoint info;
+                info = new SyncStorageEngine.EndPoint(
+                        request.getAccount(), request.getProvider(), userId);
+                if (runAtTime < 60) {
+                    Slog.w(TAG, "Requested poll frequency of " + runAtTime
+                            + " seconds being rounded up to 60 seconds.");
+                    runAtTime = 60;
                 }
+                // Schedule periodic sync.
+                getSyncManager().getSyncStorageEngine()
+                    .updateOrAddPeriodicSync(info, runAtTime, flextime, extras);
+            } else {
+                long beforeRuntimeMillis = (flextime) * 1000;
+                long runtimeMillis = runAtTime * 1000;
+                syncManager.scheduleSync(
+                        request.getAccount(), userId, callerUid, request.getProvider(), extras,
+                        beforeRuntimeMillis, runtimeMillis,
+                        false /* onlyThoseWithUnknownSyncableState */);
             }
         } finally {
             restoreCallingIdentity(identityToken);
@@ -395,25 +396,79 @@ public final class ContentService extends IContentService.Stub {
     /**
      * Clear all scheduled sync operations that match the uri and cancel the active sync
      * if they match the authority and account, if they are present.
-     * @param account filter the pending and active syncs to cancel using this account
-     * @param authority filter the pending and active syncs to cancel using this authority
+     *
+     * @param account filter the pending and active syncs to cancel using this account, or null.
+     * @param authority filter the pending and active syncs to cancel using this authority, or
+     * null.
+     * @param cname cancel syncs running on this service, or null for provider/account.
      */
     @Override
-    public void cancelSync(Account account, String authority) {
+    public void cancelSync(Account account, String authority, ComponentName cname) {
+        cancelSyncAsUser(account, authority, cname, UserHandle.getCallingUserId());
+    }
+
+    /**
+     * Clear all scheduled sync operations that match the uri and cancel the active sync
+     * if they match the authority and account, if they are present.
+     *
+     * <p> If the user id supplied is different to the calling user, the caller must hold the
+     * INTERACT_ACROSS_USERS_FULL permission.
+     *
+     * @param account filter the pending and active syncs to cancel using this account, or null.
+     * @param authority filter the pending and active syncs to cancel using this authority, or
+     * null.
+     * @param userId the user id for which to cancel sync operations.
+     * @param cname cancel syncs running on this service, or null for provider/account.
+     */
+    @Override
+    public void cancelSyncAsUser(Account account, String authority, ComponentName cname,
+            int userId) {
         if (authority != null && authority.length() == 0) {
             throw new IllegalArgumentException("Authority must be non-empty");
         }
-
-        int userId = UserHandle.getCallingUserId();
+        enforceCrossUserPermission(userId,
+                "no permission to modify the sync settings for user " + userId);
         // This makes it so that future permission checks will be in the context of this
         // process rather than the caller's process. We will restore this before returning.
         long identityToken = clearCallingIdentity();
         try {
             SyncManager syncManager = getSyncManager();
             if (syncManager != null) {
-                syncManager.clearScheduledSyncOperations(account, userId, authority);
-                syncManager.cancelActiveSync(account, userId, authority);
+                SyncStorageEngine.EndPoint info;
+                if (cname == null) {
+                    info = new SyncStorageEngine.EndPoint(account, authority, userId);
+                } else {
+                    info = new SyncStorageEngine.EndPoint(cname, userId);
+                }
+                syncManager.clearScheduledSyncOperations(info);
+                syncManager.cancelActiveSync(info, null /* all syncs for this adapter */);
             }
+        } finally {
+            restoreCallingIdentity(identityToken);
+        }
+    }
+
+    public void cancelRequest(SyncRequest request) {
+        SyncManager syncManager = getSyncManager();
+        if (syncManager == null) return;
+        int userId = UserHandle.getCallingUserId();
+
+        long identityToken = clearCallingIdentity();
+        try {
+            SyncStorageEngine.EndPoint info;
+            Bundle extras = new Bundle(request.getBundle());
+            Account account = request.getAccount();
+            String provider = request.getProvider();
+            info = new SyncStorageEngine.EndPoint(account, provider, userId);
+            if (request.isPeriodic()) {
+                // Remove periodic sync.
+                mContext.enforceCallingOrSelfPermission(Manifest.permission.WRITE_SYNC_SETTINGS,
+                        "no permission to write the sync settings");
+                getSyncManager().getSyncStorageEngine().removePeriodicSync(info, extras);
+            }
+            // Cancel active syncs and clear pending syncs from the queue.
+            syncManager.cancelScheduledSyncOperation(info, extras);
+            syncManager.cancelActiveSync(info, extras);
         } finally {
             restoreCallingIdentity(identityToken);
         }
@@ -425,9 +480,23 @@ public final class ContentService extends IContentService.Stub {
      */
     @Override
     public SyncAdapterType[] getSyncAdapterTypes() {
+        return getSyncAdapterTypesAsUser(UserHandle.getCallingUserId());
+    }
+
+    /**
+     * Get information about the SyncAdapters that are known to the system for a particular user.
+     *
+     * <p> If the user id supplied is different to the calling user, the caller must hold the
+     * INTERACT_ACROSS_USERS_FULL permission.
+     *
+     * @return an array of SyncAdapters that have registered with the system
+     */
+    @Override
+    public SyncAdapterType[] getSyncAdapterTypesAsUser(int userId) {
+        enforceCrossUserPermission(userId,
+                "no permission to read sync settings for user " + userId);
         // This makes it so that future permission checks will be in the context of this
         // process rather than the caller's process. We will restore this before returning.
-        final int userId = UserHandle.getCallingUserId();
         final long identityToken = clearCallingIdentity();
         try {
             SyncManager syncManager = getSyncManager();
@@ -439,16 +508,26 @@ public final class ContentService extends IContentService.Stub {
 
     @Override
     public boolean getSyncAutomatically(Account account, String providerName) {
+        return getSyncAutomaticallyAsUser(account, providerName, UserHandle.getCallingUserId());
+    }
+
+    /**
+     * If the user id supplied is different to the calling user, the caller must hold the
+     * INTERACT_ACROSS_USERS_FULL permission.
+     */
+    @Override
+    public boolean getSyncAutomaticallyAsUser(Account account, String providerName, int userId) {
+        enforceCrossUserPermission(userId,
+                "no permission to read the sync settings for user " + userId);
         mContext.enforceCallingOrSelfPermission(Manifest.permission.READ_SYNC_SETTINGS,
                 "no permission to read the sync settings");
 
-        int userId = UserHandle.getCallingUserId();
         long identityToken = clearCallingIdentity();
         try {
             SyncManager syncManager = getSyncManager();
             if (syncManager != null) {
-                return syncManager.getSyncStorageEngine().getSyncAutomatically(
-                        account, userId, providerName);
+                return syncManager.getSyncStorageEngine()
+                        .getSyncAutomatically(account, userId, providerName);
             }
         } finally {
             restoreCallingIdentity(identityToken);
@@ -458,19 +537,26 @@ public final class ContentService extends IContentService.Stub {
 
     @Override
     public void setSyncAutomatically(Account account, String providerName, boolean sync) {
+        setSyncAutomaticallyAsUser(account, providerName, sync, UserHandle.getCallingUserId());
+    }
+
+    @Override
+    public void setSyncAutomaticallyAsUser(Account account, String providerName, boolean sync,
+            int userId) {
         if (TextUtils.isEmpty(providerName)) {
             throw new IllegalArgumentException("Authority must be non-empty");
         }
         mContext.enforceCallingOrSelfPermission(Manifest.permission.WRITE_SYNC_SETTINGS,
                 "no permission to write the sync settings");
+        enforceCrossUserPermission(userId,
+                "no permission to modify the sync settings for user " + userId);
 
-        int userId = UserHandle.getCallingUserId();
         long identityToken = clearCallingIdentity();
         try {
             SyncManager syncManager = getSyncManager();
             if (syncManager != null) {
-                syncManager.getSyncStorageEngine().setSyncAutomatically(
-                        account, userId, providerName, sync);
+                syncManager.getSyncStorageEngine().setSyncAutomatically(account, userId,
+                        providerName, sync);
             }
         } finally {
             restoreCallingIdentity(identityToken);
@@ -496,21 +582,22 @@ public final class ContentService extends IContentService.Stub {
                     + " seconds being rounded up to 60 seconds.");
             pollFrequency = 60;
         }
+        long defaultFlex = SyncStorageEngine.calculateDefaultFlexTime(pollFrequency);
 
         long identityToken = clearCallingIdentity();
         try {
-            // Add default flex time to this sync.
-            PeriodicSync syncToAdd =
-                    new PeriodicSync(account, authority, extras,
-                            pollFrequency,
-                            SyncStorageEngine.calculateDefaultFlexTime(pollFrequency));
-            getSyncManager().getSyncStorageEngine().addPeriodicSync(syncToAdd, userId);
+            SyncStorageEngine.EndPoint info =
+                    new SyncStorageEngine.EndPoint(account, authority, userId);
+            getSyncManager().getSyncStorageEngine()
+                .updateOrAddPeriodicSync(info,
+                        pollFrequency,
+                        defaultFlex,
+                        extras);
         } finally {
             restoreCallingIdentity(identityToken);
         }
     }
 
-    @Override
     public void removePeriodicSync(Account account, String authority, Bundle extras) {
         if (account == null) {
             throw new IllegalArgumentException("Account must not be null");
@@ -524,24 +611,18 @@ public final class ContentService extends IContentService.Stub {
         int userId = UserHandle.getCallingUserId();
         long identityToken = clearCallingIdentity();
         try {
-            PeriodicSync syncToRemove = new PeriodicSync(account, authority, extras,
-                    0 /* Not read for removal */, 0 /* Not read for removal */);
-            getSyncManager().getSyncStorageEngine().removePeriodicSync(syncToRemove, userId);
+            getSyncManager().getSyncStorageEngine()
+                .removePeriodicSync(
+                        new SyncStorageEngine.EndPoint(account, authority, userId),
+                        extras);
         } finally {
             restoreCallingIdentity(identityToken);
         }
     }
 
-    /**
-     * TODO: Implement.
-     * @param request Sync to remove.
-     */
-    public void removeSync(SyncRequest request) {
 
-    }
-
-    @Override
-    public List<PeriodicSync> getPeriodicSyncs(Account account, String providerName) {
+    public List<PeriodicSync> getPeriodicSyncs(Account account, String providerName,
+            ComponentName cname) {
         if (account == null) {
             throw new IllegalArgumentException("Account must not be null");
         }
@@ -555,16 +636,25 @@ public final class ContentService extends IContentService.Stub {
         long identityToken = clearCallingIdentity();
         try {
             return getSyncManager().getSyncStorageEngine().getPeriodicSyncs(
-                    account, userId, providerName);
+                    new SyncStorageEngine.EndPoint(account, providerName, userId));
         } finally {
             restoreCallingIdentity(identityToken);
         }
     }
 
     public int getIsSyncable(Account account, String providerName) {
+        return getIsSyncableAsUser(account, providerName, UserHandle.getCallingUserId());
+    }
+
+    /**
+     * If the user id supplied is different to the calling user, the caller must hold the
+     * INTERACT_ACROSS_USERS_FULL permission.
+     */
+    public int getIsSyncableAsUser(Account account, String providerName, int userId) {
+        enforceCrossUserPermission(userId,
+                "no permission to read the sync settings for user " + userId);
         mContext.enforceCallingOrSelfPermission(Manifest.permission.READ_SYNC_SETTINGS,
                 "no permission to read the sync settings");
-        int userId = UserHandle.getCallingUserId();
 
         long identityToken = clearCallingIdentity();
         try {
@@ -579,7 +669,6 @@ public final class ContentService extends IContentService.Stub {
         return -1;
     }
 
-    @Override
     public void setIsSyncable(Account account, String providerName, int syncable) {
         if (TextUtils.isEmpty(providerName)) {
             throw new IllegalArgumentException("Authority must not be empty");
@@ -602,10 +691,20 @@ public final class ContentService extends IContentService.Stub {
 
     @Override
     public boolean getMasterSyncAutomatically() {
+        return getMasterSyncAutomaticallyAsUser(UserHandle.getCallingUserId());
+    }
+
+    /**
+     * If the user id supplied is different to the calling user, the caller must hold the
+     * INTERACT_ACROSS_USERS_FULL permission.
+     */
+    @Override
+    public boolean getMasterSyncAutomaticallyAsUser(int userId) {
+        enforceCrossUserPermission(userId,
+                "no permission to read the sync settings for user " + userId);
         mContext.enforceCallingOrSelfPermission(Manifest.permission.READ_SYNC_SETTINGS,
                 "no permission to read the sync settings");
 
-        int userId = UserHandle.getCallingUserId();
         long identityToken = clearCallingIdentity();
         try {
             SyncManager syncManager = getSyncManager();
@@ -620,10 +719,16 @@ public final class ContentService extends IContentService.Stub {
 
     @Override
     public void setMasterSyncAutomatically(boolean flag) {
+        setMasterSyncAutomaticallyAsUser(flag, UserHandle.getCallingUserId());
+    }
+
+    @Override
+    public void setMasterSyncAutomaticallyAsUser(boolean flag, int userId) {
+        enforceCrossUserPermission(userId,
+                "no permission to set the sync status for user " + userId);
         mContext.enforceCallingOrSelfPermission(Manifest.permission.WRITE_SYNC_SETTINGS,
                 "no permission to write the sync settings");
 
-        int userId = UserHandle.getCallingUserId();
         long identityToken = clearCallingIdentity();
         try {
             SyncManager syncManager = getSyncManager();
@@ -635,29 +740,38 @@ public final class ContentService extends IContentService.Stub {
         }
     }
 
-    public boolean isSyncActive(Account account, String authority) {
+    public boolean isSyncActive(Account account, String authority, ComponentName cname) {
         mContext.enforceCallingOrSelfPermission(Manifest.permission.READ_SYNC_STATS,
                 "no permission to read the sync stats");
         int userId = UserHandle.getCallingUserId();
-
+        int callingUid = Binder.getCallingUid();
         long identityToken = clearCallingIdentity();
         try {
             SyncManager syncManager = getSyncManager();
-            if (syncManager != null) {
-                return syncManager.getSyncStorageEngine().isSyncActive(
-                        account, userId, authority);
+            if (syncManager == null) {
+                return false;
             }
+            return syncManager.getSyncStorageEngine().isSyncActive(
+                    new SyncStorageEngine.EndPoint(account, authority, userId));
         } finally {
             restoreCallingIdentity(identityToken);
         }
-        return false;
     }
 
     public List<SyncInfo> getCurrentSyncs() {
+        return getCurrentSyncsAsUser(UserHandle.getCallingUserId());
+    }
+
+    /**
+     * If the user id supplied is different to the calling user, the caller must hold the
+     * INTERACT_ACROSS_USERS_FULL permission.
+     */
+    public List<SyncInfo> getCurrentSyncsAsUser(int userId) {
+        enforceCrossUserPermission(userId,
+                "no permission to read the sync settings for user " + userId);
         mContext.enforceCallingOrSelfPermission(Manifest.permission.READ_SYNC_STATS,
                 "no permission to read the sync stats");
 
-        int userId = UserHandle.getCallingUserId();
         long identityToken = clearCallingIdentity();
         try {
             return getSyncManager().getSyncStorageEngine().getCurrentSyncsCopy(userId);
@@ -666,42 +780,71 @@ public final class ContentService extends IContentService.Stub {
         }
     }
 
-    public SyncStatusInfo getSyncStatus(Account account, String authority) {
+    public SyncStatusInfo getSyncStatus(Account account, String authority, ComponentName cname) {
+        return getSyncStatusAsUser(account, authority, cname, UserHandle.getCallingUserId());
+    }
+
+    /**
+     * If the user id supplied is different to the calling user, the caller must hold the
+     * INTERACT_ACROSS_USERS_FULL permission.
+     */
+    public SyncStatusInfo getSyncStatusAsUser(Account account, String authority,
+            ComponentName cname, int userId) {
         if (TextUtils.isEmpty(authority)) {
             throw new IllegalArgumentException("Authority must not be empty");
         }
+
+        enforceCrossUserPermission(userId,
+                "no permission to read the sync stats for user " + userId);
         mContext.enforceCallingOrSelfPermission(Manifest.permission.READ_SYNC_STATS,
                 "no permission to read the sync stats");
 
-        int userId = UserHandle.getCallingUserId();
+        int callerUid = Binder.getCallingUid();
         long identityToken = clearCallingIdentity();
         try {
             SyncManager syncManager = getSyncManager();
-            if (syncManager != null) {
-                return syncManager.getSyncStorageEngine().getStatusByAccountAndAuthority(
-                        account, userId, authority);
+            if (syncManager == null) {
+                return null;
             }
+            SyncStorageEngine.EndPoint info;
+            if (!(account == null || authority == null)) {
+                info = new SyncStorageEngine.EndPoint(account, authority, userId);
+            } else {
+                throw new IllegalArgumentException("Must call sync status with valid authority");
+            }
+            return syncManager.getSyncStorageEngine().getStatusByAuthority(info);
         } finally {
             restoreCallingIdentity(identityToken);
         }
-        return null;
     }
 
-    public boolean isSyncPending(Account account, String authority) {
+    public boolean isSyncPending(Account account, String authority, ComponentName cname) {
+        return isSyncPendingAsUser(account, authority, cname, UserHandle.getCallingUserId());
+    }
+
+    @Override
+    public boolean isSyncPendingAsUser(Account account, String authority, ComponentName cname,
+            int userId) {
         mContext.enforceCallingOrSelfPermission(Manifest.permission.READ_SYNC_STATS,
                 "no permission to read the sync stats");
-
-        int userId = UserHandle.getCallingUserId();
+        enforceCrossUserPermission(userId,
+                "no permission to retrieve the sync settings for user " + userId);
+        int callerUid = Binder.getCallingUid();
         long identityToken = clearCallingIdentity();
+        SyncManager syncManager = getSyncManager();
+        if (syncManager == null) return false;
+
         try {
-            SyncManager syncManager = getSyncManager();
-            if (syncManager != null) {
-                return syncManager.getSyncStorageEngine().isSyncPending(account, userId, authority);
+            SyncStorageEngine.EndPoint info;
+            if (!(account == null || authority == null)) {
+                info = new SyncStorageEngine.EndPoint(account, authority, userId);
+            } else {
+                throw new IllegalArgumentException("Invalid authority specified");
             }
+            return syncManager.getSyncStorageEngine().isSyncPending(info);
         } finally {
             restoreCallingIdentity(identityToken);
         }
-        return false;
     }
 
     public void addStatusChangeListener(int mask, ISyncStatusObserver callback) {
@@ -732,6 +875,21 @@ public final class ContentService extends IContentService.Stub {
         ContentService service = new ContentService(context, factoryTest);
         ServiceManager.addService(ContentResolver.CONTENT_SERVICE_NAME, service);
         return service;
+    }
+
+    /**
+     * Checks if the request is from the system or an app that has INTERACT_ACROSS_USERS_FULL
+     * permission, if the userHandle is not for the caller.
+     *
+     * @param userHandle the user handle of the user we want to act on behalf of.
+     * @param message the message to log on security exception.
+     */
+    private void enforceCrossUserPermission(int userHandle, String message) {
+        final int callingUser = UserHandle.getCallingUserId();
+        if (callingUser != userHandle) {
+            mContext.enforceCallingOrSelfPermission(
+                    Manifest.permission.INTERACT_ACROSS_USERS_FULL, message);
+        }
     }
 
     /**

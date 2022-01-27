@@ -32,9 +32,11 @@
 
 package java.lang.reflect;
 
+import com.android.dex.Dex;
 import java.lang.annotation.Annotation;
 import java.util.Comparator;
-import org.apache.harmony.kernel.vm.StringUtils;
+import java.util.List;
+import libcore.reflect.AnnotationAccess;
 import libcore.reflect.GenericSignatureParser;
 import libcore.reflect.Types;
 
@@ -52,100 +54,124 @@ public final class Field extends AccessibleObject implements Member {
     public static final Comparator<Field> ORDER_BY_NAME_AND_DECLARING_CLASS
             = new Comparator<Field>() {
         @Override public int compare(Field a, Field b) {
-            int comparison = a.name.compareTo(b.name);
+            if (a == b) {
+                return 0;
+            }
+            int comparison = a.getName().compareTo(b.getName());
             if (comparison != 0) {
                 return comparison;
             }
-
-            return a.getDeclaringClass().getName().compareTo(b.getDeclaringClass().getName());
+            Class<?> aType = a.getDeclaringClass();
+            Class<?> bType = b.getDeclaringClass();
+            if (aType == bType) {
+                return 0;
+            } else {
+                return aType.getName().compareTo(bType.getName());
+            }
         }
     };
 
-    private Class<?> declaringClass;
-
-    private Class<?> type;
-
-    private Type genericType;
-
-    private volatile boolean genericTypesAreInitialized = false;
-
-    private String name;
-
-    private int slot;
-
-    private final int fieldDexIndex;
-
-    private static final char TYPE_BOOLEAN = 'Z';
-
-    private static final char TYPE_BYTE = 'B';
-
-    private static final char TYPE_CHAR = 'C';
-
-    private static final char TYPE_SHORT = 'S';
-
-    private static final char TYPE_INTEGER = 'I';
-
-    private static final char TYPE_FLOAT = 'F';
-
-    private static final char TYPE_LONG = 'J';
-
-    private static final char TYPE_DOUBLE = 'D';
-
-    private Field(Class<?> declaringClass, Class<?> type, String name, int slot, int fieldDexIndex) {
-        this.declaringClass = declaringClass;
-        this.type = type;
-        this.name = name;
-        this.slot = slot;
-        this.fieldDexIndex = fieldDexIndex;
-    }
+    private final ArtField artField;
 
     /**
-     * Returns the index of this field's ID in its dex file.
      * @hide
      */
-    public int getDexFieldIndex() {
-        return fieldDexIndex;
-    }
-
-    private synchronized void initGenericType() {
-        if (!genericTypesAreInitialized) {
-            String signatureAttribute = getSignatureAttribute();
-            GenericSignatureParser parser = new GenericSignatureParser(
-                    declaringClass.getClassLoader());
-            parser.parseForField(this.declaringClass, signatureAttribute);
-            genericType = parser.fieldType;
-            if (genericType == null) {
-                genericType = getType();
-            }
-            genericTypesAreInitialized = true;
+    public Field(ArtField artField) {
+        if (artField == null) {
+            throw new NullPointerException("artField == null");
         }
-    }
-
-    /** {@inheritDoc} */
-    @Override
-    /* package */String getSignatureAttribute() {
-        Object[] annotation = getSignatureAnnotation(declaringClass, slot);
-
-        if (annotation == null) {
-            return null;
-        }
-
-        return StringUtils.combineStrings(annotation);
+        this.artField = artField;
     }
 
     /**
-     * Get the Signature annotation for this field. Returns null if not found.
+     * Returns the modifiers for this field. The {@link Modifier} class should
+     * be used to decode the result.
+     *
+     * @return the modifiers for this field
+     * @see Modifier
      */
-    native private Object[] getSignatureAnnotation(Class declaringClass, int slot);
+    @Override public int getModifiers() {
+        return artField.getAccessFlags() & 0xffff;  // mask out bits not used by Java
+    }
+
+    /**
+     * Indicates whether or not this field is an enumeration constant.
+     *
+     * @return {@code true} if this field is an enumeration constant, {@code
+     *         false} otherwise
+     */
+    public boolean isEnumConstant() {
+        return (artField.getAccessFlags() & Modifier.ENUM) != 0;
+    }
 
     /**
      * Indicates whether or not this field is synthetic.
      *
      * @return {@code true} if this field is synthetic, {@code false} otherwise
      */
-    public boolean isSynthetic() {
-        int flags = getFieldModifiers(declaringClass, slot);
-        return (flags & Modifier.SYNTHETIC) != 0;
+    @Override public boolean isSynthetic() {
+        return (artField.getAccessFlags() & Modifier.SYNTHETIC) != 0;
+    }
+
+    /**
+     * Returns the name of this field.
+     *
+     * @return the name of this field
+     */
+    @Override public String getName() {
+        return artField.getName();
+    }
+
+    @Override public Class<?> getDeclaringClass() {
+        return artField.getDeclaringClass();
+    }
+
+    /**
+     * Return the {@link Class} associated with the type of this field.
+     *
+     * @return the type of this field
+     */
+    public Class<?> getType() {
+        return artField.getType();
+    }
+
+    /**
+     * Returns the index of this field's ID in its dex file.
+     *
+     * @hide
+     */
+    public int getDexFieldIndex() {
+        return artField.getDexFieldIndex();
+    }
+
+    /**
+     * Returns the offset of the field within an instance, or for static fields, the class.
+     *
+     * @hide
+     */
+    public int getOffset() {
+        return artField.getOffset();
+    }
+
+    /**
+     * {@inheritDoc}
+     *
+     * <p>Equivalent to {@code getDeclaringClass().getName().hashCode() ^ getName().hashCode()}.
+     */
+    @Override public int hashCode() {
+        return getDeclaringClass().getName().hashCode() ^ getName().hashCode();
+    }
+
+    /**
+     * Returns true if {@code other} has the same declaring class, name and type
+     * as this field.
+     */
+    @Override public boolean equals(Object other) {
+        if (!(other instanceof Field)) {
+            return false;
+        }
+        // exactly one instance of each member in this runtime
+        return this.artField == ((Field) other).artField;
     }
 
     /**
@@ -162,22 +188,11 @@ public final class Field extends AccessibleObject implements Member {
             sb.append(Modifier.toString(modifier)).append(' ');
         }
         // append generic type
-        appendGenericType(sb, getGenericType());
+        Types.appendGenericType(sb, getGenericType());
         sb.append(' ');
         // append full field name
         sb.append(getDeclaringClass().getName()).append('.').append(getName());
         return sb.toString();
-    }
-
-    /**
-     * Indicates whether or not this field is an enumeration constant.
-     *
-     * @return {@code true} if this field is an enumeration constant, {@code
-     *         false} otherwise
-     */
-    public boolean isEnumConstant() {
-        int flags = getFieldModifiers(declaringClass, slot);
-        return (flags & Modifier.ENUM) != 0;
     }
 
     /**
@@ -193,47 +208,45 @@ public final class Field extends AccessibleObject implements Member {
      *             instantiated for some reason
      */
     public Type getGenericType() {
-        initGenericType();
-        return Types.getType(genericType);
+        String signatureAttribute = AnnotationAccess.getSignature(this);
+        Class<?> declaringClass = getDeclaringClass();
+        ClassLoader cl = declaringClass.getClassLoader();
+        GenericSignatureParser parser = new GenericSignatureParser(cl);
+        parser.parseForField(declaringClass, signatureAttribute);
+        Type genericType = parser.fieldType;
+        if (genericType == null) {
+            genericType = getType();
+        }
+        return genericType;
+    }
+
+    /**
+     * Returns the constructor's signature in non-printable form. This is called
+     * (only) from IO native code and needed for deriving the serialVersionUID
+     * of the class
+     */
+    @SuppressWarnings("unused")
+    private String getSignature() {
+        return Types.getSignature(getType());
     }
 
     @Override public Annotation[] getDeclaredAnnotations() {
-        return getDeclaredAnnotations(declaringClass, slot);
+        List<Annotation> result = AnnotationAccess.getDeclaredAnnotations(this);
+        return result.toArray(new Annotation[result.size()]);
     }
-    private static native Annotation[] getDeclaredAnnotations(Class declaringClass, int slot);
 
     @Override public <A extends Annotation> A getAnnotation(Class<A> annotationType) {
         if (annotationType == null) {
             throw new NullPointerException("annotationType == null");
         }
-        return getAnnotation(declaringClass, slot, annotationType);
+        return AnnotationAccess.getDeclaredAnnotation(this, annotationType);
     }
-    private static native <A extends Annotation> A getAnnotation(
-            Class<?> declaringClass, int slot, Class<A> annotationType);
 
     @Override public boolean isAnnotationPresent(Class<? extends Annotation> annotationType) {
         if (annotationType == null) {
             throw new NullPointerException("annotationType == null");
         }
-        return isAnnotationPresent(declaringClass, slot, annotationType);
-    }
-    private static native boolean isAnnotationPresent(
-            Class<?> declaringClass, int slot, Class<? extends Annotation> annotationType);
-
-    /**
-     * Indicates whether or not the specified {@code object} is equal to this
-     * field. To be equal, the specified object must be an instance of
-     * {@code Field} with the same declaring class, type and name as this field.
-     *
-     * @param object
-     *            the object to compare
-     * @return {@code true} if the specified object is equal to this method,
-     *         {@code false} otherwise
-     * @see #hashCode
-     */
-    @Override
-    public boolean equals(Object object) {
-        return object instanceof Field && toString().equals(object.toString());
+        return AnnotationAccess.isDeclaredAnnotationPresent(this, annotationType);
     }
 
     /**
@@ -263,8 +276,11 @@ public final class Field extends AccessibleObject implements Member {
      *             if this field is not accessible
      */
     public Object get(Object object) throws IllegalAccessException, IllegalArgumentException {
-        return getField(object, declaringClass, type, slot, flag);
+        return get(object, isAccessible());
     }
+
+    private native Object get(Object object, boolean accessible)
+            throws IllegalAccessException, IllegalArgumentException;
 
     /**
      * Returns the value of the field in the specified object as a {@code
@@ -290,9 +306,12 @@ public final class Field extends AccessibleObject implements Member {
      *             if this field is not accessible
      */
     public boolean getBoolean(Object object) throws IllegalAccessException,
-            IllegalArgumentException {
-        return getZField(object, declaringClass, type, slot, flag, TYPE_BOOLEAN);
+                                                    IllegalArgumentException {
+        return getBoolean(object, isAccessible());
     }
+
+    private native boolean getBoolean(Object object, boolean accessible)
+            throws IllegalAccessException, IllegalArgumentException;
 
     /**
      * Returns the value of the field in the specified object as a {@code byte}.
@@ -318,8 +337,11 @@ public final class Field extends AccessibleObject implements Member {
      *             if this field is not accessible
      */
     public byte getByte(Object object) throws IllegalAccessException, IllegalArgumentException {
-        return getBField(object, declaringClass, type, slot, flag, TYPE_BYTE);
+        return getByte(object, isAccessible());
     }
+
+    private native byte getByte(Object object, boolean accessible)
+            throws IllegalAccessException, IllegalArgumentException;
 
     /**
      * Returns the value of the field in the specified object as a {@code char}.
@@ -345,17 +367,11 @@ public final class Field extends AccessibleObject implements Member {
      *             if this field is not accessible
      */
     public char getChar(Object object) throws IllegalAccessException, IllegalArgumentException {
-        return getCField(object, declaringClass, type, slot, flag, TYPE_CHAR);
+        return getChar(object, isAccessible());
     }
 
-    /**
-     * Returns the class that declares this field.
-     *
-     * @return the declaring class
-     */
-    public Class<?> getDeclaringClass() {
-        return declaringClass;
-    }
+    private native char getChar(Object object, boolean accessible)
+            throws IllegalAccessException, IllegalArgumentException;
 
     /**
      * Returns the value of the field in the specified object as a {@code
@@ -381,8 +397,11 @@ public final class Field extends AccessibleObject implements Member {
      *             if this field is not accessible
      */
     public double getDouble(Object object) throws IllegalAccessException, IllegalArgumentException {
-        return getDField(object, declaringClass, type, slot, flag, TYPE_DOUBLE);
+        return getDouble(object, isAccessible());
     }
+
+    private native double getDouble(Object object, boolean accessible)
+            throws IllegalAccessException, IllegalArgumentException;
 
     /**
      * Returns the value of the field in the specified object as a {@code float}
@@ -408,8 +427,11 @@ public final class Field extends AccessibleObject implements Member {
      *             if this field is not accessible
      */
     public float getFloat(Object object) throws IllegalAccessException, IllegalArgumentException {
-        return getFField(object, declaringClass, type, slot, flag, TYPE_FLOAT);
+        return getFloat(object, isAccessible());
     }
+
+    private native float getFloat(Object object, boolean accessible)
+            throws IllegalAccessException, IllegalArgumentException;
 
     /**
      * Returns the value of the field in the specified object as an {@code int}.
@@ -435,8 +457,11 @@ public final class Field extends AccessibleObject implements Member {
      *             if this field is not accessible
      */
     public int getInt(Object object) throws IllegalAccessException, IllegalArgumentException {
-        return getIField(object, declaringClass, type, slot, flag, TYPE_INTEGER);
+        return getInt(object, isAccessible());
     }
+
+    private native int getInt(Object object, boolean accessible)
+            throws IllegalAccessException, IllegalArgumentException;
 
     /**
      * Returns the value of the field in the specified object as a {@code long}.
@@ -462,30 +487,11 @@ public final class Field extends AccessibleObject implements Member {
      *             if this field is not accessible
      */
     public long getLong(Object object) throws IllegalAccessException, IllegalArgumentException {
-        return getJField(object, declaringClass, type, slot, flag, TYPE_LONG);
+        return getLong(object, isAccessible());
     }
 
-    /**
-     * Returns the modifiers for this field. The {@link Modifier} class should
-     * be used to decode the result.
-     *
-     * @return the modifiers for this field
-     * @see Modifier
-     */
-    public int getModifiers() {
-        return getFieldModifiers(declaringClass, slot);
-    }
-
-    private native int getFieldModifiers(Class<?> declaringClass, int slot);
-
-    /**
-     * Returns the name of this field.
-     *
-     * @return the name of this field
-     */
-    public String getName() {
-        return name;
-    }
+    private native long getLong(Object object, boolean accessible)
+            throws IllegalAccessException, IllegalArgumentException;
 
     /**
      * Returns the value of the field in the specified object as a {@code short}
@@ -511,45 +517,11 @@ public final class Field extends AccessibleObject implements Member {
      *             if this field is not accessible
      */
     public short getShort(Object object) throws IllegalAccessException, IllegalArgumentException {
-        return getSField(object, declaringClass, type, slot, flag, TYPE_SHORT);
+        return getShort(object, isAccessible());
     }
 
-    /**
-     * Returns the constructor's signature in non-printable form. This is called
-     * (only) from IO native code and needed for deriving the serialVersionUID
-     * of the class
-     *
-     * @return the constructor's signature.
-     */
-    @SuppressWarnings("unused")
-    private String getSignature() {
-        return getSignature(type);
-    }
-
-    /**
-     * Return the {@link Class} associated with the type of this field.
-     *
-     * @return the type of this field
-     */
-    public Class<?> getType() {
-        return type;
-    }
-
-    /**
-     * Returns an integer hash code for this field. Objects which are equal
-     * return the same value for this method.
-     * <p>
-     * The hash code for a Field is the exclusive-or combination of the hash
-     * code of the field's name and the hash code of the name of its declaring
-     * class.
-     *
-     * @return the hash code for this field
-     * @see #equals
-     */
-    @Override
-    public int hashCode() {
-        return name.hashCode() ^ getDeclaringClass().getName().hashCode();
-    }
+    private native short getShort(Object object, boolean accessible)
+            throws IllegalAccessException, IllegalArgumentException;
 
     /**
      * Sets the value of the field in the specified object to the value. This
@@ -581,9 +553,12 @@ public final class Field extends AccessibleObject implements Member {
      *             if this field is not accessible
      */
     public void set(Object object, Object value) throws IllegalAccessException,
-            IllegalArgumentException {
-        setField(object, declaringClass, type, slot, flag, value);
+                                                        IllegalArgumentException {
+        set(object, value, isAccessible());
     }
+
+    private native void set(Object object, Object value, boolean accessible)
+            throws IllegalAccessException, IllegalArgumentException;
 
     /**
      * Sets the value of the field in the specified object to the {@code
@@ -614,9 +589,12 @@ public final class Field extends AccessibleObject implements Member {
      *             if this field is not accessible
      */
     public void setBoolean(Object object, boolean value) throws IllegalAccessException,
-            IllegalArgumentException {
-        setZField(object, declaringClass, type, slot, flag, TYPE_BOOLEAN, value);
+                                                                IllegalArgumentException {
+        setBoolean(object, value, isAccessible());
     }
+
+    private native void setBoolean(Object object, boolean value, boolean accessible)
+            throws IllegalAccessException, IllegalArgumentException;
 
     /**
      * Sets the value of the field in the specified object to the {@code byte}
@@ -646,9 +624,12 @@ public final class Field extends AccessibleObject implements Member {
      *             if this field is not accessible
      */
     public void setByte(Object object, byte value) throws IllegalAccessException,
-            IllegalArgumentException {
-        setBField(object, declaringClass, type, slot, flag, TYPE_BYTE, value);
+                                                          IllegalArgumentException {
+        setByte(object, value, isAccessible());
     }
+
+    private native void setByte(Object object, byte value, boolean accessible)
+            throws IllegalAccessException, IllegalArgumentException;
 
     /**
      * Sets the value of the field in the specified object to the {@code char}
@@ -678,9 +659,12 @@ public final class Field extends AccessibleObject implements Member {
      *             if this field is not accessible
      */
     public void setChar(Object object, char value) throws IllegalAccessException,
-            IllegalArgumentException {
-        setCField(object, declaringClass, type, slot, flag, TYPE_CHAR, value);
+                                                          IllegalArgumentException {
+        setChar(object, value, isAccessible());
     }
+
+    private native void setChar(Object object, char value, boolean accessible)
+            throws IllegalAccessException, IllegalArgumentException;
 
     /**
      * Sets the value of the field in the specified object to the {@code double}
@@ -710,9 +694,12 @@ public final class Field extends AccessibleObject implements Member {
      *             if this field is not accessible
      */
     public void setDouble(Object object, double value) throws IllegalAccessException,
-            IllegalArgumentException {
-        setDField(object, declaringClass, type, slot, flag, TYPE_DOUBLE, value);
+                                                              IllegalArgumentException {
+        setDouble(object, value, isAccessible());
     }
+
+    private native void setDouble(Object object, double value, boolean accessible)
+            throws IllegalAccessException, IllegalArgumentException;
 
     /**
      * Sets the value of the field in the specified object to the {@code float}
@@ -742,9 +729,12 @@ public final class Field extends AccessibleObject implements Member {
      *             if this field is not accessible
      */
     public void setFloat(Object object, float value) throws IllegalAccessException,
-            IllegalArgumentException {
-        setFField(object, declaringClass, type, slot, flag, TYPE_FLOAT, value);
+                                                            IllegalArgumentException {
+        setFloat(object, value, isAccessible());
     }
+
+    private native void setFloat(Object object, float value, boolean accessible)
+            throws IllegalAccessException, IllegalArgumentException;
 
     /**
      * Set the value of the field in the specified object to the {@code int}
@@ -774,9 +764,12 @@ public final class Field extends AccessibleObject implements Member {
      *             if this field is not accessible
      */
     public void setInt(Object object, int value) throws IllegalAccessException,
-            IllegalArgumentException {
-        setIField(object, declaringClass, type, slot, flag, TYPE_INTEGER, value);
+                                                        IllegalArgumentException {
+        setInt(object, value, isAccessible());
     }
+
+    private native void setInt(Object object, int value, boolean accessible)
+            throws IllegalAccessException, IllegalArgumentException;
 
     /**
      * Sets the value of the field in the specified object to the {@code long}
@@ -806,9 +799,12 @@ public final class Field extends AccessibleObject implements Member {
      *             if this field is not accessible
      */
     public void setLong(Object object, long value) throws IllegalAccessException,
-            IllegalArgumentException {
-        setJField(object, declaringClass, type, slot, flag, TYPE_LONG, value);
+                                                          IllegalArgumentException {
+        setLong(object, value, isAccessible());
     }
+
+    private native void setLong(Object object, long value, boolean accessible)
+            throws IllegalAccessException, IllegalArgumentException;
 
     /**
      * Sets the value of the field in the specified object to the {@code short}
@@ -838,9 +834,12 @@ public final class Field extends AccessibleObject implements Member {
      *             if this field is not accessible
      */
     public void setShort(Object object, short value) throws IllegalAccessException,
-            IllegalArgumentException {
-        setSField(object, declaringClass, type, slot, flag, TYPE_SHORT, value);
+                                                            IllegalArgumentException {
+        setShort(object, value, isAccessible());
     }
+
+    private native void setShort(Object object, short value, boolean accessible)
+            throws IllegalAccessException, IllegalArgumentException;
 
     /**
      * Returns a string containing a concise, human-readable description of this
@@ -866,66 +865,11 @@ public final class Field extends AccessibleObject implements Member {
         if (result.length() != 0) {
             result.append(' ');
         }
-        appendTypeName(result, type);
+        Types.appendTypeName(result, getType());
         result.append(' ');
-        appendTypeName(result, declaringClass);
+        result.append(getDeclaringClass().getName());
         result.append('.');
-        result.append(name);
+        result.append(getName());
         return result.toString();
     }
-
-    private native Object getField(Object o, Class<?> declaringClass, Class<?> type, int slot,
-            boolean noAccessCheck) throws IllegalAccessException;
-
-    private native double getDField(Object o, Class<?> declaringClass, Class<?> type, int slot,
-            boolean noAccessCheck, char descriptor) throws IllegalAccessException;
-
-    private native int getIField(Object o, Class<?> declaringClass, Class<?> type, int slot,
-            boolean noAccessCheck, char descriptor) throws IllegalAccessException;
-
-    private native long getJField(Object o, Class<?> declaringClass, Class<?> type, int slot,
-            boolean noAccessCheck, char descriptor) throws IllegalAccessException;
-
-    private native boolean getZField(Object o, Class<?> declaringClass, Class<?> type, int slot,
-            boolean noAccessCheck, char descriptor) throws IllegalAccessException;
-
-    private native float getFField(Object o, Class<?> declaringClass, Class<?> type, int slot,
-            boolean noAccessCheck, char descriptor) throws IllegalAccessException;
-
-    private native char getCField(Object o, Class<?> declaringClass, Class<?> type, int slot,
-            boolean noAccessCheck, char descriptor) throws IllegalAccessException;
-
-    private native short getSField(Object o, Class<?> declaringClass, Class<?> type, int slot,
-            boolean noAccessCheck, char descriptor) throws IllegalAccessException;
-
-    private native byte getBField(Object o, Class<?> declaringClass, Class<?> type, int slot,
-            boolean noAccessCheck, char descriptor) throws IllegalAccessException;
-
-    private native void setField(Object o, Class<?> declaringClass, Class<?> type, int slot,
-            boolean noAccessCheck, Object value) throws IllegalAccessException;
-
-    private native void setDField(Object o, Class<?> declaringClass, Class<?> type, int slot,
-            boolean noAccessCheck, char descriptor, double v) throws IllegalAccessException;
-
-    private native void setIField(Object o, Class<?> declaringClass, Class<?> type, int slot,
-            boolean noAccessCheck, char descriptor, int i) throws IllegalAccessException;
-
-    private native void setJField(Object o, Class<?> declaringClass, Class<?> type, int slot,
-            boolean noAccessCheck, char descriptor, long j) throws IllegalAccessException;
-
-    private native void setZField(Object o, Class<?> declaringClass, Class<?> type, int slot,
-            boolean noAccessCheck, char descriptor, boolean z) throws IllegalAccessException;
-
-    private native void setFField(Object o, Class<?> declaringClass, Class<?> type, int slot,
-            boolean noAccessCheck, char descriptor, float f) throws IllegalAccessException;
-
-    private native void setCField(Object o, Class<?> declaringClass, Class<?> type, int slot,
-            boolean noAccessCheck, char descriptor, char c) throws IllegalAccessException;
-
-    private native void setSField(Object o, Class<?> declaringClass, Class<?> type, int slot,
-            boolean noAccessCheck, char descriptor, short s) throws IllegalAccessException;
-
-    private native void setBField(Object o, Class<?> declaringClass, Class<?> type, int slot,
-            boolean noAccessCheck, char descriptor, byte b) throws IllegalAccessException;
-
 }

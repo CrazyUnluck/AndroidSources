@@ -28,16 +28,13 @@ import android.os.Build;
 import android.util.Base64;
 import android.util.Log;
 
-import com.android.ex.photo.PhotoViewActivity;
+import com.android.ex.photo.PhotoViewController;
 import com.android.ex.photo.loaders.PhotoBitmapLoaderInterface.BitmapResult;
 
 import java.io.ByteArrayInputStream;
-import java.io.ByteArrayOutputStream;
 import java.io.FileNotFoundException;
 import java.io.IOException;
 import java.io.InputStream;
-import java.net.MalformedURLException;
-import java.net.URL;
 import java.util.regex.Pattern;
 
 
@@ -68,10 +65,10 @@ public class ImageUtils {
         if (Build.VERSION.SDK_INT >= 11) {
             sUseImageSize = ImageSize.NORMAL;
         } else {
-            if (PhotoViewActivity.sMemoryClass >= MIN_NORMAL_CLASS) {
+            if (PhotoViewController.sMemoryClass >= MIN_NORMAL_CLASS) {
                 // We have plenty of memory; use full sized photos
                 sUseImageSize = ImageSize.NORMAL;
-            } else if (PhotoViewActivity.sMemoryClass >= MIN_SMALL_CLASS) {
+            } else if (PhotoViewController.sMemoryClass >= MIN_SMALL_CLASS) {
                 // We have slight less memory; use smaller sized photos
                 sUseImageSize = ImageSize.SMALL;
             } else {

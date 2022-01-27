@@ -173,8 +173,6 @@ public class RecyclerViewBasicTest extends AndroidTestCase {
         assertNotSame("stateless parameter should not be preserved", mlm.mLayoutCount,
                 mlmRestored.mLayoutCount);
         layout();
-
-
     }
 
     static class MockLayoutManager extends RecyclerView.LayoutManager {
@@ -234,6 +232,28 @@ public class RecyclerViewBasicTest extends AndroidTestCase {
                 RecyclerView.Adapter nextAdapter) {
             assertPrevNextAdapters("Adapters from onAdapterChanged callback should match",
                     prevAdapter, nextAdapter);
+        }
+
+        @Override
+        public int scrollHorizontallyBy(int dx, RecyclerView.Recycler recycler,
+                RecyclerView.State state) {
+            return dx;
+        }
+
+        @Override
+        public int scrollVerticallyBy(int dy, RecyclerView.Recycler recycler,
+                RecyclerView.State state) {
+            return dy;
+        }
+
+        @Override
+        public boolean canScrollHorizontally() {
+            return true;
+        }
+
+        @Override
+        public boolean canScrollVertically() {
+            return true;
         }
     }
 

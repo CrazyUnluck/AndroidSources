@@ -145,14 +145,79 @@ public class SocketChannelTest extends TestCase {
      * Test method for 'java.nio.channels.SocketChannel.open(SocketAddress)'
      */
     public void testOpenSocketAddress_Null() throws IOException {
-        SocketChannel channel1IP = null;
         try {
-            channel1IP = SocketChannel.open(null);
+            SocketChannel.open(null);
             fail("Should throw an IllegalArgumentException");
         } catch (IllegalArgumentException e) {
             // correct
         }
-        assertNull(channel1IP);
+    }
+
+    public void testBind_Null() throws Exception {
+        assertNull(channel1.socket().getLocalSocketAddress());
+
+        channel1.socket().bind(null);
+
+        InetSocketAddress localAddress = (InetSocketAddress) channel1.socket().getLocalSocketAddress();
+        assertTrue(localAddress.getAddress().isAnyLocalAddress());
+        assertTrue(localAddress.getPort() > 0);
+    }
+
+    public void testBind_Failure() throws Exception {
+        assertNull(channel1.socket().getLocalSocketAddress());
+
+        try {
+            // Bind to a local address that is in use
+            channel1.socket().bind(localAddr1);
+            fail();
+        } catch (IOException expected) {
+        }
+    }
+
+    public void testBind_Closed() throws Exception {
+        channel1.close();
+
+        try {
+            channel1.socket().bind(null);
+            fail();
+        } catch (IOException expected) {
+        }
+    }
+
+    public void testBind_explicitPort() throws Exception {
+        ServerSocketChannel portPickingChannel = ServerSocketChannel.open();
+        // Have the OS find a free port.
+        portPickingChannel.socket().bind(null);
+        InetSocketAddress address = (InetSocketAddress) portPickingChannel.socket().getLocalSocketAddress();
+        assertTrue(address.getPort() > 0);
+        portPickingChannel.close();
+
+        // There is a risk of flakiness here if the port is allocated to something else between
+        // close() and bind().
+        InetSocketAddress bindAddress = new InetSocketAddress("localhost", address.getPort());
+        // Allow the socket to bind to a port we know is already in use.
+        channel1.socket().setReuseAddress(true);
+        channel1.socket().bind(bindAddress);
+
+        InetSocketAddress boundAddress = (InetSocketAddress) channel1.socket().getLocalSocketAddress();
+        assertEquals(bindAddress.getHostName(), boundAddress.getHostName());
+        assertEquals(bindAddress.getPort(), boundAddress.getPort());
+    }
+
+    public void test_getLocalSocketAddress_afterClose() throws IOException {
+        SocketChannel sc = SocketChannel.open();
+        assertNull(sc.socket().getLocalSocketAddress());
+
+        InetSocketAddress bindAddr = new InetSocketAddress("localhost", 0);
+        sc.socket().bind(bindAddr);
+
+        assertNotNull(sc.socket().getLocalSocketAddress());
+
+        sc.close();
+
+        assertFalse(sc.isOpen());
+
+        sc.socket().getLocalSocketAddress();
     }
 
     /*
@@ -178,8 +243,7 @@ public class SocketChannelTest extends TestCase {
             } catch (NotYetConnectedException e) {
                 // correct
             }
-            long readNum = CAPACITY_NORMAL;
-            readNum = testMSChannel.read(byteBuf);
+            long readNum = testMSChannel.read(byteBuf);
             assertEquals(0, readNum);
             readNum = CAPACITY_NORMAL;
             readNum = testMSChannelnull.read(byteBuf);
@@ -273,6 +337,7 @@ public class SocketChannelTest extends TestCase {
     public void testSocket_BasicStatusBeforeConnect() throws IOException {
         assertFalse(this.channel1.isConnected());// not connected
         Socket s1 = this.channel1.socket();
+        assertSocketBeforeBind(s1);
         assertSocketBeforeConnect(s1);
         Socket s2 = this.channel1.socket();
         // same
@@ -296,12 +361,15 @@ public class SocketChannelTest extends TestCase {
         assertFalse(this.channel1.isConnected());// not connected
         this.channel1.configureBlocking(false);
         boolean connected = channel1.connect(localAddr1);
-        Socket s1 = null;
-        Socket s2 = null;
+        Socket s1;
+        Socket s2;
         if (!connected) {
             assertFalse(this.channel1.isConnected());
             assertTrue(this.channel1.isConnectionPending());
             s1 = this.channel1.socket();
+            // A connect() causes an implicit bind()
+            assertSocketAfterImplicitBind(s1);
+
             // status of not connected
             assertSocketBeforeConnect(s1);
             s2 = this.channel1.socket();
@@ -396,11 +464,10 @@ public class SocketChannelTest extends TestCase {
 
     public void testSocket_getLocalAddress() throws Exception {
         Socket socket = channel1.socket();
-        assertNotNull(socket.getLocalAddress());
 
         channel1.connect(localAddr1);
 
-        assertNotNull(socket.getLocalAddress());
+        assertNotNull(socket.getLocalSocketAddress());
     }
 
     public void testSocket_getLocalSocketAddress() throws Exception {
@@ -429,8 +496,26 @@ public class SocketChannelTest extends TestCase {
         assertTrue(socket.getLocalPort() != -1);
     }
 
-    private void assertSocketBeforeConnect(Socket s) throws IOException {
+    private void assertSocketBeforeBind(Socket s) {
         assertFalse(s.isBound());
+        assertTrue(s.getLocalAddress().isAnyLocalAddress());
+        // RI fails here. RI returns 0 while spec says unbound socket should
+        // return -1.
+        assertEquals(-1, s.getLocalPort());
+        assertNull(s.getLocalSocketAddress());
+    }
+
+    private void assertSocketAfterImplicitBind(Socket s) throws IOException {
+        assertTrue(s.isBound());
+        assertTrue(s.getLocalAddress().isLoopbackAddress());
+        assertTrue(s.getLocalPort() > 0);
+
+        InetSocketAddress localSocketAddress = (InetSocketAddress) s.getLocalSocketAddress();
+        assertTrue(localSocketAddress.getAddress().isLoopbackAddress());
+        assertEquals(s.getLocalPort(), localSocketAddress.getPort());
+    }
+
+    private void assertSocketBeforeConnect(Socket s) throws IOException {
         assertFalse(s.isClosed());
         assertFalse(s.isConnected());
         assertFalse(s.getKeepAlive());
@@ -454,12 +539,7 @@ public class SocketChannelTest extends TestCase {
         assertFalse(s.isOutputShutdown());
 
         assertNull(s.getInetAddress());
-        assertEquals(s.getLocalAddress().getHostAddress(), "0.0.0.0");
-        // RI fails here. RI returns 0 while spec says unbound socket should
-        // return -1.
-        assertEquals(-1, s.getLocalPort());
         assertFalse(s.getReuseAddress());
-        assertNull(s.getLocalSocketAddress());
 
         // not connected
         assertEquals(0, s.getPort());
@@ -1620,8 +1700,6 @@ public class SocketChannelTest extends TestCase {
     public void testCFII_Data_FinishConnect_AddrSetServerStartLater()
             throws IOException, InterruptedException {
         ensureServerClosed();
-        java.nio.ByteBuffer[] writeBufArr = new java.nio.ByteBuffer[1];
-        writeBufArr[0] = java.nio.ByteBuffer.allocate(CAPACITY_NORMAL);
         this.channel1.configureBlocking(false);
         try {
             SocketChannel.open(localAddr1);
@@ -1690,8 +1768,6 @@ public class SocketChannelTest extends TestCase {
     public void testCFII_Data_FinishConnect_ServerStartLater()
             throws IOException {
         ensureServerClosed();
-        java.nio.ByteBuffer[] writeBufArr = new java.nio.ByteBuffer[1];
-        writeBufArr[0] = java.nio.ByteBuffer.allocate(CAPACITY_NORMAL);
         this.channel1.configureBlocking(true);
         try {
             this.channel1.finishConnect();
@@ -1790,7 +1866,7 @@ public class SocketChannelTest extends TestCase {
         ServerSocket serversocket = theServerChannel.socket();
         serversocket.setReuseAddress(true);
         // Bind the socket
-        serversocket.bind(address);
+        theServerChannel.socket().bind(address);
 
         boolean doneNonBlockingConnect = false;
         // Loop so that we make sure we're definitely testing finishConnect()
@@ -1842,7 +1918,7 @@ public class SocketChannelTest extends TestCase {
 
         ByteBuffer readContent = ByteBuffer.allocate(CAPACITY_NORMAL + 1);
         int totalCount = 0;
-        int count = 0;
+        int count;
         long startTime = System.currentTimeMillis();
         // use SocketChannel.read to read data
         while (totalCount <= CAPACITY_NORMAL) {
@@ -1886,7 +1962,7 @@ public class SocketChannelTest extends TestCase {
         channel1.configureBlocking(false);
         ByteBuffer readContent = ByteBuffer.allocate(CAPACITY_NORMAL + 1);
         int totalCount = 0;
-        int count = 0;
+        int count;
         long startTime = System.currentTimeMillis();
         // use SocketChannel.read to read data
         while (totalCount <= CAPACITY_NORMAL) {
@@ -2111,8 +2187,7 @@ public class SocketChannelTest extends TestCase {
         ByteBuffer buffer = ByteBuffer.allocateDirect(128);
 
         ServerSocketChannel server = ServerSocketChannel.open();
-        server.socket().bind(
-                new InetSocketAddress(InetAddress.getLocalHost(), 0), 5);
+        server.socket().bind(new InetSocketAddress(InetAddress.getLocalHost(), 0), 5);
         Socket client = new Socket(InetAddress.getLocalHost(), server.socket()
                 .getLocalPort());
         client.setTcpNoDelay(false);
@@ -2266,7 +2341,7 @@ public class SocketChannelTest extends TestCase {
         // note: blocking-mode will make the read process endless!
         this.channel1.configureBlocking(false);
         try {
-            channel1.read(null, 0, 0);
+            channel1.read(null, 0, 1);
             fail("Should throw NPE");
         } catch (NullPointerException e) {
             // correct
@@ -2275,7 +2350,7 @@ public class SocketChannelTest extends TestCase {
         if (tryFinish()) {
 
             try {
-                channel1.read(null, 0, 0);
+                channel1.read(null, 0, 1);
                 fail("Should throw NPE");
             } catch (NullPointerException e) {
                 // correct
@@ -2606,7 +2681,7 @@ public class SocketChannelTest extends TestCase {
         channel1.configureBlocking(isBlocking);
         long startTime = System.currentTimeMillis();
         long totalRead = 0;
-        long countRead = 0;
+        long countRead;
 
         while (totalRead <= CAPACITY_NORMAL * 2) {
             countRead = channel1.read(readContents, 0, 2);
@@ -2686,7 +2761,7 @@ public class SocketChannelTest extends TestCase {
         InputStream in = acceptedSocket.getInputStream();
         byte[] readContent = new byte[CAPACITY_NORMAL * 2 + 1];
         int totalCount = 0;
-        int count = 0;
+        int count;
         // if the channel could not finish reading in TIMEOUT ms, the test
         // fails. It is used to guarantee the test never hangs even if there
         // are bugs of SocketChannel implementation.
@@ -2847,7 +2922,7 @@ public class SocketChannelTest extends TestCase {
         client.write(buffers);
         client.close();
         ByteBuffer readBuffer = ByteBuffer.allocate(1024);
-        while (EOF != worker.read(readBuffer)) {};
+        while (EOF != worker.read(readBuffer)) {}
         readBuffer.flip();
         Buffer expected = ByteBuffer.allocate(1024).put(data).put(data).flip();
         assertEquals(expected, readBuffer);
@@ -2890,7 +2965,7 @@ public class SocketChannelTest extends TestCase {
         client.write(buffers);
         client.close();
         ByteBuffer readBuffer = ByteBuffer.allocate(1024);
-        while (EOF != worker.read(readBuffer)) {};
+        while (EOF != worker.read(readBuffer)) {}
         readBuffer.flip();
         assertEquals(ByteBuffer.wrap(data), readBuffer);
 
@@ -2932,7 +3007,7 @@ public class SocketChannelTest extends TestCase {
 
         // Read what we wrote and check it
         ByteBuffer readBuffer = ByteBuffer.allocate(1024);
-        while (EOF != worker.read(readBuffer)) {};
+        while (EOF != worker.read(readBuffer)) {}
         readBuffer.flip();
         assertEquals(ByteBuffer.wrap(data), readBuffer);
 
@@ -2958,32 +3033,27 @@ public class SocketChannelTest extends TestCase {
         try {
             client.write((ByteBuffer[]) null);
             fail("Should throw a NPE");
-        } catch (NullPointerException e) {
-            // expected
+        } catch (NullPointerException expected) {
         }
         try {
             client.write((ByteBuffer[]) null, 0, 0);
             fail("Should throw a NPE");
-        } catch (NullPointerException e) {
-            // expected
+        } catch (NullPointerException expected) {
         }
         try {
             client.write((ByteBuffer[]) null, 1, 0);
             fail("Should throw a NPE");
-        } catch (NullPointerException e) {
-            // expected
+        } catch (NullPointerException expected) {
         }
         try {
             client.write((ByteBuffer[]) null, 0, 1);
             fail("Should throw a NPE");
-        } catch (NullPointerException e) {
-            // expected
+        } catch (NullPointerException expected) {
         }
         try {
             client.write((ByteBuffer[]) null, 1, 1);
             fail("Should throw a NPE");
-        } catch (NullPointerException e) {
-            // expected
+        } catch (NullPointerException expected) {
         }
 
         ByteBuffer[] buffers = new ByteBuffer[1];
@@ -3079,8 +3149,7 @@ public class SocketChannelTest extends TestCase {
         try {
             sc.write(buf, 0, 2);
             fail("should throw NPE");
-        } catch (NullPointerException e) {
-            // expected
+        } catch (NullPointerException expected) {
         }
         ssc.close();
         sc.close();
@@ -3104,8 +3173,7 @@ public class SocketChannelTest extends TestCase {
         try {
             sc.read(buf, 0, 2);
             fail("should throw NullPointerException");
-        } catch (NullPointerException e) {
-            // expected
+        } catch (NullPointerException expected) {
         }
         ssc.close();
         sc.close();
@@ -3127,8 +3195,7 @@ public class SocketChannelTest extends TestCase {
         try {
             sc.write(buf);
             fail("should throw NPE");
-        } catch (NullPointerException e) {
-            // expected
+        } catch (NullPointerException expected) {
         }
         sock.close();
     }
@@ -3197,35 +3264,59 @@ public class SocketChannelTest extends TestCase {
             fail();
         } catch (IllegalBlockingModeException expected) {
         }
+
         try {
             is.read(null);
             fail();
         } catch (NullPointerException expected) {
+            // Any of these exceptions are possible.
+        } catch (IllegalBlockingModeException expected) {
+            // Any of these exceptions are possible.
         }
+
         try {
             is.read(buf, -1, 1);
             fail();
         } catch (IndexOutOfBoundsException expected) {
+            // Any of these exceptions are possible.
+        } catch (IllegalBlockingModeException expected) {
+            // Any of these exceptions are possible.
         }
+
         try {
             is.read(buf, 0, -1);
             fail();
         } catch (IndexOutOfBoundsException expected) {
+            // Any of these exceptions are possible.
+        } catch (IllegalBlockingModeException expected) {
+            // Any of these exceptions are possible.
         }
+
         try {
             is.read(buf, 0, 2);
             fail();
         } catch (IndexOutOfBoundsException expected) {
+            // Any of these exceptions are possible.
+        } catch (IllegalBlockingModeException expected) {
+            // Any of these exceptions are possible.
         }
+
         try {
             is.read(buf, 2, 0);
             fail();
         } catch (IndexOutOfBoundsException expected) {
+            // Any of these exceptions are possible.
+        } catch (IllegalBlockingModeException expected) {
+            // Any of these exceptions are possible.
         }
+
         try {
             is.read(null, 0, 0);
             fail();
         } catch (NullPointerException expected) {
+            // Any of these exceptions are possible.
+        } catch (IllegalBlockingModeException expected) {
+            // Any of these exceptions are possible.
         }
 
         is.close();
@@ -3234,36 +3325,75 @@ public class SocketChannelTest extends TestCase {
             is.read();
             fail();
         } catch (IllegalBlockingModeException expected) {
+            // Any of these exceptions are possible.
+        } catch (IOException expected) {
+            // Any of these exceptions are possible.
         }
+
         try {
             is.read(null);
             fail();
         } catch (NullPointerException expected) {
+            // Any of these exceptions are possible.
+        } catch (IllegalBlockingModeException expected) {
+            // Any of these exceptions are possible.
+        } catch (IOException expected) {
+            // Any of these exceptions are possible.
         }
+
         try {
             is.read(buf, -1, 1);
             fail();
         } catch (IndexOutOfBoundsException expected) {
+            // Any of these exceptions are possible.
+        } catch (IllegalBlockingModeException expected) {
+            // Any of these exceptions are possible.
+        } catch (IOException expected) {
+            // Any of these exceptions are possible.
         }
+
         try {
             is.read(buf, 0, -1);
             fail();
         } catch (IndexOutOfBoundsException expected) {
+            // Any of these exceptions are possible.
+        } catch (IllegalBlockingModeException expected) {
+            // Any of these exceptions are possible.
+        } catch (IOException expected) {
+            // Any of these exceptions are possible.
         }
+
         try {
             is.read(buf, 0, 2);
             fail();
         } catch (IndexOutOfBoundsException expected) {
+            // Any of these exceptions are possible.
+        } catch (IllegalBlockingModeException expected) {
+            // Any of these exceptions are possible.
+        } catch (IOException expected) {
+            // Any of these exceptions are possible.
         }
+
         try {
             is.read(buf, 2, 0);
             fail();
         } catch (IndexOutOfBoundsException expected) {
+            // Any of these exceptions are possible.
+        } catch (IllegalBlockingModeException expected) {
+            // Any of these exceptions are possible.
+        } catch (IOException expected) {
+            // Any of these exceptions are possible.
         }
+
         try {
             is.read(null, 0, 0);
             fail();
         } catch (NullPointerException expected) {
+            // Any of these exceptions are possible.
+        } catch (IllegalBlockingModeException expected) {
+            // Any of these exceptions are possible.
+        } catch (IOException expected) {
+            // Any of these exceptions are possible.
         }
     }
 
@@ -3292,12 +3422,12 @@ public class SocketChannelTest extends TestCase {
         } catch (IndexOutOfBoundsException expected) {
         }
         try {
-            is.read(buf, 2, 0);
+            is.read(buf, 2, 1);
             fail();
         } catch (IndexOutOfBoundsException expected) {
         }
         try {
-            is.read(null, 0, 0);
+            is.read(null, 0, 1);
             fail();
         } catch (NullPointerException expected) {
         }
@@ -3325,12 +3455,12 @@ public class SocketChannelTest extends TestCase {
         } catch (IndexOutOfBoundsException expected) {
         }
         try {
-            is.read(buf, 2, 0);
+            is.read(buf, 2, 1);
             fail();
         } catch (IndexOutOfBoundsException expected) {
         }
         try {
-            is.read(null, 0, 0);
+            is.read(null, 0, 1);
             fail();
         } catch (NullPointerException expected) {
         }
@@ -3350,32 +3480,55 @@ public class SocketChannelTest extends TestCase {
         try {
             os.write(null);
             fail();
+        } catch (IllegalBlockingModeException expected) {
+            // Any of these exceptions are possible.
         } catch (NullPointerException expected) {
+            // Any of these exceptions are possible.
         }
+
         try {
             os.write(buf, -1, 1);
             fail();
+        } catch (IllegalBlockingModeException expected) {
+            // Any of these exceptions are possible.
         } catch (IndexOutOfBoundsException expected) {
+            // Any of these exceptions are possible.
         }
+
         try {
             os.write(buf, 0, -1);
             fail();
+        } catch (IllegalBlockingModeException expected) {
+            // Any of these exceptions are possible.
         } catch (IndexOutOfBoundsException expected) {
+            // Any of these exceptions are possible.
         }
+
         try {
             os.write(buf, 0, 2);
             fail();
+        } catch (IllegalBlockingModeException expected) {
+            // Any of these exceptions are possible.
         } catch (IndexOutOfBoundsException expected) {
+            // Any of these exceptions are possible.
         }
+
         try {
-            os.write(buf, 2, 0);
+            os.write(buf, 2, 1);
             fail();
+        } catch (IllegalBlockingModeException expected) {
+            // Any of these exceptions are possible.
         } catch (IndexOutOfBoundsException expected) {
+            // Any of these exceptions are possible.
         }
+
         try {
-            os.write(null, 0, 0);
+            os.write(null, 0, 1);
             fail();
+        } catch (IllegalBlockingModeException expected) {
+            // Any of these exceptions are possible.
         } catch (NullPointerException expected) {
+            // Any of these exceptions are possible.
         }
 
         os.close();
@@ -3385,35 +3538,59 @@ public class SocketChannelTest extends TestCase {
             fail();
         } catch (IllegalBlockingModeException expected) {
         }
+
         try {
             os.write(null);
             fail();
+        } catch (IllegalBlockingModeException expected) {
+            // Any of these exceptions are possible.
         } catch (NullPointerException expected) {
+            // Any of these exceptions are possible.
         }
+
         try {
             os.write(buf, -1, 1);
             fail();
+        } catch (IllegalBlockingModeException expected) {
+            // Any of these exceptions are possible.
         } catch (IndexOutOfBoundsException expected) {
+            // Any of these exceptions are possible.
         }
+
         try {
             os.write(buf, 0, -1);
             fail();
+        } catch (IllegalBlockingModeException expected) {
+            // Any of these exceptions are possible.
         } catch (IndexOutOfBoundsException expected) {
+            // Any of these exceptions are possible.
         }
+
         try {
             os.write(buf, 0, 2);
             fail();
+        } catch (IllegalBlockingModeException expected) {
+            // Any of these exceptions are possible.
         } catch (IndexOutOfBoundsException expected) {
+            // Any of these exceptions are possible.
         }
+
         try {
             os.write(buf, 2, 0);
             fail();
+        } catch (IllegalBlockingModeException expected) {
+            // Any of these exceptions are possible.
         } catch (IndexOutOfBoundsException expected) {
+            // Any of these exceptions are possible.
         }
+
         try {
             os.write(null, 0, 0);
             fail();
+        } catch (IllegalBlockingModeException expected) {
+            // Any of these exceptions are possible.
         } catch (NullPointerException expected) {
+            // Any of these exceptions are possible.
         }
     }
 
@@ -3554,40 +3731,47 @@ public class SocketChannelTest extends TestCase {
         channel1.write(buffer);
     }
 
-    class MockSocketChannel extends SocketChannel{
+    class MockSocketChannel extends SocketChannel {
 
         private boolean isWriteCalled = false;
 
         private boolean isReadCalled = false;
 
-        public MockSocketChannel(SelectorProvider provider){
+        public MockSocketChannel(SelectorProvider provider) {
             super(provider);
         }
 
+        @Override
         public Socket socket() {
             return null;
         }
 
+        @Override
         public boolean isConnected() {
             return false;
         }
 
+        @Override
         public boolean isConnectionPending() {
             return false;
         }
 
+        @Override
         public boolean connect(SocketAddress address) throws IOException {
             return false;
         }
 
+        @Override
         public boolean finishConnect() throws IOException {
             return false;
         }
 
+        @Override
         public int read(ByteBuffer target) throws IOException {
             return 0;
         }
 
+        @Override
         public long read(ByteBuffer[] targets, int offset, int length) throws IOException {
             // Verify that calling read(ByteBuffer[]) leads to the method
             // read(ByteBuffer[], int, int) being called with a 0 for the
@@ -3598,10 +3782,12 @@ public class SocketChannelTest extends TestCase {
             return 0;
         }
 
+        @Override
         public int write(ByteBuffer source) throws IOException {
             return 0;
         }
 
+        @Override
         public long write(ByteBuffer[] sources, int offset, int length) throws IOException {
             // Verify that calling write(ByteBuffer[]) leads to the method
             // write(ByteBuffer[], int, int) being called with a 0 for the
@@ -3612,10 +3798,12 @@ public class SocketChannelTest extends TestCase {
             return 0;
         }
 
+        @Override
         protected void implCloseSelectableChannel() throws IOException {
             // empty
         }
 
+        @Override
         protected void implConfigureBlocking(boolean blockingMode) throws IOException {
             // empty
         }

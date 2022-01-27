@@ -17,15 +17,18 @@
 
 package java.nio;
 
+import android.system.ErrnoException;
 import java.io.FileDescriptor;
-import java.io.IOException;
 import java.io.InterruptedIOException;
+import java.io.IOException;
 import java.net.ConnectException;
 import java.net.DatagramPacket;
 import java.net.DatagramSocket;
 import java.net.DatagramSocketImpl;
+import java.net.Inet4Address;
 import java.net.InetAddress;
 import java.net.InetSocketAddress;
+import java.net.NetworkInterface;
 import java.net.PlainDatagramSocketImpl;
 import java.net.SocketAddress;
 import java.net.SocketException;
@@ -35,8 +38,10 @@ import java.nio.channels.DatagramChannel;
 import java.nio.channels.IllegalBlockingModeException;
 import java.nio.channels.NotYetConnectedException;
 import java.nio.channels.spi.SelectorProvider;
+import java.nio.channels.UnresolvedAddressException;
+import java.nio.channels.UnsupportedAddressTypeException;
 import java.util.Arrays;
-import libcore.io.ErrnoException;
+import java.util.Set;
 import libcore.io.IoBridge;
 import libcore.io.IoUtils;
 import libcore.io.Libcore;
@@ -50,10 +55,13 @@ class DatagramChannelImpl extends DatagramChannel implements FileDescriptorChann
     private final FileDescriptor fd;
 
     // Our internal DatagramSocket.
-    private DatagramSocket socket = null;
+    private DatagramSocket socket;
 
-    // The address to be connected.
-    InetSocketAddress connectAddress = null;
+    // The remote address to be connected.
+    InetSocketAddress connectAddress;
+
+    // The local address.
+    InetAddress localAddress;
 
     // local port
     private int localPort;
@@ -98,19 +106,38 @@ class DatagramChannelImpl extends DatagramChannel implements FileDescriptorChann
     }
 
     /**
-     * @see java.nio.channels.DatagramChannel#isConnected()
+     * Initialise the isBound, localAddress and localPort state from the file descriptor. Used when
+     * some or all of the bound state has been left to the OS to decide, or when the Socket handled
+     * bind() or connect().
+     *
+     * @param updateSocketState
+     *        if the associated socket (if present) needs to be updated
+     * @hide used to sync state, non-private to avoid synthetic method
      */
+    void onBind(boolean updateSocketState) {
+        SocketAddress sa;
+        try {
+            sa = Libcore.os.getsockname(fd);
+        } catch (ErrnoException errnoException) {
+            throw new AssertionError(errnoException);
+        }
+        isBound = true;
+        InetSocketAddress localSocketAddress = (InetSocketAddress) sa;
+        localAddress = localSocketAddress.getAddress();
+        localPort = localSocketAddress.getPort();
+        if (updateSocketState && socket != null) {
+            socket.onBind(localAddress, localPort);
+        }
+    }
+
     @Override
     synchronized public boolean isConnected() {
         return connected;
     }
 
-    /**
-     * @see java.nio.channels.DatagramChannel#connect(java.net.SocketAddress)
-     */
     @Override
     synchronized public DatagramChannel connect(SocketAddress address) throws IOException {
-        // must open
+        // must be open
         checkOpen();
         // status must be un-connected.
         if (connected) {
@@ -119,41 +146,69 @@ class DatagramChannelImpl extends DatagramChannel implements FileDescriptorChann
 
         // check the address
         InetSocketAddress inetSocketAddress = SocketChannelImpl.validateAddress(address);
+        InetAddress remoteAddress = inetSocketAddress.getAddress();
+        int remotePort = inetSocketAddress.getPort();
         try {
             begin();
-            IoBridge.connect(fd, inetSocketAddress.getAddress(), inetSocketAddress.getPort());
+            IoBridge.connect(fd, remoteAddress, remotePort);
         } catch (ConnectException e) {
             // ConnectException means connect fail, not exception
         } finally {
             end(true);
         }
 
-        // set the connected address.
-        connectAddress = inetSocketAddress;
-        connected = true;
-        isBound = true;
+        // connect() performs a bind() if an explicit bind() was not performed. Keep the local
+        // address state held by the channel and the socket up to date.
+        if (!isBound) {
+            onBind(true /* updateSocketState */);
+        }
+
+        // Keep the connected state held by the channel and the socket up to date.
+        onConnect(remoteAddress, remotePort, true /* updateSocketState */);
         return this;
     }
 
     /**
-     * @see java.nio.channels.DatagramChannel#disconnect()
+     * Initialize the state associated with being connected, optionally syncing the socket if there
+     * is one.
+     * @hide used to sync state, non-private to avoid synthetic method
      */
+    void onConnect(InetAddress remoteAddress, int remotePort, boolean updateSocketState) {
+        connected = true;
+        connectAddress = new InetSocketAddress(remoteAddress, remotePort);
+        if (updateSocketState && socket != null) {
+            socket.onConnect(remoteAddress, remotePort);
+        }
+    }
+
     @Override
     synchronized public DatagramChannel disconnect() throws IOException {
         if (!isConnected() || !isOpen()) {
             return this;
         }
-        connected = false;
-        connectAddress = null;
+
+        // Keep the disconnected state held by the channel and the socket up to date.
+        onDisconnect(true /* updateSocketState */);
+
         try {
             Libcore.os.connect(fd, InetAddress.UNSPECIFIED, 0);
         } catch (ErrnoException errnoException) {
             throw errnoException.rethrowAsIOException();
         }
-        if (socket != null) {
-            socket.disconnect();
-        }
         return this;
+    }
+
+    /**
+     * Initialize the state associated with being disconnected, optionally syncing the socket if
+     * there is one.
+     * @hide used to sync state, non-private to avoid synthetic method
+     */
+    void onDisconnect(boolean updateSocketState) {
+        connected = false;
+        connectAddress = null;
+        if (updateSocketState && socket != null && socket.isConnected()) {
+            socket.onDisconnect();
+        }
     }
 
     @Override
@@ -191,7 +246,7 @@ class DatagramChannelImpl extends DatagramChannel implements FileDescriptorChann
         SocketAddress retAddr = null;
         DatagramPacket receivePacket;
         int oldposition = target.position();
-        int received = 0;
+        int received;
         // TODO: disallow mapped buffers and lose this conditional?
         if (target.hasArray()) {
             receivePacket = new DatagramPacket(target.array(), target.position() + target.arrayOffset(), target.remaining());
@@ -200,7 +255,7 @@ class DatagramChannelImpl extends DatagramChannel implements FileDescriptorChann
         }
         do {
             received = IoBridge.recvfrom(false, fd, receivePacket.getData(), receivePacket.getOffset(), receivePacket.getLength(), 0, receivePacket, isConnected());
-            if (receivePacket != null && receivePacket.getAddress() != null) {
+            if (receivePacket.getAddress() != null) {
                 if (received > 0) {
                     if (target.hasArray()) {
                         target.position(oldposition + received);
@@ -220,10 +275,10 @@ class DatagramChannelImpl extends DatagramChannel implements FileDescriptorChann
         SocketAddress retAddr = null;
         DatagramPacket receivePacket = new DatagramPacket(EmptyArray.BYTE, 0);
         int oldposition = target.position();
-        int received = 0;
+        int received;
         do {
             received = IoBridge.recvfrom(false, fd, target, 0, receivePacket, isConnected());
-            if (receivePacket != null && receivePacket.getAddress() != null) {
+            if (receivePacket.getAddress() != null) {
                 // copy the data of received packet
                 if (received > 0) {
                     target.position(oldposition + received);
@@ -259,7 +314,9 @@ class DatagramChannelImpl extends DatagramChannel implements FileDescriptorChann
                 if (sendCount > 0) {
                     source.position(oldPosition + sendCount);
                 }
-                isBound = true;
+                if (!isBound) {
+                    onBind(true /* updateSocketState */);
+                }
             } finally {
                 end(sendCount >= 0);
             }
@@ -276,7 +333,7 @@ class DatagramChannelImpl extends DatagramChannel implements FileDescriptorChann
             return 0;
         }
 
-        int readCount = 0;
+        int readCount;
         if (target.isDirect() || target.hasArray()) {
             readCount = readImpl(target);
             if (readCount > 0) {
@@ -405,11 +462,12 @@ class DatagramChannelImpl extends DatagramChannel implements FileDescriptorChann
     }
 
     @Override protected synchronized void implCloseSelectableChannel() throws IOException {
-        connected = false;
+        // A closed channel is not connected.
+        onDisconnect(true /* updateSocketState */);
+        IoBridge.closeAndSignalBlockedThreads(fd);
+
         if (socket != null && !socket.isClosed()) {
-            socket.close();
-        } else {
-            IoBridge.closeSocket(fd);
+            socket.onClose();
         }
     }
 
@@ -420,7 +478,7 @@ class DatagramChannelImpl extends DatagramChannel implements FileDescriptorChann
     /*
      * Status check, must be open.
      */
-    private void checkOpen() throws IOException {
+    private void checkOpen() throws ClosedChannelException {
         if (!isOpen()) {
             throw new ClosedChannelException();
         }
@@ -460,15 +518,29 @@ class DatagramChannelImpl extends DatagramChannel implements FileDescriptorChann
         /*
          * The internal datagramChannelImpl.
          */
-        private DatagramChannelImpl channelImpl;
+        private final DatagramChannelImpl channelImpl;
 
         /*
          * Constructor initialize the datagramSocketImpl and datagramChannelImpl
          */
-        DatagramSocketAdapter(DatagramSocketImpl socketimpl,
-                DatagramChannelImpl channelImpl) {
+        DatagramSocketAdapter(DatagramSocketImpl socketimpl, DatagramChannelImpl channelImpl) {
             super(socketimpl);
             this.channelImpl = channelImpl;
+
+            // Sync state socket state with the channel it is being created from
+            if (channelImpl.isBound) {
+                onBind(channelImpl.localAddress, channelImpl.localPort);
+            }
+            if (channelImpl.connected) {
+                onConnect(
+                        channelImpl.connectAddress.getAddress(),
+                        channelImpl.connectAddress.getPort());
+            } else {
+                onDisconnect();
+            }
+            if (!channelImpl.isOpen()) {
+                onClose();
+            }
         }
 
         /*
@@ -479,92 +551,78 @@ class DatagramChannelImpl extends DatagramChannel implements FileDescriptorChann
             return channelImpl;
         }
 
-        /**
-         * @see java.net.DatagramSocket#isBound()
-         */
-        @Override
-        public boolean isBound() {
-            return channelImpl.isBound;
-        }
-
-        /**
-         * @see java.net.DatagramSocket#isConnected()
-         */
-        @Override
-        public boolean isConnected() {
-            return channelImpl.isConnected();
-        }
-
-        /**
-         * @see java.net.DatagramSocket#getInetAddress()
-         */
-        @Override
-        public InetAddress getInetAddress() {
-            if (channelImpl.connectAddress == null) {
-                return null;
-            }
-            return channelImpl.connectAddress.getAddress();
-        }
-
-        @Override public InetAddress getLocalAddress() {
-            try {
-                return IoBridge.getSocketLocalAddress(channelImpl.fd);
-            } catch (SocketException ex) {
-                return null;
-            }
-        }
-
-        /**
-         * @see java.net.DatagramSocket#getPort()
-         */
-        @Override
-        public int getPort() {
-            if (channelImpl.connectAddress == null) {
-                return -1;
-            }
-            return channelImpl.connectAddress.getPort();
-        }
-
-        /**
-         * @see java.net.DatagramSocket#bind(java.net.SocketAddress)
-         */
         @Override
         public void bind(SocketAddress localAddr) throws SocketException {
             if (channelImpl.isConnected()) {
                 throw new AlreadyConnectedException();
             }
             super.bind(localAddr);
-            channelImpl.isBound = true;
+            channelImpl.onBind(false /* updateSocketState */);
         }
 
-        /**
-         * @see java.net.DatagramSocket#receive(java.net.DatagramPacket)
-         */
+        @Override
+        public void connect(SocketAddress peer) throws SocketException {
+            if (isConnected()) {
+                // RI compatibility: If the socket is already connected this fails.
+                throw new IllegalStateException("Socket is already connected.");
+            }
+            super.connect(peer);
+            // Connect may have performed an implicit bind(). Sync up here.
+            channelImpl.onBind(false /* updateSocketState */);
+
+            InetSocketAddress inetSocketAddress = (InetSocketAddress) peer;
+            channelImpl.onConnect(
+                    inetSocketAddress.getAddress(), inetSocketAddress.getPort(),
+                    false /* updateSocketState */);
+        }
+
+        @Override
+        public void connect(InetAddress address, int port) {
+            // To avoid implementing connect() twice call this.connect(SocketAddress) in preference
+            // to super.connect().
+            try {
+                connect(new InetSocketAddress(address, port));
+            } catch (SocketException e) {
+                // Ignored - there is nothing we can report here.
+            }
+        }
+
         @Override
         public void receive(DatagramPacket packet) throws IOException {
             if (!channelImpl.isBlocking()) {
                 throw new IllegalBlockingModeException();
             }
+
+            boolean wasBound = isBound();
             super.receive(packet);
+            if (!wasBound) {
+                // DatagramSocket.receive() will implicitly bind if it hasn't been done explicitly.
+                // Sync the channel state with the socket.
+                channelImpl.onBind(false /* updateSocketState */);
+            }
         }
 
-        /**
-         * @see java.net.DatagramSocket#send(java.net.DatagramPacket)
-         */
         @Override
         public void send(DatagramPacket packet) throws IOException {
             if (!channelImpl.isBlocking()) {
                 throw new IllegalBlockingModeException();
             }
+
+            // DatagramSocket.send() will implicitly bind if it hasn't been done explicitly. Force
+            // bind() here so that the channel state stays in sync with the socket.
+            boolean wasBound = isBound();
             super.send(packet);
+            if (!wasBound) {
+                // DatagramSocket.send() will implicitly bind if it hasn't been done explicitly.
+                // Sync the channel state with the socket.
+                channelImpl.onBind(false /* updateSocketState */);
+            }
         }
 
-        /**
-         * @see java.net.DatagramSocket#close()
-         */
         @Override
         public void close() {
             synchronized (channelImpl) {
+                super.close();
                 if (channelImpl.isOpen()) {
                     try {
                         channelImpl.close();
@@ -572,21 +630,13 @@ class DatagramChannelImpl extends DatagramChannel implements FileDescriptorChann
                         // Ignore
                     }
                 }
-                super.close();
             }
         }
 
-        /**
-         * @see java.net.DatagramSocket#disconnect()
-         */
         @Override
         public void disconnect() {
-            try {
-                channelImpl.disconnect();
-            } catch (IOException e) {
-                // Ignore
-            }
             super.disconnect();
+            channelImpl.onDisconnect(false /* updateSocketState */);
         }
     }
 }

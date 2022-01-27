@@ -38,6 +38,7 @@ import android.content.ContentValues;
 import android.content.Context;
 import android.content.Intent;
 import android.content.Loader;
+import android.content.res.Resources;
 import android.database.Cursor;
 import android.graphics.Bitmap;
 import android.graphics.Point;
@@ -69,7 +70,6 @@ import android.widget.AbsListView.RecyclerListener;
 import android.widget.AdapterView;
 import android.widget.AdapterView.OnItemClickListener;
 import android.widget.BaseAdapter;
-import android.widget.FrameLayout;
 import android.widget.GridView;
 import android.widget.ImageView;
 import android.widget.ListView;
@@ -187,6 +187,7 @@ public class DirectoryFragment extends Fragment {
     public View onCreateView(
             LayoutInflater inflater, ViewGroup container, Bundle savedInstanceState) {
         final Context context = inflater.getContext();
+        final Resources res = context.getResources();
         final View view = inflater.inflate(R.layout.fragment_directory, container, false);
 
         mEmptyView = view.findViewById(android.R.id.empty);
@@ -195,6 +196,16 @@ public class DirectoryFragment extends Fragment {
         mListView.setOnItemClickListener(mItemListener);
         mListView.setMultiChoiceModeListener(mMultiListener);
         mListView.setRecyclerListener(mRecycleListener);
+
+        // Indent our list divider to align with text
+        final Drawable divider = mListView.getDivider();
+        final boolean insetLeft = res.getBoolean(R.bool.list_divider_inset_left);
+        final int insetSize = res.getDimensionPixelSize(R.dimen.list_divider_inset);
+        if (insetLeft) {
+            mListView.setDivider(new InsetDrawable(divider, insetSize, 0, 0, 0));
+        } else {
+            mListView.setDivider(new InsetDrawable(divider, 0, 0, insetSize, 0));
+        }
 
         mGridView = (GridView) view.findViewById(R.id.grid);
         mGridView.setOnItemClickListener(mItemListener);
@@ -340,6 +351,10 @@ public class DirectoryFragment extends Fragment {
         updateDisplayState();
     }
 
+    public void onDisplayStateChanged() {
+        updateDisplayState();
+    }
+
     public void onUserSortOrderChanged() {
         // Sort order change always triggers reload; we'll trigger state change
         // on the flip side.
@@ -436,6 +451,8 @@ public class DirectoryFragment extends Fragment {
         @Override
         public boolean onCreateActionMode(ActionMode mode, Menu menu) {
             mode.getMenuInflater().inflate(R.menu.mode_directory, menu);
+            mode.setTitle(getResources()
+                    .getString(R.string.mode_selected_count, mCurrentView.getCheckedItemCount()));
             return true;
         }
 
@@ -746,21 +763,6 @@ public class DirectoryFragment extends Fragment {
                     convertView = inflater.inflate(R.layout.item_doc_list, parent, false);
                 } else if (state.derivedMode == MODE_GRID) {
                     convertView = inflater.inflate(R.layout.item_doc_grid, parent, false);
-
-                    // Apply padding to grid items
-                    final FrameLayout grid = (FrameLayout) convertView;
-                    final int gridPadding = getResources()
-                            .getDimensionPixelSize(R.dimen.grid_padding);
-
-                    // Tricksy hobbitses! We need to fully clear the drawable so
-                    // the view doesn't clobber the new InsetDrawable callback
-                    // when setting back later.
-                    final Drawable fg = grid.getForeground();
-                    final Drawable bg = grid.getBackground();
-                    grid.setForeground(null);
-                    grid.setBackground(null);
-                    grid.setForeground(new InsetDrawable(fg, gridPadding));
-                    grid.setBackground(new InsetDrawable(bg, gridPadding));
                 } else {
                     throw new IllegalStateException();
                 }
@@ -805,6 +807,9 @@ public class DirectoryFragment extends Fragment {
                     || MimePredicate.mimeMatches(MimePredicate.VISUAL_MIMES, docMimeType);
             final boolean showThumbnail = supportsThumbnail && allowThumbnail && !mSvelteRecents;
 
+            final boolean enabled = isDocumentEnabled(docMimeType, docFlags);
+            final float iconAlpha = (state.derivedMode == MODE_LIST && !enabled) ? 0.5f : 1f;
+
             boolean cacheHit = false;
             if (showThumbnail) {
                 final Uri uri = DocumentsContract.buildDocumentUri(docAuthority, docId);
@@ -815,7 +820,7 @@ public class DirectoryFragment extends Fragment {
                 } else {
                     iconThumb.setImageDrawable(null);
                     final ThumbnailAsyncTask task = new ThumbnailAsyncTask(
-                            uri, iconMime, iconThumb, mThumbSize);
+                            uri, iconMime, iconThumb, mThumbSize, iconAlpha);
                     iconThumb.setTag(task);
                     ProviderExecutor.forAuthority(docAuthority).execute(task);
                 }
@@ -854,7 +859,11 @@ public class DirectoryFragment extends Fragment {
                 // We've already had to enumerate roots before any results can
                 // be shown, so this will never block.
                 final RootInfo root = roots.getRootBlocking(docAuthority, docRootId);
-                iconDrawable = root.loadIcon(context);
+                if (state.derivedMode == MODE_GRID) {
+                    iconDrawable = root.loadGridIcon(context);
+                } else {
+                    iconDrawable = root.loadIcon(context);
+                }
 
                 if (summary != null) {
                     final boolean alwaysShowSummary = getResources()
@@ -880,7 +889,8 @@ public class DirectoryFragment extends Fragment {
                 // hint to remind user they're a directory.
                 if (Document.MIME_TYPE_DIR.equals(docMimeType) && state.derivedMode == MODE_GRID
                         && showThumbnail) {
-                    iconDrawable = context.getResources().getDrawable(R.drawable.ic_root_folder);
+                    iconDrawable = IconUtils.applyTintAttr(context, R.drawable.ic_doc_folder,
+                            android.R.attr.textColorPrimaryInverse);
                 }
 
                 if (summary != null) {
@@ -933,20 +943,12 @@ public class DirectoryFragment extends Fragment {
                 line2.setVisibility(hasLine2 ? View.VISIBLE : View.GONE);
             }
 
-            final boolean enabled = isDocumentEnabled(docMimeType, docFlags);
-            if (enabled) {
-                setEnabledRecursive(convertView, true);
-                iconMime.setAlpha(1f);
-                iconThumb.setAlpha(1f);
-                if (icon1 != null) icon1.setAlpha(1f);
-                if (icon2 != null) icon2.setAlpha(1f);
-            } else {
-                setEnabledRecursive(convertView, false);
-                iconMime.setAlpha(0.5f);
-                iconThumb.setAlpha(0.5f);
-                if (icon1 != null) icon1.setAlpha(0.5f);
-                if (icon2 != null) icon2.setAlpha(0.5f);
-            }
+            setEnabledRecursive(convertView, enabled);
+
+            iconMime.setAlpha(iconAlpha);
+            iconThumb.setAlpha(iconAlpha);
+            if (icon1 != null) icon1.setAlpha(iconAlpha);
+            if (icon2 != null) icon2.setAlpha(iconAlpha);
 
             return convertView;
         }
@@ -993,14 +995,16 @@ public class DirectoryFragment extends Fragment {
         private final ImageView mIconMime;
         private final ImageView mIconThumb;
         private final Point mThumbSize;
+        private final float mTargetAlpha;
         private final CancellationSignal mSignal;
 
-        public ThumbnailAsyncTask(
-                Uri uri, ImageView iconMime, ImageView iconThumb, Point thumbSize) {
+        public ThumbnailAsyncTask(Uri uri, ImageView iconMime, ImageView iconThumb, Point thumbSize,
+                float targetAlpha) {
             mUri = uri;
             mIconMime = iconMime;
             mIconThumb = iconThumb;
             mThumbSize = thumbSize;
+            mTargetAlpha = targetAlpha;
             mSignal = new CancellationSignal();
         }
 
@@ -1044,11 +1048,10 @@ public class DirectoryFragment extends Fragment {
                 mIconThumb.setTag(null);
                 mIconThumb.setImageBitmap(result);
 
-                final float targetAlpha = mIconMime.isEnabled() ? 1f : 0.5f;
-                mIconMime.setAlpha(targetAlpha);
+                mIconMime.setAlpha(mTargetAlpha);
                 mIconMime.animate().alpha(0f).start();
                 mIconThumb.setAlpha(0f);
-                mIconThumb.animate().alpha(targetAlpha).start();
+                mIconThumb.animate().alpha(mTargetAlpha).start();
             }
         }
     }

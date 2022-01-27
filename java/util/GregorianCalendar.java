@@ -331,7 +331,16 @@ public class GregorianCalendar extends Calendar {
         setTimeInMillis(System.currentTimeMillis());
     }
 
-    GregorianCalendar(boolean ignored) {
+    /**
+     * A minimum-cost constructor that does not initialize the current time or perform any date
+     * calculations. For use internally when the time will be set later. Other constructors, such as
+     * {@link GregorianCalendar#GregorianCalendar()}, set the time to the current system clock
+     * and recalculate the fields incurring unnecessary cost when the time or fields will be set
+     * later.
+     *
+     * @hide used internally
+     */
+    public GregorianCalendar(boolean ignored) {
         super(TimeZone.getDefault());
         setFirstDayOfWeek(SUNDAY);
         setMinimalDaysInFirstWeek(1);
@@ -458,16 +467,17 @@ public class GregorianCalendar extends Calendar {
         complete();
     }
 
-    private void fullFieldsCalc(long timeVal, int zoneOffset) {
+    private void fullFieldsCalc() {
         int millis = (int) (time % 86400000);
-        long days = timeVal / 86400000;
+        long days = time / 86400000;
 
         if (millis < 0) {
             millis += 86400000;
             days--;
         }
-        // Cannot add ZONE_OFFSET to time as it might overflow
-        millis += zoneOffset;
+        // Adding fields[ZONE_OFFSET] to time might make it overflow, so we add
+        // it to millis (the number of milliseconds in the current day) instead.
+        millis += fields[ZONE_OFFSET];
         while (millis < 0) {
             millis += 86400000;
             days--;
@@ -477,9 +487,9 @@ public class GregorianCalendar extends Calendar {
             days++;
         }
 
-        int dayOfYear = computeYearAndDay(days, timeVal + zoneOffset);
+        int dayOfYear = computeYearAndDay(days, time + fields[ZONE_OFFSET]);
         fields[DAY_OF_YEAR] = dayOfYear;
-        if(fields[YEAR] == changeYear && gregorianCutover <= timeVal + zoneOffset){
+        if (fields[YEAR] == changeYear && gregorianCutover <= time + fields[ZONE_OFFSET]){
             dayOfYear += currentYearSkew;
         }
         int month = dayOfYear / 32;
@@ -493,7 +503,7 @@ public class GregorianCalendar extends Calendar {
         int dstOffset = fields[YEAR] <= 0 ? 0 : getTimeZone().getOffset(AD,
                 fields[YEAR], month, date, fields[DAY_OF_WEEK], millis);
         if (fields[YEAR] > 0) {
-            dstOffset -= zoneOffset;
+            dstOffset -= fields[ZONE_OFFSET];
         }
         fields[DST_OFFSET] = dstOffset;
         if (dstOffset != 0) {
@@ -507,10 +517,10 @@ public class GregorianCalendar extends Calendar {
                 days++;
             }
             if (oldDays != days) {
-                dayOfYear = computeYearAndDay(days, timeVal - zoneOffset
+                dayOfYear = computeYearAndDay(days, time - fields[ZONE_OFFSET]
                         + dstOffset);
                 fields[DAY_OF_YEAR] = dayOfYear;
-                if(fields[YEAR] == changeYear && gregorianCutover <= timeVal - zoneOffset + dstOffset){
+                if(fields[YEAR] == changeYear && gregorianCutover <= time - fields[ZONE_OFFSET] + dstOffset){
                     dayOfYear += currentYearSkew;
                 }
                 month = dayOfYear / 32;
@@ -567,10 +577,26 @@ public class GregorianCalendar extends Calendar {
         TimeZone timeZone = getTimeZone();
         int dstOffset = timeZone.inDaylightTime(new Date(time)) ? timeZone.getDSTSavings() : 0;
         int zoneOffset = timeZone.getRawOffset();
+
+        // We unconditionally overwrite DST_OFFSET and ZONE_OFFSET with
+        // values from the timezone that's currently in use. This gives us
+        // much more consistent behavior, and matches ICU4J behavior (though
+        // it is inconsistent with the RI).
+        //
+        // Anything callers can do with ZONE_OFFSET they can do by constructing
+        // a SimpleTimeZone with the required offset.
+        //
+        // DST_OFFSET is a bit of a WTF, given that it's dependent on the rest
+        // of the fields. There's no sensible reason we'd want to allow it to
+        // be set, nor can we implement consistent full-fields calculation after
+        // this field is set without maintaining a large deal of additional state.
+        //
+        // At the very least, we will need isSet to differentiate between fields
+        // set by the user and fields set by our internal field calculation.
         fields[DST_OFFSET] = dstOffset;
         fields[ZONE_OFFSET] = zoneOffset;
 
-        fullFieldsCalc(time, zoneOffset);
+        fullFieldsCalc();
 
         for (int i = 0; i < FIELD_COUNT; i++) {
             isSet[i] = true;

@@ -17,6 +17,7 @@
 package com.android.server.wm;
 
 import android.view.IWindowId;
+import android.view.IWindowSessionCallback;
 import com.android.internal.view.IInputContext;
 import com.android.internal.view.IInputMethodClient;
 import com.android.internal.view.IInputMethodManager;
@@ -54,6 +55,7 @@ import java.io.PrintWriter;
 final class Session extends IWindowSession.Stub
         implements IBinder.DeathRecipient {
     final WindowManagerService mService;
+    final IWindowSessionCallback mCallback;
     final IInputMethodClient mClient;
     final IInputContext mInputContext;
     final int mUid;
@@ -62,14 +64,17 @@ final class Session extends IWindowSession.Stub
     SurfaceSession mSurfaceSession;
     int mNumWindow = 0;
     boolean mClientDead = false;
+    float mLastReportedAnimatorScale;
 
-    public Session(WindowManagerService service, IInputMethodClient client,
-            IInputContext inputContext) {
+    public Session(WindowManagerService service, IWindowSessionCallback callback,
+            IInputMethodClient client, IInputContext inputContext) {
         mService = service;
+        mCallback = callback;
         mClient = client;
         mInputContext = inputContext;
         mUid = Binder.getCallingUid();
         mPid = Binder.getCallingPid();
+        mLastReportedAnimatorScale = service.getCurrentAnimatorScale();
         StringBuilder sb = new StringBuilder();
         sb.append("Session{");
         sb.append(Integer.toHexString(System.identityHashCode(this)));
@@ -184,13 +189,14 @@ final class Session extends IWindowSession.Stub
     public int relayout(IWindow window, int seq, WindowManager.LayoutParams attrs,
             int requestedWidth, int requestedHeight, int viewFlags,
             int flags, Rect outFrame, Rect outOverscanInsets, Rect outContentInsets,
-            Rect outVisibleInsets, Configuration outConfig, Surface outSurface) {
+            Rect outVisibleInsets, Rect outStableInsets, Configuration outConfig,
+            Surface outSurface) {
         if (false) Slog.d(WindowManagerService.TAG, ">>>>>> ENTERED relayout from "
                 + Binder.getCallingPid());
         int res = mService.relayoutWindow(this, window, seq, attrs,
                 requestedWidth, requestedHeight, viewFlags, flags,
                 outFrame, outOverscanInsets, outContentInsets, outVisibleInsets,
-                outConfig, outSurface);
+                outStableInsets, outConfig, outSurface);
         if (false) Slog.d(WindowManagerService.TAG, "<<<<<< EXITING relayout to "
                 + Binder.getCallingPid());
         return res;
@@ -409,6 +415,18 @@ final class Session extends IWindowSession.Stub
         mService.wallpaperOffsetsComplete(window);
     }
 
+    public void setWallpaperDisplayOffset(IBinder window, int x, int y) {
+        synchronized(mService.mWindowMap) {
+            long ident = Binder.clearCallingIdentity();
+            try {
+                mService.setWindowWallpaperDisplayOffsetLocked(
+                        mService.windowForClientLocked(this, window, true), x, y);
+            } finally {
+                Binder.restoreCallingIdentity(ident);
+            }
+        }
+    }
+
     public Bundle sendWallpaperCommand(IBinder window, String action, int x, int y,
             int z, Bundle extras, boolean sync) {
         synchronized(mService.mWindowMap) {
@@ -441,11 +459,11 @@ final class Session extends IWindowSession.Stub
         }
     }
 
-    public void onRectangleOnScreenRequested(IBinder token, Rect rectangle, boolean immediate) {
+    public void onRectangleOnScreenRequested(IBinder token, Rect rectangle) {
         synchronized(mService.mWindowMap) {
             final long identity = Binder.clearCallingIdentity();
             try {
-                mService.onRectangleOnScreenRequested(token, rectangle, immediate);
+                mService.onRectangleOnScreenRequested(token, rectangle);
             } finally {
                 Binder.restoreCallingIdentity(identity);
             }
@@ -464,6 +482,9 @@ final class Session extends IWindowSession.Stub
             if (WindowManagerService.SHOW_TRANSACTIONS) Slog.i(
                     WindowManagerService.TAG, "  NEW SURFACE SESSION " + mSurfaceSession);
             mService.mSessions.add(this);
+            if (mLastReportedAnimatorScale != mService.getCurrentAnimatorScale()) {
+                mService.dispatchNewAnimatorScaleLocked(this);
+            }
         }
         mNumWindow++;
     }

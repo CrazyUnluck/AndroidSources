@@ -24,6 +24,7 @@ import android.app.IActivityManager;
 import android.app.ProgressDialog;
 import android.bluetooth.BluetoothAdapter;
 import android.bluetooth.IBluetoothManager;
+import android.media.AudioAttributes;
 import android.nfc.NfcAdapter;
 import android.nfc.INfcAdapter;
 import android.content.BroadcastReceiver;
@@ -44,6 +45,7 @@ import android.os.storage.IMountService;
 import android.os.storage.IMountShutdownObserver;
 
 import com.android.internal.telephony.ITelephony;
+import com.android.server.pm.PackageManagerService;
 
 import android.util.Log;
 import android.view.WindowManager;
@@ -76,7 +78,12 @@ public final class ShutdownThread extends Thread {
 
     // static instance of this thread
     private static final ShutdownThread sInstance = new ShutdownThread();
-    
+
+    private static final AudioAttributes VIBRATION_ATTRIBUTES = new AudioAttributes.Builder()
+            .setContentType(AudioAttributes.CONTENT_TYPE_SONIFICATION)
+            .setUsage(AudioAttributes.USAGE_ASSISTANCE_SONIFICATION)
+            .build();
+
     private final Object mActionDoneSync = new Object();
     private boolean mActionDone;
     private Context mContext;
@@ -328,6 +335,14 @@ public final class ShutdownThread extends Thread {
             }
         }
 
+        Log.i(TAG, "Shutting down package manager...");
+
+        final PackageManagerService pm = (PackageManagerService)
+            ServiceManager.getService("package");
+        if (pm != null) {
+            pm.shutdown();
+        }
+
         // Shutdown radios.
         shutdownRadios(MAX_RADIO_WAIT_TIME);
 
@@ -415,10 +430,10 @@ public final class ShutdownThread extends Thread {
                 }
 
                 try {
-                    radioOff = phone == null || !phone.isRadioOn();
+                    radioOff = phone == null || !phone.needMobileRadioShutdown();
                     if (!radioOff) {
-                        Log.w(TAG, "Turning off radio...");
-                        phone.setRadio(false);
+                        Log.w(TAG, "Turning off cellular radios...");
+                        phone.shutdownMobileRadios();
                     }
                 } catch (RemoteException ex) {
                     Log.e(TAG, "RemoteException during radio shutdown", ex);
@@ -441,7 +456,7 @@ public final class ShutdownThread extends Thread {
                     }
                     if (!radioOff) {
                         try {
-                            radioOff = !phone.isRadioOn();
+                            radioOff = !phone.needMobileRadioShutdown();
                         } catch (RemoteException ex) {
                             Log.e(TAG, "RemoteException during radio shutdown", ex);
                             radioOff = true;
@@ -457,7 +472,7 @@ public final class ShutdownThread extends Thread {
                             Log.e(TAG, "RemoteException during NFC shutdown", ex);
                             nfcOff = true;
                         }
-                        if (radioOff) {
+                        if (nfcOff) {
                             Log.i(TAG, "NFC turned off.");
                         }
                     }
@@ -498,7 +513,7 @@ public final class ShutdownThread extends Thread {
             // vibrate before shutting down
             Vibrator vibrator = new SystemVibrator();
             try {
-                vibrator.vibrate(SHUTDOWN_VIBRATE_MS);
+                vibrator.vibrate(SHUTDOWN_VIBRATE_MS, VIBRATION_ATTRIBUTES);
             } catch (Exception e) {
                 // Failure to vibrate shouldn't interrupt shutdown.  Just log it.
                 Log.w(TAG, "Failed to vibrate during shutdown.", e);

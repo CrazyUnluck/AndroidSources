@@ -20,9 +20,7 @@ import dalvik.system.CloseGuard;
 import android.graphics.Bitmap;
 import android.graphics.Rect;
 import android.graphics.Region;
-import android.view.Surface;
 import android.os.IBinder;
-import android.os.SystemProperties;
 import android.util.Log;
 import android.view.Surface.OutOfResourcesException;
 
@@ -40,9 +38,11 @@ public class SurfaceControl {
     private static native void nativeDestroy(long nativeObject);
 
     private static native Bitmap nativeScreenshot(IBinder displayToken,
-            int width, int height, int minLayer, int maxLayer, boolean allLayers);
+            Rect sourceCrop, int width, int height, int minLayer, int maxLayer,
+            boolean allLayers, boolean useIdentityTransform, int rotation);
     private static native void nativeScreenshot(IBinder displayToken, Surface consumer,
-            int width, int height, int minLayer, int maxLayer, boolean allLayers);
+            Rect sourceCrop, int width, int height, int minLayer, int maxLayer,
+            boolean allLayers, boolean useIdentityTransform);
 
     private static native void nativeOpenTransaction();
     private static native void nativeCloseTransaction();
@@ -58,6 +58,11 @@ public class SurfaceControl {
     private static native void nativeSetWindowCrop(long nativeObject, int l, int t, int r, int b);
     private static native void nativeSetLayerStack(long nativeObject, int layerStack);
 
+    private static native boolean nativeClearContentFrameStats(long nativeObject);
+    private static native boolean nativeGetContentFrameStats(long nativeObject, WindowContentFrameStats outStats);
+    private static native boolean nativeClearAnimationFrameStats();
+    private static native boolean nativeGetAnimationFrameStats(WindowAnimationFrameStats outStats);
+
     private static native IBinder nativeGetBuiltInDisplay(int physicalDisplayId);
     private static native IBinder nativeCreateDisplay(String name, boolean secure);
     private static native void nativeDestroyDisplay(IBinder displayToken);
@@ -69,10 +74,13 @@ public class SurfaceControl {
             IBinder displayToken, int orientation,
             int l, int t, int r, int b,
             int L, int T, int R, int B);
-    private static native boolean nativeGetDisplayInfo(
-            IBinder displayToken, SurfaceControl.PhysicalDisplayInfo outInfo);
-    private static native void nativeBlankDisplay(IBinder displayToken);
-    private static native void nativeUnblankDisplay(IBinder displayToken);
+    private static native void nativeSetDisplaySize(IBinder displayToken, int width, int height);
+    private static native SurfaceControl.PhysicalDisplayInfo[] nativeGetDisplayConfigs(
+            IBinder displayToken);
+    private static native int nativeGetActiveConfig(IBinder displayToken);
+    private static native boolean nativeSetActiveConfig(IBinder displayToken, int id);
+    private static native void nativeSetDisplayPowerMode(
+            IBinder displayToken, int mode);
 
 
     private final CloseGuard mCloseGuard = CloseGuard.get();
@@ -150,6 +158,11 @@ public class SurfaceControl {
     // 0x1000 is reserved for an independent DRM protected flag in framework
 
     /**
+     * Surface creation flag: Window represents a cursor glyph.
+     */
+    public static final int CURSOR_WINDOW = 0x00002000;
+
+    /**
      * Surface creation flag: Creates a normal surface.
      * This is the default.
      *
@@ -178,13 +191,13 @@ public class SurfaceControl {
      * Equivalent to calling hide().
      * Updates the value set during Surface creation (see {@link #HIDDEN}).
      */
-    public static final int SURFACE_HIDDEN = 0x01;
+    private static final int SURFACE_HIDDEN = 0x01;
 
     /**
      * Surface flag: composite without blending when possible.
      * Updates the value set during Surface creation (see {@link #OPAQUE}).
      */
-    public static final int SURFACE_OPAQUE = 0x02;
+    private static final int SURFACE_OPAQUE = 0x02;
 
 
     /* built-in physical display ids (keep in sync with ISurfaceComposer.h)
@@ -192,17 +205,41 @@ public class SurfaceControl {
 
     /**
      * Built-in physical display id: Main display.
-     * Use only with {@link SurfaceControl#getBuiltInDisplay()}.
+     * Use only with {@link SurfaceControl#getBuiltInDisplay(int)}.
      */
     public static final int BUILT_IN_DISPLAY_ID_MAIN = 0;
 
     /**
      * Built-in physical display id: Attached HDMI display.
-     * Use only with {@link SurfaceControl#getBuiltInDisplay()}.
+     * Use only with {@link SurfaceControl#getBuiltInDisplay(int)}.
      */
     public static final int BUILT_IN_DISPLAY_ID_HDMI = 1;
 
+    /* Display power modes * /
 
+    /**
+     * Display power mode off: used while blanking the screen.
+     * Use only with {@link SurfaceControl#setDisplayPowerMode}.
+     */
+    public static final int POWER_MODE_OFF = 0;
+
+    /**
+     * Display power mode doze: used while putting the screen into low power mode.
+     * Use only with {@link SurfaceControl#setDisplayPowerMode}.
+     */
+    public static final int POWER_MODE_DOZE = 1;
+
+    /**
+     * Display power mode normal: used while unblanking the screen.
+     * Use only with {@link SurfaceControl#setDisplayPowerMode}.
+     */
+    public static final int POWER_MODE_NORMAL = 2;
+
+    /**
+     * Display power mode doze: used while putting the screen into a suspended
+     * low power mode.  Use only with {@link SurfaceControl#setDisplayPowerMode}.
+     */
+    public static final int POWER_MODE_DOZE_SUSPEND = 3;
 
     /**
      * Create a surface with a name.
@@ -356,6 +393,24 @@ public class SurfaceControl {
         nativeSetTransparentRegionHint(mNativeObject, region);
     }
 
+    public boolean clearContentFrameStats() {
+        checkNotReleased();
+        return nativeClearContentFrameStats(mNativeObject);
+    }
+
+    public boolean getContentFrameStats(WindowContentFrameStats outStats) {
+        checkNotReleased();
+        return nativeGetContentFrameStats(mNativeObject, outStats);
+    }
+
+    public static boolean clearAnimationFrameStats() {
+        return nativeClearAnimationFrameStats();
+    }
+
+    public static boolean getAnimationFrameStats(WindowAnimationFrameStats outStats) {
+        return nativeGetAnimationFrameStats(outStats);
+    }
+
     /**
      * Sets an alpha value for the entire Surface.  This value is combined with the
      * per-pixel alpha.  It may be used with opaque Surfaces.
@@ -368,18 +423,6 @@ public class SurfaceControl {
     public void setMatrix(float dsdx, float dtdx, float dsdy, float dtdy) {
         checkNotReleased();
         nativeSetMatrix(mNativeObject, dsdx, dtdx, dsdy, dtdy);
-    }
-
-    /**
-     * Sets and clears flags, such as {@link #SURFACE_HIDDEN}.  The new value will be:
-     * <p>
-     *   <code>newFlags = (oldFlags & ~mask) | (flags & mask)</code>
-     * <p>
-     * Note this does not take the same set of flags as the constructor.
-     */
-    public void setFlags(int flags, int mask) {
-        checkNotReleased();
-        nativeSetFlags(mNativeObject, flags, mask);
     }
 
     public void setWindowCrop(Rect crop) {
@@ -426,6 +469,8 @@ public class SurfaceControl {
         public float xDpi;
         public float yDpi;
         public boolean secure;
+        public long appVsyncOffsetNanos;
+        public long presentationDeadlineNanos;
 
         public PhysicalDisplayInfo() {
         }
@@ -447,7 +492,9 @@ public class SurfaceControl {
                     && density == other.density
                     && xDpi == other.xDpi
                     && yDpi == other.yDpi
-                    && secure == other.secure;
+                    && secure == other.secure
+                    && appVsyncOffsetNanos == other.appVsyncOffsetNanos
+                    && presentationDeadlineNanos == other.presentationDeadlineNanos;
         }
 
         @Override
@@ -463,6 +510,8 @@ public class SurfaceControl {
             xDpi = other.xDpi;
             yDpi = other.yDpi;
             secure = other.secure;
+            appVsyncOffsetNanos = other.appVsyncOffsetNanos;
+            presentationDeadlineNanos = other.presentationDeadlineNanos;
         }
 
         // For debugging purposes
@@ -470,32 +519,37 @@ public class SurfaceControl {
         public String toString() {
             return "PhysicalDisplayInfo{" + width + " x " + height + ", " + refreshRate + " fps, "
                     + "density " + density + ", " + xDpi + " x " + yDpi + " dpi, secure " + secure
-                    + "}";
+                    + ", appVsyncOffset " + appVsyncOffsetNanos
+                    + ", bufferDeadline " + presentationDeadlineNanos + "}";
         }
     }
 
-    public static void unblankDisplay(IBinder displayToken) {
+    public static void setDisplayPowerMode(IBinder displayToken, int mode) {
         if (displayToken == null) {
             throw new IllegalArgumentException("displayToken must not be null");
         }
-        nativeUnblankDisplay(displayToken);
+        nativeSetDisplayPowerMode(displayToken, mode);
     }
 
-    public static void blankDisplay(IBinder displayToken) {
+    public static SurfaceControl.PhysicalDisplayInfo[] getDisplayConfigs(IBinder displayToken) {
         if (displayToken == null) {
             throw new IllegalArgumentException("displayToken must not be null");
         }
-        nativeBlankDisplay(displayToken);
+        return nativeGetDisplayConfigs(displayToken);
     }
 
-    public static boolean getDisplayInfo(IBinder displayToken, SurfaceControl.PhysicalDisplayInfo outInfo) {
+    public static int getActiveConfig(IBinder displayToken) {
         if (displayToken == null) {
             throw new IllegalArgumentException("displayToken must not be null");
         }
-        if (outInfo == null) {
-            throw new IllegalArgumentException("outInfo must not be null");
+        return nativeGetActiveConfig(displayToken);
+    }
+
+    public static boolean setActiveConfig(IBinder displayToken, int id) {
+        if (displayToken == null) {
+            throw new IllegalArgumentException("displayToken must not be null");
         }
-        return nativeGetDisplayInfo(displayToken, outInfo);
+        return nativeSetActiveConfig(displayToken, id);
     }
 
     public static void setDisplayProjection(IBinder displayToken,
@@ -535,6 +589,17 @@ public class SurfaceControl {
         }
     }
 
+    public static void setDisplaySize(IBinder displayToken, int width, int height) {
+        if (displayToken == null) {
+            throw new IllegalArgumentException("displayToken must not be null");
+        }
+        if (width <= 0 || height <= 0) {
+            throw new IllegalArgumentException("width and height must be positive");
+        }
+
+        nativeSetDisplaySize(displayToken, width, height);
+    }
+
     public static IBinder createDisplay(String name, boolean secure) {
         if (name == null) {
             throw new IllegalArgumentException("name must not be null");
@@ -553,7 +618,6 @@ public class SurfaceControl {
         return nativeGetBuiltInDisplay(builtInDisplayId);
     }
 
-
     /**
      * Copy the current screen contents into the provided {@link Surface}
      *
@@ -567,10 +631,15 @@ public class SurfaceControl {
      * include in the screenshot.
      * @param maxLayer The highest (top-most Z order) surface layer to
      * include in the screenshot.
+     * @param useIdentityTransform Replace whatever transformation (rotation,
+     * scaling, translation) the surface layers are currently using with the
+     * identity transformation while taking the screenshot.
      */
     public static void screenshot(IBinder display, Surface consumer,
-            int width, int height, int minLayer, int maxLayer) {
-        screenshot(display, consumer, width, height, minLayer, maxLayer, false);
+            int width, int height, int minLayer, int maxLayer,
+            boolean useIdentityTransform) {
+        screenshot(display, consumer, new Rect(), width, height, minLayer, maxLayer,
+                false, useIdentityTransform);
     }
 
     /**
@@ -585,7 +654,7 @@ public class SurfaceControl {
      */
     public static void screenshot(IBinder display, Surface consumer,
             int width, int height) {
-        screenshot(display, consumer, width, height, 0, 0, true);
+        screenshot(display, consumer, new Rect(), width, height, 0, 0, true, false);
     }
 
     /**
@@ -595,9 +664,8 @@ public class SurfaceControl {
      * @param consumer The {@link Surface} to take the screenshot into.
      */
     public static void screenshot(IBinder display, Surface consumer) {
-        screenshot(display, consumer, 0, 0, 0, 0, true);
+        screenshot(display, consumer, new Rect(), 0, 0, 0, 0, true, false);
     }
-
 
     /**
      * Copy the current screen contents into a bitmap and return it.
@@ -607,6 +675,8 @@ public class SurfaceControl {
      * the versions that use a {@link Surface} instead, such as
      * {@link SurfaceControl#screenshot(IBinder, Surface)}.
      *
+     * @param sourceCrop The portion of the screen to capture into the Bitmap;
+     * caller may pass in 'new Rect()' if no cropping is desired.
      * @param width The desired width of the returned bitmap; the raw
      * screen will be scaled down to this size.
      * @param height The desired height of the returned bitmap; the raw
@@ -615,20 +685,31 @@ public class SurfaceControl {
      * include in the screenshot.
      * @param maxLayer The highest (top-most Z order) surface layer to
      * include in the screenshot.
+     * @param useIdentityTransform Replace whatever transformation (rotation,
+     * scaling, translation) the surface layers are currently using with the
+     * identity transformation while taking the screenshot.
+     * @param rotation Apply a custom clockwise rotation to the screenshot, i.e.
+     * Surface.ROTATION_0,90,180,270. Surfaceflinger will always take
+     * screenshots in its native portrait orientation by default, so this is
+     * useful for returning screenshots that are independent of device
+     * orientation.
      * @return Returns a Bitmap containing the screen contents, or null
      * if an error occurs. Make sure to call Bitmap.recycle() as soon as
      * possible, once its content is not needed anymore.
      */
-    public static Bitmap screenshot(int width, int height, int minLayer, int maxLayer) {
+    public static Bitmap screenshot(Rect sourceCrop, int width, int height,
+            int minLayer, int maxLayer, boolean useIdentityTransform,
+            int rotation) {
         // TODO: should take the display as a parameter
         IBinder displayToken = SurfaceControl.getBuiltInDisplay(
                 SurfaceControl.BUILT_IN_DISPLAY_ID_MAIN);
-        return nativeScreenshot(displayToken, width, height, minLayer, maxLayer, false);
+        return nativeScreenshot(displayToken, sourceCrop, width, height,
+                minLayer, maxLayer, false, useIdentityTransform, rotation);
     }
 
     /**
-     * Like {@link SurfaceControl#screenshot(int, int, int, int)} but includes all
-     * Surfaces in the screenshot.
+     * Like {@link SurfaceControl#screenshot(int, int, int, int, boolean)} but
+     * includes all Surfaces in the screenshot.
      *
      * @param width The desired width of the returned bitmap; the raw
      * screen will be scaled down to this size.
@@ -642,17 +723,20 @@ public class SurfaceControl {
         // TODO: should take the display as a parameter
         IBinder displayToken = SurfaceControl.getBuiltInDisplay(
                 SurfaceControl.BUILT_IN_DISPLAY_ID_MAIN);
-        return nativeScreenshot(displayToken, width, height, 0, 0, true);
+        return nativeScreenshot(displayToken, new Rect(), width, height, 0, 0, true,
+                false, Surface.ROTATION_0);
     }
 
-    private static void screenshot(IBinder display, Surface consumer,
-            int width, int height, int minLayer, int maxLayer, boolean allLayers) {
+    private static void screenshot(IBinder display, Surface consumer, Rect sourceCrop,
+            int width, int height, int minLayer, int maxLayer, boolean allLayers,
+            boolean useIdentityTransform) {
         if (display == null) {
             throw new IllegalArgumentException("displayToken must not be null");
         }
         if (consumer == null) {
             throw new IllegalArgumentException("consumer must not be null");
         }
-        nativeScreenshot(display, consumer, width, height, minLayer, maxLayer, allLayers);
+        nativeScreenshot(display, consumer, sourceCrop, width, height,
+                minLayer, maxLayer, allLayers, useIdentityTransform);
     }
 }

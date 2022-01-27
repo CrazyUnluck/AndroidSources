@@ -17,18 +17,18 @@
 
 package java.nio;
 
+import android.system.ErrnoException;
 import dalvik.system.VMRuntime;
 import java.io.FileDescriptor;
 import java.io.IOException;
 import java.nio.channels.FileChannel.MapMode;
-import libcore.io.ErrnoException;
 import libcore.io.Libcore;
 import libcore.io.Memory;
 
-import static libcore.io.OsConstants.MAP_PRIVATE;
-import static libcore.io.OsConstants.MAP_SHARED;
-import static libcore.io.OsConstants.PROT_READ;
-import static libcore.io.OsConstants.PROT_WRITE;
+import static android.system.OsConstants.MAP_PRIVATE;
+import static android.system.OsConstants.MAP_SHARED;
+import static android.system.OsConstants.PROT_READ;
+import static android.system.OsConstants.PROT_WRITE;
 
 class MemoryBlock {
     /**
@@ -48,8 +48,8 @@ class MemoryBlock {
                     // a state where munmap(2) could return an error.
                     throw new AssertionError(errnoException);
                 }
-                address = 0;
             }
+            super.free();
         }
 
         @Override protected void finalize() throws Throwable {
@@ -78,7 +78,7 @@ class MemoryBlock {
 
         @Override public void free() {
             array = null;
-            address = 0;
+            super.free();
         }
     }
 
@@ -90,15 +90,12 @@ class MemoryBlock {
         private UnmanagedBlock(long address, long byteCount) {
             super(address, byteCount);
         }
-
-        @Override
-        public void free() {
-            address = 0;
-        }
     }
 
     protected long address;
     protected final long size;
+    private boolean accessible;
+    private boolean freed;
 
     public static MemoryBlock mmap(FileDescriptor fd, long offset, long size, MapMode mapMode) throws IOException {
         if (size == 0) {
@@ -143,6 +140,8 @@ class MemoryBlock {
     private MemoryBlock(long address, long size) {
         this.address = address;
         this.size = size;
+        accessible = true;
+        freed = false;
     }
 
     // Used to support array/arrayOffset/hasArray for direct buffers.
@@ -151,6 +150,20 @@ class MemoryBlock {
     }
 
     public void free() {
+        address = 0;
+        freed = true;
+    }
+
+    public boolean isFreed() {
+        return freed;
+    }
+
+    public boolean isAccessible() {
+        return !isFreed() && accessible;
+    }
+
+    public final void setAccessible(boolean accessible) {
+        this.accessible = accessible;
     }
 
     public final void pokeByte(int offset, byte value) {

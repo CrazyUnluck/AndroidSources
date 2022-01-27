@@ -22,6 +22,7 @@ import android.view.DisplayInfo;
 import android.view.Surface;
 
 import java.io.PrintWriter;
+import java.util.Arrays;
 import java.util.List;
 
 import libcore.util.Objects;
@@ -71,6 +72,9 @@ final class LogicalDisplay {
 
     // True if the logical display has unique content.
     private boolean mHasContent;
+
+    // The pending requested refresh rate. 0 if no request is pending.
+    private float mRequestedRefreshRate;
 
     // Temporary rectangle used when needed.
     private final Rect mTempLayerStackRect = new Rect();
@@ -210,9 +214,13 @@ final class LogicalDisplay {
             mBaseDisplayInfo.logicalHeight = deviceInfo.height;
             mBaseDisplayInfo.rotation = Surface.ROTATION_0;
             mBaseDisplayInfo.refreshRate = deviceInfo.refreshRate;
+            mBaseDisplayInfo.supportedRefreshRates = Arrays.copyOf(
+                    deviceInfo.supportedRefreshRates, deviceInfo.supportedRefreshRates.length);
             mBaseDisplayInfo.logicalDensityDpi = deviceInfo.densityDpi;
             mBaseDisplayInfo.physicalXDpi = deviceInfo.xDpi;
             mBaseDisplayInfo.physicalYDpi = deviceInfo.yDpi;
+            mBaseDisplayInfo.appVsyncOffsetNanos = deviceInfo.appVsyncOffsetNanos;
+            mBaseDisplayInfo.presentationDeadlineNanos = deviceInfo.presentationDeadlineNanos;
             mBaseDisplayInfo.state = deviceInfo.state;
             mBaseDisplayInfo.smallestNominalAppWidth = deviceInfo.width;
             mBaseDisplayInfo.smallestNominalAppHeight = deviceInfo.height;
@@ -251,6 +259,9 @@ final class LogicalDisplay {
         // Set the layer stack.
         device.setLayerStackInTransactionLocked(isBlanked ? BLANK_LAYER_STACK : mLayerStack);
 
+        // Set the refresh rate
+        device.requestRefreshRateLocked(mRequestedRefreshRate);
+
         // Set the viewport.
         // This is the area of the logical display that we intend to show on the
         // display device.  For now, it is always the full size of the logical display.
@@ -260,8 +271,7 @@ final class LogicalDisplay {
         // The orientation specifies how the physical coordinate system of the display
         // is rotated when the contents of the logical display are rendered.
         int orientation = Surface.ROTATION_0;
-        if (device == mPrimaryDisplayDevice
-                && (displayDeviceInfo.flags & DisplayDeviceInfo.FLAG_ROTATES_WITH_CONTENT) != 0) {
+        if ((displayDeviceInfo.flags & DisplayDeviceInfo.FLAG_ROTATES_WITH_CONTENT) != 0) {
             orientation = displayInfo.rotation;
         }
 
@@ -325,6 +335,23 @@ final class LogicalDisplay {
      */
     public void setHasContentLocked(boolean hasContent) {
         mHasContent = hasContent;
+    }
+
+    /**
+     * Requests the given refresh rate.
+     * @param requestedRefreshRate The desired refresh rate.
+     */
+    public void setRequestedRefreshRateLocked(float requestedRefreshRate) {
+        mRequestedRefreshRate = requestedRefreshRate;
+    }
+
+    /**
+     * Gets the pending requested refresh rate.
+     *
+     * @return The pending refresh rate requested
+     */
+    public float getRequestedRefreshRateLocked() {
+        return mRequestedRefreshRate;
     }
 
     public void dumpLocked(PrintWriter pw) {

@@ -21,6 +21,7 @@ import android.content.res.XmlResourceParser;
 import android.graphics.drawable.Drawable;
 import android.os.Bundle;
 import android.os.Parcel;
+import android.os.UserHandle;
 import android.text.TextUtils;
 import android.util.Printer;
 
@@ -86,8 +87,15 @@ public class PackageItemInfo {
      * {@link PackageManager#GET_META_DATA} flag when requesting the info.
      */
     public Bundle metaData;
-    
+
+    /**
+     * If different of UserHandle.USER_NULL, The icon of this item will be the one of that user.
+     * @hide
+     */
+    public int showUserIcon;
+
     public PackageItemInfo() {
+        showUserIcon = UserHandle.USER_NULL;
     }
 
     public PackageItemInfo(PackageItemInfo orig) {
@@ -101,6 +109,7 @@ public class PackageItemInfo {
         banner = orig.banner;
         logo = orig.logo;
         metaData = orig.metaData;
+        showUserIcon = orig.showUserIcon;
     }
 
     /**
@@ -143,15 +152,9 @@ public class PackageItemInfo {
      * such as the default activity icon.
      */
     public Drawable loadIcon(PackageManager pm) {
-        if (icon != 0) {
-            Drawable dr = pm.getDrawable(packageName, icon, getApplicationInfo());
-            if (dr != null) {
-                return dr;
-            }
-        }
-        return loadDefaultIcon(pm);
+        return pm.loadItemIcon(this, getApplicationInfo());
     }
-    
+
     /**
      * Retrieve the current graphical banner associated with this item.  This
      * will call back on the given PackageManager to load the banner from
@@ -184,7 +187,7 @@ public class PackageItemInfo {
      * 
      * @hide
      */
-    protected Drawable loadDefaultIcon(PackageManager pm) {
+    public Drawable loadDefaultIcon(PackageManager pm) {
         return pm.getDefaultActivityIcon();
     }
 
@@ -288,6 +291,7 @@ public class PackageItemInfo {
         dest.writeInt(logo);
         dest.writeBundle(metaData);
         dest.writeInt(banner);
+        dest.writeInt(showUserIcon);
     }
     
     protected PackageItemInfo(Parcel source) {
@@ -300,6 +304,7 @@ public class PackageItemInfo {
         logo = source.readInt();
         metaData = source.readBundle();
         banner = source.readInt();
+        showUserIcon = source.readInt();
     }
 
     /**

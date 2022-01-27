@@ -124,8 +124,8 @@ public class Thread implements Runnable {
      */
     public static final int NORM_PRIORITY = 5;
 
-    /* some of these are accessed directly by the VM; do not rename them */
-    volatile VMThread vmThread;
+    /* Some of these are accessed directly by the VM; do not rename them. */
+    private volatile long nativePeer;
     volatile ThreadGroup group;
     volatile boolean daemon;
     volatile String name;
@@ -179,7 +179,12 @@ public class Thread implements Runnable {
     /** the park state of the thread */
     private int parkState = ParkState.UNPARKED;
 
-    /** The synchronization object responsible for this thread parking. */
+    /**
+     * The synchronization object responsible for this thread's join/sleep/park operations.
+     */
+    private final Object lock = new Object();
+
+    /** Looked up reflectively and used by java.util.concurrent.locks.LockSupport. */
     private Object parkBlocker;
 
     /**
@@ -364,7 +369,7 @@ public class Thread implements Runnable {
         }
 
         if (group == null) {
-            throw new InternalError("group not specified");
+            throw new InternalError("group == null");
         }
 
         this.group = group;
@@ -463,12 +468,8 @@ public class Thread implements Runnable {
 
     /**
      * Returns the Thread of the caller, that is, the current Thread.
-     *
-     * @return the current Thread.
      */
-    public static Thread currentThread() {
-        return VMThread.currentThread();
-    }
+    public static native Thread currentThread();
 
     /**
      * Throws {@code UnsupportedOperationException}.
@@ -512,11 +513,11 @@ public class Thread implements Runnable {
 
         // Find out how many live threads we have. Allocate a bit more
         // space than needed, in case new ones are just being created.
-        int count = ThreadGroup.mSystem.activeCount();
+        int count = ThreadGroup.systemThreadGroup.activeCount();
         Thread[] threads = new Thread[count + count / 2];
 
         // Enumerate the threads and collect the stacktraces.
-        count = ThreadGroup.mSystem.enumerate(threads);
+        count = ThreadGroup.systemThreadGroup.enumerate(threads);
         for (int i = 0; i < count; i++) {
             map.put(threads[i], threads[i].getStackTrace());
         }
@@ -587,22 +588,10 @@ public class Thread implements Runnable {
      * @return a {@link State} value.
      */
     public State getState() {
-        // TODO This is ugly and should be implemented better.
-        VMThread vmt = this.vmThread;
-
-        // Make sure we have a valid reference to an object. If native code
-        // deletes the reference we won't run into a null reference later.
-        VMThread thread = vmThread;
-        if (thread != null) {
-            // If the Thread Object became invalid or was not yet started,
-            // getStatus() will return -1.
-            int state = thread.getStatus();
-            if(state != -1) {
-                return VMThread.STATE_MAP[state];
-            }
-        }
-        return hasBeenStarted ? Thread.State.TERMINATED : Thread.State.NEW;
+        return State.values()[nativeGetStatus(hasBeenStarted)];
     }
+
+    private native int nativeGetStatus(boolean hasBeenStarted);
 
     /**
      * Returns the ThreadGroup to which this Thread belongs.
@@ -626,10 +615,11 @@ public class Thread implements Runnable {
      * @return an {@link UncaughtExceptionHandler} instance or {@code null}.
      */
     public UncaughtExceptionHandler getUncaughtExceptionHandler() {
-        if (uncaughtHandler != null)
+        if (uncaughtHandler != null) {
             return uncaughtHandler;
-        else
+        } else {
             return group;           // ThreadGroup is instance of UEH
+        }
     }
 
     /**
@@ -660,10 +650,7 @@ public class Thread implements Runnable {
         // Interrupt this thread before running actions so that other
         // threads that observe the interrupt as a result of an action
         // will see that this thread is in the interrupted state.
-        VMThread vmt = this.vmThread;
-        if (vmt != null) {
-            vmt.interrupt();
-        }
+        nativeInterrupt();
 
         synchronized (interruptActions) {
             for (int i = interruptActions.size() - 1; i >= 0; i--) {
@@ -671,6 +658,8 @@ public class Thread implements Runnable {
             }
         }
     }
+
+    private native void nativeInterrupt();
 
     /**
      * Returns a <code>boolean</code> indicating whether the current Thread (
@@ -683,9 +672,7 @@ public class Thread implements Runnable {
      * @see Thread#interrupt
      * @see Thread#isInterrupted
      */
-    public static boolean interrupted() {
-        return VMThread.interrupted();
-    }
+    public static native boolean interrupted();
 
     /**
      * Returns <code>true</code> if the receiver has already been started and
@@ -697,7 +684,7 @@ public class Thread implements Runnable {
      * @see Thread#start
      */
     public final boolean isAlive() {
-        return (vmThread != null);
+        return (nativePeer != 0);
     }
 
     /**
@@ -719,33 +706,22 @@ public class Thread implements Runnable {
      * @see Thread#interrupt
      * @see Thread#interrupted
      */
-    public boolean isInterrupted() {
-        VMThread vmt = this.vmThread;
-        if (vmt != null) {
-            return vmt.isInterrupted();
-        }
-
-        return false;
-    }
+    public native boolean isInterrupted();
 
     /**
      * Blocks the current Thread (<code>Thread.currentThread()</code>) until
      * the receiver finishes its execution and dies.
      *
-     * @throws InterruptedException if <code>interrupt()</code> was called for
-     *         the receiver while it was in the <code>join()</code> call
+     * @throws InterruptedException if the current thread has been interrupted.
+     *         The interrupted status of the current thread will be cleared before the exception is
+     *         thrown.
      * @see Object#notifyAll
      * @see java.lang.ThreadDeath
      */
     public final void join() throws InterruptedException {
-        VMThread t = vmThread;
-        if (t == null) {
-            return;
-        }
-
-        synchronized (t) {
+        synchronized (lock) {
             while (isAlive()) {
-                t.wait();
+                lock.wait();
             }
         }
     }
@@ -755,9 +731,12 @@ public class Thread implements Runnable {
      * the receiver finishes its execution and dies or the specified timeout
      * expires, whatever happens first.
      *
+     * <p>A timeout of zero means the calling thread should wait forever unless interrupted.
+     *
      * @param millis The maximum time to wait (in milliseconds).
-     * @throws InterruptedException if <code>interrupt()</code> was called for
-     *         the receiver while it was in the <code>join()</code> call
+     * @throws InterruptedException if the current thread has been interrupted.
+     *         The interrupted status of the current thread will be cleared before the exception is
+     *         thrown.
      * @see Object#notifyAll
      * @see java.lang.ThreadDeath
      */
@@ -770,10 +749,13 @@ public class Thread implements Runnable {
      * the receiver finishes its execution and dies or the specified timeout
      * expires, whatever happens first.
      *
+     * <p>A timeout of zero means the calling thread should wait forever unless interrupted.
+     *
      * @param millis The maximum time to wait (in milliseconds).
      * @param nanos Extra nanosecond precision
-     * @throws InterruptedException if <code>interrupt()</code> was called for
-     *         the receiver while it was in the <code>join()</code> call
+     * @throws InterruptedException if the current thread has been interrupted.
+     *         The interrupted status of the current thread will be cleared before the exception is
+     *         thrown.
      * @see Object#notifyAll
      * @see java.lang.ThreadDeath
      */
@@ -790,12 +772,7 @@ public class Thread implements Runnable {
             return;
         }
 
-        VMThread t = vmThread;
-        if (t == null) {
-            return;
-        }
-
-        synchronized (t) {
+        synchronized (lock) {
             if (!isAlive()) {
                 return;
             }
@@ -806,7 +783,7 @@ public class Thread implements Runnable {
             // wait until this thread completes or the timeout has elapsed
             long start = System.nanoTime();
             while (true) {
-                t.wait(millis, nanos);
+                lock.wait(millis, nanos);
                 if (!isAlive()) {
                     break;
                 }
@@ -861,7 +838,8 @@ public class Thread implements Runnable {
      */
     public final void setDaemon(boolean isDaemon) {
         checkNotStarted();
-        if (vmThread == null) {
+
+        if (nativePeer == 0) {
             daemon = isDaemon;
         }
     }
@@ -916,8 +894,7 @@ public class Thread implements Runnable {
         synchronized (interruptActions) {
             Runnable removed = interruptActions.remove(interruptActions.size() - 1);
             if (interruptAction != removed) {
-                throw new IllegalArgumentException(
-                        "Expected " + interruptAction + " but was " + removed);
+                throw new IllegalArgumentException("Expected " + interruptAction + " but was " + removed);
             }
         }
     }
@@ -932,14 +909,22 @@ public class Thread implements Runnable {
         if (threadName == null) {
             throw new NullPointerException("threadName == null");
         }
+        // The lock is taken to ensure no race occurs between starting the
+        // the thread and setting its name (and the name of its native peer).
+        synchronized (this) {
+            this.name = threadName;
 
-        name = threadName;
-        VMThread vmt = this.vmThread;
-        if (vmt != null) {
-            /* notify the VM that the thread name has changed */
-            vmt.nameChanged(threadName);
+            if (isAlive()) {
+                nativeSetName(threadName);
+            }
         }
     }
+
+    /**
+     * Tell the VM that the thread's name has changed.  This is useful for
+     * DDMS, which would otherwise be oblivious to Thread.setName calls.
+     */
+    private native void nativeSetName(String newName);
 
     /**
      * Sets the priority of this thread. If the requested priority is greater than the
@@ -958,13 +943,18 @@ public class Thread implements Runnable {
             priority = group.getMaxPriority();
         }
 
-        this.priority = priority;
+        // The lock is taken to ensure no race occurs between starting the
+        // the thread and setting its priority (and the priority of its native peer).
+        synchronized (this) {
+            this.priority = priority;
 
-        VMThread vmt = this.vmThread;
-        if (vmt != null) {
-            vmt.setPriority(priority);
+            if (isAlive()) {
+                nativeSetPriority(priority);
+            }
         }
     }
+
+    private native void nativeSetPriority(int newPriority);
 
     /**
      * <p>
@@ -986,9 +976,9 @@ public class Thread implements Runnable {
      *
      * @param time
      *            The time to sleep in milliseconds.
-     * @throws InterruptedException
-     *             if <code>interrupt()</code> was called for this Thread while
-     *             it was sleeping
+     * @throws InterruptedException if the current thread has been interrupted.
+     *            The interrupted status of the current thread will be cleared before the exception
+     *            is thrown.
      * @see Thread#interrupt()
      */
     public static void sleep(long time) throws InterruptedException {
@@ -1004,14 +994,58 @@ public class Thread implements Runnable {
      *            The time to sleep in milliseconds.
      * @param nanos
      *            Extra nanosecond precision
-     * @throws InterruptedException
-     *             if <code>interrupt()</code> was called for this Thread while
-     *             it was sleeping
+     * @throws InterruptedException if the current thread has been interrupted.
+     *            The interrupted status of the current thread will be cleared before the exception
+     *            is thrown.
      * @see Thread#interrupt()
      */
     public static void sleep(long millis, int nanos) throws InterruptedException {
-        VMThread.sleep(millis, nanos);
+        if (millis < 0) {
+            throw new IllegalArgumentException("millis < 0: " + millis);
+        }
+        if (nanos < 0) {
+            throw new IllegalArgumentException("nanos < 0: " + nanos);
+        }
+        if (nanos > 999999) {
+            throw new IllegalArgumentException("nanos > 999999: " + nanos);
+        }
+
+        // The JLS 3rd edition, section 17.9 says: "...sleep for zero
+        // time...need not have observable effects."
+        if (millis == 0 && nanos == 0) {
+            // ...but we still have to handle being interrupted.
+            if (Thread.interrupted()) {
+              throw new InterruptedException();
+            }
+            return;
+        }
+
+        long start = System.nanoTime();
+        long duration = (millis * NANOS_PER_MILLI) + nanos;
+
+        Object lock = currentThread().lock;
+
+        // Wait may return early, so loop until sleep duration passes.
+        synchronized (lock) {
+            while (true) {
+                sleep(lock, millis, nanos);
+
+                long now = System.nanoTime();
+                long elapsed = now - start;
+
+                if (elapsed >= duration) {
+                    break;
+                }
+
+                duration -= elapsed;
+                start = now;
+                millis = duration / NANOS_PER_MILLI;
+                nanos = (int) (duration % NANOS_PER_MILLI);
+            }
+        }
     }
+
+    private static native void sleep(Object lock, long millis, int nanos);
 
     /**
      * Starts the new Thread of execution. The <code>run()</code> method of
@@ -1026,15 +1060,17 @@ public class Thread implements Runnable {
 
         hasBeenStarted = true;
 
-        VMThread.create(this, stackSize);
+        nativeCreate(this, stackSize, daemon);
     }
+
+    private native static void nativeCreate(Thread t, long stackSize, boolean daemon);
 
     /**
      * Requests the receiver Thread to stop and throw ThreadDeath. The Thread is
      * resumed if it was suspended and awakened if it was sleeping, so that it
      * can proceed to throw ThreadDeath.
      *
-     * @deprecated Stopping a thread in this manner is unsafe and can
+     * @deprecated because stopping a thread in this manner is unsafe and can
      * leave your application and the VM in an unpredictable state.
      */
     @Deprecated
@@ -1044,7 +1080,7 @@ public class Thread implements Runnable {
 
     /**
      * Throws {@code UnsupportedOperationException}.
-     * @deprecated Stopping a thread in this manner is unsafe and can
+     * @deprecated because stopping a thread in this manner is unsafe and can
      * leave your application and the VM in an unpredictable state.
      */
     @Deprecated
@@ -1076,9 +1112,7 @@ public class Thread implements Runnable {
      * Causes the calling Thread to yield execution time to another Thread that
      * is ready to run. The actual scheduling is implementation-dependent.
      */
-    public static void yield() {
-        VMThread.yield();
-    }
+    public static native void yield();
 
     /**
      * Indicates whether the current Thread has a monitor lock on the specified
@@ -1089,8 +1123,10 @@ public class Thread implements Runnable {
      *         object; false otherwise
      */
     public static boolean holdsLock(Object object) {
-        return currentThread().vmThread.holdsLock(object);
+        return currentThread().nativeHoldsLock(object);
     }
+
+    private native boolean nativeHoldsLock(Object object);
 
     /**
      * Implemented by objects that want to handle cases where a thread is being
@@ -1123,21 +1159,7 @@ public class Thread implements Runnable {
      * @hide for Unsafe
      */
     public void unpark() {
-        VMThread vmt = vmThread;
-
-        if (vmt == null) {
-            /*
-             * vmThread is null before the thread is start()ed. In
-             * this case, we just go ahead and set the state to
-             * PREEMPTIVELY_UNPARKED. Since this happens before the
-             * thread is started, we don't have to worry about
-             * synchronizing with it.
-             */
-            parkState = ParkState.PREEMPTIVELY_UNPARKED;
-            return;
-        }
-
-        synchronized (vmt) {
+        synchronized (lock) {
             switch (parkState) {
                 case ParkState.PREEMPTIVELY_UNPARKED: {
                     /*
@@ -1154,7 +1176,7 @@ public class Thread implements Runnable {
                 }
                 default /*parked*/: {
                     parkState = ParkState.UNPARKED;
-                    vmt.notifyAll();
+                    lock.notifyAll();
                     break;
                 }
             }
@@ -1183,14 +1205,7 @@ public class Thread implements Runnable {
      * @hide for Unsafe
      */
     public void parkFor(long nanos) {
-        VMThread vmt = vmThread;
-
-        if (vmt == null) {
-            // Running threads should always have an associated vmThread.
-            throw new AssertionError();
-        }
-
-        synchronized (vmt) {
+        synchronized (lock) {
             switch (parkState) {
                 case ParkState.PREEMPTIVELY_UNPARKED: {
                     parkState = ParkState.UNPARKED;
@@ -1202,7 +1217,7 @@ public class Thread implements Runnable {
 
                     parkState = ParkState.PARKED;
                     try {
-                        vmt.wait(millis, (int) nanos);
+                        lock.wait(millis, (int) nanos);
                     } catch (InterruptedException ex) {
                         interrupt();
                     } finally {
@@ -1218,8 +1233,7 @@ public class Thread implements Runnable {
                     break;
                 }
                 default /*parked*/: {
-                    throw new AssertionError(
-                            "shouldn't happen: attempt to repark");
+                    throw new AssertionError("Attempt to repark");
                 }
             }
         }
@@ -1247,14 +1261,7 @@ public class Thread implements Runnable {
      * @hide for Unsafe
      */
     public void parkUntil(long time) {
-        VMThread vmt = vmThread;
-
-        if (vmt == null) {
-            // Running threads should always have an associated vmThread.
-            throw new AssertionError();
-        }
-
-        synchronized (vmt) {
+        synchronized (lock) {
             /*
              * Note: This conflates the two time bases of "wall clock"
              * time and "monotonic uptime" time. However, given that

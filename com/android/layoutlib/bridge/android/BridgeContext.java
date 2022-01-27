@@ -598,8 +598,7 @@ public final class BridgeContext extends Context {
 
             if (item != null) {
                 // item is a reference to a style entry. Search for it.
-                item = mRenderResources.findResValue(item.getValue(),
-                        false /*forceFrameworkOnly*/);
+                item = mRenderResources.findResValue(item.getValue(), item.isFramework());
 
                 if (item instanceof StyleResourceValue) {
                     defStyleValues = (StyleResourceValue)item;
@@ -620,39 +619,36 @@ public final class BridgeContext extends Context {
             }
 
             if (value != null) {
-                if ((value.getFirst() == ResourceType.STYLE)
-                        || (value.getFirst() == ResourceType.ATTR)) {
-                    // look for the style in the current theme, and its parent:
-                    ResourceValue item = mRenderResources.findItemInTheme(value.getSecond(),
+                if ((value.getFirst() == ResourceType.STYLE)) {
+                    // look for the style in all resources:
+                    StyleResourceValue item = mRenderResources.getStyle(value.getSecond(),
                             isFrameworkRes);
                     if (item != null) {
-                        if (item instanceof StyleResourceValue) {
-                            if (defaultPropMap != null) {
-                                defaultPropMap.put("style", item.getName());
-                            }
-
-                            defStyleValues = (StyleResourceValue)item;
+                        if (defaultPropMap != null) {
+                            defaultPropMap.put("style", item.getName());
                         }
+
+                        defStyleValues = item;
                     } else {
                         Bridge.getLog().error(null,
                                 String.format(
                                         "Style with id 0x%x (resolved to '%s') does not exist.",
                                         defStyleRes, value.getSecond()),
-                                null /*data*/);
+                                null);
                     }
                 } else {
                     Bridge.getLog().error(null,
                             String.format(
-                                    "Resouce id 0x%x is not of type STYLE (instead %s)",
+                                    "Resource id 0x%x is not of type STYLE (instead %s)",
                                     defStyleRes, value.getFirst().toString()),
-                            null /*data*/);
+                            null);
                 }
             } else {
                 Bridge.getLog().error(null,
                         String.format(
                                 "Failed to find style with id 0x%x in current theme",
                                 defStyleRes),
-                        null /*data*/);
+                        null);
             }
         }
 
@@ -971,6 +967,12 @@ public final class BridgeContext extends Context {
     }
 
     @Override
+    public Context createApplicationContext(ApplicationInfo application, int flags)
+            throws PackageManager.NameNotFoundException {
+        return null;
+    }
+
+    @Override
     public boolean deleteDatabase(String arg0) {
         // pass
         return false;
@@ -1046,6 +1048,12 @@ public final class BridgeContext extends Context {
     }
 
     @Override
+    public File getCodeCacheDir() {
+        // pass
+        return null;
+    }
+
+    @Override
     public File getExternalCacheDir() {
         // pass
         return null;
@@ -1079,6 +1087,12 @@ public final class BridgeContext extends Context {
 
     @Override
     public File getFilesDir() {
+        // pass
+        return null;
+    }
+
+    @Override
+    public File getNoBackupFilesDir() {
         // pass
         return null;
     }
@@ -1284,6 +1298,14 @@ public final class BridgeContext extends Context {
     }
 
     @Override
+    public void sendOrderedBroadcastAsUser(Intent intent, UserHandle user,
+            String receiverPermission, int appOp, BroadcastReceiver resultReceiver,
+            Handler scheduler,
+            int initialCode, String initialData, Bundle initialExtras) {
+        // pass
+    }
+
+    @Override
     public void sendStickyBroadcast(Intent arg0) {
         // pass
 
@@ -1455,6 +1477,12 @@ public final class BridgeContext extends Context {
 
     @Override
     public File[] getExternalCacheDirs() {
+        // pass
+        return new File[0];
+    }
+
+    @Override
+    public File[] getExternalMediaDirs() {
         // pass
         return new File[0];
     }

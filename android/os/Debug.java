@@ -26,7 +26,6 @@ import java.io.FileNotFoundException;
 import java.io.FileOutputStream;
 import java.io.FileReader;
 import java.io.IOException;
-import java.io.OutputStreamWriter;
 import java.io.PrintWriter;
 import java.io.Reader;
 import java.lang.reflect.Field;
@@ -41,7 +40,6 @@ import org.apache.harmony.dalvik.ddmc.ChunkHandler;
 import org.apache.harmony.dalvik.ddmc.DdmServer;
 
 import dalvik.bytecode.OpcodeInfo;
-import dalvik.bytecode.Opcodes;
 import dalvik.system.VMDebug;
 
 
@@ -627,8 +625,9 @@ href="{@docRoot}guide/developing/tools/traceview.html">Traceview: A Graphical Lo
      * in relative terms (e.g. was run #1 faster than run #2).  The times
      * for native methods will not change, so don't try to use this to
      * compare the performance of interpreted and native implementations of the
-     * same method.  As an alternative, consider using "native" tracing in the emulator via
-     * {@link #startNativeTracing()}.
+     * same method.  As an alternative, consider using sampling-based method
+     * tracing via {@link #startMethodTracingSampling(String, int, int)} or
+     * "native" tracing in the emulator via {@link #startNativeTracing()}.
      * </p>
      *
      * @param traceName    Name for the trace log file to create.
@@ -656,7 +655,6 @@ href="{@docRoot}guide/developing/tools/traceview.html">Traceview: A Graphical Lo
      * If the trace file given does not end in ".trace", it will be appended for you.
      * @param bufferSize    The maximum amount of trace data we gather. If not given, it defaults to 8MB.
      * @param intervalUs    The amount of time between each sample in microseconds.
-     * @hide
      */
     public static void startMethodTracingSampling(String traceName,
         int bufferSize, int intervalUs) {

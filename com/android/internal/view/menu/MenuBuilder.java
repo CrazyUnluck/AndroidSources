@@ -212,8 +212,21 @@ public class MenuBuilder implements Menu {
      * @param presenter The presenter to add
      */
     public void addMenuPresenter(MenuPresenter presenter) {
+        addMenuPresenter(presenter, mContext);
+    }
+
+    /**
+     * Add a presenter to this menu that uses an alternate context for
+     * inflating menu items. This will only hold a WeakReference; you do not
+     * need to explicitly remove a presenter, but you can using
+     * {@link #removeMenuPresenter(MenuPresenter)}.
+     *
+     * @param presenter The presenter to add
+     * @param menuContext The context used to inflate menu items
+     */
+    public void addMenuPresenter(MenuPresenter presenter, Context menuContext) {
         mPresenters.add(new WeakReference<MenuPresenter>(presenter));
-        presenter.initForMenu(mContext, this);
+        presenter.initForMenu(menuContext, this);
         mIsActionItemsStale = true;
     }
 
@@ -926,7 +939,7 @@ public class MenuBuilder implements Menu {
      *            sub menu is about to be shown, <var>allMenusAreClosing</var>
      *            is false.
      */
-    final void close(boolean allMenusAreClosing) {
+    public final void close(boolean allMenusAreClosing) {
         if (mIsClosing) return;
 
         mIsClosing = true;
@@ -953,7 +966,7 @@ public class MenuBuilder implements Menu {
      *                         false if only item properties changed.
      *                         (Visibility is a structural property since it affects layout.)
      */
-    void onItemsChanged(boolean structureChanged) {
+    public void onItemsChanged(boolean structureChanged) {
         if (!mPreventDispatchingItemsChanged) {
             if (structureChanged) {
                 mIsVisibleItemsStale = true;
@@ -1007,7 +1020,7 @@ public class MenuBuilder implements Menu {
         onItemsChanged(true);
     }
     
-    ArrayList<MenuItemImpl> getVisibleItems() {
+    public ArrayList<MenuItemImpl> getVisibleItems() {
         if (!mIsVisibleItemsStale) return mVisibleItems;
         
         // Refresh the visible items
@@ -1092,12 +1105,12 @@ public class MenuBuilder implements Menu {
         mIsActionItemsStale = false;
     }
     
-    ArrayList<MenuItemImpl> getActionItems() {
+    public ArrayList<MenuItemImpl> getActionItems() {
         flagActionItems();
         return mActionItems;
     }
     
-    ArrayList<MenuItemImpl> getNonActionItems() {
+    public ArrayList<MenuItemImpl> getNonActionItems() {
         flagActionItems();
         return mNonActionItems;
     }
@@ -1128,7 +1141,7 @@ public class MenuBuilder implements Menu {
             }
             
             if (iconRes > 0) {
-                mHeaderIcon = r.getDrawable(iconRes);
+                mHeaderIcon = getContext().getDrawable(iconRes);
             } else if (icon != null) {
                 mHeaderIcon = icon;
             }

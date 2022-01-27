@@ -289,7 +289,6 @@ public class Region_Delegate {
         dstRegion.mArea.reset();
         dstRegion.mArea.add(srcRegion.mArea);
 
-        return;
     }
 
     @LayoutlibDelegate

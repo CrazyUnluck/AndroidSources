@@ -17,12 +17,17 @@
 
 package java.nio;
 
+import android.system.ErrnoException;
+import android.system.StructFlock;
+import android.util.MutableLong;
 import java.io.Closeable;
 import java.io.FileDescriptor;
 import java.io.IOException;
+import java.nio.channels.ClosedByInterruptException;
 import java.nio.channels.ClosedChannelException;
 import java.nio.channels.FileChannel;
 import java.nio.channels.FileLock;
+import java.nio.channels.FileLockInterruptionException;
 import java.nio.channels.NonReadableChannelException;
 import java.nio.channels.NonWritableChannelException;
 import java.nio.channels.OverlappingFileLockException;
@@ -32,11 +37,8 @@ import java.util.Arrays;
 import java.util.Comparator;
 import java.util.SortedSet;
 import java.util.TreeSet;
-import libcore.io.ErrnoException;
 import libcore.io.Libcore;
-import libcore.io.StructFlock;
-import libcore.util.MutableLong;
-import static libcore.io.OsConstants.*;
+import static android.system.OsConstants.*;
 
 /**
  * Our concrete implementation of the abstract FileChannel class.
@@ -50,7 +52,7 @@ final class FileChannelImpl extends FileChannel {
         }
     };
 
-    private final Object stream;
+    private final Closeable ioObject;
     private final FileDescriptor fd;
     private final int mode;
 
@@ -61,9 +63,9 @@ final class FileChannelImpl extends FileChannel {
      * Create a new file channel implementation class that wraps the given
      * fd and operates in the specified mode.
      */
-    public FileChannelImpl(Object stream, FileDescriptor fd, int mode) {
+    public FileChannelImpl(Closeable ioObject, FileDescriptor fd, int mode) {
         this.fd = fd;
-        this.stream = stream;
+        this.ioObject = ioObject;
         this.mode = mode;
     }
 
@@ -86,9 +88,7 @@ final class FileChannelImpl extends FileChannel {
     }
 
     protected void implCloseChannel() throws IOException {
-        if (stream instanceof Closeable) {
-            ((Closeable) stream).close();
-        }
+        ioObject.close();
     }
 
     private FileLock basicLock(long position, long size, boolean shared, boolean wait) throws IOException {
@@ -166,7 +166,11 @@ final class FileChannelImpl extends FileChannel {
                 resultLock = basicLock(position, size, shared, true);
                 completed = true;
             } finally {
-                end(completed);
+                try {
+                    end(completed);
+                } catch (ClosedByInterruptException e) {
+                    throw new FileLockInterruptionException();
+                }
             }
         }
         return resultLock;

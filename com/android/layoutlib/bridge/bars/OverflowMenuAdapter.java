@@ -17,7 +17,6 @@
 package com.android.layoutlib.bridge.bars;
 
 import com.android.internal.view.menu.MenuBuilder;
-import com.android.internal.view.menu.MenuBuilderAccessor;
 import com.android.internal.view.menu.MenuItemImpl;
 import com.android.internal.view.menu.MenuView;
 
@@ -47,7 +46,7 @@ public class OverflowMenuAdapter extends BaseAdapter {
 
     @Override
     public int getCount() {
-        ArrayList<MenuItemImpl> items = MenuBuilderAccessor.getNonActionItems(mMenu);
+        ArrayList<MenuItemImpl> items = mMenu.getNonActionItems();
         if (mExpandedIndex < 0) {
             return items.size();
         }
@@ -56,7 +55,7 @@ public class OverflowMenuAdapter extends BaseAdapter {
 
     @Override
     public MenuItemImpl getItem(int position) {
-        ArrayList<MenuItemImpl> items = MenuBuilderAccessor.getNonActionItems(mMenu);
+        ArrayList<MenuItemImpl> items = mMenu.getNonActionItems();
         if (mExpandedIndex >= 0 && position >= mExpandedIndex) {
             position++;
         }
@@ -86,7 +85,7 @@ public class OverflowMenuAdapter extends BaseAdapter {
     private void findExpandedIndex() {
         final MenuItemImpl expandedItem = mMenu.getExpandedItem();
         if (expandedItem != null) {
-            final ArrayList<MenuItemImpl> items = MenuBuilderAccessor.getNonActionItems(mMenu);
+            final ArrayList<MenuItemImpl> items = mMenu.getNonActionItems();
             final int count = items.size();
             for (int i = 0; i < count; i++) {
                 final MenuItemImpl item = items.get(i);

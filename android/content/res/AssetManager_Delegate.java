@@ -28,21 +28,18 @@ import com.android.tools.layoutlib.annotations.LayoutlibDelegate;
 public class AssetManager_Delegate {
 
     @LayoutlibDelegate
-    /*package*/ static int newTheme(AssetManager manager) {
-        return (int) Resources_Theme_Delegate.getDelegateManager()
+    /*package*/ static long newTheme(AssetManager manager) {
+        return Resources_Theme_Delegate.getDelegateManager()
                 .addNewDelegate(new Resources_Theme_Delegate());
     }
 
     @LayoutlibDelegate
-    /*package*/ static void deleteTheme(AssetManager manager, int theme) {
+    /*package*/ static void deleteTheme(AssetManager manager, long theme) {
         Resources_Theme_Delegate.getDelegateManager().removeJavaReferenceFor(theme);
     }
 
     @LayoutlibDelegate
-    /*package*/ static void applyThemeStyle(int theme, int styleRes, boolean force) {
-        Resources_Theme_Delegate delegate = Resources_Theme_Delegate.getDelegateManager()
-                .getDelegate(theme);
-        delegate.mThemeResId = styleRes;
-        delegate.force = force;
+    /*package*/ static void applyThemeStyle(long theme, int styleRes, boolean force) {
+        Resources_Theme_Delegate.getDelegateManager().getDelegate(theme).force = force;
     }
 }

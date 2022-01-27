@@ -14,108 +14,111 @@
 package android.support.v17.leanback.app;
 
 import android.support.v17.leanback.R;
+import android.support.v17.leanback.transition.TransitionHelper;
+import android.support.v17.leanback.widget.OnItemViewClickedListener;
+import android.support.v17.leanback.widget.OnItemViewSelectedListener;
+import android.support.v17.leanback.widget.Presenter;
+import android.support.v17.leanback.widget.Row;
+import android.support.v17.leanback.widget.RowPresenter;
+import android.support.v17.leanback.widget.TitleView;
 import android.support.v17.leanback.widget.VerticalGridPresenter;
 import android.support.v17.leanback.widget.ObjectAdapter;
 import android.support.v17.leanback.widget.OnItemClickedListener;
 import android.support.v17.leanback.widget.OnItemSelectedListener;
-import android.support.v17.leanback.widget.Presenter;
-import android.support.v17.leanback.widget.PresenterSelector;
-import android.support.v17.leanback.widget.RowPresenter;
 import android.support.v17.leanback.widget.SearchOrbView;
-import android.support.v17.leanback.widget.VerticalGridView;
-import android.util.Log;
 import android.app.Fragment;
 import android.graphics.drawable.Drawable;
 import android.os.Bundle;
+import android.util.Log;
 import android.view.LayoutInflater;
 import android.view.View;
 import android.view.ViewGroup;
+import android.view.ViewGroup.MarginLayoutParams;
 import android.widget.ImageView;
 import android.widget.TextView;
 
 /**
- * Leanback fragment for a vertical grid.
+ * A fragment for creating leanback vertical grids.
  *
- * Renders a vertical grid of objects given a {@link VerticalGridPresenter} and
+ * <p>Renders a vertical grid of objects given a {@link VerticalGridPresenter} and
  * an {@link ObjectAdapter}.
  */
 public class VerticalGridFragment extends Fragment {
     private static final String TAG = "VerticalGridFragment";
     private static boolean DEBUG = false;
 
-    private Params mParams;
+    private BrowseFrameLayout mBrowseFrame;
+    private String mTitle;
+    private Drawable mBadgeDrawable;
     private ObjectAdapter mAdapter;
     private VerticalGridPresenter mGridPresenter;
     private VerticalGridPresenter.ViewHolder mGridViewHolder;
     private OnItemSelectedListener mOnItemSelectedListener;
     private OnItemClickedListener mOnItemClickedListener;
+    private OnItemViewSelectedListener mOnItemViewSelectedListener;
+    private OnItemViewClickedListener mOnItemViewClickedListener;
     private View.OnClickListener mExternalOnSearchClickedListener;
     private int mSelectedPosition = -1;
 
-    private ImageView mBadgeView;
-    private TextView mTitleView;
-    private ViewGroup mBrowseTitle;
-    private SearchOrbView mSearchOrbView;
+    private TitleView mTitleView;
+    private SearchOrbView.Colors mSearchAffordanceColors;
+    private boolean mSearchAffordanceColorSet;
+    private boolean mShowingTitle = true;
 
-    public static class Params {
-        private String mTitle;
-        private Drawable mBadgeDrawable;
+    // transition related
+    private static TransitionHelper sTransitionHelper = TransitionHelper.getInstance();
+    private Object mTitleUpTransition;
+    private Object mTitleDownTransition;
+    private Object mSceneWithTitle;
+    private Object mSceneWithoutTitle;
 
-        /**
-         * Sets the badge image.
-         */
-        public void setBadgeImage(Drawable drawable) {
+    /**
+     * Sets the badge drawable displayed in the title area.
+     */
+    public void setBadgeDrawable(Drawable drawable) {
+        if (drawable != mBadgeDrawable) {
             mBadgeDrawable = drawable;
-        }
-
-        /**
-         * Returns the badge image.
-         */
-        public Drawable getBadgeImage() {
-            return mBadgeDrawable;
-        }
-
-        /**
-         * Sets a title for the browse fragment.
-         */
-        public void setTitle(String title) {
-            mTitle = title;
-        }
-
-        /**
-         * Returns the title for the browse fragment.
-         */
-        public String getTitle() {
-            return mTitle;
+            if (mTitleView != null) {
+                mTitleView.setBadgeDrawable(drawable);
+            }
         }
     }
 
     /**
-     * Set fragment parameters.
+     * Returns the badge drawable.
      */
-    public void setParams(Params params) {
-        mParams = params;
-        setBadgeDrawable(mParams.mBadgeDrawable);
-        setTitle(mParams.mTitle);
+    public Drawable getBadgeDrawable() {
+        return mBadgeDrawable;
     }
 
     /**
-     * Returns fragment parameters.
+     * Sets a title for the fragment.
      */
-    public Params getParams() {
-        return mParams;
+    public void setTitle(String title) {
+        mTitle = title;
+        if (mTitleView != null) {
+            mTitleView.setTitle(mTitle);
+        }
     }
 
     /**
-     * Set the grid presenter.
+     * Returns the title for the fragment.
+     */
+    public String getTitle() {
+        return mTitle;
+    }
+
+    /**
+     * Sets the grid presenter.
      */
     public void setGridPresenter(VerticalGridPresenter gridPresenter) {
         if (gridPresenter == null) {
             throw new IllegalArgumentException("Grid presenter may not be null");
         }
         mGridPresenter = gridPresenter;
-        if (mOnItemSelectedListener != null) {
-            mGridPresenter.setOnItemSelectedListener(mOnItemSelectedListener);
+        mGridPresenter.setOnItemViewSelectedListener(mRowSelectedListener);
+        if (mOnItemViewClickedListener != null) {
+            mGridPresenter.setOnItemViewClickedListener(mOnItemViewClickedListener);
         }
         if (mOnItemClickedListener != null) {
             mGridPresenter.setOnItemClickedListener(mOnItemClickedListener);
@@ -144,20 +147,58 @@ public class VerticalGridFragment extends Fragment {
         return mAdapter;
     }
 
+    final private OnItemViewSelectedListener mRowSelectedListener =
+            new OnItemViewSelectedListener() {
+        @Override
+        public void onItemSelected(Presenter.ViewHolder itemViewHolder, Object item,
+                RowPresenter.ViewHolder rowViewHolder, Row row) {
+            int position = mGridViewHolder.getGridView().getSelectedPosition();
+            if (DEBUG) Log.v(TAG, "row selected position " + position);
+            onRowSelected(position);
+            if (mOnItemSelectedListener != null) {
+                mOnItemSelectedListener.onItemSelected(item, row);
+            }
+            if (mOnItemViewSelectedListener != null) {
+                mOnItemViewSelectedListener.onItemSelected(itemViewHolder, item,
+                        rowViewHolder, row);
+            }
+        }
+    };
+
     /**
      * Sets an item selection listener.
+     * @deprecated Use {@link #setOnItemViewSelectedListener(OnItemViewSelectedListener)}
      */
     public void setOnItemSelectedListener(OnItemSelectedListener listener) {
         mOnItemSelectedListener = listener;
-        if (mGridPresenter != null) {
-            mGridPresenter.setOnItemSelectedListener(mOnItemSelectedListener);
+    }
+
+    /**
+     * Sets an item selection listener.
+     */
+    public void setOnItemViewSelectedListener(OnItemViewSelectedListener listener) {
+        mOnItemViewSelectedListener = listener;
+    }
+
+    private void onRowSelected(int position) {
+        if (position != mSelectedPosition) {
+            if (!mGridViewHolder.getGridView().hasPreviousViewInSameRow(position)) {
+                // if has no sibling in front of it,  show title
+                if (!mShowingTitle) {
+                    sTransitionHelper.runTransition(mSceneWithTitle, mTitleDownTransition);
+                    mShowingTitle = true;
+                }
+            } else if (mShowingTitle) {
+                sTransitionHelper.runTransition(mSceneWithoutTitle, mTitleUpTransition);
+                mShowingTitle = false;
+            }
+            mSelectedPosition = position;
         }
     }
 
-    // TODO: getitemselectedlistener?
-
     /**
      * Sets an item clicked listener.
+     * @deprecated Use {@link #setOnItemViewClickedListener(OnItemViewClickedListener)}
      */
     public void setOnItemClickedListener(OnItemClickedListener listener) {
         mOnItemClickedListener = listener;
@@ -168,63 +209,146 @@ public class VerticalGridFragment extends Fragment {
 
     /**
      * Returns the item clicked listener.
+     * @deprecated Use {@link #getOnItemViewClickedListener()}
      */
     public OnItemClickedListener getOnItemClickedListener() {
         return mOnItemClickedListener;
     }
 
     /**
+     * Sets an item clicked listener.
+     */
+    public void setOnItemViewClickedListener(OnItemViewClickedListener listener) {
+        mOnItemViewClickedListener = listener;
+        if (mGridPresenter != null) {
+            mGridPresenter.setOnItemViewClickedListener(mOnItemViewClickedListener);
+        }
+    }
+
+    /**
+     * Returns the item clicked listener.
+     */
+    public OnItemViewClickedListener getOnItemViewClickedListener() {
+        return mOnItemViewClickedListener;
+    }
+
+    /**
      * Sets a click listener for the search affordance.
      *
-     * The presence of a listener will change the visibility of the search affordance in the
-     * title area. When set to non-null the title area will contain a call to search action.
+     * <p>The presence of a listener will change the visibility of the search
+     * affordance in the title area. When set to non-null, the title area will
+     * contain a call to search action.
      *
-     * The listener onClick method will be invoked when the user click on the search action.
+     * <p>The listener's onClick method will be invoked when the user clicks on
+     * the search action.
      *
-     * @param listener The listener.
+     * @param listener The listener to invoke when the search affordance is
+     *        clicked, or null to hide the search affordance.
      */
     public void setOnSearchClickedListener(View.OnClickListener listener) {
         mExternalOnSearchClickedListener = listener;
-        if (mSearchOrbView != null) {
-            mSearchOrbView.setOnOrbClickedListener(listener);
-        }
-    }
-
-    private void setBadgeDrawable(Drawable drawable) {
-        if (mBadgeView == null) {
-            return;
-        }
-        mBadgeView.setImageDrawable(drawable);
-        if (drawable != null) {
-            mBadgeView.setVisibility(View.VISIBLE);
-        } else {
-            mBadgeView.setVisibility(View.GONE);
-        }
-    }
-
-    private void setTitle(String title) {
         if (mTitleView != null) {
-            mTitleView.setText(title);
+            mTitleView.setOnSearchClickedListener(listener);
         }
     }
+
+    /**
+     * Sets the {@link SearchOrbView.Colors} used to draw the search affordance.
+     */
+    public void setSearchAffordanceColors(SearchOrbView.Colors colors) {
+        mSearchAffordanceColors = colors;
+        mSearchAffordanceColorSet = true;
+        if (mTitleView != null) {
+            mTitleView.setSearchAffordanceColors(mSearchAffordanceColors);
+        }
+    }
+
+    /**
+     * Returns the {@link SearchOrbView.Colors} used to draw the search affordance.
+     */
+    public SearchOrbView.Colors getSearchAffordanceColors() {
+        if (mSearchAffordanceColorSet) {
+            return mSearchAffordanceColors;
+        }
+        if (mTitleView == null) {
+            throw new IllegalStateException("Fragment views not yet created");
+        }
+        return mTitleView.getSearchAffordanceColors();
+    }
+
+    /**
+     * Sets the color used to draw the search affordance.
+     * A default brighter color will be set by the framework.
+     *
+     * @param color The color to use for the search affordance.
+     */
+    public void setSearchAffordanceColor(int color) {
+        setSearchAffordanceColors(new SearchOrbView.Colors(color));
+    }
+
+    /**
+     * Returns the color used to draw the search affordance.
+     */
+    public int getSearchAffordanceColor() {
+        return getSearchAffordanceColors().color;
+    }
+
+    private final BrowseFrameLayout.OnFocusSearchListener mOnFocusSearchListener =
+            new BrowseFrameLayout.OnFocusSearchListener() {
+        @Override
+        public View onFocusSearch(View focused, int direction) {
+            if (DEBUG) Log.v(TAG, "onFocusSearch focused " + focused + " + direction " + direction);
+
+            final View searchOrbView = mTitleView.getSearchAffordanceView();
+            if (focused == searchOrbView && (
+                    direction == View.FOCUS_DOWN || direction == View.FOCUS_RIGHT)) {
+                return mGridViewHolder.view;
+
+            } else if (focused != searchOrbView && searchOrbView.getVisibility() == View.VISIBLE
+                    && direction == View.FOCUS_UP) {
+                return searchOrbView;
+
+            } else {
+                return null;
+            }
+        }
+    };
 
     @Override
     public View onCreateView(LayoutInflater inflater, ViewGroup container,
             Bundle savedInstanceState) {
-        View root = inflater.inflate(R.layout.lb_vertical_grid_fragment, container, false);
+        ViewGroup root = (ViewGroup) inflater.inflate(R.layout.lb_vertical_grid_fragment,
+                container, false);
 
-        mBrowseTitle = (ViewGroup) root.findViewById(R.id.browse_title_group);
-        mBadgeView = (ImageView) mBrowseTitle.findViewById(R.id.browse_badge);
-        mTitleView = (TextView) mBrowseTitle.findViewById(R.id.browse_title);
-        mSearchOrbView = (SearchOrbView) mBrowseTitle.findViewById(R.id.browse_orb);
+        mBrowseFrame = (BrowseFrameLayout) root.findViewById(R.id.browse_frame);
+        mBrowseFrame.setOnFocusSearchListener(mOnFocusSearchListener);
+
+        mTitleView = (TitleView) root.findViewById(R.id.browse_title_group);
+        mTitleView.setBadgeDrawable(mBadgeDrawable);
+        mTitleView.setTitle(mTitle);
+        if (mSearchAffordanceColorSet) {
+            mTitleView.setSearchAffordanceColors(mSearchAffordanceColors);
+        }
         if (mExternalOnSearchClickedListener != null) {
-            mSearchOrbView.setOnOrbClickedListener(mExternalOnSearchClickedListener);
+            mTitleView.setOnSearchClickedListener(mExternalOnSearchClickedListener);
         }
 
-        if (mParams != null) {
-            setBadgeDrawable(mParams.mBadgeDrawable);
-            setTitle(mParams.mTitle);
-        }
+        mSceneWithTitle = sTransitionHelper.createScene(root, new Runnable() {
+            @Override
+            public void run() {
+                mTitleView.setVisibility(View.VISIBLE);
+            }
+        });
+        mSceneWithoutTitle = sTransitionHelper.createScene(root, new Runnable() {
+            @Override
+            public void run() {
+                mTitleView.setVisibility(View.INVISIBLE);
+            }
+        });
+        mTitleUpTransition = TitleTransitionHelper.createTransitionTitleUp(sTransitionHelper);
+        mTitleDownTransition = TitleTransitionHelper.createTransitionTitleDown(sTransitionHelper);
+        sTransitionHelper.excludeChildren(mTitleUpTransition, R.id.browse_grid_dock, true);
+        sTransitionHelper.excludeChildren(mTitleDownTransition, R.id.browse_grid_dock, true);
 
         return root;
     }

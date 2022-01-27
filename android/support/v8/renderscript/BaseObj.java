@@ -17,6 +17,7 @@
 package android.support.v8.renderscript;
 
 import android.util.Log;
+import java.util.concurrent.locks.ReentrantReadWriteLock;
 
 /**
  * BaseObj is the base class for all RenderScript objects owned by a RS context.
@@ -50,12 +51,6 @@ public class BaseObj {
      */
     int getID(RenderScript rs) {
         mRS.validate();
-        if (rs.isNative) {
-            RenderScriptThunker rst = (RenderScriptThunker)rs;
-            if (getNObj() != null) {
-                return getNObj().hashCode();
-            }
-        }
         if (mDestroyed) {
             throw new RSInvalidStateException("using a destroyed object.");
         }
@@ -82,17 +77,31 @@ public class BaseObj {
     private boolean mDestroyed;
     RenderScript mRS;
 
-    protected void finalize() throws Throwable {
-        if (!mDestroyed) {
-            if(mID != 0 && mRS.isAlive()) {
+    private void helpDestroy() {
+        boolean shouldDestroy = false;
+        synchronized(this) {
+            if (!mDestroyed) {
+                shouldDestroy = true;
+                mDestroyed = true;
+            }
+        }
+
+        if (shouldDestroy) {
+            // must include nObjDestroy in the critical section
+            ReentrantReadWriteLock.ReadLock rlock = mRS.mRWLock.readLock();
+            rlock.lock();
+            if(mRS.isAlive()) {
                 mRS.nObjDestroy(mID);
             }
+            rlock.unlock();
             mRS = null;
             mID = 0;
-            mDestroyed = true;
-            //Log.v(RenderScript.LOG_TAG, getClass() +
-            // " auto finalizing object without having released the RS reference.");
         }
+    }
+
+
+    protected void finalize() throws Throwable {
+        helpDestroy();
         super.finalize();
     }
 
@@ -101,12 +110,11 @@ public class BaseObj {
      * primary use is to force immediate cleanup of resources when it is
      * believed the GC will not respond quickly enough.
      */
-    synchronized public void destroy() {
+    public void destroy() {
         if(mDestroyed) {
             throw new RSInvalidStateException("Object already destroyed.");
         }
-        mDestroyed = true;
-        mRS.nObjDestroy(mID);
+        helpDestroy();
     }
 
     /**
@@ -132,8 +140,16 @@ public class BaseObj {
         if (this == obj)
             return true;
 
+        if (obj == null) {
+            return false;
+        }
+
         if (getClass() != obj.getClass()) {
             return false;
+        }
+
+        if (mRS.isNative) {
+            return ((RenderScriptThunker)mRS).equals((Object)this, obj);
         }
 
         BaseObj b = (BaseObj) obj;

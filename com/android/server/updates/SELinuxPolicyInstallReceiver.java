@@ -18,10 +18,10 @@ package com.android.server.updates;
 
 import android.content.Context;
 import android.content.Intent;
-import android.os.FileUtils;
-import android.os.SELinux;
 import android.os.SystemProperties;
 import android.provider.Settings;
+import android.system.ErrnoException;
+import android.system.Os;
 import android.util.Base64;
 import android.util.Slog;
 
@@ -30,9 +30,7 @@ import java.io.File;
 import java.io.FileInputStream;
 import java.io.IOException;
 
-import libcore.io.ErrnoException;
 import libcore.io.IoUtils;
-import libcore.io.Libcore;
 
 public class SELinuxPolicyInstallReceiver extends ConfigUpdateInstallReceiver {
 
@@ -42,12 +40,21 @@ public class SELinuxPolicyInstallReceiver extends ConfigUpdateInstallReceiver {
     private static final String fileContextsPath = "file_contexts";
     private static final String propertyContextsPath = "property_contexts";
     private static final String seappContextsPath = "seapp_contexts";
+    private static final String versionPath = "selinux_version";
+    private static final String macPermissionsPath = "mac_permissions.xml";
+    private static final String serviceContextsPath = "service_contexts";
 
     public SELinuxPolicyInstallReceiver() {
         super("/data/security/bundle", "sepolicy_bundle", "metadata/", "version");
     }
 
     private void backupContexts(File contexts) {
+        new File(contexts, versionPath).renameTo(
+                new File(contexts, versionPath + "_backup"));
+
+        new File(contexts, macPermissionsPath).renameTo(
+                new File(contexts, macPermissionsPath + "_backup"));
+
         new File(contexts, seappContextsPath).renameTo(
                 new File(contexts, seappContextsPath + "_backup"));
 
@@ -59,13 +66,19 @@ public class SELinuxPolicyInstallReceiver extends ConfigUpdateInstallReceiver {
 
         new File(contexts, sepolicyPath).renameTo(
                 new File(contexts, sepolicyPath + "_backup"));
+
+        new File(contexts, serviceContextsPath).renameTo(
+                new File(contexts, serviceContextsPath + "_backup"));
     }
 
     private void copyUpdate(File contexts) {
+        new File(updateDir, versionPath).renameTo(new File(contexts, versionPath));
+        new File(updateDir, macPermissionsPath).renameTo(new File(contexts, macPermissionsPath));
         new File(updateDir, seappContextsPath).renameTo(new File(contexts, seappContextsPath));
         new File(updateDir, propertyContextsPath).renameTo(new File(contexts, propertyContextsPath));
         new File(updateDir, fileContextsPath).renameTo(new File(contexts, fileContextsPath));
         new File(updateDir, sepolicyPath).renameTo(new File(contexts, sepolicyPath));
+        new File(updateDir, serviceContextsPath).renameTo(new File(contexts, serviceContextsPath));
     }
 
     private int readInt(BufferedInputStream reader) throws IOException {
@@ -77,11 +90,14 @@ public class SELinuxPolicyInstallReceiver extends ConfigUpdateInstallReceiver {
     }
 
     private int[] readChunkLengths(BufferedInputStream bundle) throws IOException {
-        int[] chunks = new int[4];
+        int[] chunks = new int[7];
         chunks[0] = readInt(bundle);
         chunks[1] = readInt(bundle);
         chunks[2] = readInt(bundle);
         chunks[3] = readInt(bundle);
+        chunks[4] = readInt(bundle);
+        chunks[5] = readInt(bundle);
+        chunks[6] = readInt(bundle);
         return chunks;
     }
 
@@ -96,10 +112,13 @@ public class SELinuxPolicyInstallReceiver extends ConfigUpdateInstallReceiver {
         BufferedInputStream stream = new BufferedInputStream(new FileInputStream(updateContent));
         try {
             int[] chunkLengths = readChunkLengths(stream);
-            installFile(new File(updateDir, seappContextsPath), stream, chunkLengths[0]);
-            installFile(new File(updateDir, propertyContextsPath), stream, chunkLengths[1]);
-            installFile(new File(updateDir, fileContextsPath), stream, chunkLengths[2]);
-            installFile(new File(updateDir, sepolicyPath), stream, chunkLengths[3]);
+            installFile(new File(updateDir, versionPath), stream, chunkLengths[0]);
+            installFile(new File(updateDir, macPermissionsPath), stream, chunkLengths[1]);
+            installFile(new File(updateDir, seappContextsPath), stream, chunkLengths[2]);
+            installFile(new File(updateDir, propertyContextsPath), stream, chunkLengths[3]);
+            installFile(new File(updateDir, fileContextsPath), stream, chunkLengths[4]);
+            installFile(new File(updateDir, sepolicyPath), stream, chunkLengths[5]);
+            installFile(new File(updateDir, serviceContextsPath), stream, chunkLengths[6]);
         } finally {
             IoUtils.closeQuietly(stream);
         }
@@ -112,16 +131,16 @@ public class SELinuxPolicyInstallReceiver extends ConfigUpdateInstallReceiver {
         File update = new File(updateDir.getParentFile(), "update");
         File tmp = new File(updateDir.getParentFile(), "tmp");
         if (current.exists()) {
-            Libcore.os.symlink(updateDir.getPath(), update.getPath());
-            Libcore.os.rename(update.getPath(), current.getPath());
+            Os.symlink(updateDir.getPath(), update.getPath());
+            Os.rename(update.getPath(), current.getPath());
         } else {
-            Libcore.os.symlink(updateDir.getPath(), current.getPath());
+            Os.symlink(updateDir.getPath(), current.getPath());
         }
         contexts.mkdirs();
         backupContexts(contexts);
         copyUpdate(contexts);
-        Libcore.os.symlink(contexts.getPath(), tmp.getPath());
-        Libcore.os.rename(tmp.getPath(), current.getPath());
+        Os.symlink(contexts.getPath(), tmp.getPath());
+        Os.rename(tmp.getPath(), current.getPath());
         SystemProperties.set("selinux.reload_policy", "1");
     }
 

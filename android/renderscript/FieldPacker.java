@@ -16,7 +16,6 @@
 
 package android.renderscript;
 
-import android.util.Log;
 import java.util.BitSet;
 
 /**
@@ -37,10 +36,15 @@ public class FieldPacker {
     }
 
     public FieldPacker(byte[] data) {
-        mPos = 0;
+        // Advance mPos to the end of the buffer, since we are copying in the
+        // full data input.
+        mPos = data.length;
         mLen = data.length;
         mData = data;
         mAlignment = new BitSet();
+        // TODO: We should either have an actual FieldPacker copy constructor
+        // or drop support for computing alignment like this. As it stands,
+        // subAlign() can never work correctly for copied FieldPacker objects.
     }
 
     public void align(int v) {
@@ -76,7 +80,7 @@ public class FieldPacker {
         mPos = 0;
     }
     public void reset(int i) {
-        if ((i < 0) || (i >= mLen)) {
+        if ((i < 0) || (i > mLen)) {
             throw new RSIllegalArgumentException("out of range argument: " + i);
         }
         mPos = i;
@@ -232,9 +236,24 @@ public class FieldPacker {
 
     public void addObj(BaseObj obj) {
         if (obj != null) {
-            addI32(obj.getID(null));
+            if (RenderScript.sPointerSize == 8) {
+                addI64(obj.getID(null));
+                addI64(0);
+                addI64(0);
+                addI64(0);
+            }
+            else {
+                addI32((int)obj.getID(null));
+            }
         } else {
-            addI32(0);
+            if (RenderScript.sPointerSize == 8) {
+                addI64(0);
+                addI64(0);
+                addI64(0);
+                addI64(0);
+            } else {
+                addI32(0);
+            }
         }
     }
 
@@ -589,6 +608,15 @@ public class FieldPacker {
 
     public final byte[] getData() {
         return mData;
+    }
+
+    /**
+     * Get the actual length used for the FieldPacker.
+     *
+     * @hide
+     */
+    public int getPos() {
+        return mPos;
     }
 
     private final byte mData[];

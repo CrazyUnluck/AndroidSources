@@ -390,6 +390,12 @@ public abstract class SensorManager {
      * {@link android.hardware.Sensor#TYPE_ALL Sensor.TYPE_ALL} to get all the
      * sensors.
      *
+     * <p class="note">
+     * NOTE: Both wake-up and non wake-up sensors matching the given type are
+     * returned. Check {@link Sensor#isWakeUpSensor()} to know the wake-up properties
+     * of the returned {@link Sensor}.
+     * </p>
+     *
      * @param type
      *        of sensors requested
      *
@@ -439,7 +445,55 @@ public abstract class SensorManager {
     public Sensor getDefaultSensor(int type) {
         // TODO: need to be smarter, for now, just return the 1st sensor
         List<Sensor> l = getSensorList(type);
-        return l.isEmpty() ? null : l.get(0);
+        boolean wakeUpSensor = false;
+        // For the following sensor types, return a wake-up sensor. These types are by default
+        // defined as wake-up sensors. For the rest of the SDK defined sensor types return a
+        // non_wake-up version.
+        if (type == Sensor.TYPE_PROXIMITY || type == Sensor.TYPE_SIGNIFICANT_MOTION ||
+                type == Sensor.TYPE_TILT_DETECTOR || type == Sensor.TYPE_WAKE_GESTURE ||
+                type == Sensor.TYPE_GLANCE_GESTURE || type == Sensor.TYPE_PICK_UP_GESTURE) {
+            wakeUpSensor = true;
+        }
+
+        for (Sensor sensor : l) {
+            if (sensor.isWakeUpSensor() == wakeUpSensor) return sensor;
+        }
+        return null;
+    }
+
+    /**
+     * Return a Sensor with the given type and wakeUp properties. If multiple sensors of this
+     * type exist, any one of them may be returned.
+     * <p>
+     * For example,
+     * <ul>
+     *     <li>getDefaultSensor({@link Sensor#TYPE_ACCELEROMETER}, true) returns a wake-up accelerometer
+     *     sensor if it exists. </li>
+     *     <li>getDefaultSensor({@link Sensor#TYPE_PROXIMITY}, false) returns a non wake-up proximity
+     *     sensor if it exists. </li>
+     *     <li>getDefaultSensor({@link Sensor#TYPE_PROXIMITY}, true) returns a wake-up proximity sensor
+     *     which is the same as the Sensor returned by {@link #getDefaultSensor(int)}. </li>
+     * </ul>
+     * </p>
+     * <p class="note">
+     * Note: Sensors like {@link Sensor#TYPE_PROXIMITY} and {@link Sensor#TYPE_SIGNIFICANT_MOTION}
+     * are declared as wake-up sensors by default.
+     * </p>
+     * @param type
+     *        type of sensor requested
+     * @param wakeUp
+     *        flag to indicate whether the Sensor is a wake-up or non wake-up sensor.
+     * @return the default sensor matching the requested type and wakeUp properties if one exists
+     *         and the application has the necessary permissions, or null otherwise.
+     * @see Sensor#isWakeUpSensor()
+     */
+    public Sensor getDefaultSensor(int type, boolean wakeUp) {
+        List<Sensor> l = getSensorList(type);
+        for (Sensor sensor : l) {
+            if (sensor.isWakeUpSensor() == wakeUp)
+                return sensor;
+        }
+        return null;
     }
 
     /**
@@ -1367,7 +1421,7 @@ public abstract class SensorManager {
         float q2 = rotationVector[1];
         float q3 = rotationVector[2];
 
-        if (rotationVector.length == 4) {
+        if (rotationVector.length >= 4) {
             q0 = rotationVector[3];
         } else {
             q0 = 1 - q1*q1 - q2*q2 - q3*q3;
@@ -1424,7 +1478,7 @@ public abstract class SensorManager {
      *  @param Q an array of floats in which to store the computed quaternion
      */
     public static void getQuaternionFromVector(float[] Q, float[] rv) {
-        if (rv.length == 4) {
+        if (rv.length >= 4) {
             Q[0] = rv[3];
         } else {
             Q[0] = 1 - rv[0]*rv[0] - rv[1]*rv[1] - rv[2]*rv[2];

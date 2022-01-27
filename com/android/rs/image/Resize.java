@@ -46,10 +46,8 @@ public class Resize extends TestBase {
         mHeight = mInPixelsAllocation.getType().getY();
         float scale = 1.f / 32.f;
 
-        Type.Builder tb = new Type.Builder(mRS, mInPixelsAllocation.getElement());
-        tb.setX((int)(mWidth * scale));
-        tb.setY((int)(mHeight * scale));
-        Type t = tb.create();
+        Type t = Type.createXY(mRS, mInPixelsAllocation.getElement(),
+                               (int)(mWidth * scale), (int)(mHeight * scale));
         mScratchAllocation = Allocation.createTyped(mRS, t);
 
         // make small buffer

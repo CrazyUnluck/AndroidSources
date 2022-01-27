@@ -33,7 +33,7 @@ public class RuleBasedCollatorTest extends TestCase {
   public void test_getCollationKeyLjava_lang_String() throws Exception {
     // Regression test for HARMONY-28
     String source = null;
-    String Simple = "< a< b< c< d";
+    String Simple = "&9 < a< b< c< d";
     RuleBasedCollator rbc = new RuleBasedCollator(Simple);
     CollationKey ck = rbc.getCollationKey(source);
     assertNull("Assert 1: getCollationKey (null) does not return null", ck);
@@ -41,13 +41,13 @@ public class RuleBasedCollatorTest extends TestCase {
 
   public void testHashCode() throws ParseException {
     {
-      String rule = "< a < b < c < d";
+      String rule = "&9 < a < b < c < d";
       RuleBasedCollator coll = new RuleBasedCollator(rule);
       assertEquals(rule.hashCode(), coll.hashCode());
     }
 
     {
-      String rule = "< a < b < c < d < e";
+      String rule = "&9 < a < b < c < d < e";
       RuleBasedCollator coll = new RuleBasedCollator(rule);
       assertEquals(rule.hashCode(), coll.hashCode());
     }
@@ -63,7 +63,7 @@ public class RuleBasedCollatorTest extends TestCase {
   }
 
   public void testEqualsObject() throws ParseException {
-    String rule = "< a < b < c < d < e";
+    String rule = "&9 < a < b < c < d < e";
     RuleBasedCollator coll = new RuleBasedCollator(rule);
 
     assertEquals(Collator.TERTIARY, coll.getStrength());
@@ -80,7 +80,7 @@ public class RuleBasedCollatorTest extends TestCase {
   }
 
   public void testCompareStringString() throws ParseException {
-    String rule = "< c < b < a";
+    String rule = "&9 < c < b < a";
     RuleBasedCollator coll = new RuleBasedCollator(rule);
     assertEquals(-1, coll.compare("c", "a"));
   }
@@ -98,14 +98,14 @@ public class RuleBasedCollatorTest extends TestCase {
   }
 
   public void testGetRules() throws ParseException {
-    String rule = "< a = b < c";
+    String rule = "&9 < a = b < c";
     RuleBasedCollator coll = new RuleBasedCollator(rule);
     assertEquals(rule, coll.getRules());
   }
 
   public void testGetCollationElementIteratorString() throws Exception {
     {
-      Locale locale = new Locale("es", "", "TRADITIONAL");
+      Locale locale = Locale.forLanguageTag("es-u-co-trad");
       RuleBasedCollator coll = (RuleBasedCollator) Collator.getInstance(locale);
       String source = "cha";
       CollationElementIterator iterator = coll.getCollationElementIterator(source);
@@ -139,7 +139,7 @@ public class RuleBasedCollatorTest extends TestCase {
     }
     //Regression for HARMONY-1352
     try {
-      new RuleBasedCollator("< a< b< c< d").getCollationElementIterator((String)null);
+      new RuleBasedCollator("&9 < a< b< c< d").getCollationElementIterator((String)null);
       fail();
     } catch (NullPointerException expected) {
     }
@@ -147,7 +147,7 @@ public class RuleBasedCollatorTest extends TestCase {
 
   public void testGetCollationElementIteratorCharacterIterator() throws Exception {
     {
-      Locale locale = new Locale("es", "", "TRADITIONAL");
+      Locale locale = Locale.forLanguageTag("es-u-co-trad");
       RuleBasedCollator coll = (RuleBasedCollator) Collator.getInstance(locale);
       String text = "cha";
       StringCharacterIterator source = new StringCharacterIterator(text);
@@ -184,7 +184,7 @@ public class RuleBasedCollatorTest extends TestCase {
     }
     //Regression for HARMONY-1352
     try {
-      new RuleBasedCollator("< a< b< c< d").getCollationElementIterator((CharacterIterator)null);
+      new RuleBasedCollator("&9 < a< b< c< d").getCollationElementIterator((CharacterIterator)null);
       fail();
     } catch (NullPointerException expected) {
     }
@@ -244,20 +244,15 @@ public class RuleBasedCollatorTest extends TestCase {
   public void testCompareNull() throws Exception {
     //Regression for HARMONY-836
     try {
-      new RuleBasedCollator("< a").compare(null, null);
+      new RuleBasedCollator("&9 < a").compare(null, null);
       fail();
     } catch (NullPointerException expected) {
     }
   }
 
-  public void testEmptyStringException() {
-    //Regression for HARMONY-241
-    try {
-      new RuleBasedCollator("");
-      fail();
-    } catch (ParseException e) {
-      assertEquals("java.text.ParseException", e.getClass().getName());
-      assertEquals(0, e.getErrorOffset());
-    }
+  public void testEmptyRules() throws Exception {
+    new RuleBasedCollator("");
+    new RuleBasedCollator(" ");
+    new RuleBasedCollator("# This is a comment.");
   }
 }

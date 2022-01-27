@@ -13,9 +13,12 @@
  */
 package android.support.v17.leanback.widget;
 
-import android.support.v17.leanback.graphics.ColorOverlayDimmer;
+import android.graphics.Paint;
+import android.support.v17.leanback.R;
+import android.view.LayoutInflater;
 import android.view.View;
 import android.view.ViewGroup;
+import android.widget.TextView;
 
 /**
  * RowHeaderPresenter provides a default implementation for header using TextView.
@@ -24,10 +27,25 @@ import android.view.ViewGroup;
  */
 public class RowHeaderPresenter extends Presenter {
 
+    private final int mLayoutResourceId;
+    private final Paint mFontMeasurePaint = new Paint(Paint.ANTI_ALIAS_FLAG);
+
+    public RowHeaderPresenter() {
+        this(R.layout.lb_row_header);
+    }
+
+    /**
+     * @hide
+     */
+    public RowHeaderPresenter(int layoutResourceId) {
+        mLayoutResourceId = layoutResourceId;
+    }
+
     public static class ViewHolder extends Presenter.ViewHolder {
         float mSelectLevel;
         int mOriginalTextColor;
-        ColorOverlayDimmer mColorDimmer;
+        float mUnselectAlpha;
+
         public ViewHolder(View view) {
             super(view);
         }
@@ -38,9 +56,13 @@ public class RowHeaderPresenter extends Presenter {
 
     @Override
     public Presenter.ViewHolder onCreateViewHolder(ViewGroup parent) {
-        RowHeaderView headerView = new RowHeaderView(parent.getContext());
+        RowHeaderView headerView = (RowHeaderView) LayoutInflater.from(parent.getContext())
+                .inflate(mLayoutResourceId, parent, false);
+
         ViewHolder viewHolder = new ViewHolder(headerView);
         viewHolder.mOriginalTextColor = headerView.getCurrentTextColor();
+        viewHolder.mUnselectAlpha = parent.getResources().getFraction(
+                R.fraction.lb_browse_header_unselect_alpha, 1, 1);
         return viewHolder;
     }
 
@@ -59,7 +81,6 @@ public class RowHeaderPresenter extends Presenter {
 
     @Override
     public void onUnbindViewHolder(Presenter.ViewHolder viewHolder) {
-        ((RowHeaderView) viewHolder.view).setText(null);
     }
 
     public final void setSelectLevel(ViewHolder holder, float selectLevel) {
@@ -68,11 +89,29 @@ public class RowHeaderPresenter extends Presenter {
     }
 
     protected void onSelectLevelChanged(ViewHolder holder) {
-        if (holder.mColorDimmer == null) {
-            holder.mColorDimmer = ColorOverlayDimmer.createDefault(holder.view.getContext());
+        holder.view.setAlpha(holder.mUnselectAlpha + holder.mSelectLevel *
+                (1f - holder.mUnselectAlpha));
+    }
+
+    /**
+     * Returns the space (distance in pixels) below the baseline of the
+     * text view, if one exists; otherwise, returns 0.
+     */
+    public int getSpaceUnderBaseline(ViewHolder holder) {
+        int space = holder.view.getPaddingBottom();
+        if (holder.view instanceof TextView) {
+            space += (int) getFontDescent((TextView) holder.view, mFontMeasurePaint);
         }
-        holder.mColorDimmer.setActiveLevel(holder.mSelectLevel);
-        final RowHeaderView headerView = (RowHeaderView) holder.view;
-        headerView.setTextColor(holder.mColorDimmer.applyToColor(holder.mOriginalTextColor));
+        return space;
+    }
+
+    protected static float getFontDescent(TextView textView, Paint fontMeasurePaint) {
+        if (fontMeasurePaint.getTextSize() != textView.getTextSize()) {
+            fontMeasurePaint.setTextSize(textView.getTextSize());
+        }
+        if (fontMeasurePaint.getTypeface() != textView.getTypeface()) {
+            fontMeasurePaint.setTypeface(textView.getTypeface());
+        }
+        return fontMeasurePaint.descent();
     }
 }

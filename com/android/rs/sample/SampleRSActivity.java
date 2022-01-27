@@ -66,7 +66,6 @@ public class SampleRSActivity extends Activity {
         }
 
         public boolean onSurfaceTextureDestroyed(SurfaceTexture surface) {
-            mOutPixelsAllocation.setSurface(null);
             return true;
         }
     }
@@ -102,11 +101,11 @@ public class SampleRSActivity extends Activity {
         mRS = RenderScript.create(this);
         mTwoByTwoAlloc = Allocation.createFromBitmap(mRS, mBitmapTwoByTwo,
                                                           Allocation.MipmapControl.MIPMAP_NONE,
-                                                          Allocation.USAGE_SCRIPT);
+                                                          Allocation.USAGE_SCRIPT | Allocation.USAGE_GRAPHICS_TEXTURE);
 
         mCityAlloc = Allocation.createFromBitmap(mRS, mBitmapCity,
                                                           Allocation.MipmapControl.MIPMAP_NONE,
-                                                          Allocation.USAGE_SCRIPT);
+                                                          Allocation.USAGE_SCRIPT | Allocation.USAGE_GRAPHICS_TEXTURE);
 
         Type.Builder b = new Type.Builder(mRS, Element.RGBA_8888(mRS));
 
@@ -139,7 +138,7 @@ public class SampleRSActivity extends Activity {
         displayView = (TextureView) findViewById(R.id.display4);
         displayView.setSurfaceTextureListener(updater);
 
-        mScript = new ScriptC_sample(mRS, getResources(), R.raw.sample);
+        mScript = new ScriptC_sample(mRS);
     }
 
     private Bitmap loadBitmap(int resource) {
@@ -157,7 +156,7 @@ public class SampleRSActivity extends Activity {
         long t = java.lang.System.currentTimeMillis();
         mScript.invoke_setSampleData(alloc, mTwoByTwoAlloc, sampler);
         mScript.forEach_root(alloc);
-        alloc.ioSendOutput();
+        alloc.ioSend();
         mRS.finish();
         t = java.lang.System.currentTimeMillis() - t;
         Log.i(TAG, "Filter time is: " + t + " ms");

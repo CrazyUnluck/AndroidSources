@@ -21,9 +21,12 @@ import junit.framework.TestResult;
 /**
  * A benign test result that does no actually test execution, just runs
  * through the motions
- *
  */
-class NoExecTestResult extends TestResult {
+class NoExecTestResult extends DelegatingTestResult {
+
+    NoExecTestResult(TestResult wrappedResult) {
+        super(wrappedResult);
+    }
 
     /**
      * Override parent to just inform listeners of test,
@@ -34,5 +37,4 @@ class NoExecTestResult extends TestResult {
         startTest(test);
         endTest(test);
     }
-
 }

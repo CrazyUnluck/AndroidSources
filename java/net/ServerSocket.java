@@ -21,6 +21,8 @@ import java.io.Closeable;
 import java.io.IOException;
 import java.nio.channels.ServerSocketChannel;
 
+import libcore.io.IoBridge;
+
 /**
  * This class represents a server-side socket that waits for incoming client
  * connections. A {@code ServerSocket} handles the requests and sends back an
@@ -48,6 +50,8 @@ public class ServerSocket implements Closeable {
     private boolean isBound;
 
     private boolean isClosed;
+
+    private InetAddress localAddress;
 
     /**
      * Constructs a new unbound {@code ServerSocket}.
@@ -99,13 +103,21 @@ public class ServerSocket implements Closeable {
             impl.create(true);
             try {
                 impl.bind(addr, port);
-                isBound = true;
+                readBackBindState();
                 impl.listen(backlog > 0 ? backlog : DEFAULT_BACKLOG);
             } catch (IOException e) {
                 close();
                 throw e;
             }
         }
+    }
+
+    /**
+     * Read the cached isBound and localAddress state from the underlying OS socket.
+     */
+    private void readBackBindState() throws SocketException {
+        localAddress = IoBridge.getSocketLocalAddress(impl.fd);
+        isBound = true;
     }
 
     /**
@@ -152,8 +164,8 @@ public class ServerSocket implements Closeable {
     }
 
     /**
-     * Gets the local IP address of this server socket or {@code null} if the
-     * socket is unbound. This is useful for multihomed hosts.
+     * Gets the local IP address of this server socket if this socket has ever been bound,
+     * {@code null} otherwise. This is useful for multihomed hosts.
      *
      * @return the local address of this server socket.
      */
@@ -161,12 +173,13 @@ public class ServerSocket implements Closeable {
         if (!isBound()) {
             return null;
         }
-        return impl.getInetAddress();
+        return localAddress;
     }
 
     /**
-     * Gets the local port of this server socket or {@code -1} if the socket is
-     * unbound.
+     * Gets the local port of this server socket or {@code -1} if the socket is not bound.
+     * If the socket has ever been bound this method will return the local port it was bound to,
+     * even after it has been closed.
      *
      * @return the local port this server is listening on.
      */
@@ -300,9 +313,12 @@ public class ServerSocket implements Closeable {
         if (isBound()) {
             throw new BindException("Socket is already bound");
         }
-        int port = 0;
-        InetAddress addr = Inet4Address.ANY;
-        if (localAddr != null) {
+        InetAddress addr;
+        int port;
+        if (localAddr == null) {
+            addr = Inet4Address.ANY;
+            port = 0;
+        } else {
             if (!(localAddr instanceof InetSocketAddress)) {
                 throw new IllegalArgumentException("Local address not an InetSocketAddress: " +
                         localAddr.getClass());
@@ -317,7 +333,7 @@ public class ServerSocket implements Closeable {
         synchronized (this) {
             try {
                 impl.bind(addr, port);
-                isBound = true;
+                readBackBindState();
                 impl.listen(backlog > 0 ? backlog : DEFAULT_BACKLOG);
             } catch (IOException e) {
                 close();
@@ -327,8 +343,9 @@ public class ServerSocket implements Closeable {
     }
 
     /**
-     * Gets the local socket address of this server socket or {@code null} if
-     * the socket is unbound. This is useful on multihomed hosts.
+     * Gets the local socket address of this server socket or {@code null} if the socket is unbound.
+     * This is useful on multihomed hosts. If the socket has ever been bound this method will return
+     * the local address it was bound to, even after it has been closed.
      *
      * @return the local socket address and port this socket is bound to.
      */
@@ -336,7 +353,7 @@ public class ServerSocket implements Closeable {
         if (!isBound()) {
             return null;
         }
-        return new InetSocketAddress(getInetAddress(), getLocalPort());
+        return new InetSocketAddress(localAddress, getLocalPort());
     }
 
     /**

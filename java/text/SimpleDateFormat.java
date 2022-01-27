@@ -740,15 +740,9 @@ public class SimpleDateFormat extends DateFormat {
             TimeZone tz = calendar.getTimeZone();
             boolean daylight = (calendar.get(Calendar.DST_OFFSET) != 0);
             int style = count < 4 ? TimeZone.SHORT : TimeZone.LONG;
-            if (!formatData.customZoneStrings) {
-                buffer.append(tz.getDisplayName(daylight, style, formatData.locale));
-                return;
-            }
-            // We can't call TimeZone.getDisplayName() because it would not use
-            // the custom DateFormatSymbols of this SimpleDateFormat.
-            String custom = TimeZoneNames.getDisplayName(formatData.zoneStrings, tz.getID(), daylight, style);
-            if (custom != null) {
-                buffer.append(custom);
+            String zoneString = formatData.getTimeZoneDisplayName(tz, daylight, style);
+            if (zoneString != null) {
+                buffer.append(zoneString);
                 return;
             }
         }
@@ -759,21 +753,11 @@ public class SimpleDateFormat extends DateFormat {
     // See http://www.unicode.org/reports/tr35/#Date_Format_Patterns for the different counts.
     // @param generalTimeZone "GMT-08:00" rather than "-0800".
     private void appendNumericTimeZone(StringBuffer buffer, int count, boolean generalTimeZone) {
-        int offset = calendar.get(Calendar.ZONE_OFFSET) + calendar.get(Calendar.DST_OFFSET);
-        char sign = '+';
-        if (offset < 0) {
-            sign = '-';
-            offset = -offset;
-        }
-        if (generalTimeZone || count == 4) {
-            buffer.append("GMT");
-        }
-        buffer.append(sign);
-        appendNumber(buffer, 2, offset / 3600000);
-        if (generalTimeZone || count >= 4) {
-            buffer.append(':');
-        }
-        appendNumber(buffer, 2, (offset % 3600000) / 60000);
+        int offsetMillis = calendar.get(Calendar.ZONE_OFFSET) + calendar.get(Calendar.DST_OFFSET);
+        boolean includeGmt = generalTimeZone || count == 4;
+        boolean includeMinuteSeparator = generalTimeZone || count >= 4;
+        buffer.append(TimeZone.createGmtOffsetString(includeGmt,  includeMinuteSeparator,
+                offsetMillis));
     }
 
     private void appendMilliseconds(StringBuffer buffer, int count, int value) {
@@ -923,8 +907,7 @@ public class SimpleDateFormat extends DateFormat {
                 field = Calendar.SECOND;
                 break;
             case MILLISECOND_FIELD:
-                field = Calendar.MILLISECOND;
-                break;
+                return parseFractionalSeconds(string, offset, absolute);
             case STAND_ALONE_DAY_OF_WEEK_FIELD:
                 return parseDayOfWeek(string, offset, true);
             case DAY_OF_WEEK_FIELD:
@@ -967,6 +950,31 @@ public class SimpleDateFormat extends DateFormat {
             return parseNumber(absolute, string, offset, field, 0);
         }
         return offset;
+    }
+
+    /**
+     * Parses the fractional seconds section of a formatted date and assigns
+     * it to the {@code Calendar.MILLISECOND} field. Note that fractional seconds
+     * are somewhat unique, because they are zero suffixed.
+     */
+    private int parseFractionalSeconds(String string, int offset, int count) {
+        final ParsePosition parsePosition = new ParsePosition(offset);
+        final Number fractionalSeconds = parseNumber(count, string, parsePosition);
+        if (fractionalSeconds == null) {
+            return -parsePosition.getErrorIndex() - 1;
+        }
+
+        // NOTE: We could've done this using two parses instead. The first parse
+        // looking at |count| digits (to verify the date matched the format), and
+        // then a second parse that consumed just the first three digits. That
+        // would've avoided the floating point arithmetic, but would've demanded
+        // that we round values ourselves.
+        final double result = fractionalSeconds.doubleValue();
+        final int numDigitsParsed = parsePosition.getIndex() - offset;
+        final double divisor = Math.pow(10, numDigitsParsed);
+
+        calendar.set(Calendar.MILLISECOND, (int) ((result / divisor) * 1000));
+        return parsePosition.getIndex();
     }
 
     private int parseDayOfWeek(String string, int offset, boolean standAlone) {
@@ -1103,25 +1111,7 @@ public class SimpleDateFormat extends DateFormat {
         }
         if (max == 0) {
             position.setIndex(index);
-            Number n = numberFormat.parse(string, position);
-            // In RTL locales, NumberFormat might have parsed "2012-" in an ISO date as the
-            // negative number -2012.
-            // Ideally, we wouldn't have this broken API that exposes a NumberFormat and expects
-            // us to use it. The next best thing would be a way to ask the NumberFormat to parse
-            // positive numbers only, but icu4c supports negative (BCE) years. The best we can do
-            // is try to recognize when icu4c has done this, and undo it.
-            if (n != null && n.longValue() < 0) {
-                if (numberFormat instanceof DecimalFormat) {
-                    DecimalFormat df = (DecimalFormat) numberFormat;
-                    char lastChar = string.charAt(position.getIndex() - 1);
-                    char minusSign = df.getDecimalFormatSymbols().getMinusSign();
-                    if (lastChar == minusSign) {
-                        n = Long.valueOf(-n.longValue()); // Make the value positive.
-                        position.setIndex(position.getIndex() - 1); // Spit out the negative sign.
-                    }
-                }
-            }
-            return n;
+            return numberFormat.parse(string, position);
         }
 
         int result = 0;
@@ -1186,6 +1176,8 @@ public class SimpleDateFormat extends DateFormat {
         if (foundGMT) {
             offset += 3;
         }
+
+        // Check for an offset, which may have been preceded by "GMT"
         char sign;
         if (offset < string.length() && ((sign = string.charAt(offset)) == '+' || sign == '-')) {
             ParsePosition position = new ParsePosition(offset + 1);
@@ -1213,10 +1205,14 @@ public class SimpleDateFormat extends DateFormat {
             calendar.setTimeZone(new SimpleTimeZone(raw, ""));
             return position.getIndex();
         }
+
+        // If there was "GMT" but no offset.
         if (foundGMT) {
             calendar.setTimeZone(TimeZone.getTimeZone("GMT"));
             return offset;
         }
+
+        // Exhaustively look for the string in this DateFormat's localized time zone strings.
         for (String[] row : formatData.internalZoneStrings()) {
             for (int i = TimeZoneNames.LONG_NAME; i < TimeZoneNames.NAME_COUNT; ++i) {
                 if (row[i] == null) {

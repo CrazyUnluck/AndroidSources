@@ -18,6 +18,7 @@ package java.lang;
 
 import java.util.Locale;
 import libcore.icu.ICU;
+import libcore.icu.Transliterator;
 
 /**
  * Performs case operations as described by http://unicode.org/reports/tr21/tr21-5.html.
@@ -45,9 +46,10 @@ class CaseMapper {
      */
     public static String toLowerCase(Locale locale, String s, char[] value, int offset, int count) {
         // Punt hard cases to ICU4C.
+        // Note that Greek isn't a particularly hard case for toLowerCase, only toUpperCase.
         String languageCode = locale.getLanguage();
         if (languageCode.equals("tr") || languageCode.equals("az") || languageCode.equals("lt")) {
-            return ICU.toLowerCase(s, locale.toString());
+            return ICU.toLowerCase(s, locale);
         }
 
         char[] newValue = null;
@@ -57,7 +59,7 @@ class CaseMapper {
             char newCh;
             if (ch == LATIN_CAPITAL_I_WITH_DOT || Character.isHighSurrogate(ch)) {
                 // Punt these hard cases.
-                return ICU.toLowerCase(s, locale.toString());
+                return ICU.toLowerCase(s, locale);
             } else if (ch == GREEK_CAPITAL_SIGMA && isFinalSigma(value, offset, count, i)) {
                 newCh = GREEK_SMALL_FINAL_SIGMA;
             } else {
@@ -139,10 +141,19 @@ class CaseMapper {
         return index;
     }
 
+    private static final ThreadLocal<Transliterator> EL_UPPER = new ThreadLocal<Transliterator>() {
+        @Override protected Transliterator initialValue() {
+            return new Transliterator("el-Upper");
+        }
+    };
+
     public static String toUpperCase(Locale locale, String s, char[] value, int offset, int count) {
         String languageCode = locale.getLanguage();
         if (languageCode.equals("tr") || languageCode.equals("az") || languageCode.equals("lt")) {
-            return ICU.toUpperCase(s, locale.toString());
+            return ICU.toUpperCase(s, locale);
+        }
+        if (languageCode.equals("el")) {
+            return EL_UPPER.get().transliterate(s);
         }
 
         char[] output = null;
@@ -150,7 +161,7 @@ class CaseMapper {
         for (int o = offset, end = offset + count; o < end; o++) {
             char ch = value[o];
             if (Character.isHighSurrogate(ch)) {
-                return ICU.toUpperCase(s, locale.toString());
+                return ICU.toUpperCase(s, locale);
             }
             int index = upperIndex(ch);
             if (index == -1) {

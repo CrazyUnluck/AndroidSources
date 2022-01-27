@@ -40,7 +40,6 @@ import com.android.ide.common.rendering.api.ViewInfo;
 import com.android.ide.common.rendering.api.ViewType;
 import com.android.internal.util.XmlUtils;
 import com.android.internal.view.menu.ActionMenuItemView;
-import com.android.internal.view.menu.ActionMenuView;
 import com.android.internal.view.menu.BridgeMenuItemImpl;
 import com.android.internal.view.menu.IconMenuItemView;
 import com.android.internal.view.menu.ListMenuItemView;
@@ -50,6 +49,7 @@ import com.android.layoutlib.bridge.Bridge;
 import com.android.layoutlib.bridge.android.BridgeContext;
 import com.android.layoutlib.bridge.android.BridgeLayoutParamsMapAttributes;
 import com.android.layoutlib.bridge.android.BridgeXmlBlockParser;
+import com.android.layoutlib.bridge.bars.Config;
 import com.android.layoutlib.bridge.bars.NavigationBar;
 import com.android.layoutlib.bridge.bars.StatusBar;
 import com.android.layoutlib.bridge.bars.TitleBar;
@@ -90,6 +90,7 @@ import android.view.WindowManagerGlobal_Delegate;
 import android.view.ViewParent;
 import android.widget.AbsListView;
 import android.widget.AbsSpinner;
+import android.widget.ActionMenuView;
 import android.widget.AdapterView;
 import android.widget.ExpandableListView;
 import android.widget.FrameLayout;
@@ -247,6 +248,7 @@ public class RenderSessionImpl extends RenderAction<SessionParams> {
                 backgroundView = mViewRoot = mContentRoot = new FrameLayout(context);
                 mViewRoot.setLayoutDirection(layoutDirection);
             } else {
+                int simulatedPlatformVersion = params.getSimulatedPlatformVersion();
                 if (hasSoftwareButtons() && mNavigationBarOrientation == LinearLayout.VERTICAL) {
                     /*
                      * This is a special case where the navigation bar is on the right.
@@ -271,12 +273,14 @@ public class RenderSessionImpl extends RenderAction<SessionParams> {
                     mViewRoot = topLayout;
                     topLayout.setOrientation(LinearLayout.HORIZONTAL);
 
-                    try {
-                        NavigationBar navigationBar = createNavigationBar(context,
-                                hardwareConfig.getDensity(), isRtl, params.isRtlSupported());
-                        topLayout.addView(navigationBar);
-                    } catch (XmlPullParserException ignored) {
-
+                    if (Config.showOnScreenNavBar(simulatedPlatformVersion)) {
+                        try {
+                            NavigationBar navigationBar = createNavigationBar(context,
+                                    hardwareConfig.getDensity(), isRtl, params.isRtlSupported(),
+                                    simulatedPlatformVersion);
+                            topLayout.addView(navigationBar);
+                        } catch (XmlPullParserException ignored) {
+                        }
                     }
                 }
 
@@ -329,7 +333,8 @@ public class RenderSessionImpl extends RenderAction<SessionParams> {
                     // system bar
                     try {
                         StatusBar statusBar = createStatusBar(context, hardwareConfig.getDensity(),
-                                layoutDirection, params.isRtlSupported());
+                                layoutDirection, params.isRtlSupported(),
+                                simulatedPlatformVersion);
                         topLayout.addView(statusBar);
                     } catch (XmlPullParserException ignored) {
 
@@ -355,7 +360,8 @@ public class RenderSessionImpl extends RenderAction<SessionParams> {
                 } else if (mTitleBarSize > 0) {
                     try {
                         TitleBar titleBar = createTitleBar(context,
-                                hardwareConfig.getDensity(), params.getAppLabel());
+                                params.getAppLabel(),
+                                simulatedPlatformVersion);
                         backgroundLayout.addView(titleBar);
                     } catch (XmlPullParserException ignored) {
 
@@ -372,12 +378,14 @@ public class RenderSessionImpl extends RenderAction<SessionParams> {
                     backgroundLayout.addView(mContentRoot);
                 }
 
-                if (mNavigationBarOrientation == LinearLayout.HORIZONTAL &&
+                if (Config.showOnScreenNavBar(simulatedPlatformVersion) &&
+                        mNavigationBarOrientation == LinearLayout.HORIZONTAL &&
                         mNavigationBarSize > 0) {
                     // system bar
                     try {
                         NavigationBar navigationBar = createNavigationBar(context,
-                                hardwareConfig.getDensity(), isRtl, params.isRtlSupported());
+                                hardwareConfig.getDensity(), isRtl, params.isRtlSupported(),
+                                simulatedPlatformVersion);
                         topLayout.addView(navigationBar);
                     } catch (XmlPullParserException ignored) {
 
@@ -1572,9 +1580,9 @@ public class RenderSessionImpl extends RenderAction<SessionParams> {
      * Creates the status bar with wifi and battery icons.
      */
     private StatusBar createStatusBar(BridgeContext context, Density density, int direction,
-            boolean isRtlSupported) throws XmlPullParserException {
+            boolean isRtlSupported, int platformVersion) throws XmlPullParserException {
         StatusBar statusBar = new StatusBar(context, density,
-                direction, isRtlSupported);
+                direction, isRtlSupported, platformVersion);
         statusBar.setLayoutParams(
                 new LinearLayout.LayoutParams(
                         LayoutParams.MATCH_PARENT, mStatusBarSize));
@@ -1589,10 +1597,11 @@ public class RenderSessionImpl extends RenderAction<SessionParams> {
      *        is RTL aware.
      */
     private NavigationBar createNavigationBar(BridgeContext context, Density density,
-            boolean isRtl, boolean isRtlSupported) throws XmlPullParserException {
+            boolean isRtl, boolean isRtlSupported, int simulatedPlatformVersion)
+            throws XmlPullParserException {
         NavigationBar navigationBar = new NavigationBar(context,
                 density, mNavigationBarOrientation, isRtl,
-                isRtlSupported);
+                isRtlSupported, simulatedPlatformVersion);
         if (mNavigationBarOrientation == LinearLayout.VERTICAL) {
             navigationBar.setLayoutParams(new LinearLayout.LayoutParams(mNavigationBarSize,
                     LayoutParams.MATCH_PARENT));
@@ -1603,9 +1612,10 @@ public class RenderSessionImpl extends RenderAction<SessionParams> {
         return navigationBar;
     }
 
-    private TitleBar createTitleBar(BridgeContext context, Density density, String title)
+    private TitleBar createTitleBar(BridgeContext context, String title,
+            int simulatedPlatformVersion)
             throws XmlPullParserException {
-        TitleBar titleBar = new TitleBar(context, density, title);
+        TitleBar titleBar = new TitleBar(context, title, simulatedPlatformVersion);
         titleBar.setLayoutParams(
                 new LinearLayout.LayoutParams(LayoutParams.MATCH_PARENT, mTitleBarSize));
         return titleBar;

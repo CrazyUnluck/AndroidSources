@@ -77,7 +77,7 @@ import java.nio.channels.spi.AbstractInterruptibleChannel;
  * content, size, etc.
  */
 public abstract class FileChannel extends AbstractInterruptibleChannel
-        implements GatheringByteChannel, ScatteringByteChannel, ByteChannel {
+        implements ByteChannel, GatheringByteChannel, ScatteringByteChannel {
 
     /**
      * {@code MapMode} defines file mapping mode constants.
@@ -281,10 +281,9 @@ public abstract class FileChannel extends AbstractInterruptibleChannel
             long position, long size) throws IOException;
 
     /**
-     * Returns the current value of the file position pointer.
+     * Returns the current position as a positive integer number of bytes from
+     * the start of the file.
      *
-     * @return the current position as a positive integer number of bytes from
-     *         the start of the file.
      * @throws ClosedChannelException
      *             if this channel is closed.
      * @throws IOException
@@ -302,9 +301,7 @@ public abstract class FileChannel extends AbstractInterruptibleChannel
      * succeed but they will fill the bytes between the current end of file and
      * the new position with the required number of (unspecified) byte values.
      *
-     * @param offset
-     *            the new file position, in bytes.
-     * @return the receiver.
+     * @return this.
      * @throws IllegalArgumentException
      *             if the new position is negative.
      * @throws ClosedChannelException
@@ -312,7 +309,7 @@ public abstract class FileChannel extends AbstractInterruptibleChannel
      * @throws IOException
      *             if another I/O error occurs.
      */
-    public abstract FileChannel position(long offset) throws IOException;
+    public abstract FileChannel position(long newPosition) throws IOException;
 
     /**
      * Reads bytes from this file channel into the given buffer.
@@ -362,7 +359,7 @@ public abstract class FileChannel extends AbstractInterruptibleChannel
      *            the buffer to receive the bytes.
      * @param position
      *            the (non-negative) position at which to read the bytes.
-     * @return the number of bytes actually read.
+     * @return the number of bytes actually read, or -1 if the end of the file has been reached.
      * @throws AsynchronousCloseException
      *             if this channel is closed by another thread while this method
      *             is executing.
@@ -398,7 +395,7 @@ public abstract class FileChannel extends AbstractInterruptibleChannel
      *
      * @param buffers
      *            the array of byte buffers into which the bytes will be copied.
-     * @return the number of bytes actually read.
+     * @return the number of bytes actually read, or -1 if the end of the file has been reached.
      * @throws AsynchronousCloseException
      *             if this channel is closed by another thread during this read
      *             operation.
@@ -413,6 +410,7 @@ public abstract class FileChannel extends AbstractInterruptibleChannel
      *             if the channel has not been opened in a mode that permits
      *             reading.
      */
+    @Override
     public final long read(ByteBuffer[] buffers) throws IOException {
         return read(buffers, 0, buffers.length);
     }
@@ -433,7 +431,7 @@ public abstract class FileChannel extends AbstractInterruptibleChannel
      *            the index of the first buffer to store bytes in.
      * @param number
      *            the maximum number of buffers to store bytes in.
-     * @return the number of bytes actually read.
+     * @return the number of bytes actually read, or -1 if the end of the file has been reached.
      * @throws AsynchronousCloseException
      *             if this channel is closed by another thread during this read
      *             operation.
@@ -458,7 +456,6 @@ public abstract class FileChannel extends AbstractInterruptibleChannel
     /**
      * Returns the size of the file underlying this channel in bytes.
      *
-     * @return the size of the file in bytes.
      * @throws ClosedChannelException
      *             if this channel is closed.
      * @throws IOException
@@ -546,7 +543,7 @@ public abstract class FileChannel extends AbstractInterruptibleChannel
      * beyond the given size then the file contents are unmodified.
      * <p>
      * If the file position is currently greater than the given size, then it is
-     * set to the given size.
+     * set to the new size.
      *
      * @param size
      *            the maximum size of the underlying file.
@@ -712,6 +709,7 @@ public abstract class FileChannel extends AbstractInterruptibleChannel
      * @throws NonWritableChannelException
      *             if this channel was not opened for writing.
      */
+    @Override
     public final long write(ByteBuffer[] buffers) throws IOException {
         return write(buffers, 0, buffers.length);
     }
@@ -752,6 +750,7 @@ public abstract class FileChannel extends AbstractInterruptibleChannel
      * @throws NonWritableChannelException
      *             if this channel was not opened for writing.
      */
+    @Override
     public abstract long write(ByteBuffer[] buffers, int offset, int length)
             throws IOException;
 }

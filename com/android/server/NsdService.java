@@ -26,11 +26,8 @@ import android.net.nsd.DnsSdTxtRecord;
 import android.net.nsd.INsdManager;
 import android.net.nsd.NsdManager;
 import android.os.Binder;
-import android.os.Handler;
-import android.os.HandlerThread;
 import android.os.Message;
 import android.os.Messenger;
-import android.os.IBinder;
 import android.os.UserHandle;
 import android.provider.Settings;
 import android.util.Slog;
@@ -40,22 +37,17 @@ import java.io.FileDescriptor;
 import java.io.PrintWriter;
 import java.io.UnsupportedEncodingException;
 import java.net.InetAddress;
-import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 import java.util.concurrent.CountDownLatch;
 
-import com.android.internal.app.IBatteryStats;
-import com.android.internal.telephony.TelephonyIntents;
 import com.android.internal.util.AsyncChannel;
 import com.android.internal.util.Protocol;
 import com.android.internal.util.State;
 import com.android.internal.util.StateMachine;
-import com.android.server.am.BatteryStatsService;
 import com.android.server.NativeDaemonConnector.Command;
-import com.android.internal.R;
 
 /**
  * Network Service Discovery Service handles remote service discovery operation requests by
@@ -405,8 +397,7 @@ public class NsdService extends INsdManager.Stub {
                         break;
                     case NsdManager.NATIVE_DAEMON_EVENT:
                         NativeEvent event = (NativeEvent) msg.obj;
-                        if (!handleNativeEvent(event.code, event.raw,
-                                NativeDaemonEvent.unescapeArgs(event.raw))) {
+                        if (!handleNativeEvent(event.code, event.raw, event.cooked)) {
                             result = NOT_HANDLED;
                         }
                         break;
@@ -429,11 +420,8 @@ public class NsdService extends INsdManager.Stub {
                 }
 
                 /* This goes in response as msg.arg2 */
-                int clientId = -1;
-                int keyId = clientInfo.mClientIds.indexOfValue(id);
-                if (keyId != -1) {
-                    clientId = clientInfo.mClientIds.keyAt(keyId);
-                } else {
+                int clientId = clientInfo.getClientId(id);
+                if (clientId < 0) {
                     // This can happen because of race conditions. For example,
                     // SERVICE_FOUND may race with STOP_SERVICE_DISCOVERY,
                     // and we may get in this situation.
@@ -485,14 +473,22 @@ public class NsdService extends INsdManager.Stub {
                     case NativeResponseCode.SERVICE_RESOLVED:
                         /* NNN resolveId fullName hostName port txtlen txtdata */
                         if (DBG) Slog.d(TAG, "SERVICE_RESOLVED Raw: " + raw);
-                        int index = cooked[2].indexOf(".");
-                        if (index == -1) {
+                        int index = 0;
+                        while (index < cooked[2].length() && cooked[2].charAt(index) != '.') {
+                            if (cooked[2].charAt(index) == '\\') {
+                                ++index;
+                            }
+                            ++index;
+                        }
+                        if (index >= cooked[2].length()) {
                             Slog.e(TAG, "Invalid service found " + raw);
                             break;
                         }
                         String name = cooked[2].substring(0, index);
                         String rest = cooked[2].substring(index);
                         String type = rest.replace(".local.", "");
+
+                        name = unescape(name);
 
                         clientInfo.mResolvedService.setServiceName(name);
                         clientInfo.mResolvedService.setServiceType(type);
@@ -552,6 +548,30 @@ public class NsdService extends INsdManager.Stub {
        }
     }
 
+    private String unescape(String s) {
+        StringBuilder sb = new StringBuilder(s.length());
+        for (int i = 0; i < s.length(); ++i) {
+            char c = s.charAt(i);
+            if (c == '\\') {
+                if (++i >= s.length()) {
+                    Slog.e(TAG, "Unexpected end of escape sequence in: " + s);
+                    break;
+                }
+                c = s.charAt(i);
+                if (c != '.' && c != '\\') {
+                    if (i + 2 >= s.length()) {
+                        Slog.e(TAG, "Unexpected end of escape sequence in: " + s);
+                        break;
+                    }
+                    c = (char) ((c-'0') * 100 + (s.charAt(i+1)-'0') * 10 + (s.charAt(i+2)-'0'));
+                    i += 2;
+                }
+            }
+            sb.append(c);
+        }
+        return sb.toString();
+    }
+
     private NativeDaemonConnector mNativeConnector;
     private final CountDownLatch mNativeDaemonConnected = new CountDownLatch(1);
 
@@ -560,7 +580,7 @@ public class NsdService extends INsdManager.Stub {
         mContentResolver = context.getContentResolver();
 
         mNativeConnector = new NativeDaemonConnector(new NativeCallbackReceiver(), "mdns", 10,
-                MDNS_TAG, 25);
+                MDNS_TAG, 25, null);
 
         mNsdStateMachine = new NsdStateMachine(TAG);
         mNsdStateMachine.start();
@@ -614,7 +634,7 @@ public class NsdService extends INsdManager.Stub {
         return mUniqueId;
     }
 
-    /* These should be in sync with system/netd/mDnsResponseCode.h */
+    /* These should be in sync with system/netd/server/ResponseCode.h */
     class NativeResponseCode {
         public static final int SERVICE_DISCOVERY_FAILED    =   602;
         public static final int SERVICE_FOUND               =   603;
@@ -636,10 +656,12 @@ public class NsdService extends INsdManager.Stub {
     private class NativeEvent {
         final int code;
         final String raw;
+        final String[] cooked;
 
-        NativeEvent(int code, String raw) {
+        NativeEvent(int code, String raw, String[] cooked) {
             this.code = code;
             this.raw = raw;
+            this.cooked = cooked;
         }
     }
 
@@ -648,10 +670,14 @@ public class NsdService extends INsdManager.Stub {
             mNativeDaemonConnected.countDown();
         }
 
+        public boolean onCheckHoldWakeLock(int code) {
+            return false;
+        }
+
         public boolean onEvent(int code, String raw, String[] cooked) {
             // TODO: NDC translates a message to a callback, we could enhance NDC to
             // directly interact with a state machine through messages
-            NativeEvent event = new NativeEvent(code, raw);
+            NativeEvent event = new NativeEvent(code, raw, cooked);
             mNsdStateMachine.sendMessage(NsdManager.NATIVE_DAEMON_EVENT, event);
             return true;
         }
@@ -690,8 +716,9 @@ public class NsdService extends INsdManager.Stub {
             for (String key : txtRecords.keySet()) {
                 try {
                     // TODO: Send encoded TXT record as bytes once NDC/netd supports binary data.
+                    byte[] recordValue = txtRecords.get(key);
                     cmd.appendArg(String.format(Locale.US, "%s=%s", key,
-                            new String(txtRecords.get(key), "UTF_8")));
+                            recordValue != null ? new String(recordValue, "UTF_8") : ""));
                 } catch (UnsupportedEncodingException e) {
                     Slog.e(TAG, "Failed to encode txtRecord " + e);
                 }
@@ -908,5 +935,18 @@ public class NsdService extends INsdManager.Stub {
             mClientRequests.clear();
         }
 
+        // mClientIds is a sparse array of listener id -> mDnsClient id.  For a given mDnsClient id,
+        // return the corresponding listener id.  mDnsClient id is also called a global id.
+        private int getClientId(final int globalId) {
+            // This doesn't use mClientIds.indexOfValue because indexOfValue uses == (not .equals)
+            // while also coercing the int primitives to Integer objects.
+            for (int i = 0, nSize = mClientIds.size(); i < nSize; i++) {
+                int mDnsId = mClientIds.valueAt(i);
+                if (globalId == mDnsId) {
+                    return mClientIds.keyAt(i);
+                }
+            }
+            return -1;
+        }
     }
 }

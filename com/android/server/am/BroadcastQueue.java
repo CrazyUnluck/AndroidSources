@@ -27,7 +27,7 @@ import android.content.ComponentName;
 import android.content.IIntentReceiver;
 import android.content.Intent;
 import android.content.pm.ActivityInfo;
-import android.content.pm.PackageInfo;
+import android.content.pm.ApplicationInfo;
 import android.content.pm.PackageManager;
 import android.content.pm.ResolveInfo;
 import android.os.Bundle;
@@ -424,11 +424,16 @@ public final class BroadcastQueue {
             Intent intent, int resultCode, String data, Bundle extras,
             boolean ordered, boolean sticky, int sendingUser) throws RemoteException {
         // Send the intent to the receiver asynchronously using one-way binder calls.
-        if (app != null && app.thread != null) {
-            // If we have an app thread, do the call through that so it is
-            // correctly ordered with other one-way calls.
-            app.thread.scheduleRegisteredReceiver(receiver, intent, resultCode,
-                    data, extras, ordered, sticky, sendingUser, app.repProcState);
+        if (app != null) {
+            if (app.thread != null) {
+                // If we have an app thread, do the call through that so it is
+                // correctly ordered with other one-way calls.
+                app.thread.scheduleRegisteredReceiver(receiver, intent, resultCode,
+                        data, extras, ordered, sticky, sendingUser, app.repProcState);
+            } else {
+                // Application has died. Receiver doesn't exist.
+                throw new RemoteException("app.thread must not be null");
+            }
         } else {
             receiver.performReceive(intent, resultCode, data, extras, ordered,
                     sticky, sendingUser);
@@ -504,7 +509,7 @@ public final class BroadcastQueue {
                     // are already core system stuff so don't matter for this.
                     r.curApp = filter.receiverList.app;
                     filter.receiverList.app.curReceiver = r;
-                    mService.updateOomAdjLocked(r.curApp, true);
+                    mService.updateOomAdjLocked(r.curApp);
                 }
             }
             try {
@@ -670,6 +675,7 @@ public final class BroadcastQueue {
                             // (local and remote) isn't kept in the mBroadcastHistory.
                             r.resultTo = null;
                         } catch (RemoteException e) {
+                            r.resultTo = null;
                             Slog.w(TAG, "Failure ["
                                     + mQueueName + "] sending broadcast result of "
                                     + r.intent, e);
@@ -859,7 +865,10 @@ public final class BroadcastQueue {
             r.state = BroadcastRecord.APP_RECEIVE;
             String targetProcess = info.activityInfo.processName;
             r.curComponent = component;
-            if (r.callingUid != Process.SYSTEM_UID && isSingleton) {
+            final int receiverUid = info.activityInfo.applicationInfo.uid;
+            // If it's a singleton, it needs to be the same app or a special app
+            if (r.callingUid != Process.SYSTEM_UID && isSingleton
+                    && mService.isValidSingletonCall(r.callingUid, receiverUid)) {
                 info.activityInfo = mService.getActivityInfoForUser(info.activityInfo, 0);
             }
             r.curReceiver = info.activityInfo;
@@ -884,14 +893,15 @@ public final class BroadcastQueue {
                     info.activityInfo.applicationInfo.uid, false);
             if (app != null && app.thread != null) {
                 try {
-                    app.addPackage(info.activityInfo.packageName, mService.mProcessStats);
+                    app.addPackage(info.activityInfo.packageName,
+                            info.activityInfo.applicationInfo.versionCode, mService.mProcessStats);
                     processCurBroadcastLocked(r, app);
                     return;
                 } catch (RemoteException e) {
                     Slog.w(TAG, "Exception when sending broadcast to "
                           + r.curComponent, e);
                 } catch (RuntimeException e) {
-                    Log.wtf(TAG, "Failed sending broadcast to "
+                    Slog.wtf(TAG, "Failed sending broadcast to "
                             + r.curComponent + " with " + r.intent, e);
                     // If some unexpected exception happened, just skip
                     // this broadcast.  At this point we are not in the call

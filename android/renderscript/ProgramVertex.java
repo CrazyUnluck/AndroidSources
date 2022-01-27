@@ -39,10 +39,6 @@
 package android.renderscript;
 
 
-import android.graphics.Matrix;
-import android.util.Log;
-
-
 /**
  * @hide
  * @deprecated in API 16
@@ -53,7 +49,7 @@ import android.util.Log;
  **/
 public class ProgramVertex extends Program {
 
-    ProgramVertex(int id, RenderScript rs) {
+    ProgramVertex(long id, RenderScript rs) {
         super(id, rs);
     }
 
@@ -126,7 +122,7 @@ public class ProgramVertex extends Program {
          */
         public ProgramVertex create() {
             mRS.validate();
-            int[] tmp = new int[(mInputCount + mOutputCount + mConstantCount + mTextureCount) * 2];
+            long[] tmp = new long[(mInputCount + mOutputCount + mConstantCount + mTextureCount) * 2];
             String[] texNames = new String[mTextureCount];
             int idx = 0;
 
@@ -148,7 +144,7 @@ public class ProgramVertex extends Program {
                 texNames[i] = mTextureNames[i];
             }
 
-            int id = mRS.nProgramVertexCreate(mShader, texNames, tmp);
+            long id = mRS.nProgramVertexCreate(mShader, texNames, tmp);
             ProgramVertex pv = new ProgramVertex(id, mRS);
             initProgram(pv);
             return pv;

@@ -85,13 +85,19 @@ public class ZipOutputStream extends DeflaterOutputStream implements ZipConstant
 
     private final CRC32 crc = new CRC32();
 
-    private int offset = 0, curOffset = 0, nameLength;
+    private int offset = 0, curOffset = 0;
 
+    /** The charset-encoded name for the current entry. */
     private byte[] nameBytes;
 
+    /** The charset-encoded comment for the current entry. */
+    private byte[] entryCommentBytes;
+
     /**
-     * Constructs a new {@code ZipOutputStream} that writes a zip file
-     * to the given {@code OutputStream}.
+     * Constructs a new {@code ZipOutputStream} that writes a zip file to the given
+     * {@code OutputStream}.
+     *
+     * <p>UTF-8 will be used to encode the file comment, entry names and comments.
      */
     public ZipOutputStream(OutputStream os) {
         super(os, new Deflater(Deflater.DEFAULT_COMPRESSION, true));
@@ -153,8 +159,8 @@ public class ZipOutputStream extends DeflaterOutputStream implements ZipConstant
         // Update the CentralDirectory
         // http://www.pkware.com/documents/casestudies/APPNOTE.TXT
         int flags = currentEntry.getMethod() == STORED ? 0 : ZipFile.GPBF_DATA_DESCRIPTOR_FLAG;
-        // Since gingerbread, we always set the UTF-8 flag on individual files.
-        // Some tools insist that the central directory also have the UTF-8 flag.
+        // Since gingerbread, we always set the UTF-8 flag on individual files if appropriate.
+        // Some tools insist that the central directory have the UTF-8 flag.
         // http://code.google.com/p/android/issues/detail?id=20214
         flags |= ZipFile.GPBF_UTF8_FLAG;
         writeLong(cDir, CENSIG);
@@ -172,19 +178,14 @@ public class ZipOutputStream extends DeflaterOutputStream implements ZipConstant
             curOffset += writeLong(cDir, crc.tbytes);
             writeLong(cDir, crc.tbytes);
         }
-        curOffset += writeShort(cDir, nameLength);
+        curOffset += writeShort(cDir, nameBytes.length);
         if (currentEntry.extra != null) {
             curOffset += writeShort(cDir, currentEntry.extra.length);
         } else {
             writeShort(cDir, 0);
         }
 
-        String comment = currentEntry.getComment();
-        byte[] commentBytes = EmptyArray.BYTE;
-        if (comment != null) {
-            commentBytes = comment.getBytes(StandardCharsets.UTF_8);
-        }
-        writeShort(cDir, commentBytes.length); // Comment length.
+        writeShort(cDir, entryCommentBytes.length); // Comment length.
         writeShort(cDir, 0); // Disk Start
         writeShort(cDir, 0); // Internal File Attributes
         writeLong(cDir, 0); // External File Attributes
@@ -195,8 +196,9 @@ public class ZipOutputStream extends DeflaterOutputStream implements ZipConstant
             cDir.write(currentEntry.extra);
         }
         offset += curOffset;
-        if (commentBytes.length > 0) {
-            cDir.write(commentBytes);
+        if (entryCommentBytes.length > 0) {
+            cDir.write(entryCommentBytes);
+            entryCommentBytes = EmptyArray.BYTE;
         }
         currentEntry = null;
         crc.reset();
@@ -295,9 +297,13 @@ public class ZipOutputStream extends DeflaterOutputStream implements ZipConstant
             throw new ZipException("Too many entries for the zip file format's 16-bit entry count");
         }
         nameBytes = ze.name.getBytes(StandardCharsets.UTF_8);
-        nameLength = nameBytes.length;
-        if (nameLength > 0xffff) {
-            throw new IllegalArgumentException("Name too long: " + nameLength + " UTF-8 bytes");
+        checkSizeIsWithinShort("Name", nameBytes);
+        entryCommentBytes = EmptyArray.BYTE;
+        if (ze.comment != null) {
+            entryCommentBytes = ze.comment.getBytes(StandardCharsets.UTF_8);
+            // The comment is not written out until the entry is finished, but it is validated here
+            // to fail-fast.
+            checkSizeIsWithinShort("Comment", entryCommentBytes);
         }
 
         def.setLevel(compressionLevel);
@@ -310,7 +316,7 @@ public class ZipOutputStream extends DeflaterOutputStream implements ZipConstant
         // http://www.pkware.com/documents/casestudies/APPNOTE.TXT
         int flags = (method == STORED) ? 0 : ZipFile.GPBF_DATA_DESCRIPTOR_FLAG;
         // Java always outputs UTF-8 filenames. (Before Java 7, the RI didn't set this flag and used
-        // modified UTF-8. From Java 7, it sets this flag and uses normal UTF-8.)
+        // modified UTF-8. From Java 7, when using UTF_8 it sets this flag and uses normal UTF-8.)
         flags |= ZipFile.GPBF_UTF8_FLAG;
         writeLong(out, LOCSIG); // Entry header
         writeShort(out, ZIP_VERSION_2_0); // Minimum version needed to extract.
@@ -331,7 +337,7 @@ public class ZipOutputStream extends DeflaterOutputStream implements ZipConstant
             writeLong(out, 0);
             writeLong(out, 0);
         }
-        writeShort(out, nameLength);
+        writeShort(out, nameBytes.length);
         if (currentEntry.extra != null) {
             writeShort(out, currentEntry.extra.length);
         } else {
@@ -345,18 +351,16 @@ public class ZipOutputStream extends DeflaterOutputStream implements ZipConstant
 
     /**
      * Sets the comment associated with the file being written. See {@link ZipFile#getComment}.
-     * @throws IllegalArgumentException if the comment is >= 64 Ki UTF-8 bytes.
+     * @throws IllegalArgumentException if the comment is >= 64 Ki encoded bytes.
      */
     public void setComment(String comment) {
         if (comment == null) {
-            this.commentBytes = null;
+            this.commentBytes = EmptyArray.BYTE;
             return;
         }
 
         byte[] newCommentBytes = comment.getBytes(StandardCharsets.UTF_8);
-        if (newCommentBytes.length > 0xffff) {
-            throw new IllegalArgumentException("Comment too long: " + newCommentBytes.length + " bytes");
-        }
+        checkSizeIsWithinShort("Comment", newCommentBytes);
         this.commentBytes = newCommentBytes;
     }
 
@@ -421,6 +425,13 @@ public class ZipOutputStream extends DeflaterOutputStream implements ZipConstant
     private void checkOpen() throws IOException {
         if (cDir == null) {
             throw new IOException("Stream is closed");
+        }
+    }
+
+    private void checkSizeIsWithinShort(String property, byte[] bytes) {
+        if (bytes.length > 0xffff) {
+            throw new IllegalArgumentException(property + " too long in UTF-8:" + bytes.length +
+                                               " bytes");
         }
     }
 }

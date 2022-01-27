@@ -16,9 +16,6 @@
 
 package android.renderscript;
 
-import java.lang.reflect.Field;
-import android.util.Log;
-
 /**
  * <p>An Element represents one item within an {@link
  * android.renderscript.Allocation}.  An Element is roughly equivalent to a C
@@ -143,23 +140,31 @@ public class Element extends BaseObj {
         MATRIX_3X3 (17, 36),
         MATRIX_2X2 (18, 16),
 
-        RS_ELEMENT (1000, 4),
-        RS_TYPE (1001, 4),
-        RS_ALLOCATION (1002, 4),
-        RS_SAMPLER (1003, 4),
-        RS_SCRIPT (1004, 4),
-        RS_MESH (1005, 4),
-        RS_PROGRAM_FRAGMENT (1006, 4),
-        RS_PROGRAM_VERTEX (1007, 4),
-        RS_PROGRAM_RASTER (1008, 4),
-        RS_PROGRAM_STORE (1009, 4),
-        RS_FONT (1010, 4);
+        RS_ELEMENT (1000),
+        RS_TYPE (1001),
+        RS_ALLOCATION (1002),
+        RS_SAMPLER (1003),
+        RS_SCRIPT (1004),
+        RS_MESH (1005),
+        RS_PROGRAM_FRAGMENT (1006),
+        RS_PROGRAM_VERTEX (1007),
+        RS_PROGRAM_RASTER (1008),
+        RS_PROGRAM_STORE (1009),
+        RS_FONT (1010);
 
         int mID;
         int mSize;
         DataType(int id, int size) {
             mID = id;
             mSize = size;
+        }
+
+        DataType(int id) {
+            mID = id;
+            mSize = 4;
+            if (RenderScript.sPointerSize == 8) {
+                mSize = 32;
+            }
         }
     }
 
@@ -759,7 +764,7 @@ public class Element extends BaseObj {
         return rs.mElement_MATRIX_2X2;
     }
 
-    Element(int id, RenderScript rs, Element[] e, String[] n, int[] as) {
+    Element(long id, RenderScript rs, Element[] e, String[] n, int[] as) {
         super(id, rs);
         mSize = 0;
         mVectorSize = 1;
@@ -776,7 +781,7 @@ public class Element extends BaseObj {
         updateVisibleSubElements();
     }
 
-    Element(int id, RenderScript rs, DataType dt, DataKind dk, boolean norm, int size) {
+    Element(long id, RenderScript rs, DataType dt, DataKind dk, boolean norm, int size) {
         super(id, rs);
         if ((dt != DataType.UNSIGNED_5_6_5) &&
             (dt != DataType.UNSIGNED_4_4_4_4) &&
@@ -795,7 +800,7 @@ public class Element extends BaseObj {
         mVectorSize = size;
     }
 
-    Element(int id, RenderScript rs) {
+    Element(long id, RenderScript rs) {
         super(id, rs);
     }
 
@@ -829,7 +834,7 @@ public class Element extends BaseObj {
             mArraySizes = new int[numSubElements];
             mOffsetInBytes = new int[numSubElements];
 
-            int[] subElementIds = new int[numSubElements];
+            long[] subElementIds = new long[numSubElements];
             mRS.nElementGetSubElements(getID(mRS), subElementIds, mElementNames, mArraySizes);
             for(int i = 0; i < numSubElements; i ++) {
                 mElements[i] = new Element(subElementIds[i], mRS);
@@ -853,7 +858,7 @@ public class Element extends BaseObj {
         DataKind dk = DataKind.USER;
         boolean norm = false;
         int vecSize = 1;
-        int id = rs.nElementCreate(dt.mID, dk.mID, norm, vecSize);
+        long id = rs.nElementCreate(dt.mID, dk.mID, norm, vecSize);
         return new Element(id, rs, dt, dk, norm, vecSize);
     }
 
@@ -890,7 +895,7 @@ public class Element extends BaseObj {
         case BOOLEAN: {
             DataKind dk = DataKind.USER;
             boolean norm = false;
-            int id = rs.nElementCreate(dt.mID, dk.mID, norm, size);
+            long id = rs.nElementCreate(dt.mID, dk.mID, norm, size);
             return new Element(id, rs, dt, dk, norm, size);
         }
 
@@ -961,7 +966,7 @@ public class Element extends BaseObj {
         }
 
         boolean norm = true;
-        int id = rs.nElementCreate(dt.mID, dk.mID, norm, size);
+        long id = rs.nElementCreate(dt.mID, dk.mID, norm, size);
         return new Element(id, rs, dt, dk, norm, size);
     }
 
@@ -1088,11 +1093,11 @@ public class Element extends BaseObj {
             java.lang.System.arraycopy(mElementNames, 0, sin, 0, mCount);
             java.lang.System.arraycopy(mArraySizes, 0, asin, 0, mCount);
 
-            int[] ids = new int[ein.length];
+            long[] ids = new long[ein.length];
             for (int ct = 0; ct < ein.length; ct++ ) {
                 ids[ct] = ein[ct].getID(mRS);
             }
-            int id = mRS.nElementCreate2(ids, sin, asin);
+            long id = mRS.nElementCreate2(ids, sin, asin);
             return new Element(id, mRS, ein, sin, asin);
         }
     }

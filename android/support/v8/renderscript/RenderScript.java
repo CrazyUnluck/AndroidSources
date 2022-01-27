@@ -19,6 +19,7 @@ package android.support.v8.renderscript;
 import java.io.File;
 import java.lang.reflect.Field;
 import java.lang.reflect.Method;
+import java.util.concurrent.locks.ReentrantReadWriteLock;
 
 import android.content.Context;
 import android.content.pm.ApplicationInfo;
@@ -29,8 +30,6 @@ import android.graphics.BitmapFactory;
 import android.os.Process;
 import android.util.Log;
 import android.view.Surface;
-
-import android.os.SystemProperties;
 
 /**
  * This class provides access to a RenderScript context, which controls RenderScript
@@ -76,21 +75,91 @@ public class RenderScript {
 
     static boolean isNative = false;
 
-    private static int thunk = 0;
+    static private int sThunk = -1;
+    static private int sSdkVersion = -1;
+
+    static boolean shouldThunk() {
+        if (sThunk == -1) {
+            throw new RSRuntimeException("Can't use RS classes before setting up a RenderScript context");
+        } else if (sThunk == 1) {
+            return true;
+        }
+        return false;
+    }
+
     /**
      * Determines whether or not we should be thunking into the native
      * RenderScript layer or actually using the compatibility library.
      */
-    static boolean shouldThunk() {
-        if (thunk == 0) {
-            if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.JELLY_BEAN_MR2
-                    && SystemProperties.getInt("debug.rs.forcecompat", 0) == 0) {
-                thunk = 1;
+    static private boolean setupThunk(int sdkVersion, Context ctx) {
+        if (sThunk == -1) {
+
+            // get the value of the debug.rs.forcecompat property
+            int forcecompat = 0;
+            try {
+                Class<?> sysprop = Class.forName("android.os.SystemProperties");
+                Class[] signature = {String.class, Integer.TYPE};
+                Method getint = sysprop.getDeclaredMethod("getInt", signature);
+                Object[] args = {"debug.rs.forcecompat", new Integer(0)};
+                forcecompat = ((java.lang.Integer)getint.invoke(null, args)).intValue();
+            } catch (Exception e) {
+
+            }
+
+            // use compat on Jelly Bean MR2 if we're requesting SDK 19+
+            if (android.os.Build.VERSION.SDK_INT == 18 && sdkVersion >= 19) {
+                sThunk = 0;
+            }
+            else if ((android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.JELLY_BEAN_MR2)
+                     && forcecompat == 0) {
+                sThunk = 1;
             } else {
-                thunk = -1;
+                sThunk = 0;
+            }
+
+
+            if (sThunk == 1) {
+                // Workarounds that may disable thunking go here
+                ApplicationInfo info;
+                try {
+                    info = ctx.getPackageManager().getApplicationInfo(ctx.getPackageName(),
+                                                                      PackageManager.GET_META_DATA);
+                } catch (PackageManager.NameNotFoundException e) {
+                    // assume no workarounds needed
+                    return true;
+                }
+                long minorVersion = 0;
+
+                // load minorID from reflection
+                try {
+                    Class<?> javaRS = Class.forName("android.renderscript.RenderScript");
+                    Method getMinorID = javaRS.getDeclaredMethod("getMinorID");
+                    minorVersion = ((java.lang.Long)getMinorID.invoke(null)).longValue();
+                } catch (Exception e) {
+                    // minor version remains 0 on devices with no possible WARs
+                }
+
+                if (info.metaData != null) {
+                    // asynchronous teardown: minor version 1+
+                    if (info.metaData.getBoolean("com.android.support.v8.renderscript.EnableAsyncTeardown") == true) {
+                        if (minorVersion == 0) {
+                            sThunk = 0;
+                        }
+                    }
+
+                    // blur issues on some drivers with 4.4
+                    if (info.metaData.getBoolean("com.android.support.v8.renderscript.EnableBlurWorkaround") == true) {
+                        if (android.os.Build.VERSION.SDK_INT <= 19) {
+                            //android.util.Log.e("rs", "war on");
+                            sThunk = 0;
+                        }
+                    }
+                }
+                // end of workarounds
             }
         }
-        if (thunk == 1) {
+
+        if (sThunk == 1) {
             return true;
         }
         return false;
@@ -155,7 +224,18 @@ public class RenderScript {
     native void rsnContextDestroy(int con);
     synchronized void nContextDestroy() {
         validate();
-        rsnContextDestroy(mContext);
+
+        // take teardown lock
+        // teardown lock can only be taken when no objects are being destroyed
+        ReentrantReadWriteLock.WriteLock wlock = mRWLock.writeLock();
+        wlock.lock();
+
+        int curCon = mContext;
+        // context is considered dead as of this point
+        mContext = 0;
+
+        wlock.unlock();
+        rsnContextDestroy(curCon);
     }
     native void rsnContextSetPriority(int con, int p);
     synchronized void nContextSetPriority(int p) {
@@ -179,8 +259,9 @@ public class RenderScript {
         rsnContextSendMessage(mContext, id, data);
     }
 
+    // nObjDestroy is explicitly _not_ synchronous to prevent crashes in finalizers
     native void rsnObjDestroy(int con, int id);
-    synchronized void nObjDestroy(int id) {
+    void nObjDestroy(int id) {
         // There is a race condition here.  The calling code may be run
         // by the gc while teardown is occuring.  This protects againts
         // deleting dead objects.
@@ -584,8 +665,10 @@ public class RenderScript {
 
 
 
+
     int     mDev;
     int     mContext;
+    ReentrantReadWriteLock mRWLock;
     @SuppressWarnings({"FieldCanBeLocal"})
     MessageThread mMessageThread;
 
@@ -703,16 +786,7 @@ public class RenderScript {
         mMessageCallback = msg;
         if (isNative) {
             RenderScriptThunker rst = (RenderScriptThunker) this;
-            android.renderscript.RenderScript.RSMessageHandler newmsg =
-                new android.renderscript.RenderScript.RSMessageHandler() {
-                    public void run()  {
-                        mMessageCallback.mData = mData;
-                        mMessageCallback.mID = mID;
-                        mMessageCallback.mLength = mLength;
-                        mMessageCallback.run();
-                    }
-                };
-            rst.mN.setMessageHandler(newmsg);
+            rst.setMessageHandler(msg);
         }
     }
     public RSMessageHandler getMessageHandler() {
@@ -758,15 +832,7 @@ public class RenderScript {
         mErrorCallback = msg;
         if (isNative) {
             RenderScriptThunker rst = (RenderScriptThunker) this;
-            android.renderscript.RenderScript.RSErrorHandler newmsg =
-                new android.renderscript.RenderScript.RSErrorHandler() {
-                    public void run()  {
-                        mErrorCallback.mErrorMessage = mErrorMessage;
-                        mErrorCallback.mErrorNum = mErrorNum;
-                        mErrorCallback.run();
-                    }
-                };
-            rst.mN.setErrorHandler(newmsg);
+            rst.setErrorHandler(msg);
         }
     }
     public RSErrorHandler getErrorHandler() {
@@ -891,6 +957,7 @@ public class RenderScript {
         if (ctx != null) {
             mApplicationContext = ctx.getApplicationContext();
         }
+        mRWLock = new ReentrantReadWriteLock();
     }
 
     /**
@@ -919,9 +986,15 @@ public class RenderScript {
     public static RenderScript create(Context ctx, int sdkVersion, ContextType ct) {
         RenderScript rs = new RenderScript(ctx);
 
-        if (shouldThunk()) {
+        if (sSdkVersion == -1) {
+            sSdkVersion = sdkVersion;
+        } else if (sSdkVersion != sdkVersion) {
+            throw new RSRuntimeException("Can't have two contexts with different SDK versions in support lib");
+        }
+
+        if (setupThunk(sSdkVersion, ctx)) {
             android.util.Log.v(LOG_TAG, "RS native mode");
-            return RenderScriptThunker.create(ctx, sdkVersion);
+            return RenderScriptThunker.create(ctx, sSdkVersion);
         }
         synchronized(lock) {
             if (sInitialized == false) {
@@ -1009,6 +1082,7 @@ public class RenderScript {
      */
     public void destroy() {
         validate();
+        nContextFinish();
         nContextDeinitToClient(mContext);
         mMessageThread.mRun = false;
         try {
@@ -1017,8 +1091,6 @@ public class RenderScript {
         }
 
         nContextDestroy();
-        mContext = 0;
-
         nDeviceDestroy(mDev);
         mDev = 0;
     }

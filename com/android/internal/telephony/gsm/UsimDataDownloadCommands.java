@@ -351,6 +351,10 @@ class UsimDataDownloadCommands extends BaseCommands {
     }
 
     @Override
+    public void sendSMSExpectMore(String smscPDU, String pdu, Message response) {
+    }
+
+    @Override
     public void sendCdmaSms(byte[] pdu, Message response) {
     }
 
@@ -625,6 +629,10 @@ class UsimDataDownloadCommands extends BaseCommands {
     }
 
     @Override
+    public void requestIccSimAuthentication(String data, Message response) {
+    }
+
+    @Override
     public void getVoiceRadioTechnology(Message response) {
     }
 
@@ -634,6 +642,15 @@ class UsimDataDownloadCommands extends BaseCommands {
 
     @Override
     public void setCellInfoListRate(int rateInMillis, Message response) {
+    }
+
+    @Override
+    public void setInitialAttachApn(String apn, String protocol, int authType, String username,
+            String password, Message result) {
+    }
+
+    @Override
+    public void setDataProfile(DataProfile[] dps, Message result) {
     }
 
     @Override
@@ -661,5 +678,21 @@ class UsimDataDownloadCommands extends BaseCommands {
     @Override
     public void iccTransmitApduBasicChannel(int cla, int instruction, int p1, int p2,
             int p3, String data, Message response) {
+    }
+
+    @Override
+    public void nvReadItem(int itemID, Message response) {
+    }
+
+    @Override
+    public void nvWriteItem(int itemID, String itemValue, Message response) {
+    }
+
+    @Override
+    public void nvWriteCdmaPrl(byte[] preferredRoamingList, Message response) {
+    }
+
+    @Override
+    public void nvResetConfig(int resetType, Message response) {
     }
 }

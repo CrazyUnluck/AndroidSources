@@ -19,6 +19,8 @@ package org.apache.harmony.tests.java.lang;
 
 import java.io.IOException;
 import java.io.InputStream;
+import java.util.ArrayList;
+import java.util.List;
 import java.util.Vector;
 
 public class RuntimeTest extends junit.framework.TestCase {
@@ -82,40 +84,6 @@ public class RuntimeTest extends junit.framework.TestCase {
     }
 
     /**
-     * java.lang.Runtime#freeMemory()
-     */
-    public void test_freeMemory() {
-        // Test for method long java.lang.Runtime.freeMemory()
-        assertTrue("freeMemory returned nonsense value", r.freeMemory() > 0);
-    }
-
-    /**
-     * java.lang.Runtime#gc()
-     */
-    public void test_gc() {
-        // Test for method void java.lang.Runtime.gc()
-        try {
-            r.gc(); // ensure all garbage objects have been collected
-            r.gc(); // two GCs force collection phase to complete
-            long firstRead = r.totalMemory() - r.freeMemory();
-            Vector<StringBuffer> v = new Vector<StringBuffer>();
-            for (int i = 1; i < 10; i++)
-                v.addElement(new StringBuffer(10000));
-            long secondRead = r.totalMemory() - r.freeMemory();
-            v = null;
-            r.gc();
-            r.gc();
-            assertTrue("object memory did not grow", secondRead > firstRead);
-            assertTrue("space was not reclaimed", (r.totalMemory() - r
-                    .freeMemory()) < secondRead);
-        } catch (OutOfMemoryError oome) {
-            System.out.println("Out of memory during freeMemory test");
-            r.gc();
-            r.gc();
-        }
-    }
-
-    /**
      * java.lang.Runtime#getRuntime()
      */
     public void test_getRuntime() {
@@ -142,12 +110,13 @@ public class RuntimeTest extends junit.framework.TestCase {
     }
 
     /**
-     * java.lang.Runtime#totalMemory()
+     * java.lang.Runtime#freeMemory() / java.lang.Runtime#totalMemory() /
+     * java.lang.Runtime#maxMemory()
      */
-    public void test_totalMemory() {
-        // Test for method long java.lang.Runtime.totalMemory()
-        assertTrue("totalMemory returned nonsense value", r.totalMemory() >= r
-                .freeMemory());
+    public void test_memory() {
+        assertTrue("freeMemory < 0", r.freeMemory() >= 0);
+        assertTrue("totalMemory() < freeMemory()", r.totalMemory() >= r.freeMemory());
+        assertTrue("maxMemory() < totalMemory()", r.maxMemory() >= r.totalMemory());
     }
 
     public RuntimeTest() {

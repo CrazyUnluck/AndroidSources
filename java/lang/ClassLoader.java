@@ -33,7 +33,6 @@
 package java.lang;
 
 import dalvik.system.PathClassLoader;
-import dalvik.system.VMStack;
 import java.io.IOException;
 import java.io.InputStream;
 import java.net.URL;
@@ -43,6 +42,7 @@ import java.util.Collection;
 import java.util.Collections;
 import java.util.Enumeration;
 import java.util.HashMap;
+import java.util.List;
 import java.util.Map;
 
 /**
@@ -90,6 +90,18 @@ public abstract class ClassLoader {
      * The packages known to the class loader.
      */
     private Map<String, Package> packages = new HashMap<String, Package>();
+
+    /**
+     * To avoid unloading individual classes, {@link java.lang.reflect.Proxy}
+     * only generates one class for each set of interfaces. This maps sets of
+     * interfaces to the proxy class that implements all of them. It is declared
+     * here so that these generated classes can be unloaded with their class
+     * loader.
+     *
+     * @hide
+     */
+    public final Map<List<Class<?>>, Class<?>> proxyCache =
+            new HashMap<List<Class<?>>, Class<?>>();
 
     /**
      * Create the system class loader. Note this is NOT the bootstrap class
@@ -218,7 +230,7 @@ public abstract class ClassLoader {
      *             if {@code offset < 0}, {@code length < 0} or if
      *             {@code offset + length} is greater than the length of
      *             {@code classRep}.
-     * @deprecated Use {@link #defineClass(String, byte[], int, int)} instead.
+     * @deprecated Use {@link #defineClass(String, byte[], int, int)}
      */
     @Deprecated
     protected final Class<?> defineClass(byte[] classRep, int offset, int length)
@@ -409,8 +421,8 @@ public abstract class ClassLoader {
     @SuppressWarnings("unchecked")
     public Enumeration<URL> getResources(String resName) throws IOException {
 
-        Enumeration first = parent.getResources(resName);
-        Enumeration second = findResources(resName);
+        Enumeration<URL> first = parent.getResources(resName);
+        Enumeration<URL> second = findResources(resName);
 
         return new TwoEnumerationsInOne(first, second);
     }
@@ -487,14 +499,20 @@ public abstract class ClassLoader {
         Class<?> clazz = findLoadedClass(className);
 
         if (clazz == null) {
+            ClassNotFoundException suppressed = null;
             try {
                 clazz = parent.loadClass(className, false);
             } catch (ClassNotFoundException e) {
-                // Don't want to see this.
+                suppressed = e;
             }
 
             if (clazz == null) {
-                clazz = findClass(className);
+                try {
+                    clazz = findClass(className);
+                } catch (ClassNotFoundException e) {
+                    e.addSuppressed(suppressed);
+                    throw e;
+                }
             }
         }
 
@@ -711,19 +729,21 @@ public abstract class ClassLoader {
  */
 class TwoEnumerationsInOne implements Enumeration<URL> {
 
-    private Enumeration<URL> first;
+    private final Enumeration<URL> first;
 
-    private Enumeration<URL> second;
+    private final Enumeration<URL> second;
 
     public TwoEnumerationsInOne(Enumeration<URL> first, Enumeration<URL> second) {
         this.first = first;
         this.second = second;
     }
 
+    @Override
     public boolean hasMoreElements() {
         return first.hasMoreElements() || second.hasMoreElements();
     }
 
+    @Override
     public URL nextElement() {
         if (first.hasMoreElements()) {
             return first.nextElement();
@@ -758,7 +778,7 @@ class BootClassLoader extends ClassLoader {
 
     @Override
     protected Class<?> findClass(String name) throws ClassNotFoundException {
-        return VMClassLoader.loadClass(name, false);
+        return Class.classForName(name, false, null);
     }
 
     @Override

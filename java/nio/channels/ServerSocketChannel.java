@@ -19,8 +19,10 @@ package java.nio.channels;
 
 import java.io.IOException;
 import java.net.ServerSocket;
+import java.net.SocketAddress;
 import java.nio.channels.spi.AbstractSelectableChannel;
 import java.nio.channels.spi.SelectorProvider;
+import java.util.Set;
 
 /**
  * A {@code ServerSocketChannel} is a partial abstraction of a selectable,
@@ -35,7 +37,6 @@ import java.nio.channels.spi.SelectorProvider;
  * related {@code ServerSocket} instance.
  */
 public abstract class ServerSocketChannel extends AbstractSelectableChannel {
-
     /**
      * Constructs a new {@link ServerSocketChannel}.
      *

@@ -123,8 +123,15 @@ public class BootReceiver extends BroadcastReceiver {
         }
 
         if (SystemProperties.getLong("ro.runtime.firstboot", 0) == 0) {
-            String now = Long.toString(System.currentTimeMillis());
-            SystemProperties.set("ro.runtime.firstboot", now);
+            if ("encrypted".equals(SystemProperties.get("ro.crypto.state"))
+                && "trigger_restart_min_framework".equals(SystemProperties.get("vold.decrypt"))){
+                // Encrypted, first boot to get PIN/pattern/password so data is tmpfs
+                // Don't set ro.runtime.firstboot so that we will do this again
+                // when data is properly mounted
+            } else {
+                String now = Long.toString(System.currentTimeMillis());
+                SystemProperties.set("ro.runtime.firstboot", now);
+            }
             if (db != null) db.addText("SYSTEM_BOOT", headers);
 
             // Negative sizes mean to take the *tail* of the file (see FileUtils.readTextFile())
@@ -148,8 +155,10 @@ public class BootReceiver extends BroadcastReceiver {
         // Scan existing tombstones (in case any new ones appeared)
         File[] tombstoneFiles = TOMBSTONE_DIR.listFiles();
         for (int i = 0; tombstoneFiles != null && i < tombstoneFiles.length; i++) {
-            addFileToDropBox(db, prefs, headers, tombstoneFiles[i].getPath(),
-                    LOG_SIZE, "SYSTEM_TOMBSTONE");
+            if (tombstoneFiles[i].isFile()) {
+                addFileToDropBox(db, prefs, headers, tombstoneFiles[i].getPath(),
+                        LOG_SIZE, "SYSTEM_TOMBSTONE");
+            }
         }
 
         // Start watching for new tombstone files; will record them as they occur.
@@ -158,8 +167,10 @@ public class BootReceiver extends BroadcastReceiver {
             @Override
             public void onEvent(int event, String path) {
                 try {
-                    String filename = new File(TOMBSTONE_DIR, path).getPath();
-                    addFileToDropBox(db, prefs, headers, filename, LOG_SIZE, "SYSTEM_TOMBSTONE");
+                    File file = new File(TOMBSTONE_DIR, path);
+                    if (file.isFile()) {
+                        addFileToDropBox(db, prefs, headers, file.getPath(), LOG_SIZE, "SYSTEM_TOMBSTONE");
+                    }
                 } catch (IOException e) {
                     Slog.e(TAG, "Can't log tombstone", e);
                 }

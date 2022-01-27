@@ -24,6 +24,7 @@ import com.android.internal.telephony.BaseCommands;
 import com.android.internal.telephony.CommandsInterface;
 import com.android.internal.telephony.UUSInfo;
 import com.android.internal.telephony.cdma.CdmaSmsBroadcastConfigInfo;
+import com.android.internal.telephony.dataconnection.DataProfile;
 import com.android.internal.telephony.gsm.SmsBroadcastConfigInfo;
 
 /**
@@ -214,6 +215,10 @@ class SipCommandInterface extends BaseCommands implements CommandsInterface {
 
     @Override
     public void sendSMS (String smscPDU, String pdu, Message result) {
+    }
+
+    @Override
+    public void sendSMSExpectMore (String smscPDU, String pdu, Message result) {
     }
 
     @Override
@@ -540,6 +545,10 @@ class SipCommandInterface extends BaseCommands implements CommandsInterface {
     }
 
     @Override
+    public void requestIccSimAuthentication(int authContext, String data, String aid, Message response) {
+    }
+
+    @Override
     public void getVoiceRadioTechnology(Message result) {
     }
 
@@ -554,6 +563,10 @@ class SipCommandInterface extends BaseCommands implements CommandsInterface {
     @Override
     public void setInitialAttachApn(String apn, String protocol, int authType, String username,
             String password, Message result) {
+    }
+
+    @Override
+    public void setDataProfile(DataProfile[] dps, Message result) {
     }
 
     @Override
@@ -572,5 +585,29 @@ class SipCommandInterface extends BaseCommands implements CommandsInterface {
     @Override
     public void iccTransmitApduBasicChannel(int cla, int instruction, int p1, int p2,
             int p3, String data, Message response) {
+    }
+
+    @Override
+    public void nvReadItem(int itemID, Message response) {
+    }
+
+    @Override
+    public void nvWriteItem(int itemID, String itemValue, Message response) {
+    }
+
+    @Override
+    public void nvWriteCdmaPrl(byte[] preferredRoamingList, Message response) {
+    }
+
+    @Override
+    public void nvResetConfig(int resetType, Message response) {
+    }
+
+    @Override
+    public void getHardwareConfig(Message result) {
+    }
+
+    @Override
+    public void requestShutdown(Message result) {
     }
 }

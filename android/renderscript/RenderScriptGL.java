@@ -16,17 +16,10 @@
 
 package android.renderscript;
 
-import java.lang.reflect.Field;
-
 import android.content.Context;
-import android.graphics.PixelFormat;
-import android.graphics.Bitmap;
-import android.graphics.BitmapFactory;
 import android.graphics.SurfaceTexture;
-import android.util.Log;
 import android.view.Surface;
 import android.view.SurfaceHolder;
-import android.view.SurfaceView;
 
 /**
  * @hide
@@ -232,9 +225,13 @@ public class RenderScriptGL extends RenderScript {
         validate();
         //android.util.Log.v("rs", "set surface " + sur + " w=" + w + ", h=" + h);
 
+        Surface s = null;
+        if (sur != null) {
+            s = new Surface(sur);
+        }
         mWidth = w;
         mHeight = h;
-        nContextSetSurfaceTexture(w, h, sur);
+        nContextSetSurface(w, h, s);
     }
 
     /**
@@ -286,7 +283,7 @@ public class RenderScriptGL extends RenderScript {
      */
     public void bindRootScript(Script s) {
         validate();
-        nContextBindRootScript(safeID(s));
+        nContextBindRootScript((int)safeID(s));
     }
 
     /**
@@ -298,7 +295,7 @@ public class RenderScriptGL extends RenderScript {
      */
     public void bindProgramStore(ProgramStore p) {
         validate();
-        nContextBindProgramStore(safeID(p));
+        nContextBindProgramStore((int)safeID(p));
     }
 
     /**
@@ -310,7 +307,7 @@ public class RenderScriptGL extends RenderScript {
      */
     public void bindProgramFragment(ProgramFragment p) {
         validate();
-        nContextBindProgramFragment(safeID(p));
+        nContextBindProgramFragment((int)safeID(p));
     }
 
     /**
@@ -322,7 +319,7 @@ public class RenderScriptGL extends RenderScript {
      */
     public void bindProgramRaster(ProgramRaster p) {
         validate();
-        nContextBindProgramRaster(safeID(p));
+        nContextBindProgramRaster((int)safeID(p));
     }
 
     /**
@@ -334,7 +331,7 @@ public class RenderScriptGL extends RenderScript {
      */
     public void bindProgramVertex(ProgramVertex p) {
         validate();
-        nContextBindProgramVertex(safeID(p));
+        nContextBindProgramVertex((int)safeID(p));
     }
 
 }

@@ -20,14 +20,11 @@ import static android.content.pm.PackageManager.COMPONENT_ENABLED_STATE_DEFAULT;
 import static android.content.pm.PackageManager.COMPONENT_ENABLED_STATE_DISABLED;
 import static android.content.pm.PackageManager.COMPONENT_ENABLED_STATE_ENABLED;
 
-import android.content.pm.ApplicationInfo;
 import android.content.pm.PackageUserState;
-import android.content.pm.UserInfo;
 import android.util.SparseArray;
 
 import java.io.File;
 import java.util.HashSet;
-import java.util.List;
 
 /**
  * Settings base class for pending and resolved classes.
@@ -48,11 +45,44 @@ class PackageSettingBase extends GrantedPermissions {
 
     final String name;
     final String realName;
+
+    /**
+     * Path where this package was found on disk. For monolithic packages
+     * this is path to single base APK file; for cluster packages this is
+     * path to the cluster directory.
+     */
     File codePath;
     String codePathString;
     File resourcePath;
     String resourcePathString;
-    String nativeLibraryPathString;
+
+    /**
+     * The path under which native libraries have been unpacked. This path is
+     * always derived at runtime, and is only stored here for cleanup when a
+     * package is uninstalled.
+     */
+    @Deprecated
+    String legacyNativeLibraryPathString;
+
+    /**
+     * The primary CPU abi for this package. This value is regenerated at every
+     * boot scan.
+     */
+    String primaryCpuAbiString;
+
+    /**
+     * The secondary CPU abi for this package. This value is regenerated at every
+     * boot scan.
+     */
+    String secondaryCpuAbiString;
+
+    /**
+     * The install time CPU override, if any. This value is written at install time
+     * and doesn't change during the life of an install. If non-null,
+     * {@code primaryCpuAbiString} will contain the same value.
+     */
+    String cpuAbiOverrideString;
+
     long timeStamp;
     long firstInstallTime;
     long lastUpdateTime;
@@ -80,11 +110,14 @@ class PackageSettingBase extends GrantedPermissions {
     /* package name of the app that installed this package */
     String installerPackageName;
     PackageSettingBase(String name, String realName, File codePath, File resourcePath,
-            String nativeLibraryPathString, int pVersionCode, int pkgFlags) {
+            String legacyNativeLibraryPathString, String primaryCpuAbiString,
+            String secondaryCpuAbiString, String cpuAbiOverrideString,
+            int pVersionCode, int pkgFlags) {
         super(pkgFlags);
         this.name = name;
         this.realName = realName;
-        init(codePath, resourcePath, nativeLibraryPathString, pVersionCode);
+        init(codePath, resourcePath, legacyNativeLibraryPathString, primaryCpuAbiString,
+                secondaryCpuAbiString, cpuAbiOverrideString, pVersionCode);
     }
 
     /**
@@ -100,7 +133,10 @@ class PackageSettingBase extends GrantedPermissions {
         codePathString = base.codePathString;
         resourcePath = base.resourcePath;
         resourcePathString = base.resourcePathString;
-        nativeLibraryPathString = base.nativeLibraryPathString;
+        legacyNativeLibraryPathString = base.legacyNativeLibraryPathString;
+        primaryCpuAbiString = base.primaryCpuAbiString;
+        secondaryCpuAbiString = base.secondaryCpuAbiString;
+        cpuAbiOverrideString = base.cpuAbiOverrideString;
         timeStamp = base.timeStamp;
         firstInstallTime = base.firstInstallTime;
         lastUpdateTime = base.lastUpdateTime;
@@ -127,13 +163,17 @@ class PackageSettingBase extends GrantedPermissions {
 
     }
 
-    void init(File codePath, File resourcePath, String nativeLibraryPathString,
-            int pVersionCode) {
+    void init(File codePath, File resourcePath, String legacyNativeLibraryPathString,
+              String primaryCpuAbiString, String secondaryCpuAbiString,
+              String cpuAbiOverrideString, int pVersionCode) {
         this.codePath = codePath;
         this.codePathString = codePath.toString();
         this.resourcePath = resourcePath;
         this.resourcePathString = resourcePath.toString();
-        this.nativeLibraryPathString = nativeLibraryPathString;
+        this.legacyNativeLibraryPathString = legacyNativeLibraryPathString;
+        this.primaryCpuAbiString = primaryCpuAbiString;
+        this.secondaryCpuAbiString = secondaryCpuAbiString;
+        this.cpuAbiOverrideString = cpuAbiOverrideString;
         this.versionCode = pVersionCode;
     }
 
@@ -164,6 +204,9 @@ class PackageSettingBase extends GrantedPermissions {
         grantedPermissions = base.grantedPermissions;
         gids = base.gids;
 
+        primaryCpuAbiString = base.primaryCpuAbiString;
+        secondaryCpuAbiString = base.secondaryCpuAbiString;
+        cpuAbiOverrideString = base.cpuAbiOverrideString;
         timeStamp = base.timeStamp;
         firstInstallTime = base.firstInstallTime;
         lastUpdateTime = base.lastUpdateTime;
@@ -260,27 +303,36 @@ class PackageSettingBase extends GrantedPermissions {
         modifyUserState(userId).notLaunched = stop;
     }
 
-    boolean getBlocked(int userId) {
-        return readUserState(userId).blocked;
+    boolean getHidden(int userId) {
+        return readUserState(userId).hidden;
     }
 
-    void setBlocked(boolean blocked, int userId) {
-        modifyUserState(userId).blocked = blocked;
+    void setHidden(boolean hidden, int userId) {
+        modifyUserState(userId).hidden = hidden;
+    }
+
+    boolean getBlockUninstall(int userId) {
+        return readUserState(userId).blockUninstall;
+    }
+
+    void setBlockUninstall(boolean blockUninstall, int userId) {
+        modifyUserState(userId).blockUninstall = blockUninstall;
     }
 
     void setUserState(int userId, int enabled, boolean installed, boolean stopped,
-            boolean notLaunched, boolean blocked,
+            boolean notLaunched, boolean hidden,
             String lastDisableAppCaller, HashSet<String> enabledComponents,
-            HashSet<String> disabledComponents) {
+            HashSet<String> disabledComponents, boolean blockUninstall) {
         PackageUserState state = modifyUserState(userId);
         state.enabled = enabled;
         state.installed = installed;
         state.stopped = stopped;
         state.notLaunched = notLaunched;
-        state.blocked = blocked;
+        state.hidden = hidden;
         state.lastDisableAppCaller = lastDisableAppCaller;
         state.enabledComponents = enabledComponents;
         state.disabledComponents = disabledComponents;
+        state.blockUninstall = blockUninstall;
     }
 
     HashSet<String> getEnabledComponents(int userId) {

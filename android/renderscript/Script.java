@@ -36,7 +36,7 @@ public class Script extends BaseObj {
         Script mScript;
         int mSlot;
         int mSig;
-        KernelID(int id, RenderScript rs, Script s, int slot, int sig) {
+        KernelID(long id, RenderScript rs, Script s, int slot, int sig) {
             super(id, rs);
             mScript = s;
             mSlot = slot;
@@ -54,7 +54,7 @@ public class Script extends BaseObj {
             return k;
         }
 
-        int id = mRS.nScriptKernelIDCreate(getID(mRS), slot, sig);
+        long id = mRS.nScriptKernelIDCreate(getID(mRS), slot, sig);
         if (id == 0) {
             throw new RSDriverException("Failed to create KernelID");
         }
@@ -75,7 +75,7 @@ public class Script extends BaseObj {
     public static final class FieldID extends BaseObj {
         Script mScript;
         int mSlot;
-        FieldID(int id, RenderScript rs, Script s, int slot) {
+        FieldID(long id, RenderScript rs, Script s, int slot) {
             super(id, rs);
             mScript = s;
             mSlot = slot;
@@ -92,7 +92,7 @@ public class Script extends BaseObj {
             return f;
         }
 
-        int id = mRS.nScriptFieldIDCreate(getID(mRS), slot);
+        long id = mRS.nScriptFieldIDCreate(getID(mRS), slot);
         if (id == 0) {
             throw new RSDriverException("Failed to create FieldID");
         }
@@ -128,15 +128,18 @@ public class Script extends BaseObj {
      *
      */
     protected void forEach(int slot, Allocation ain, Allocation aout, FieldPacker v) {
+        mRS.validate();
+        mRS.validateObject(ain);
+        mRS.validateObject(aout);
         if (ain == null && aout == null) {
             throw new RSIllegalArgumentException(
                 "At least one of ain or aout is required to be non-null.");
         }
-        int in_id = 0;
+        long in_id = 0;
         if (ain != null) {
             in_id = ain.getID(mRS);
         }
-        int out_id = 0;
+        long out_id = 0;
         if (aout != null) {
             out_id = aout.getID(mRS);
         }
@@ -152,6 +155,9 @@ public class Script extends BaseObj {
      *
      */
     protected void forEach(int slot, Allocation ain, Allocation aout, FieldPacker v, LaunchOptions sc) {
+        mRS.validate();
+        mRS.validateObject(ain);
+        mRS.validateObject(aout);
         if (ain == null && aout == null) {
             throw new RSIllegalArgumentException(
                 "At least one of ain or aout is required to be non-null.");
@@ -161,11 +167,11 @@ public class Script extends BaseObj {
             forEach(slot, ain, aout, v);
             return;
         }
-        int in_id = 0;
+        long in_id = 0;
         if (ain != null) {
             in_id = ain.getID(mRS);
         }
-        int out_id = 0;
+        long out_id = 0;
         if (aout != null) {
             out_id = aout.getID(mRS);
         }
@@ -176,7 +182,55 @@ public class Script extends BaseObj {
         mRS.nScriptForEachClipped(getID(mRS), slot, in_id, out_id, params, sc.xstart, sc.xend, sc.ystart, sc.yend, sc.zstart, sc.zend);
     }
 
-    Script(int id, RenderScript rs) {
+    /**
+     * Only intended for use by generated reflected code.
+     *
+     * @hide
+     */
+    protected void forEach(int slot, Allocation[] ains, Allocation aout, FieldPacker v) {
+        forEach(slot, ains, aout, v, new LaunchOptions());
+    }
+
+    /**
+     * Only intended for use by generated reflected code.
+     *
+     * @hide
+     */
+    protected void forEach(int slot, Allocation[] ains, Allocation aout, FieldPacker v, LaunchOptions sc) {
+        mRS.validate();
+
+        for (Allocation ain : ains) {
+          mRS.validateObject(ain);
+        }
+
+        mRS.validateObject(aout);
+        if (ains == null && aout == null) {
+            throw new RSIllegalArgumentException(
+                "At least one of ain or aout is required to be non-null.");
+        }
+
+        if (sc == null) {
+            forEach(slot, ains, aout, v);
+            return;
+        }
+
+        long[] in_ids = new long[ains.length];
+        for (int index = 0; index < ains.length; ++index) {
+            in_ids[index] = ains[index].getID(mRS);
+        }
+
+        long out_id = 0;
+        if (aout != null) {
+            out_id = aout.getID(mRS);
+        }
+        byte[] params = null;
+        if (v != null) {
+            params = v.getData();
+        }
+        mRS.nScriptForEachMultiClipped(getID(mRS), slot, in_ids, out_id, params, sc.xstart, sc.xend, sc.ystart, sc.yend, sc.zstart, sc.zend);
+    }
+
+    Script(long id, RenderScript rs) {
         super(id, rs);
     }
 
@@ -187,7 +241,15 @@ public class Script extends BaseObj {
      */
     public void bindAllocation(Allocation va, int slot) {
         mRS.validate();
+        mRS.validateObject(va);
         if (va != null) {
+            if (mRS.getApplicationContext().getApplicationInfo().targetSdkVersion >= 20) {
+                final Type t = va.mType;
+                if (t.hasMipmaps() || t.hasFaces() || (t.getY() != 0) || (t.getZ() != 0)) {
+                    throw new RSIllegalArgumentException(
+                        "API 20+ only allows simple 1D allocations to be used with bind.");
+                }
+            }
             mRS.nScriptBindAllocation(getID(mRS), va.getID(mRS), slot);
         } else {
             mRS.nScriptBindAllocation(getID(mRS), 0, slot);
@@ -256,6 +318,8 @@ public class Script extends BaseObj {
      *
      */
     public void setVar(int index, BaseObj o) {
+        mRS.validate();
+        mRS.validateObject(o);
         mRS.nScriptSetVarObj(getID(mRS), index, (o == null) ? 0 : o.getID(mRS));
     }
 
@@ -461,4 +525,3 @@ public class Script extends BaseObj {
 
     }
 }
-

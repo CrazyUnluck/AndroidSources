@@ -16,8 +16,6 @@
 
 package com.android.server.am;
 
-import android.app.AppGlobals;
-import android.content.pm.IPackageManager;
 import android.content.pm.PackageManager;
 import android.os.Binder;
 import android.os.Parcel;
@@ -25,7 +23,6 @@ import android.os.ParcelFileDescriptor;
 import android.os.RemoteException;
 import android.os.SystemClock;
 import android.os.SystemProperties;
-import android.os.UserHandle;
 import android.util.ArrayMap;
 import android.util.AtomicFile;
 import android.util.Slog;
@@ -111,13 +108,14 @@ public final class ProcessStatsService extends IProcessStats.Stub {
     }
 
     public ProcessStats.ProcessState getProcessStateLocked(String packageName,
-            int uid, String processName) {
-        return mProcessStats.getProcessStateLocked(packageName, uid, processName);
+            int uid, int versionCode, String processName) {
+        return mProcessStats.getProcessStateLocked(packageName, uid, versionCode, processName);
     }
 
     public ProcessStats.ServiceState getServiceStateLocked(String packageName, int uid,
-            String processName, String className) {
-        return mProcessStats.getServiceStateLocked(packageName, uid, processName, className);
+            int versionCode, String processName, String className) {
+        return mProcessStats.getServiceStateLocked(packageName, uid, versionCode, processName,
+                className);
     }
 
     public boolean isMemFactorLowered() {
@@ -137,24 +135,29 @@ public final class ProcessStatsService extends IProcessStats.Stub {
             }
             mProcessStats.mMemFactor = memFactor;
             mProcessStats.mStartTime = now;
-            ArrayMap<String, SparseArray<ProcessStats.PackageState>> pmap
+            final ArrayMap<String, SparseArray<SparseArray<ProcessStats.PackageState>>> pmap
                     = mProcessStats.mPackages.getMap();
-            for (int i=0; i<pmap.size(); i++) {
-                SparseArray<ProcessStats.PackageState> uids = pmap.valueAt(i);
-                for (int j=0; j<uids.size(); j++) {
-                    ProcessStats.PackageState pkg = uids.valueAt(j);
-                    ArrayMap<String, ProcessStats.ServiceState> services = pkg.mServices;
-                    for (int k=0; k<services.size(); k++) {
-                        ProcessStats.ServiceState service = services.valueAt(k);
-                        if (service.isInUse()) {
-                            if (service.mStartedState != ProcessStats.STATE_NOTHING) {
-                                service.setStarted(true, memFactor, now);
-                            }
-                            if (service.mBoundState != ProcessStats.STATE_NOTHING) {
-                                service.setBound(true, memFactor, now);
-                            }
-                            if (service.mExecState != ProcessStats.STATE_NOTHING) {
-                                service.setExecuting(true, memFactor, now);
+            for (int ipkg=pmap.size()-1; ipkg>=0; ipkg--) {
+                final SparseArray<SparseArray<ProcessStats.PackageState>> uids = pmap.valueAt(ipkg);
+                for (int iuid=uids.size()-1; iuid>=0; iuid--) {
+                    final SparseArray<ProcessStats.PackageState> vers = uids.valueAt(iuid);
+                    for (int iver=vers.size()-1; iver>=0; iver--) {
+                        final ProcessStats.PackageState pkg = vers.valueAt(iver);
+                        final ArrayMap<String, ProcessStats.ServiceState> services = pkg.mServices;
+                        for (int isvc=services.size()-1; isvc>=0; isvc--) {
+                            final ProcessStats.ServiceState service = services.valueAt(isvc);
+                            if (service.isRestarting()) {
+                                service.setRestarting(true, memFactor, now);
+                            } else if (service.isInUse()) {
+                                if (service.mStartedState != ProcessStats.STATE_NOTHING) {
+                                    service.setStarted(true, memFactor, now);
+                                }
+                                if (service.mBoundState != ProcessStats.STATE_NOTHING) {
+                                    service.setBound(true, memFactor, now);
+                                }
+                                if (service.mExecState != ProcessStats.STATE_NOTHING) {
+                                    service.setExecuting(true, memFactor, now);
+                                }
                             }
                         }
                     }
@@ -169,10 +172,17 @@ public final class ProcessStatsService extends IProcessStats.Stub {
         return mProcessStats.mMemFactor != ProcessStats.STATE_NOTHING ? mProcessStats.mMemFactor : 0;
     }
 
+    public void addSysMemUsageLocked(long cachedMem, long freeMem, long zramMem, long kernelMem,
+            long nativeMem) {
+        mProcessStats.addSysMemUsage(cachedMem, freeMem, zramMem, kernelMem, nativeMem);
+    }
+
     public boolean shouldWriteNowLocked(long now) {
         if (now > (mLastWriteTime+WRITE_PERIOD)) {
             if (SystemClock.elapsedRealtime()
-                    > (mProcessStats.mTimePeriodStartRealtime+ProcessStats.COMMIT_PERIOD)) {
+                    > (mProcessStats.mTimePeriodStartRealtime+ProcessStats.COMMIT_PERIOD) &&
+                    SystemClock.uptimeMillis()
+                    > (mProcessStats.mTimePeriodStartUptime+ProcessStats.COMMIT_UPTIME_PERIOD)) {
                 mCommitPending = true;
             }
             return true;
@@ -210,6 +220,7 @@ public final class ProcessStatsService extends IProcessStats.Stub {
             if (mPendingWrite == null || !mPendingWriteCommitted) {
                 mPendingWrite = Parcel.obtain();
                 mProcessStats.mTimePeriodEndRealtime = SystemClock.elapsedRealtime();
+                mProcessStats.mTimePeriodEndUptime = now;
                 if (commit) {
                     mProcessStats.mFlags |= ProcessStats.FLAG_COMPLETE;
                 }
@@ -294,25 +305,32 @@ public final class ProcessStatsService extends IProcessStats.Stub {
                             Slog.w(TAG, "  Uid " + uids.keyAt(iu) + ": " + uids.valueAt(iu));
                         }
                     }
-                    ArrayMap<String, SparseArray<ProcessStats.PackageState>> pkgMap
+                    ArrayMap<String, SparseArray<SparseArray<ProcessStats.PackageState>>> pkgMap
                             = stats.mPackages.getMap();
                     final int NPKG = pkgMap.size();
                     for (int ip=0; ip<NPKG; ip++) {
                         Slog.w(TAG, "Package: " + pkgMap.keyAt(ip));
-                        SparseArray<ProcessStats.PackageState> uids = pkgMap.valueAt(ip);
+                        SparseArray<SparseArray<ProcessStats.PackageState>> uids
+                                = pkgMap.valueAt(ip);
                         final int NUID = uids.size();
                         for (int iu=0; iu<NUID; iu++) {
                             Slog.w(TAG, "  Uid: " + uids.keyAt(iu));
-                            ProcessStats.PackageState pkgState = uids.valueAt(iu);
-                            final int NPROCS = pkgState.mProcesses.size();
-                            for (int iproc=0; iproc<NPROCS; iproc++) {
-                                Slog.w(TAG, "    Process " + pkgState.mProcesses.keyAt(iproc)
-                                        + ": " + pkgState.mProcesses.valueAt(iproc));
-                            }
-                            final int NSRVS = pkgState.mServices.size();
-                            for (int isvc=0; isvc<NSRVS; isvc++) {
-                                Slog.w(TAG, "    Service " + pkgState.mServices.keyAt(isvc)
-                                        + ": " + pkgState.mServices.valueAt(isvc));
+                            SparseArray<ProcessStats.PackageState> vers = uids.valueAt(iu);
+                            final int NVERS = vers.size();
+                            for (int iv=0; iv<NVERS; iv++) {
+                                Slog.w(TAG, "    Vers: " + vers.keyAt(iv));
+                                ProcessStats.PackageState pkgState = vers.valueAt(iv);
+                                final int NPROCS = pkgState.mProcesses.size();
+                                for (int iproc=0; iproc<NPROCS; iproc++) {
+                                    Slog.w(TAG, "      Process " + pkgState.mProcesses.keyAt(iproc)
+                                            + ": " + pkgState.mProcesses.valueAt(iproc));
+                                }
+                                final int NSRVS = pkgState.mServices.size();
+                                for (int isvc=0; isvc<NSRVS; isvc++) {
+                                    Slog.w(TAG, "      Service " + pkgState.mServices.keyAt(isvc)
+                                            + ": " + pkgState.mServices.valueAt(isvc));
+
+                                }
                             }
                         }
                     }
@@ -430,8 +448,10 @@ public final class ProcessStatsService extends IProcessStats.Stub {
         mWriteLock.lock();
         try {
             synchronized (mAm) {
+                long now = SystemClock.uptimeMillis();
                 mProcessStats.mTimePeriodEndRealtime = SystemClock.elapsedRealtime();
-                mProcessStats.writeToParcel(current, 0);
+                mProcessStats.mTimePeriodEndUptime = now;
+                mProcessStats.writeToParcel(current, now, 0);
             }
             if (historic != null) {
                 ArrayList<String> files = getCommittedFiles(0, false, true);
@@ -461,8 +481,10 @@ public final class ProcessStatsService extends IProcessStats.Stub {
             Parcel current = Parcel.obtain();
             long curTime;
             synchronized (mAm) {
+                long now = SystemClock.uptimeMillis();
                 mProcessStats.mTimePeriodEndRealtime = SystemClock.elapsedRealtime();
-                mProcessStats.writeToParcel(current, 0);
+                mProcessStats.mTimePeriodEndUptime = now;
+                mProcessStats.writeToParcel(current, now, 0);
                 curTime = mProcessStats.mTimePeriodEndRealtime
                         - mProcessStats.mTimePeriodStartRealtime;
             }
@@ -559,8 +581,8 @@ public final class ProcessStatsService extends IProcessStats.Stub {
     static private void dumpHelp(PrintWriter pw) {
         pw.println("Process stats (procstats) dump options:");
         pw.println("    [--checkin|-c|--csv] [--csv-screen] [--csv-proc] [--csv-mem]");
-        pw.println("    [--details] [--full-details] [--current] [--hours] [--active]");
-        pw.println("    [--commit] [--reset] [--clear] [--write] [-h] [<package.name>]");
+        pw.println("    [--details] [--full-details] [--current] [--hours N] [--last N]");
+        pw.println("    [--active] [--commit] [--reset] [--clear] [--write] [-h] [<package.name>]");
         pw.println("  --checkin: perform a checkin: print and delete old committed states.");
         pw.println("  --c: print only state in checkin format.");
         pw.println("  --csv: output data suitable for putting in a spreadsheet.");
@@ -572,6 +594,7 @@ public final class ProcessStatsService extends IProcessStats.Stub {
         pw.println("  --full-details: dump all timing and active state details.");
         pw.println("  --current: only dump current state.");
         pw.println("  --hours: aggregate over about N last hours.");
+        pw.println("  --last: only show the last committed stats at index N (starting at 1).");
         pw.println("  --active: only show currently active processes/services.");
         pw.println("  --commit: commit current stats to disk and reset to start new stats.");
         pw.println("  --reset: reset current stats, without committing.");
@@ -612,6 +635,7 @@ public final class ProcessStatsService extends IProcessStats.Stub {
         boolean dumpFullDetails = false;
         boolean dumpAll = false;
         int aggregateHours = 0;
+        int lastIndex = 0;
         boolean activeOnly = false;
         String reqPackage = null;
         boolean csvSepScreenStats = false;
@@ -696,6 +720,20 @@ public final class ProcessStatsService extends IProcessStats.Stub {
                         dumpHelp(pw);
                         return;
                     }
+                } else if ("--last".equals(arg)) {
+                    i++;
+                    if (i >= args.length) {
+                        pw.println("Error: argument required for --last");
+                        dumpHelp(pw);
+                        return;
+                    }
+                    try {
+                        lastIndex = Integer.parseInt(args[i]);
+                    } catch (NumberFormatException e) {
+                        pw.println("Error: --last argument not an int -- " + args[i]);
+                        dumpHelp(pw);
+                        return;
+                    }
                 } else if ("--active".equals(arg)) {
                     activeOnly = true;
                     currentOnly = true;
@@ -753,7 +791,7 @@ public final class ProcessStatsService extends IProcessStats.Stub {
                     reqPackage = arg;
                     // Include all details, since we know we are only going to
                     // be dumping a smaller set of data.  In fact only the details
-                    // container per-package data, so that are needed to be able
+                    // contain per-package data, so this is needed to be able
                     // to dump anything at all when filtering by package.
                     dumpDetails = true;
                 }
@@ -809,6 +847,43 @@ public final class ProcessStatsService extends IProcessStats.Stub {
             dumpAggregatedStats(pw, aggregateHours, now, reqPackage, isCompact,
                     dumpDetails, dumpFullDetails, dumpAll, activeOnly);
             return;
+        } else if (lastIndex > 0) {
+            pw.print("LAST STATS AT INDEX "); pw.print(lastIndex); pw.println(":");
+            ArrayList<String> files = getCommittedFiles(0, false, true);
+            if (lastIndex >= files.size()) {
+                pw.print("Only have "); pw.print(files.size()); pw.println(" data sets");
+                return;
+            }
+            AtomicFile file = new AtomicFile(new File(files.get(lastIndex)));
+            ProcessStats processStats = new ProcessStats(false);
+            readLocked(processStats, file);
+            if (processStats.mReadError != null) {
+                if (isCheckin || isCompact) pw.print("err,");
+                pw.print("Failure reading "); pw.print(files.get(lastIndex));
+                pw.print("; "); pw.println(processStats.mReadError);
+                return;
+            }
+            String fileStr = file.getBaseFile().getPath();
+            boolean checkedIn = fileStr.endsWith(STATE_FILE_CHECKIN_SUFFIX);
+            if (isCheckin || isCompact) {
+                // Don't really need to lock because we uniquely own this object.
+                processStats.dumpCheckinLocked(pw, reqPackage);
+            } else {
+                pw.print("COMMITTED STATS FROM ");
+                pw.print(processStats.mTimePeriodStartClockStr);
+                if (checkedIn) pw.print(" (checked in)");
+                pw.println(":");
+                if (dumpDetails || dumpFullDetails) {
+                    processStats.dumpLocked(pw, reqPackage, now, !dumpFullDetails, dumpAll,
+                            activeOnly);
+                    if (dumpAll) {
+                        pw.print("  mFile="); pw.println(mFile.getBaseFile());
+                    }
+                } else {
+                    processStats.dumpSummaryLocked(pw, reqPackage, now, activeOnly);
+                }
+            }
+            return;
         }
 
         boolean sepNeeded = false;
@@ -850,7 +925,7 @@ public final class ProcessStatsService extends IProcessStats.Stub {
                                 // Always dump summary here, dumping all details is just too
                                 // much crud.
                                 if (dumpFullDetails) {
-                                    mProcessStats.dumpLocked(pw, reqPackage, now, false, false,
+                                    processStats.dumpLocked(pw, reqPackage, now, false, false,
                                             activeOnly);
                                 } else {
                                     processStats.dumpSummaryLocked(pw, reqPackage, now, activeOnly);

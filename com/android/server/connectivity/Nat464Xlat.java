@@ -25,11 +25,12 @@ import android.net.IConnectivityManager;
 import android.net.InterfaceConfiguration;
 import android.net.LinkAddress;
 import android.net.LinkProperties;
-import android.net.NetworkStateTracker;
+import android.net.NetworkAgent;
 import android.net.NetworkUtils;
 import android.net.RouteInfo;
 import android.os.Handler;
 import android.os.Message;
+import android.os.Messenger;
 import android.os.INetworkManagementService;
 import android.os.RemoteException;
 import android.util.Slog;
@@ -45,15 +46,18 @@ public class Nat464Xlat extends BaseNetworkObserver {
     private Context mContext;
     private INetworkManagementService mNMService;
     private IConnectivityManager mConnService;
-    private NetworkStateTracker mTracker;
-    private Handler mHandler;
-
     // Whether we started clatd and expect it to be running.
     private boolean mIsStarted;
     // Whether the clatd interface exists (i.e., clatd is running).
     private boolean mIsRunning;
     // The LinkProperties of the clat interface.
     private LinkProperties mLP;
+    // Current LinkProperties of the network.  Includes mLP as a stacked link when clat is active.
+    private LinkProperties mBaseLP;
+    // ConnectivityService Handler for LinkProperties updates.
+    private Handler mHandler;
+    // Marker to connote which network we're augmenting.
+    private Messenger mNetworkMessenger;
 
     // This must match the interface name in clatd.conf.
     private static final String CLAT_INTERFACE_NAME = "clat4";
@@ -70,38 +74,53 @@ public class Nat464Xlat extends BaseNetworkObserver {
         mIsStarted = false;
         mIsRunning = false;
         mLP = new LinkProperties();
+
+        // If this is a runtime restart, it's possible that clatd is already
+        // running, but we don't know about it. If so, stop it.
+        try {
+            if (mNMService.isClatdStarted()) {
+                mNMService.stopClatd();
+            }
+        } catch(RemoteException e) {}  // Well, we tried.
     }
 
     /**
-     * Determines whether an interface requires clat.
-     * @param netType the network type (one of the
-     *   android.net.ConnectivityManager.TYPE_* constants)
-     * @param tracker the NetworkStateTracker corresponding to the network type.
-     * @return true if the interface requires clat, false otherwise.
+     * Determines whether a network requires clat.
+     * @param network the NetworkAgentInfo corresponding to the network.
+     * @return true if the network requires clat, false otherwise.
      */
-    public boolean requiresClat(int netType, NetworkStateTracker tracker) {
-        LinkProperties lp = tracker.getLinkProperties();
+    public static boolean requiresClat(NetworkAgentInfo nai) {
+        final int netType = nai.networkInfo.getType();
+        final boolean connected = nai.networkInfo.isConnected();
+        final boolean hasIPv4Address =
+                (nai.linkProperties != null) ? nai.linkProperties.hasIPv4Address() : false;
+        Slog.d(TAG, "requiresClat: netType=" + netType +
+                    ", connected=" + connected +
+                    ", hasIPv4Address=" + hasIPv4Address);
         // Only support clat on mobile for now.
-        Slog.d(TAG, "requiresClat: netType=" + netType + ", hasIPv4Address=" +
-               lp.hasIPv4Address());
-        return netType == TYPE_MOBILE && !lp.hasIPv4Address();
+        return netType == TYPE_MOBILE && connected && !hasIPv4Address;
     }
 
-    public static boolean isRunningClat(LinkProperties lp) {
-      return lp != null && lp.getAllInterfaceNames().contains(CLAT_INTERFACE_NAME);
+    public boolean isRunningClat(NetworkAgentInfo network) {
+        return mNetworkMessenger == network.messenger;
     }
 
     /**
      * Starts the clat daemon.
      * @param lp The link properties of the interface to start clatd on.
      */
-    public void startClat(NetworkStateTracker tracker) {
+    public void startClat(NetworkAgentInfo network) {
+        if (mNetworkMessenger != null && mNetworkMessenger != network.messenger) {
+            Slog.e(TAG, "startClat: too many networks requesting clat");
+            return;
+        }
+        mNetworkMessenger = network.messenger;
+        LinkProperties lp = network.linkProperties;
+        mBaseLP = new LinkProperties(lp);
         if (mIsStarted) {
             Slog.e(TAG, "startClat: already started");
             return;
         }
-        mTracker = tracker;
-        LinkProperties lp = mTracker.getLinkProperties();
         String iface = lp.getInterfaceName();
         Slog.i(TAG, "Starting clatd on " + iface + ", lp=" + lp);
         try {
@@ -125,19 +144,35 @@ public class Nat464Xlat extends BaseNetworkObserver {
             }
             mIsStarted = false;
             mIsRunning = false;
-            mTracker = null;
+            mNetworkMessenger = null;
+            mBaseLP = null;
             mLP.clear();
         } else {
             Slog.e(TAG, "stopClat: already stopped");
         }
     }
 
-    public boolean isStarted() {
-        return mIsStarted;
+    private void updateConnectivityService() {
+        Message msg = mHandler.obtainMessage(
+            NetworkAgent.EVENT_NETWORK_PROPERTIES_CHANGED, mBaseLP);
+        msg.replyTo = mNetworkMessenger;
+        Slog.i(TAG, "sending message to ConnectivityService: " + msg);
+        msg.sendToTarget();
     }
 
-    public boolean isRunning() {
-        return mIsRunning;
+    // Copies the stacked clat link in oldLp, if any, to the LinkProperties in nai.
+    public void fixupLinkProperties(NetworkAgentInfo nai, LinkProperties oldLp) {
+        if (isRunningClat(nai) &&
+                nai.linkProperties != null &&
+                !nai.linkProperties.getAllInterfaceNames().contains(CLAT_INTERFACE_NAME)) {
+            Slog.d(TAG, "clatd running, updating NAI for " + nai.linkProperties.getInterfaceName());
+            for (LinkProperties stacked: oldLp.getStackedLinks()) {
+                if (CLAT_INTERFACE_NAME.equals(stacked.getInterfaceName())) {
+                    nai.linkProperties.addStackedLink(stacked);
+                    break;
+                }
+            }
+        }
     }
 
     @Override
@@ -150,34 +185,28 @@ public class Nat464Xlat extends BaseNetworkObserver {
             // Create the LinkProperties for the clat interface by fetching the
             // IPv4 address for the interface and adding an IPv4 default route,
             // then stack the LinkProperties on top of the link it's running on.
-            // Although the clat interface is a point-to-point tunnel, we don't
-            // point the route directly at the interface because some apps don't
-            // understand routes without gateways (see, e.g., http://b/9597256
-            // http://b/9597516). Instead, set the next hop of the route to the
-            // clat IPv4 address itself (for those apps, it doesn't matter what
-            // the IP of the gateway is, only that there is one).
             try {
                 InterfaceConfiguration config = mNMService.getInterfaceConfig(iface);
                 LinkAddress clatAddress = config.getLinkAddress();
                 mLP.clear();
                 mLP.setInterfaceName(iface);
+
+                // Although the clat interface is a point-to-point tunnel, we don't
+                // point the route directly at the interface because some apps don't
+                // understand routes without gateways (see, e.g., http://b/9597256
+                // http://b/9597516). Instead, set the next hop of the route to the
+                // clat IPv4 address itself (for those apps, it doesn't matter what
+                // the IP of the gateway is, only that there is one).
                 RouteInfo ipv4Default = new RouteInfo(new LinkAddress(Inet4Address.ANY, 0),
                                                       clatAddress.getAddress(), iface);
                 mLP.addRoute(ipv4Default);
                 mLP.addLinkAddress(clatAddress);
-                mTracker.addStackedLink(mLP);
-                Slog.i(TAG, "Adding stacked link. tracker LP: " +
-                       mTracker.getLinkProperties());
+                mBaseLP.addStackedLink(mLP);
+                Slog.i(TAG, "Adding stacked link. tracker LP: " + mBaseLP);
+                updateConnectivityService();
             } catch(RemoteException e) {
                 Slog.e(TAG, "Error getting link properties: " + e);
             }
-
-            // Inform ConnectivityService that things have changed.
-            Message msg = mHandler.obtainMessage(
-                NetworkStateTracker.EVENT_CONFIGURATION_CHANGED,
-                mTracker.getNetworkInfo());
-            Slog.i(TAG, "sending message to ConnectivityService: " + msg);
-            msg.sendToTarget();
         }
     }
 
@@ -188,11 +217,12 @@ public class Nat464Xlat extends BaseNetworkObserver {
                 NetworkUtils.resetConnections(
                     CLAT_INTERFACE_NAME,
                     NetworkUtils.RESET_IPV4_ADDRESSES);
+                mBaseLP.removeStackedLink(mLP);
+                updateConnectivityService();
             }
             Slog.i(TAG, "interface " + CLAT_INTERFACE_NAME +
                    " removed, mIsRunning = " + mIsRunning + " -> false");
             mIsRunning = false;
-            mTracker.removeStackedLink(mLP);
             mLP.clear();
             Slog.i(TAG, "mLP = " + mLP);
         }

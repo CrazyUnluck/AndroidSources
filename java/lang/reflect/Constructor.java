@@ -32,11 +32,11 @@
 
 package java.lang.reflect;
 
+import com.android.dex.Dex;
 import java.lang.annotation.Annotation;
-import libcore.util.EmptyArray;
-import org.apache.harmony.kernel.vm.StringUtils;
-import libcore.reflect.GenericSignatureParser;
-import libcore.reflect.ListOfTypes;
+import java.util.Comparator;
+import java.util.List;
+import libcore.reflect.AnnotationAccess;
 import libcore.reflect.Types;
 
 /**
@@ -45,83 +45,96 @@ import libcore.reflect.Types;
  *
  * @param <T> the class that declares this constructor
  */
-public final class Constructor<T> extends AccessibleObject implements GenericDeclaration,
-        Member {
+public final class Constructor<T> extends AbstractMethod implements GenericDeclaration, Member {
 
-    Class<T> declaringClass;
-
-    Class<?>[] parameterTypes;
-
-    Class<?>[] exceptionTypes;
-
-    ListOfTypes genericExceptionTypes;
-    ListOfTypes genericParameterTypes;
-    TypeVariable<Constructor<T>>[] formalTypeParameters;
-    private volatile boolean genericTypesAreInitialized = false;
-
-    private synchronized void initGenericTypes() {
-        if (!genericTypesAreInitialized) {
-            String signatureAttribute = getSignatureAttribute();
-            GenericSignatureParser parser = new GenericSignatureParser(
-                    declaringClass.getClassLoader());
-            parser.parseForConstructor(this, signatureAttribute, exceptionTypes);
-            formalTypeParameters = parser.formalTypeParameters;
-            genericParameterTypes = parser.parameterTypes;
-            genericExceptionTypes = parser.exceptionTypes;
-            genericTypesAreInitialized = true;
-        }
-    }
-
-    int slot;
-
-    private int methodDexIndex;
+    private static final Comparator<Method> ORDER_BY_SIGNATURE = null; // Unused; must match Method.
 
     /**
-     * Prevent this class from being instantiated.
+     * @hide
      */
-    private Constructor(){
-        //do nothing
+    public Constructor(ArtMethod artMethod) {
+        super(artMethod);
+    }
+
+    public Annotation[] getAnnotations() {
+        return super.getAnnotations();
     }
 
     /**
-     * Creates an instance of the class. Only called from native code, thus
-     * private.
+     * Returns the modifiers for this constructor. The {@link Modifier} class
+     * should be used to decode the result.
+     */
+    @Override public int getModifiers() {
+        return super.getModifiers();
+    }
+
+    /**
+     * Returns true if this constructor takes a variable number of arguments.
+     */
+    public boolean isVarArgs() {
+        return super.isVarArgs();
+    }
+
+    /**
+     * Returns true if this constructor is synthetic (artificially introduced by the compiler).
+     */
+    @Override public boolean isSynthetic() {
+        return super.isSynthetic();
+    }
+
+    /**
+     * Returns the name of this constructor.
+     */
+    @Override public String getName() {
+        return getDeclaringClass().getName();
+    }
+
+    /**
+     * Returns the class that declares this constructor.
+     */
+    @Override public Class<T> getDeclaringClass() {
+        return (Class<T>) super.getDeclaringClass();
+    }
+
+    /**
+     * Returns the exception types as an array of {@code Class} instances. If
+     * this constructor has no declared exceptions, an empty array will be
+     * returned.
+     */
+    public Class<?>[] getExceptionTypes() {
+        // TODO: use dex cache to speed looking up class
+        return AnnotationAccess.getExceptions(this);
+    }
+
+    /**
+     * Returns an array of the {@code Class} objects associated with the
+     * parameter types of this constructor. If the constructor was declared with
+     * no parameters, an empty array will be returned.
+     */
+    @Override public Class<?>[] getParameterTypes() {
+        return super.getParameterTypes();
+    }
+
+    /**
+     * {@inheritDoc}
      *
-     * @param declaringClass
-     *            the class this constructor object belongs to
-     * @param ptypes
-     *            the parameter types of the constructor
-     * @param extypes
-     *            the exception types of the constructor
-     * @param slot
-     *            the slot of the constructor inside the VM class structure
+     * <p>Equivalent to {@code getDeclaringClass().getName().hashCode()}.
      */
-    private Constructor(Class<T> declaringClass, Class<?>[] ptypes, Class<?>[] extypes, int slot, int methodDexIndex) {
-        this.declaringClass = declaringClass;
-        this.parameterTypes = ptypes;
-        this.exceptionTypes = extypes;          // may be null
-        this.slot = slot;
-        this.methodDexIndex = methodDexIndex;
+    @Override public int hashCode() {
+        return getDeclaringClass().getName().hashCode();
     }
 
-    /** @hide */
-    public int getDexMethodIndex() {
-        return methodDexIndex;
+    /**
+     * Returns true if {@code other} has the same declaring class and parameters
+     * as this constructor.
+     */
+    @Override public boolean equals(Object other) {
+        return super.equals(other);
     }
 
-    @Override /*package*/ String getSignatureAttribute() {
-        Object[] annotation = Method.getSignatureAnnotation(declaringClass, slot);
-
-        if (annotation == null) {
-            return null;
-        }
-
-        return StringUtils.combineStrings(annotation);
-    }
-
-    public TypeVariable<Constructor<T>>[] getTypeParameters() {
-        initGenericTypes();
-        return formalTypeParameters.clone();
+    @Override public TypeVariable<Constructor<T>>[] getTypeParameters() {
+        GenericInfo info = getMethodOrConstructorGenericInfo();
+        return (TypeVariable<Constructor<T>>[]) info.formalTypeParameters.clone();
     }
 
     /**
@@ -131,37 +144,7 @@ public final class Constructor<T> extends AccessibleObject implements GenericDec
      * @return the string representation of the constructor's declaration
      */
     public String toGenericString() {
-        StringBuilder sb = new StringBuilder(80);
-        initGenericTypes();
-        // append modifiers if any
-        int modifier = getModifiers();
-        if (modifier != 0) {
-            sb.append(Modifier.toString(modifier & ~Modifier.VARARGS)).append(' ');
-        }
-        // append type parameters
-        if (formalTypeParameters != null && formalTypeParameters.length > 0) {
-            sb.append('<');
-            for (int i = 0; i < formalTypeParameters.length; i++) {
-                appendGenericType(sb, formalTypeParameters[i]);
-                if (i < formalTypeParameters.length - 1) {
-                    sb.append(",");
-                }
-            }
-            sb.append("> ");
-        }
-        // append constructor name
-        appendTypeName(sb, getDeclaringClass());
-        // append parameters
-        sb.append('(');
-        appendArrayGenericType(sb, Types.getTypeArray(genericParameterTypes, false));
-        sb.append(')');
-        // append exceptions if any
-        Type[] genericExceptionTypeArray = Types.getTypeArray(genericExceptionTypes, false);
-        if (genericExceptionTypeArray.length > 0) {
-            sb.append(" throws ");
-            appendArrayGenericType(sb, genericExceptionTypeArray);
-        }
-        return sb.toString();
+        return super.toGenericString();
     }
 
     /**
@@ -180,8 +163,7 @@ public final class Constructor<T> extends AccessibleObject implements GenericDec
      *             instantiated for some reason
      */
     public Type[] getGenericParameterTypes() {
-        initGenericTypes();
-        return Types.getTypeArray(genericParameterTypes, true);
+        return super.getGenericParameterTypes();
     }
 
     /**
@@ -200,27 +182,26 @@ public final class Constructor<T> extends AccessibleObject implements GenericDec
      *             instantiated for some reason
      */
     public Type[] getGenericExceptionTypes() {
-        initGenericTypes();
-        return Types.getTypeArray(genericExceptionTypes, true);
+        return super.getGenericExceptionTypes();
     }
 
-    @Override
-    public Annotation[] getDeclaredAnnotations() {
-        return Method.getDeclaredAnnotations(declaringClass, slot);
-    }
-
-    @Override public <A extends Annotation> A getAnnotation(Class<A> annotationType) {
-        if (annotationType == null) {
-            throw new NullPointerException("annotationType == null");
-        }
-        return Method.getAnnotation(declaringClass, slot, annotationType);
+    @Override public Annotation[] getDeclaredAnnotations() {
+        List<Annotation> result = AnnotationAccess.getDeclaredAnnotations(this);
+        return result.toArray(new Annotation[result.size()]);
     }
 
     @Override public boolean isAnnotationPresent(Class<? extends Annotation> annotationType) {
         if (annotationType == null) {
             throw new NullPointerException("annotationType == null");
         }
-        return Method.isAnnotationPresent(declaringClass, slot, annotationType);
+        return AnnotationAccess.isDeclaredAnnotationPresent(this, annotationType);
+    }
+
+    @Override public <A extends Annotation> A getAnnotation(Class<A> annotationType) {
+        if (annotationType == null) {
+            throw new NullPointerException("annotationType == null");
+        }
+        return AnnotationAccess.getDeclaredAnnotation(this, annotationType);
     }
 
     /**
@@ -232,110 +213,7 @@ public final class Constructor<T> extends AccessibleObject implements GenericDec
      * @return an array of arrays of {@code Annotation} instances
      */
     public Annotation[][] getParameterAnnotations() {
-        Annotation[][] parameterAnnotations
-                = Method.getParameterAnnotations(declaringClass, slot);
-        if (parameterAnnotations.length == 0) {
-            return Method.noAnnotations(parameterTypes.length);
-        }
-        return parameterAnnotations;
-    }
-
-    /**
-     * Indicates whether or not this constructor takes a variable number of
-     * arguments.
-     *
-     * @return {@code true} if a vararg is declare, otherwise
-     *         {@code false}
-     */
-    public boolean isVarArgs() {
-        int mods = Method.getMethodModifiers(declaringClass, slot);
-        return (mods & Modifier.VARARGS) != 0;
-    }
-
-    /**
-     * Indicates whether or not this constructor is synthetic (artificially
-     * introduced by the compiler).
-     *
-     * @return {@code true} if this constructor is synthetic, {@code false}
-     *         otherwise
-     */
-    public boolean isSynthetic() {
-        int mods = Method.getMethodModifiers(declaringClass, slot);
-        return (mods & Modifier.SYNTHETIC) != 0;
-    }
-
-    /**
-     * Indicates whether or not the specified {@code object} is equal to this
-     * constructor. To be equal, the specified object must be an instance
-     * of {@code Constructor} with the same declaring class and parameter types
-     * as this constructor.
-     *
-     * @param object
-     *            the object to compare
-     *
-     * @return {@code true} if the specified object is equal to this
-     *         constructor, {@code false} otherwise
-     *
-     * @see #hashCode
-     */
-    @Override
-    public boolean equals(Object object) {
-        return object instanceof Constructor && toString().equals(object.toString());
-    }
-
-    /**
-     * Returns the class that declares this constructor.
-     *
-     * @return the declaring class
-     */
-    public Class<T> getDeclaringClass() {
-        return declaringClass;
-    }
-
-    /**
-     * Returns the exception types as an array of {@code Class} instances. If
-     * this constructor has no declared exceptions, an empty array will be
-     * returned.
-     *
-     * @return the declared exception classes
-     */
-    public Class<?>[] getExceptionTypes() {
-        if (exceptionTypes == null) {
-            return EmptyArray.CLASS;
-        }
-        return exceptionTypes.clone();
-    }
-
-    /**
-     * Returns the modifiers for this constructor. The {@link Modifier} class
-     * should be used to decode the result.
-     *
-     * @return the modifiers for this constructor
-     *
-     * @see Modifier
-     */
-    public int getModifiers() {
-        return Method.getMethodModifiers(declaringClass, slot);
-    }
-
-    /**
-     * Returns the name of this constructor.
-     *
-     * @return the name of this constructor
-     */
-    public String getName() {
-        return declaringClass.getName();
-    }
-
-    /**
-     * Returns an array of the {@code Class} objects associated with the
-     * parameter types of this constructor. If the constructor was declared with
-     * no parameters, an empty array will be returned.
-     *
-     * @return the parameter types
-     */
-    public Class<?>[] getParameterTypes() {
-        return parameterTypes.clone();
+        return artMethod.getParameterAnnotations();
     }
 
     /**
@@ -346,30 +224,17 @@ public final class Constructor<T> extends AccessibleObject implements GenericDec
      * @return the constructor's signature
      */
     @SuppressWarnings("unused")
-    private String getSignature() {
+    String getSignature() {
         StringBuilder result = new StringBuilder();
 
         result.append('(');
-        for (int i = 0; i < parameterTypes.length; i++) {
-            result.append(getSignature(parameterTypes[i]));
+        Class<?>[] parameterTypes = getParameterTypes();
+        for (Class<?> parameterType : parameterTypes) {
+            result.append(Types.getSignature(parameterType));
         }
         result.append(")V");
 
         return result.toString();
-    }
-
-    /**
-     * Returns an integer hash code for this constructor. Constructors which are
-     * equal return the same value for this method. The hash code for a
-     * Constructor is the hash code of the name of the declaring class.
-     *
-     * @return the hash code
-     *
-     * @see #equals
-     */
-    @Override
-    public int hashCode() {
-        return declaringClass.getName().hashCode();
     }
 
     /**
@@ -406,27 +271,26 @@ public final class Constructor<T> extends AccessibleObject implements GenericDec
      *
      * @return the new, initialized, object
      *
-     * @throws InstantiationException
+     * @exception InstantiationException
      *                if the class cannot be instantiated
-     * @throws IllegalAccessException
+     * @exception IllegalAccessException
      *                if this constructor is not accessible
-     * @throws IllegalArgumentException
+     * @exception IllegalArgumentException
      *                if an incorrect number of arguments are passed, or an
      *                argument could not be converted by a widening conversion
-     * @throws InvocationTargetException
+     * @exception InvocationTargetException
      *                if an exception was thrown by the invoked constructor
      *
      * @see AccessibleObject
      */
-    public T newInstance(Object... args) throws InstantiationException, IllegalAccessException,
-            IllegalArgumentException, InvocationTargetException {
-        return constructNative (args, declaringClass, parameterTypes, slot, flag);
+    public T newInstance(Object... args) throws InstantiationException,
+            IllegalAccessException, IllegalArgumentException, InvocationTargetException {
+      return newInstance(args, isAccessible());
     }
 
-    private native T constructNative(Object[] args, Class<T> declaringClass,
-            Class<?>[] parameterTypes, int slot,
-            boolean noAccessCheck) throws InstantiationException, IllegalAccessException,
-            InvocationTargetException;
+    /** @hide */
+    public native T newInstance(Object[] args, boolean accessible) throws InstantiationException,
+            IllegalAccessException, IllegalArgumentException, InvocationTargetException;
 
     /**
      * Returns a string containing a concise, human-readable description of this
@@ -450,15 +314,18 @@ public final class Constructor<T> extends AccessibleObject implements GenericDec
     public String toString() {
         StringBuilder result = new StringBuilder(Modifier.toString(getModifiers()));
 
-        if (result.length() != 0)
+        if (result.length() != 0) {
             result.append(' ');
-        result.append(declaringClass.getName());
+        }
+        result.append(getDeclaringClass().getName());
         result.append("(");
-        result.append(toString(parameterTypes));
+        Class<?>[] parameterTypes = getParameterTypes();
+        result.append(Types.toString(parameterTypes));
         result.append(")");
-        if (exceptionTypes != null && exceptionTypes.length != 0) {
+        Class<?>[] exceptionTypes = getExceptionTypes();
+        if (exceptionTypes.length > 0) {
             result.append(" throws ");
-            result.append(toString(exceptionTypes));
+            result.append(Types.toString(exceptionTypes));
         }
 
         return result.toString();

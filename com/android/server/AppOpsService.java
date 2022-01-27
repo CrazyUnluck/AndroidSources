@@ -29,12 +29,17 @@ import java.util.Iterator;
 import java.util.List;
 import java.util.Map;
 
+import android.app.ActivityThread;
 import android.app.AppOpsManager;
 import android.content.Context;
+import android.content.pm.ApplicationInfo;
+import android.content.pm.IPackageManager;
 import android.content.pm.PackageManager;
 import android.content.pm.PackageManager.NameNotFoundException;
+import android.media.AudioAttributes;
 import android.os.AsyncTask;
 import android.os.Binder;
+import android.os.Bundle;
 import android.os.Handler;
 import android.os.IBinder;
 import android.os.Process;
@@ -42,11 +47,13 @@ import android.os.RemoteException;
 import android.os.ServiceManager;
 import android.os.UserHandle;
 import android.util.ArrayMap;
+import android.util.ArraySet;
 import android.util.AtomicFile;
 import android.util.Log;
 import android.util.Pair;
 import android.util.Slog;
 import android.util.SparseArray;
+import android.util.SparseIntArray;
 import android.util.TimeUtils;
 import android.util.Xml;
 
@@ -89,13 +96,17 @@ public class AppOpsService extends IAppOpsService.Stub {
     final SparseArray<HashMap<String, Ops>> mUidOps
             = new SparseArray<HashMap<String, Ops>>();
 
+    private final SparseArray<boolean[]> mOpRestrictions = new SparseArray<boolean[]>();
+
     public final static class Ops extends SparseArray<Op> {
         public final String packageName;
         public final int uid;
+        public final boolean isPrivileged;
 
-        public Ops(String _packageName, int _uid) {
+        public Ops(String _packageName, int _uid, boolean _isPrivileged) {
             packageName = _packageName;
             uid = _uid;
+            isPrivileged = _isPrivileged;
         }
     }
 
@@ -123,6 +134,8 @@ public class AppOpsService extends IAppOpsService.Stub {
             = new ArrayMap<String, ArrayList<Callback>>();
     final ArrayMap<IBinder, Callback> mModeWatchers
             = new ArrayMap<IBinder, Callback>();
+    final SparseArray<SparseArray<Restriction>> mAudioRestrictions
+            = new SparseArray<SparseArray<Restriction>>();
 
     public final class Callback implements DeathRecipient {
         final IAppOpsCallback mCallback;
@@ -356,7 +369,10 @@ public class AppOpsService extends IAppOpsService.Stub {
 
     @Override
     public void setMode(int code, int uid, String packageName, int mode) {
-        verifyIncomingUid(uid);
+        if (Binder.getCallingPid() != Process.myPid()) {
+            mContext.enforcePermission(android.Manifest.permission.UPDATE_APP_OPS_STATS,
+                    Binder.getCallingPid(), Binder.getCallingUid(), null);
+        }
         verifyIncomingOp(code);
         ArrayList<Callback> repCbs = null;
         code = AppOpsManager.opToSwitch(code);
@@ -421,13 +437,18 @@ public class AppOpsService extends IAppOpsService.Stub {
 
     @Override
     public void resetAllModes() {
+        int callingUid = Binder.getCallingUid();
         mContext.enforcePermission(android.Manifest.permission.UPDATE_APP_OPS_STATS,
-                Binder.getCallingPid(), Binder.getCallingUid(), null);
+                Binder.getCallingPid(), callingUid, null);
         HashMap<Callback, ArrayList<Pair<String, Integer>>> callbacks = null;
         synchronized (this) {
             boolean changed = false;
             for (int i=mUidOps.size()-1; i>=0; i--) {
                 HashMap<String, Ops> packages = mUidOps.valueAt(i);
+                if (UserHandle.getUserId(callingUid) != UserHandle.getUserId(mUidOps.keyAt(i))) {
+                    // Skip any ops for a different user
+                    continue;
+                }
                 Iterator<Map.Entry<String, Ops>> it = packages.entrySet().iterator();
                 while (it.hasNext()) {
                     Map.Entry<String, Ops> ent = it.next();
@@ -544,6 +565,9 @@ public class AppOpsService extends IAppOpsService.Stub {
         verifyIncomingUid(uid);
         verifyIncomingOp(code);
         synchronized (this) {
+            if (isOpRestricted(uid, code, packageName)) {
+                return AppOpsManager.MODE_IGNORED;
+            }
             Op op = getOpLocked(AppOpsManager.opToSwitch(code), uid, packageName, false);
             if (op == null) {
                 return AppOpsManager.opToDefaultMode(code);
@@ -553,9 +577,61 @@ public class AppOpsService extends IAppOpsService.Stub {
     }
 
     @Override
+    public int checkAudioOperation(int code, int usage, int uid, String packageName) {
+        synchronized (this) {
+            final int mode = checkRestrictionLocked(code, usage, uid, packageName);
+            if (mode != AppOpsManager.MODE_ALLOWED) {
+                return mode;
+            }
+        }
+        return checkOperation(code, uid, packageName);
+    }
+
+    private int checkRestrictionLocked(int code, int usage, int uid, String packageName) {
+        final SparseArray<Restriction> usageRestrictions = mAudioRestrictions.get(code);
+        if (usageRestrictions != null) {
+            final Restriction r = usageRestrictions.get(usage);
+            if (r != null && !r.exceptionPackages.contains(packageName)) {
+                return r.mode;
+            }
+        }
+        return AppOpsManager.MODE_ALLOWED;
+    }
+
+    @Override
+    public void setAudioRestriction(int code, int usage, int uid, int mode,
+            String[] exceptionPackages) {
+        verifyIncomingUid(uid);
+        verifyIncomingOp(code);
+        synchronized (this) {
+            SparseArray<Restriction> usageRestrictions = mAudioRestrictions.get(code);
+            if (usageRestrictions == null) {
+                usageRestrictions = new SparseArray<Restriction>();
+                mAudioRestrictions.put(code, usageRestrictions);
+            }
+            usageRestrictions.remove(usage);
+            if (mode != AppOpsManager.MODE_ALLOWED) {
+                final Restriction r = new Restriction();
+                r.mode = mode;
+                if (exceptionPackages != null) {
+                    final int N = exceptionPackages.length;
+                    r.exceptionPackages = new ArraySet<String>(N);
+                    for (int i = 0; i < N; i++) {
+                        final String pkg = exceptionPackages[i];
+                        if (pkg != null) {
+                            r.exceptionPackages.add(pkg.trim());
+                        }
+                    }
+                }
+                usageRestrictions.put(usage, r);
+            }
+        }
+    }
+
+    @Override
     public int checkPackage(int uid, String packageName) {
         synchronized (this) {
-            if (getOpsLocked(uid, packageName, true) != null) {
+            if (getOpsRawLocked(uid, packageName, true) != null) {
                 return AppOpsManager.MODE_ALLOWED;
             } else {
                 return AppOpsManager.MODE_ERRORED;
@@ -575,6 +651,9 @@ public class AppOpsService extends IAppOpsService.Stub {
                 return AppOpsManager.MODE_ERRORED;
             }
             Op op = getOpLocked(ops, code, true);
+            if (isOpRestricted(uid, code, packageName)) {
+                return AppOpsManager.MODE_IGNORED;
+            }
             if (op.duration == -1) {
                 Slog.w(TAG, "Noting op not finished: uid " + uid + " pkg " + packageName
                         + " code " + code + " time=" + op.time + " duration=" + op.duration);
@@ -609,6 +688,9 @@ public class AppOpsService extends IAppOpsService.Stub {
                 return AppOpsManager.MODE_ERRORED;
             }
             Op op = getOpLocked(ops, code, true);
+            if (isOpRestricted(uid, code, packageName)) {
+                return AppOpsManager.MODE_IGNORED;
+            }
             final int switchCode = AppOpsManager.opToSwitch(code);
             final Op switchOp = switchCode != code ? getOpLocked(ops, switchCode, true) : op;
             if (switchOp.mode != AppOpsManager.MODE_ALLOWED) {
@@ -687,6 +769,15 @@ public class AppOpsService extends IAppOpsService.Stub {
     }
 
     private Ops getOpsLocked(int uid, String packageName, boolean edit) {
+        if (uid == 0) {
+            packageName = "root";
+        } else if (uid == Process.SHELL_UID) {
+            packageName = "com.android.shell";
+        }
+        return getOpsRawLocked(uid, packageName, edit);
+    }
+
+    private Ops getOpsRawLocked(int uid, String packageName, boolean edit) {
         HashMap<String, Ops> pkgOps = mUidOps.get(uid);
         if (pkgOps == null) {
             if (!edit) {
@@ -695,16 +786,12 @@ public class AppOpsService extends IAppOpsService.Stub {
             pkgOps = new HashMap<String, Ops>();
             mUidOps.put(uid, pkgOps);
         }
-        if (uid == 0) {
-            packageName = "root";
-        } else if (uid == Process.SHELL_UID) {
-            packageName = "com.android.shell";
-        }
         Ops ops = pkgOps.get(packageName);
         if (ops == null) {
             if (!edit) {
                 return null;
             }
+            boolean isPrivileged = false;
             // This is the first time we have seen this package name under this uid,
             // so let's make sure it is valid.
             if (uid != 0) {
@@ -712,12 +799,19 @@ public class AppOpsService extends IAppOpsService.Stub {
                 try {
                     int pkgUid = -1;
                     try {
-                        pkgUid = mContext.getPackageManager().getPackageUid(packageName,
-                                UserHandle.getUserId(uid));
-                    } catch (NameNotFoundException e) {
-                        if ("media".equals(packageName)) {
-                            pkgUid = Process.MEDIA_UID;
+                        ApplicationInfo appInfo = ActivityThread.getPackageManager()
+                                .getApplicationInfo(packageName, 0, UserHandle.getUserId(uid));
+                        if (appInfo != null) {
+                            pkgUid = appInfo.uid;
+                            isPrivileged = (appInfo.flags & ApplicationInfo.FLAG_PRIVILEGED) != 0;
+                        } else {
+                            if ("media".equals(packageName)) {
+                                pkgUid = Process.MEDIA_UID;
+                                isPrivileged = false;
+                            }
                         }
+                    } catch (RemoteException e) {
+                        Slog.w(TAG, "Could not contact PackageManager", e);
                     }
                     if (pkgUid != uid) {
                         // Oops!  The package name is not valid for the uid they are calling
@@ -730,7 +824,7 @@ public class AppOpsService extends IAppOpsService.Stub {
                     Binder.restoreCallingIdentity(ident);
                 }
             }
-            ops = new Ops(packageName, uid);
+            ops = new Ops(packageName, uid, isPrivileged);
             pkgOps.put(packageName, ops);
         }
         return ops;
@@ -772,6 +866,23 @@ public class AppOpsService extends IAppOpsService.Stub {
             scheduleWriteLocked();
         }
         return op;
+    }
+
+    private boolean isOpRestricted(int uid, int code, String packageName) {
+        int userHandle = UserHandle.getUserId(uid);
+        boolean[] opRestrictions = mOpRestrictions.get(userHandle);
+        if ((opRestrictions != null) && opRestrictions[code]) {
+            if (AppOpsManager.opAllowSystemBypassRestriction(code)) {
+                synchronized (this) {
+                    Ops ops = getOpsLocked(uid, packageName, true);
+                    if ((ops != null) && ops.isPrivileged) {
+                        return false;
+                    }
+                }
+            }
+            return true;
+        }
+        return false;
     }
 
     void readState() {
@@ -865,6 +976,27 @@ public class AppOpsService extends IAppOpsService.Stub {
     void readUid(XmlPullParser parser, String pkgName) throws NumberFormatException,
             XmlPullParserException, IOException {
         int uid = Integer.parseInt(parser.getAttributeValue(null, "n"));
+        String isPrivilegedString = parser.getAttributeValue(null, "p");
+        boolean isPrivileged = false;
+        if (isPrivilegedString == null) {
+            try {
+                IPackageManager packageManager = ActivityThread.getPackageManager();
+                if (packageManager != null) {
+                    ApplicationInfo appInfo = ActivityThread.getPackageManager()
+                            .getApplicationInfo(pkgName, 0, UserHandle.getUserId(uid));
+                    if (appInfo != null) {
+                        isPrivileged = (appInfo.flags & ApplicationInfo.FLAG_PRIVILEGED) != 0;
+                    }
+                } else {
+                    // Could not load data, don't add to cache so it will be loaded later.
+                    return;
+                }
+            } catch (RemoteException e) {
+                Slog.w(TAG, "Could not contact PackageManager", e);
+            }
+        } else {
+            isPrivileged = Boolean.parseBoolean(isPrivilegedString);
+        }
         int outerDepth = parser.getDepth();
         int type;
         while ((type = parser.next()) != XmlPullParser.END_DOCUMENT
@@ -899,7 +1031,7 @@ public class AppOpsService extends IAppOpsService.Stub {
                 }
                 Ops ops = pkgOps.get(pkgName);
                 if (ops == null) {
-                    ops = new Ops(pkgName, uid);
+                    ops = new Ops(pkgName, uid, isPrivileged);
                     pkgOps.put(pkgName, ops);
                 }
                 ops.put(op.op, op);
@@ -943,6 +1075,16 @@ public class AppOpsService extends IAppOpsService.Stub {
                         }
                         out.startTag(null, "uid");
                         out.attribute(null, "n", Integer.toString(pkg.getUid()));
+                        synchronized (this) {
+                            Ops ops = getOpsLocked(pkg.getUid(), pkg.getPackageName(), false);
+                            // Should always be present as the list of PackageOps is generated
+                            // from Ops.
+                            if (ops != null) {
+                                out.attribute(null, "p", Boolean.toString(ops.isPrivileged));
+                            } else {
+                                out.attribute(null, "p", Boolean.toString(false));
+                            }
+                        }
                         List<AppOpsManager.OpEntry> ops = pkg.getOps();
                         for (int j=0; j<ops.size(); j++) {
                             AppOpsManager.OpEntry op = ops.get(j);
@@ -1048,6 +1190,31 @@ public class AppOpsService extends IAppOpsService.Stub {
                     }
                 }
             }
+            if (mAudioRestrictions.size() > 0) {
+                boolean printedHeader = false;
+                for (int o=0; o<mAudioRestrictions.size(); o++) {
+                    final String op = AppOpsManager.opToName(mAudioRestrictions.keyAt(o));
+                    final SparseArray<Restriction> restrictions = mAudioRestrictions.valueAt(o);
+                    for (int i=0; i<restrictions.size(); i++) {
+                        if (!printedHeader){
+                            pw.println("  Audio Restrictions:");
+                            printedHeader = true;
+                            needSep = true;
+                        }
+                        final int usage = restrictions.keyAt(i);
+                        pw.print("    "); pw.print(op);
+                        pw.print(" usage="); pw.print(AudioAttributes.usageToString(usage));
+                        Restriction r = restrictions.valueAt(i);
+                        pw.print(": mode="); pw.println(r.mode);
+                        if (!r.exceptionPackages.isEmpty()) {
+                            pw.println("      Exceptions:");
+                            for (int j=0; j<r.exceptionPackages.size(); j++) {
+                                pw.print("        "); pw.println(r.exceptionPackages.valueAt(j));
+                            }
+                        }
+                    }
+                }
+            }
             if (needSep) {
                 pw.println();
             }
@@ -1080,4 +1247,42 @@ public class AppOpsService extends IAppOpsService.Stub {
             }
         }
     }
+
+    private static final class Restriction {
+        private static final ArraySet<String> NO_EXCEPTIONS = new ArraySet<String>();
+        int mode;
+        ArraySet<String> exceptionPackages = NO_EXCEPTIONS;
+    }
+
+    @Override
+    public void setUserRestrictions(Bundle restrictions, int userHandle) throws RemoteException {
+        checkSystemUid("setUserRestrictions");
+        boolean[] opRestrictions = mOpRestrictions.get(userHandle);
+        if (opRestrictions == null) {
+            opRestrictions = new boolean[AppOpsManager._NUM_OP];
+            mOpRestrictions.put(userHandle, opRestrictions);
+        }
+        for (int i = 0; i < opRestrictions.length; ++i) {
+            String restriction = AppOpsManager.opToRestriction(i);
+            if (restriction != null) {
+                opRestrictions[i] = restrictions.getBoolean(restriction, false);
+            } else {
+                opRestrictions[i] = false;
+            }
+        }
+    }
+
+    @Override
+    public void removeUser(int userHandle) throws RemoteException {
+        checkSystemUid("removeUser");
+        mOpRestrictions.remove(userHandle);
+    }
+
+    private void checkSystemUid(String function) {
+        int uid = Binder.getCallingUid();
+        if (uid != Process.SYSTEM_UID) {
+            throw new SecurityException(function + " must by called by the system");
+        }
+    }
+
 }

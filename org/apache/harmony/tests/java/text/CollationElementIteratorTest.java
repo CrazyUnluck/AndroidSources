@@ -66,6 +66,8 @@ public class CollationElementIteratorTest extends TestCase {
 
     int offset = iterator.getOffset();
     assertEquals(text.length(), offset);
+
+    iterator.reset();
     order = iterator.previous();
 
     while (order != CollationElementIterator.NULLORDER) {
@@ -91,6 +93,8 @@ public class CollationElementIteratorTest extends TestCase {
 
     int offset = iterator.getOffset();
     assertEquals(text.length(), offset);
+
+    iterator.reset();
     order = iterator.previous();
 
     while (order != CollationElementIterator.NULLORDER) {
@@ -121,7 +125,8 @@ public class CollationElementIteratorTest extends TestCase {
 
   public void testGetMaxExpansion() {
     String text = "cha";
-    RuleBasedCollator rbColl = (RuleBasedCollator) Collator.getInstance(new Locale("es", "", "TRADITIONAL"));
+    RuleBasedCollator rbColl = (RuleBasedCollator) Collator.getInstance(
+            Locale.forLanguageTag("es-u-co-trad"));
     CollationElementIterator iterator = rbColl.getCollationElementIterator(text);
     int order = iterator.next();
     while (order != CollationElementIterator.NULLORDER) {
@@ -173,26 +178,41 @@ public class CollationElementIteratorTest extends TestCase {
   }
 
   public void testSetOffset() {
-    RuleBasedCollator rbColl = (RuleBasedCollator) Collator.getInstance(new Locale("es", "", "TRADITIONAL"));
+    RuleBasedCollator rbColl = (RuleBasedCollator) Collator.getInstance(
+            Locale.forLanguageTag("es-u-co-trad"));
     String text = "cha";
     CollationElementIterator iterator = rbColl.getCollationElementIterator(text);
+    iterator.setOffset(0);
+    assertEquals(0, iterator.getOffset());
     iterator.setOffset(1);
-    assertEquals(1, iterator.getOffset());
+    assertEquals(0, iterator.getOffset());
+    iterator.setOffset(2);
+    assertEquals(2, iterator.getOffset());
   }
 
   public void testSetTextString() {
-    RuleBasedCollator rbColl = (RuleBasedCollator) Collator.getInstance(new Locale("es", "", "TRADITIONAL"));
+    RuleBasedCollator rbColl = (RuleBasedCollator) Collator.getInstance(
+            Locale.forLanguageTag("es-u-co-trad"));
     String text = "caa";
     CollationElementIterator iterator = rbColl.getCollationElementIterator(text);
+    iterator.setOffset(0);
+    assertEquals(0, iterator.getOffset());
     iterator.setOffset(1);
     assertEquals(1, iterator.getOffset());
+    iterator.setOffset(2);
+    assertEquals(2, iterator.getOffset());
     iterator.setText("cha");
+    iterator.setOffset(0);
+    assertEquals(0, iterator.getOffset());
     iterator.setOffset(1);
-    assertEquals(1, iterator.getOffset());
+    assertEquals(0, iterator.getOffset());
+    iterator.setOffset(2);
+    assertEquals(2, iterator.getOffset());
   }
 
   public void testSetTextCharacterIterator() {
-    RuleBasedCollator rbColl = (RuleBasedCollator) Collator.getInstance(new Locale("es", "", "TRADITIONAL"));
+    RuleBasedCollator rbColl = (RuleBasedCollator) Collator.getInstance(
+            Locale.forLanguageTag("es-u-co-trad"));
     String text = "caa";
     CollationElementIterator iterator = rbColl.getCollationElementIterator(text);
     iterator.setOffset(1);

@@ -39,12 +39,16 @@ public final class Daemons {
         ReferenceQueueDaemon.INSTANCE.start();
         FinalizerDaemon.INSTANCE.start();
         FinalizerWatchdogDaemon.INSTANCE.start();
+        HeapTrimmerDaemon.INSTANCE.start();
+        GCDaemon.INSTANCE.start();
     }
 
     public static void stop() {
         ReferenceQueueDaemon.INSTANCE.stop();
         FinalizerDaemon.INSTANCE.stop();
         FinalizerWatchdogDaemon.INSTANCE.stop();
+        HeapTrimmerDaemon.INSTANCE.stop();
+        GCDaemon.INSTANCE.stop();
     }
 
     /**
@@ -59,8 +63,7 @@ public final class Daemons {
             if (thread != null) {
                 throw new IllegalStateException("already running");
             }
-            thread = new Thread(ThreadGroup.mSystem, this,
-                getClass().getSimpleName());
+            thread = new Thread(ThreadGroup.systemThreadGroup, this, getClass().getSimpleName());
             thread.setDaemon(true);
             thread.start();
         }
@@ -189,6 +192,7 @@ public final class Daemons {
                 // The RI silently swallows these, but Android has always logged.
                 System.logE("Uncaught exception thrown by finalizer", ex);
             } finally {
+                // Done finalizing, stop holding the object as live.
                 finalizingObject = null;
             }
         }
@@ -204,24 +208,29 @@ public final class Daemons {
 
         @Override public void run() {
             while (isRunning()) {
-                Object object = waitForObject();
-                if (object == null) {
+                boolean waitSuccessful = waitForObject();
+                if (waitSuccessful == false) {
                     // We have been interrupted, need to see if this daemon has been stopped.
                     continue;
                 }
-                boolean finalized = waitForFinalization(object);
+                boolean finalized = waitForFinalization();
                 if (!finalized && !VMRuntime.getRuntime().isDebuggerActive()) {
-                    finalizerTimedOut(object);
-                    break;
+                    Object finalizedObject = FinalizerDaemon.INSTANCE.finalizingObject;
+                    // At this point we probably timed out, look at the object in case the finalize
+                    // just finished.
+                    if (finalizedObject != null) {
+                        finalizerTimedOut(finalizedObject);
+                        break;
+                    }
                 }
             }
         }
 
-        private Object waitForObject() {
+        private boolean waitForObject() {
             while (true) {
                 Object object = FinalizerDaemon.INSTANCE.finalizingObject;
                 if (object != null) {
-                    return object;
+                    return true;
                 }
                 synchronized (this) {
                     // wait until something is ready to be finalized
@@ -230,7 +239,7 @@ public final class Daemons {
                         wait();
                     } catch (InterruptedException e) {
                         // Daemon.stop may have interrupted us.
-                        return null;
+                        return false;
                     }
                 }
             }
@@ -254,9 +263,14 @@ public final class Daemons {
             }
         }
 
-        private boolean waitForFinalization(Object object) {
-            sleepFor(FinalizerDaemon.INSTANCE.finalizingStartedNanos, MAX_FINALIZE_NANOS);
-            return object != FinalizerDaemon.INSTANCE.finalizingObject;
+        private boolean waitForFinalization() {
+            long startTime = FinalizerDaemon.INSTANCE.finalizingStartedNanos;
+            sleepFor(startTime, MAX_FINALIZE_NANOS);
+            // If we are finalizing an object and the start time is the same, it must be that we
+            // timed out finalizing something. It may not be the same object that we started out
+            // with but this doesn't matter.
+            return FinalizerDaemon.INSTANCE.finalizingObject == null ||
+                   FinalizerDaemon.INSTANCE.finalizingStartedNanos != startTime;
         }
 
         private static void finalizerTimedOut(Object object) {
@@ -276,6 +290,62 @@ public final class Daemons {
             // We don't just throw because we're not the thread that
             // timed out; we're the thread that detected it.
             h.uncaughtException(Thread.currentThread(), syntheticException);
+        }
+    }
+
+    // Invoked by the GC to request that the HeapTrimmerDaemon thread attempt to trim the heap.
+    public static void requestHeapTrim() {
+        synchronized (HeapTrimmerDaemon.INSTANCE) {
+            HeapTrimmerDaemon.INSTANCE.notify();
+        }
+    }
+
+    private static class HeapTrimmerDaemon extends Daemon {
+        private static final HeapTrimmerDaemon INSTANCE = new HeapTrimmerDaemon();
+
+        @Override public void run() {
+            while (isRunning()) {
+                try {
+                    synchronized (this) {
+                        wait();
+                    }
+                    VMRuntime.getRuntime().trimHeap();
+                } catch (InterruptedException ignored) {
+                }
+            }
+        }
+    }
+
+    // Invoked by the GC to request that the HeapTrimmerDaemon thread attempt to trim the heap.
+    public static void requestGC() {
+        GCDaemon.INSTANCE.requestGC();
+    }
+
+    private static class GCDaemon extends Daemon {
+        private static final GCDaemon INSTANCE = new GCDaemon();
+        private int count = 0;
+
+        public void requestGC() {
+            synchronized (this) {
+                ++count;
+                notify();
+            }
+        }
+
+        @Override public void run() {
+            while (isRunning()) {
+                try {
+                    synchronized (this) {
+                        // Wait until a request comes in, unless we have a pending request.
+                        while (count == 0) {
+                            wait();
+                        }
+                        --count;
+                    }
+                    VMRuntime.getRuntime().concurrentGC();
+                } catch (InterruptedException ignored) {
+                }
+            }
         }
     }
 }

@@ -35,7 +35,7 @@ public final class Currency implements Serializable {
 
     private Currency(String currencyCode) {
         this.currencyCode = currencyCode;
-        String symbol = ICU.getCurrencySymbol(Locale.US.toString(), currencyCode);
+        String symbol = ICU.getCurrencySymbol(Locale.US, currencyCode);
         if (symbol == null) {
             throw new IllegalArgumentException("Unsupported ISO 4217 currency code: " +
                     currencyCode);
@@ -65,6 +65,9 @@ public final class Currency implements Serializable {
      */
     public static Currency getInstance(Locale locale) {
         synchronized (localesToCurrencies) {
+            if (locale == null) {
+                throw new NullPointerException("locale == null");
+            }
             Currency currency = localesToCurrencies.get(locale);
             if (currency != null) {
                 return currency;
@@ -123,7 +126,7 @@ public final class Currency implements Serializable {
      * @since 1.7
      */
     public String getDisplayName(Locale locale) {
-        return ICU.getCurrencyDisplayName(locale.toString(), currencyCode);
+        return ICU.getCurrencyDisplayName(locale, currencyCode);
     }
 
     /**
@@ -146,10 +149,9 @@ public final class Currency implements Serializable {
      * <p>If there is no locale-specific currency symbol, the ISO 4217 currency code is returned.
      */
     public String getSymbol(Locale locale) {
-        if (locale.getCountry().length() == 0) {
-            return currencyCode;
+        if (locale == null) {
+            throw new NullPointerException("locale == null");
         }
-
         // Check the locale first, in case the locale has the same currency.
         LocaleData localeData = LocaleData.get(locale);
         if (localeData.internationalCurrencySymbol.equals(currencyCode)) {
@@ -157,7 +159,7 @@ public final class Currency implements Serializable {
         }
 
         // Try ICU, and fall back to the currency code if ICU has nothing.
-        String symbol = ICU.getCurrencySymbol(locale.toString(), currencyCode);
+        String symbol = ICU.getCurrencySymbol(locale, currencyCode);
         return symbol != null ? symbol : currencyCode;
     }
 

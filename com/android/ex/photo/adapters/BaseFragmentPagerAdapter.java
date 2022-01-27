@@ -138,7 +138,7 @@ public abstract class BaseFragmentPagerAdapter extends PagerAdapter {
 
     @Override
     public void finishUpdate(View container) {
-        if (mCurTransaction != null) {
+        if (mCurTransaction != null && !mFragmentManager.isDestroyed()) {
             mCurTransaction.commitAllowingStateLoss();
             mCurTransaction = null;
             mFragmentManager.executePendingTransactions();

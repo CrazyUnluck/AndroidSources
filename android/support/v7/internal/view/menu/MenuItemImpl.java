@@ -20,9 +20,11 @@ import android.content.ActivityNotFoundException;
 import android.content.Context;
 import android.content.Intent;
 import android.graphics.drawable.Drawable;
+import android.support.v4.content.ContextCompat;
 import android.support.v4.view.ActionProvider;
 import android.support.v4.internal.view.SupportMenuItem;
 import android.support.v4.view.MenuItemCompat;
+import android.support.v7.internal.widget.TintManager;
 import android.util.Log;
 import android.view.ContextMenu.ContextMenuInfo;
 import android.view.LayoutInflater;
@@ -53,25 +55,19 @@ public final class MenuItemImpl implements SupportMenuItem {
     private char mShortcutNumericChar;
     private char mShortcutAlphabeticChar;
 
-    /**
-     * The icon's drawable which is only created as needed
-     */
+    /** The icon's drawable which is only created as needed */
     private Drawable mIconDrawable;
 
     /**
-     * The icon's resource ID which is used to get the Drawable when it is needed (if the Drawable
-     * isn't already obtained--only one of the two is needed).
+     * The icon's resource ID which is used to get the Drawable when it is
+     * needed (if the Drawable isn't already obtained--only one of the two is
+     * needed).
      */
     private int mIconResId = NO_ICON;
 
-    /**
-     * The menu to which this item belongs
-     */
+    /** The menu to which this item belongs */
     private MenuBuilder mMenu;
-
-    /**
-     * If this item should launch a sub menu, this is the sub menu to launch
-     */
+    /** If this item should launch a sub menu, this is the sub menu to launch */
     private SubMenuBuilder mSubMenu;
 
     private Runnable mItemCallback;
@@ -92,14 +88,12 @@ public final class MenuItemImpl implements SupportMenuItem {
     private MenuItemCompat.OnActionExpandListener mOnActionExpandListener;
     private boolean mIsActionViewExpanded = false;
 
-    /**
-     * Used for the icon resource ID if this item does not have an icon
-     */
+    /** Used for the icon resource ID if this item does not have an icon */
     static final int NO_ICON = 0;
 
     /**
-     * Current use case is for context menu: Extra information linked to the View that added this
-     * item to the context menu.
+     * Current use case is for context menu: Extra information linked to the
+     * View that added this item to the context menu.
      */
     private ContextMenuInfo mMenuInfo;
 
@@ -112,13 +106,14 @@ public final class MenuItemImpl implements SupportMenuItem {
     /**
      * Instantiates this menu item.
      *
-     * @param group         Item ordering grouping control. The item will be added after all other
-     *                      items whose order is <= this number, and before any that are larger than
-     *                      it. This can also be used to define groups of items for batch state
-     *                      changes. Normally use 0.
-     * @param id            Unique item ID. Use 0 if you do not need a unique ID.
+     * @param menu
+     * @param group Item ordering grouping control. The item will be added after
+     *            all other items whose order is <= this number, and before any
+     *            that are larger than it. This can also be used to define
+     *            groups of items for batch state changes. Normally use 0.
+     * @param id Unique item ID. Use 0 if you do not need a unique ID.
      * @param categoryOrder The ordering for this item.
-     * @param title         The text to display for the item.
+     * @param title The text to display for the item.
      */
     MenuItemImpl(MenuBuilder menu, int group, int id, int categoryOrder, int ordering,
             CharSequence title, int showAsAction) {
@@ -150,8 +145,7 @@ public final class MenuItemImpl implements SupportMenuItem {
      * @return true if the invocation was handled, false otherwise
      */
     public boolean invoke() {
-        if (mClickListener != null &&
-                mClickListener.onMenuItemClick(this)) {
+        if (mClickListener != null && mClickListener.onMenuItemClick(this)) {
             return true;
         }
 
@@ -288,8 +282,7 @@ public final class MenuItemImpl implements SupportMenuItem {
      * @return The active shortcut (based on QWERTY-mode of the menu).
      */
     char getShortcut() {
-        //return (mMenu.isQwertyMode() ? mShortcutAlphabeticChar : mShortcutNumericChar);
-        return mShortcutAlphabeticChar;
+        return (mMenu.isQwertyMode() ? mShortcutAlphabeticChar : mShortcutNumericChar);
     }
 
     /**
@@ -328,8 +321,9 @@ public final class MenuItemImpl implements SupportMenuItem {
     }
 
     /**
-     * @return Whether this menu item should be showing shortcuts (depends on whether the menu
-     *         should show shortcuts and whether this item has a shortcut defined)
+     * @return Whether this menu item should be showing shortcuts (depends on
+     *         whether the menu should show shortcuts and whether this item has
+     *         a shortcut defined)
      */
     boolean shouldShowShortcut() {
         // Show shortcuts if the menu is supposed to show shortcuts AND this item has a shortcut
@@ -414,7 +408,7 @@ public final class MenuItemImpl implements SupportMenuItem {
         }
 
         if (mIconResId != NO_ICON) {
-            Drawable icon =  mMenu.getResources().getDrawable(mIconResId);
+            Drawable icon = TintManager.getDrawable(mMenu.getContext(), mIconResId);
             mIconResId = NO_ICON;
             mIconDrawable = icon;
             return icon;
@@ -632,13 +626,13 @@ public final class MenuItemImpl implements SupportMenuItem {
     @Override
     public MenuItem setActionProvider(android.view.ActionProvider actionProvider) {
         throw new UnsupportedOperationException(
-                "Implementation should use setSupportActionProvider!");
+                "This is not supported, use MenuItemCompat.setActionProvider()");
     }
 
     @Override
     public android.view.ActionProvider getActionProvider() {
         throw new UnsupportedOperationException(
-                "Implementation should use getSupportActionProvider!");
+                "This is not supported, use MenuItemCompat.getActionProvider()");
     }
 
     @Override
@@ -648,18 +642,14 @@ public final class MenuItemImpl implements SupportMenuItem {
 
     @Override
     public SupportMenuItem setSupportActionProvider(ActionProvider actionProvider) {
-        if (mActionProvider == actionProvider) {
-            return this;
-        }
-
-        mActionView = null;
         if (mActionProvider != null) {
             mActionProvider.setVisibilityListener(null);
         }
+        mActionView = null;
         mActionProvider = actionProvider;
         mMenu.onItemsChanged(true); // Measurement can be changed
-        if (actionProvider != null) {
-            actionProvider.setVisibilityListener(new ActionProvider.VisibilityListener() {
+        if (mActionProvider != null) {
+            mActionProvider.setVisibilityListener(new ActionProvider.VisibilityListener() {
                 @Override
                 public void onActionProviderVisibilityChanged(boolean isVisible) {
                     mMenu.onItemVisibleChanged(MenuItemImpl.this);
@@ -677,7 +667,7 @@ public final class MenuItemImpl implements SupportMenuItem {
 
     @Override
     public boolean expandActionView() {
-        if ((mShowAsAction & SHOW_AS_ACTION_COLLAPSE_ACTION_VIEW) == 0 || mActionView == null) {
+        if (!hasCollapsibleActionView()) {
             return false;
         }
 
@@ -715,7 +705,13 @@ public final class MenuItemImpl implements SupportMenuItem {
     }
 
     public boolean hasCollapsibleActionView() {
-        return (mShowAsAction & SHOW_AS_ACTION_COLLAPSE_ACTION_VIEW) != 0 && mActionView != null;
+        if ((mShowAsAction & SHOW_AS_ACTION_COLLAPSE_ACTION_VIEW) != 0) {
+            if (mActionView == null && mActionProvider != null) {
+                mActionView = mActionProvider.onCreateActionView(this);
+            }
+            return mActionView != null;
+        }
+        return false;
     }
 
     public void setActionViewExpanded(boolean isExpanded) {
@@ -731,6 +727,6 @@ public final class MenuItemImpl implements SupportMenuItem {
     @Override
     public MenuItem setOnActionExpandListener(MenuItem.OnActionExpandListener listener) {
         throw new UnsupportedOperationException(
-                "Implementation should use setSupportOnActionExpandListener!");
+                "This is not supported, use MenuItemCompat.setOnActionExpandListener()");
     }
 }

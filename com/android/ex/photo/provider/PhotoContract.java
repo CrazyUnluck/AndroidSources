@@ -64,6 +64,10 @@ public final class PhotoContract {
             PhotoViewColumns.THUMBNAIL_URI,
             PhotoViewColumns.CONTENT_TYPE
         };
+
+        public final static String[] OPTIONAL_COLUMNS = {
+            PhotoViewColumns.LOADING_INDICATOR
+        };
     }
 
     public static final class ContentTypeParameters {

@@ -28,7 +28,6 @@ import android.database.ContentObserver;
 import android.net.NetworkInfo;
 import android.net.wifi.ScanResult;
 import android.net.wifi.WifiManager;
-import android.net.wifi.WifiStateMachine;
 import android.os.Handler;
 import android.os.Message;
 import android.os.UserHandle;
@@ -140,14 +139,17 @@ final class WifiNotificationController {
 
     private synchronized void checkAndSetNotification(NetworkInfo networkInfo,
             List<ScanResult> scanResults) {
+
         // TODO: unregister broadcast so we do not have to check here
         // If we shouldn't place a notification on available networks, then
         // don't bother doing any of the following
         if (!mNotificationEnabled) return;
-        if (networkInfo == null) return;
         if (mWifiState != WifiManager.WIFI_STATE_ENABLED) return;
 
-        NetworkInfo.State state = networkInfo.getState();
+        NetworkInfo.State state = NetworkInfo.State.DISCONNECTED;
+        if (networkInfo != null)
+            state = networkInfo.getState();
+
         if ((state == NetworkInfo.State.DISCONNECTED)
                 || (state == NetworkInfo.State.UNKNOWN)) {
             if (scanResults != null) {
@@ -244,6 +246,8 @@ final class WifiNotificationController {
             CharSequence details = mContext.getResources().getQuantityText(
                     com.android.internal.R.plurals.wifi_available_detailed, numNetworks);
             mNotification.tickerText = title;
+            mNotification.color = mContext.getResources().getColor(
+                    com.android.internal.R.color.system_notification_accent_color);
             mNotification.setLatestEventInfo(mContext, title, details, mNotification.contentIntent);
 
             mNotificationRepeatTime = System.currentTimeMillis() + NOTIFICATION_REPEAT_DELAY_MS;

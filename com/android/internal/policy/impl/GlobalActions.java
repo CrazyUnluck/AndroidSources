@@ -21,7 +21,9 @@ import com.android.internal.app.AlertController.AlertParams;
 import com.android.internal.telephony.TelephonyIntents;
 import com.android.internal.telephony.TelephonyProperties;
 import com.android.internal.R;
+import com.android.internal.widget.LockPatternUtils;
 
+import android.app.ActivityManager;
 import android.app.ActivityManagerNative;
 import android.app.AlertDialog;
 import android.app.Dialog;
@@ -35,6 +37,7 @@ import android.database.ContentObserver;
 import android.graphics.drawable.Drawable;
 import android.media.AudioManager;
 import android.net.ConnectivityManager;
+import android.os.Build;
 import android.os.Bundle;
 import android.os.Handler;
 import android.os.Message;
@@ -51,6 +54,7 @@ import android.service.dreams.IDreamManager;
 import android.telephony.PhoneStateListener;
 import android.telephony.ServiceState;
 import android.telephony.TelephonyManager;
+import android.text.TextUtils;
 import android.util.ArraySet;
 import android.util.Log;
 import android.util.TypedValue;
@@ -62,7 +66,10 @@ import android.view.View;
 import android.view.ViewConfiguration;
 import android.view.ViewGroup;
 import android.view.WindowManager;
+import android.view.WindowManagerGlobal;
+import android.view.WindowManagerInternal;
 import android.view.WindowManagerPolicy.WindowManagerFuncs;
+import android.view.accessibility.AccessibilityEvent;
 import android.widget.AdapterView;
 import android.widget.BaseAdapter;
 import android.widget.ImageView;
@@ -92,6 +99,7 @@ class GlobalActions implements DialogInterface.OnDismissListener, DialogInterfac
     private static final String GLOBAL_ACTION_KEY_SILENT = "silent";
     private static final String GLOBAL_ACTION_KEY_USERS = "users";
     private static final String GLOBAL_ACTION_KEY_SETTINGS = "settings";
+    private static final String GLOBAL_ACTION_KEY_LOCKDOWN = "lockdown";
 
     private final Context mContext;
     private final WindowManagerFuncs mWindowManagerFuncs;
@@ -131,13 +139,14 @@ class GlobalActions implements DialogInterface.OnDismissListener, DialogInterfac
         filter.addAction(TelephonyIntents.ACTION_EMERGENCY_CALLBACK_MODE_CHANGED);
         context.registerReceiver(mBroadcastReceiver, filter);
 
+        ConnectivityManager cm = (ConnectivityManager)
+                context.getSystemService(Context.CONNECTIVITY_SERVICE);
+        mHasTelephony = cm.isNetworkSupported(ConnectivityManager.TYPE_MOBILE);
+
         // get notified of phone state changes
         TelephonyManager telephonyManager =
                 (TelephonyManager) context.getSystemService(Context.TELEPHONY_SERVICE);
         telephonyManager.listen(mPhoneStateListener, PhoneStateListener.LISTEN_SERVICE_STATE);
-        ConnectivityManager cm = (ConnectivityManager)
-                context.getSystemService(Context.CONNECTIVITY_SERVICE);
-        mHasTelephony = cm.isNetworkSupported(ConnectivityManager.TYPE_MOBILE);
         mContext.getContentResolver().registerContentObserver(
                 Settings.Global.getUriFor(Settings.Global.AIRPLANE_MODE_ON), true,
                 mAirplaneModeObserver);
@@ -184,7 +193,8 @@ class GlobalActions implements DialogInterface.OnDismissListener, DialogInterfac
 
         // If we only have 1 item and it's a simple press action, just do this action.
         if (mAdapter.getCount() == 1
-                && mAdapter.getItem(0) instanceof SinglePressAction) {
+                && mAdapter.getItem(0) instanceof SinglePressAction
+                && !(mAdapter.getItem(0) instanceof LongPressAction)) {
             ((SinglePressAction) mAdapter.getItem(0)).onPress();
         } else {
             WindowManager.LayoutParams attrs = mDialog.getWindow().getAttributes();
@@ -261,20 +271,26 @@ class GlobalActions implements DialogInterface.OnDismissListener, DialogInterfac
                 continue;
             }
             if (GLOBAL_ACTION_KEY_POWER.equals(actionKey)) {
-                mItems.add(getPowerAction());
+                mItems.add(new PowerAction());
             } else if (GLOBAL_ACTION_KEY_AIRPLANE.equals(actionKey)) {
                 mItems.add(mAirplaneModeOn);
-            } else if (GLOBAL_ACTION_KEY_BUGREPORT.equals(actionKey)
-                    && (Settings.Global.getInt(mContext.getContentResolver(),
-                        Settings.Global.BUGREPORT_IN_POWER_MENU, 0) != 0 && isCurrentUserOwner())) {
-                mItems.add(getBugReportAction());
-            } else if (GLOBAL_ACTION_KEY_SILENT.equals(actionKey) && mShowSilentToggle) {
-                mItems.add(mSilentModeAction);
-            } else if (GLOBAL_ACTION_KEY_USERS.equals(actionKey)
-                    && SystemProperties.getBoolean("fw.power_user_switcher", false)) {
-                addUsersToMenu(mItems);
+            } else if (GLOBAL_ACTION_KEY_BUGREPORT.equals(actionKey)) {
+                if (Settings.Global.getInt(mContext.getContentResolver(),
+                        Settings.Global.BUGREPORT_IN_POWER_MENU, 0) != 0 && isCurrentUserOwner()) {
+                    mItems.add(getBugReportAction());
+                }
+            } else if (GLOBAL_ACTION_KEY_SILENT.equals(actionKey)) {
+                if (mShowSilentToggle) {
+                    mItems.add(mSilentModeAction);
+                }
+            } else if (GLOBAL_ACTION_KEY_USERS.equals(actionKey)) {
+                if (SystemProperties.getBoolean("fw.power_user_switcher", false)) {
+                    addUsersToMenu(mItems);
+                }
             } else if (GLOBAL_ACTION_KEY_SETTINGS.equals(actionKey)) {
                 mItems.add(getSettingsAction());
+            } else if (GLOBAL_ACTION_KEY_LOCKDOWN.equals(actionKey)) {
+                mItems.add(getLockdownAction());
             } else {
                 Log.e(TAG, "Invalid global action key " + actionKey);
             }
@@ -299,7 +315,11 @@ class GlobalActions implements DialogInterface.OnDismissListener, DialogInterfac
                     @Override
                     public boolean onItemLongClick(AdapterView<?> parent, View view, int position,
                             long id) {
-                        return mAdapter.getItem(position).onLongPress();
+                        final Action action = mAdapter.getItem(position);
+                        if (action instanceof LongPressAction) {
+                            return ((LongPressAction) action).onLongPress();
+                        }
+                        return false;
                     }
         });
         dialog.getWindow().setType(WindowManager.LayoutParams.TYPE_KEYGUARD_DIALOG);
@@ -309,34 +329,38 @@ class GlobalActions implements DialogInterface.OnDismissListener, DialogInterfac
         return dialog;
     }
 
-    private Action getPowerAction() {
-        return new SinglePressAction(
-                com.android.internal.R.drawable.ic_lock_power_off,
-                R.string.global_action_power_off) {
+    private final class PowerAction extends SinglePressAction implements LongPressAction {
+        private PowerAction() {
+            super(com.android.internal.R.drawable.ic_lock_power_off,
+                R.string.global_action_power_off);
+        }
 
-            public void onPress() {
-                // shutdown by making sure radio and power are handled accordingly.
-                mWindowManagerFuncs.shutdown(true);
-            }
+        @Override
+        public boolean onLongPress() {
+            mWindowManagerFuncs.rebootSafeMode(true);
+            return true;
+        }
 
-            public boolean onLongPress() {
-                mWindowManagerFuncs.rebootSafeMode(true);
-                return true;
-            }
+        @Override
+        public boolean showDuringKeyguard() {
+            return true;
+        }
 
-            public boolean showDuringKeyguard() {
-                return true;
-            }
+        @Override
+        public boolean showBeforeProvisioning() {
+            return true;
+        }
 
-            public boolean showBeforeProvisioning() {
-                return true;
-            }
-        };
+        @Override
+        public void onPress() {
+            // shutdown by making sure radio and power are handled accordingly.
+            mWindowManagerFuncs.shutdown(false /* confirm */);
+        }
     }
 
     private Action getBugReportAction() {
-        return new SinglePressAction(com.android.internal.R.drawable.stat_sys_adb,
-                R.string.global_action_bug_report) {
+        return new SinglePressAction(com.android.internal.R.drawable.ic_lock_bugreport,
+                R.string.bugreport_title) {
 
             public void onPress() {
                 AlertDialog.Builder builder = new AlertDialog.Builder(mContext);
@@ -347,6 +371,11 @@ class GlobalActions implements DialogInterface.OnDismissListener, DialogInterfac
                         new DialogInterface.OnClickListener() {
                             @Override
                             public void onClick(DialogInterface dialog, int which) {
+                                // don't actually trigger the bugreport if we are running stability
+                                // tests via monkey
+                                if (ActivityManager.isUserAMonkey()) {
+                                    return;
+                                }
                                 // Add a little delay before executing, to give the
                                 // dialog a chance to go away before it takes a
                                 // screenshot.
@@ -366,16 +395,20 @@ class GlobalActions implements DialogInterface.OnDismissListener, DialogInterfac
                 dialog.show();
             }
 
-            public boolean onLongPress() {
-                return false;
-            }
-
             public boolean showDuringKeyguard() {
                 return true;
             }
 
             public boolean showBeforeProvisioning() {
                 return false;
+            }
+
+            @Override
+            public String getStatus() {
+                return mContext.getString(
+                        com.android.internal.R.string.bugreport_status,
+                        Build.VERSION.RELEASE,
+                        Build.ID);
             }
         };
     }
@@ -387,13 +420,8 @@ class GlobalActions implements DialogInterface.OnDismissListener, DialogInterfac
             @Override
             public void onPress() {
                 Intent intent = new Intent(Settings.ACTION_SETTINGS);
-                intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
+                intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_CLEAR_TOP);
                 mContext.startActivity(intent);
-            }
-
-            @Override
-            public boolean onLongPress() {
-                return false;
             }
 
             @Override
@@ -404,6 +432,32 @@ class GlobalActions implements DialogInterface.OnDismissListener, DialogInterfac
             @Override
             public boolean showBeforeProvisioning() {
                 return true;
+            }
+        };
+    }
+
+    private Action getLockdownAction() {
+        return new SinglePressAction(com.android.internal.R.drawable.ic_lock_lock,
+                R.string.global_action_lockdown) {
+
+            @Override
+            public void onPress() {
+                new LockPatternUtils(mContext).requireCredentialEntry(UserHandle.USER_ALL);
+                try {
+                    WindowManagerGlobal.getWindowManagerService().lockNow(null);
+                } catch (RemoteException e) {
+                    Log.e(TAG, "Error while trying to lock device.", e);
+                }
+            }
+
+            @Override
+            public boolean showDuringKeyguard() {
+                return true;
+            }
+
+            @Override
+            public boolean showBeforeProvisioning() {
+                return false;
             }
         };
     }
@@ -422,36 +476,38 @@ class GlobalActions implements DialogInterface.OnDismissListener, DialogInterfac
     }
 
     private void addUsersToMenu(ArrayList<Action> items) {
-        List<UserInfo> users = ((UserManager) mContext.getSystemService(Context.USER_SERVICE))
-                .getUsers();
-        if (users.size() > 1) {
+        UserManager um = (UserManager) mContext.getSystemService(Context.USER_SERVICE);
+        if (um.isUserSwitcherEnabled()) {
+            List<UserInfo> users = um.getUsers();
             UserInfo currentUser = getCurrentUser();
             for (final UserInfo user : users) {
-                boolean isCurrentUser = currentUser == null
-                        ? user.id == 0 : (currentUser.id == user.id);
-                Drawable icon = user.iconPath != null ? Drawable.createFromPath(user.iconPath)
-                        : null;
-                SinglePressAction switchToUser = new SinglePressAction(
-                        com.android.internal.R.drawable.ic_menu_cc, icon,
-                        (user.name != null ? user.name : "Primary")
-                        + (isCurrentUser ? " \u2714" : "")) {
-                    public void onPress() {
-                        try {
-                            ActivityManagerNative.getDefault().switchUser(user.id);
-                        } catch (RemoteException re) {
-                            Log.e(TAG, "Couldn't switch user " + re);
+                if (user.supportsSwitchTo()) {
+                    boolean isCurrentUser = currentUser == null
+                            ? user.id == 0 : (currentUser.id == user.id);
+                    Drawable icon = user.iconPath != null ? Drawable.createFromPath(user.iconPath)
+                            : null;
+                    SinglePressAction switchToUser = new SinglePressAction(
+                            com.android.internal.R.drawable.ic_menu_cc, icon,
+                            (user.name != null ? user.name : "Primary")
+                            + (isCurrentUser ? " \u2714" : "")) {
+                        public void onPress() {
+                            try {
+                                ActivityManagerNative.getDefault().switchUser(user.id);
+                            } catch (RemoteException re) {
+                                Log.e(TAG, "Couldn't switch user " + re);
+                            }
                         }
-                    }
 
-                    public boolean showDuringKeyguard() {
-                        return true;
-                    }
+                        public boolean showDuringKeyguard() {
+                            return true;
+                        }
 
-                    public boolean showBeforeProvisioning() {
-                        return false;
-                    }
-                };
-                items.add(switchToUser);
+                        public boolean showBeforeProvisioning() {
+                            return false;
+                        }
+                    };
+                    items.add(switchToUser);
+                }
             }
         }
     }
@@ -576,11 +632,15 @@ class GlobalActions implements DialogInterface.OnDismissListener, DialogInterfac
      * What each item in the global actions dialog must be able to support.
      */
     private interface Action {
+        /**
+         * @return Text that will be announced when dialog is created.  null
+         *     for none.
+         */
+        CharSequence getLabelForAccessibility(Context context);
+
         View create(Context context, View convertView, ViewGroup parent, LayoutInflater inflater);
 
         void onPress();
-
-        public boolean onLongPress();
 
         /**
          * @return whether this action should appear in the dialog when the keygaurd
@@ -595,6 +655,13 @@ class GlobalActions implements DialogInterface.OnDismissListener, DialogInterfac
         boolean showBeforeProvisioning();
 
         boolean isEnabled();
+    }
+
+    /**
+     * An action that also supports long press.
+     */
+    private interface LongPressAction extends Action {
+        boolean onLongPress();
     }
 
     /**
@@ -632,10 +699,18 @@ class GlobalActions implements DialogInterface.OnDismissListener, DialogInterfac
             return true;
         }
 
+        public String getStatus() {
+            return null;
+        }
+
         abstract public void onPress();
 
-        public boolean onLongPress() {
-            return false;
+        public CharSequence getLabelForAccessibility(Context context) {
+            if (mMessage != null) {
+                return mMessage;
+            } else {
+                return context.getString(mMessageResId);
+            }
         }
 
         public View create(
@@ -645,12 +720,18 @@ class GlobalActions implements DialogInterface.OnDismissListener, DialogInterfac
             ImageView icon = (ImageView) v.findViewById(R.id.icon);
             TextView messageView = (TextView) v.findViewById(R.id.message);
 
-            v.findViewById(R.id.status).setVisibility(View.GONE);
+            TextView statusView = (TextView) v.findViewById(R.id.status);
+            final String status = getStatus();
+            if (!TextUtils.isEmpty(status)) {
+                statusView.setText(status);
+            } else {
+                statusView.setVisibility(View.GONE);
+            }
             if (mIcon != null) {
                 icon.setImageDrawable(mIcon);
                 icon.setScaleType(ScaleType.CENTER_CROP);
             } else if (mIconResId != 0) {
-                icon.setImageDrawable(context.getResources().getDrawable(mIconResId));
+                icon.setImageDrawable(context.getDrawable(mIconResId));
             }
             if (mMessage != null) {
                 messageView.setText(mMessage);
@@ -721,6 +802,11 @@ class GlobalActions implements DialogInterface.OnDismissListener, DialogInterfac
 
         }
 
+        @Override
+        public CharSequence getLabelForAccessibility(Context context) {
+            return context.getString(mMessageResId);
+        }
+
         public View create(Context context, View convertView, ViewGroup parent,
                 LayoutInflater inflater) {
             willCreate();
@@ -740,7 +826,7 @@ class GlobalActions implements DialogInterface.OnDismissListener, DialogInterfac
 
             boolean on = ((mState == State.On) || (mState == State.TurningOn));
             if (icon != null) {
-                icon.setImageDrawable(context.getResources().getDrawable(
+                icon.setImageDrawable(context.getDrawable(
                         (on ? mEnabledIconResId : mDisabledIconResid)));
                 icon.setEnabled(enabled);
             }
@@ -764,10 +850,6 @@ class GlobalActions implements DialogInterface.OnDismissListener, DialogInterfac
             final boolean nowOn = !(mState == State.On);
             onToggle(nowOn);
             changeStateFromPress(nowOn);
-        }
-
-        public boolean onLongPress() {
-            return false;
         }
 
         public boolean isEnabled() {
@@ -841,6 +923,11 @@ class GlobalActions implements DialogInterface.OnDismissListener, DialogInterfac
             return index;
         }
 
+        @Override
+        public CharSequence getLabelForAccessibility(Context context) {
+            return null;
+        }
+
         public View create(Context context, View convertView, ViewGroup parent,
                 LayoutInflater inflater) {
             View v = inflater.inflate(R.layout.global_actions_silent_mode, parent, false);
@@ -857,10 +944,6 @@ class GlobalActions implements DialogInterface.OnDismissListener, DialogInterfac
         }
 
         public void onPress() {
-        }
-
-        public boolean onLongPress() {
-            return false;
         }
 
         public boolean showDuringKeyguard() {
@@ -993,6 +1076,7 @@ class GlobalActions implements DialogInterface.OnDismissListener, DialogInterfac
         private final Context mContext;
         private final int mWindowTouchSlop;
         private final AlertController mAlert;
+        private final MyAdapter mAdapter;
 
         private EnableAccessibilityController mEnableAccessibilityController;
 
@@ -1003,6 +1087,7 @@ class GlobalActions implements DialogInterface.OnDismissListener, DialogInterfac
             super(context, getDialogTheme(context));
             mContext = context;
             mAlert = new AlertController(mContext, this, getWindow());
+            mAdapter = (MyAdapter) params.mAdapter;
             mWindowTouchSlop = ViewConfiguration.get(context).getScaledWindowTouchSlop();
             params.apply(mAlert);
         }
@@ -1021,7 +1106,13 @@ class GlobalActions implements DialogInterface.OnDismissListener, DialogInterfac
             // is dismissed on the first down while the global gesture is a long press
             // with two fingers anywhere on the screen.
             if (EnableAccessibilityController.canEnableAccessibilityViaGesture(mContext)) {
-                mEnableAccessibilityController = new EnableAccessibilityController(mContext);
+                mEnableAccessibilityController = new EnableAccessibilityController(mContext,
+                        new Runnable() {
+                    @Override
+                    public void run() {
+                        dismiss();
+                    }
+                });
                 super.setCanceledOnTouchOutside(false);
             } else {
                 mEnableAccessibilityController = null;
@@ -1088,6 +1179,20 @@ class GlobalActions implements DialogInterface.OnDismissListener, DialogInterfac
         protected void onCreate(Bundle savedInstanceState) {
             super.onCreate(savedInstanceState);
             mAlert.installContent();
+        }
+
+        @Override
+        public boolean dispatchPopulateAccessibilityEvent(AccessibilityEvent event) {
+            if (event.getEventType() == AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED) {
+                for (int i = 0; i < mAdapter.getCount(); ++i) {
+                    CharSequence label =
+                            mAdapter.getItem(i).getLabelForAccessibility(getContext());
+                    if (label != null) {
+                        event.getText().add(label);
+                    }
+                }
+            }
+            return super.dispatchPopulateAccessibilityEvent(event);
         }
 
         @Override

@@ -65,8 +65,8 @@ public class ThreadGroup implements Thread.UncaughtExceptionHandler {
     private boolean isDestroyed;
 
     /* the VM uses these directly; do not rename */
-    static final ThreadGroup mSystem = new ThreadGroup();
-    static final ThreadGroup mMain = new ThreadGroup(mSystem, "main");
+    static final ThreadGroup systemThreadGroup = new ThreadGroup();
+    static final ThreadGroup mainThreadGroup = new ThreadGroup(systemThreadGroup, "main");
 
     /**
      * Constructs a new {@code ThreadGroup} with the given name. The new {@code ThreadGroup}
@@ -176,7 +176,7 @@ public class ThreadGroup implements Thread.UncaughtExceptionHandler {
      * @param b Used to control low memory implicit suspension
      * @return {@code true} (always)
      *
-     * @deprecated Required deprecated method {@link #suspend()}.
+     * @deprecated Required deprecated method suspend().
      */
     @Deprecated
     public boolean allowThreadSuspension(boolean b) {
@@ -533,7 +533,7 @@ public class ThreadGroup implements Thread.UncaughtExceptionHandler {
      * @see Thread#resume
      * @see #suspend
      *
-     * @deprecated Requires deprecated method {@link Thread#resume()}.
+     * @deprecated Requires deprecated method Thread.resume().
      */
     @SuppressWarnings("deprecation")
     @Deprecated
@@ -600,7 +600,7 @@ public class ThreadGroup implements Thread.UncaughtExceptionHandler {
      * @see Thread#stop(Throwable)
      * @see ThreadDeath
      *
-     * @deprecated Requires deprecated method {@link Thread#stop()}.
+     * @deprecated Requires deprecated method Thread.stop().
      */
     @SuppressWarnings("deprecation")
     @Deprecated
@@ -638,7 +638,7 @@ public class ThreadGroup implements Thread.UncaughtExceptionHandler {
      * @see Thread#suspend
      * @see #resume
      *
-     * @deprecated Requires deprecated method {@link Thread#suspend()}.
+     * @deprecated Requires deprecated method Thread.suspend().
      */
     @SuppressWarnings("deprecation")
     @Deprecated

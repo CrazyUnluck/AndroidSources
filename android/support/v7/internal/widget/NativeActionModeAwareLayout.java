@@ -16,16 +16,18 @@
 
 package android.support.v7.internal.widget;
 
+import android.annotation.TargetApi;
 import android.content.Context;
+import android.os.Build;
 import android.util.AttributeSet;
 import android.view.ActionMode;
 import android.view.View;
-import android.widget.LinearLayout;
 
 /**
  * @hide
  */
-public class NativeActionModeAwareLayout extends LinearLayout {
+@TargetApi(Build.VERSION_CODES.HONEYCOMB)
+public class NativeActionModeAwareLayout extends ContentFrameLayout {
 
     private OnActionModeForChildListener mActionModeForChildListener;
 
@@ -37,10 +39,9 @@ public class NativeActionModeAwareLayout extends LinearLayout {
         mActionModeForChildListener = listener;
     }
 
-    @Override
     public ActionMode startActionModeForChild(View originalView, ActionMode.Callback callback) {
         if (mActionModeForChildListener != null) {
-            callback = mActionModeForChildListener.onActionModeForChild(callback);
+            return mActionModeForChildListener.startActionModeForChild(originalView, callback);
         }
         return super.startActionModeForChild(originalView, callback);
     }
@@ -49,6 +50,6 @@ public class NativeActionModeAwareLayout extends LinearLayout {
      * @hide
      */
     public interface OnActionModeForChildListener {
-        ActionMode.Callback onActionModeForChild(ActionMode.Callback callback);
+        ActionMode startActionModeForChild(View originalView, ActionMode.Callback callback);
     }
 }

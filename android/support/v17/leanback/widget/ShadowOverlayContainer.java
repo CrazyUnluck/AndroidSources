@@ -19,6 +19,7 @@ import android.util.AttributeSet;
 import android.view.LayoutInflater;
 import android.view.View;
 import android.view.ViewGroup;
+import android.graphics.Rect;
 
 /**
  * ShadowOverlayContainer Provides a SDK version independent wrapper container
@@ -32,9 +33,9 @@ import android.view.ViewGroup;
  * to parent.
  * </p>
  * <p>
- * {@link #initialize(boolean, boolean)} must be first called on the container to initialize
- * shadows and/or color overlay.  Then call {@link #wrap(View)} to insert wrapped view
- * into container.
+ * {@link #initialize(boolean, boolean, boolean)} must be first called on the container
+ * to initialize shadows and/or color overlay.  Then call {@link #wrap(View)} to insert
+ * wrapped view into container.
  * </p>
  * <p>
  * Call {@link #setShadowFocusLevel(float)} to control shadow alpha.
@@ -49,6 +50,7 @@ public class ShadowOverlayContainer extends ViewGroup {
     private View mColorDimOverlay;
     private Object mShadowImpl;
     private View mWrappedView;
+    private static final Rect sTempRect = new Rect();
 
     public ShadowOverlayContainer(Context context) {
         this(context, null, 0);
@@ -79,15 +81,27 @@ public class ShadowOverlayContainer extends ViewGroup {
     }
 
     /**
-     * Initialize shadows and/or color overlay.  Both are optional.
+     * Initialize shadows, color overlay.
+     * @deprecated use {@link #initialize(boolean, boolean, boolean)} instead.
      */
+    @Deprecated
     public void initialize(boolean hasShadow, boolean hasColorDimOverlay) {
+        initialize(hasShadow, hasColorDimOverlay, true);
+    }
+
+    /**
+     * Initialize shadows, color overlay, and rounded corners.  All are optional.
+     */
+    public void initialize(boolean hasShadow, boolean hasColorDimOverlay, boolean roundedCorners) {
         if (mInitialized) {
             throw new IllegalStateException();
         }
         mInitialized = true;
         if (hasShadow) {
-            mShadowImpl = ShadowHelper.getInstance().addShadow(this);
+            mShadowImpl = ShadowHelper.getInstance().addShadow(this, roundedCorners);
+        } else if (roundedCorners) {
+            RoundedRectHelper.getInstance().setRoundedRectBackground(this,
+                    android.graphics.Color.TRANSPARENT);
         }
         if (hasColorDimOverlay) {
             mColorDimOverlay = LayoutInflater.from(getContext())
@@ -194,6 +208,13 @@ public class ShadowOverlayContainer extends ViewGroup {
                 final int height = child.getMeasuredHeight();
                 child.layout(0, 0, width, height);
             }
+        }
+        if (mWrappedView != null) {
+            sTempRect.left = (int) mWrappedView.getPivotX();
+            sTempRect.top = (int) mWrappedView.getPivotY();
+            offsetDescendantRectToMyCoords(mWrappedView, sTempRect);
+            setPivotX(sTempRect.left);
+            setPivotY(sTempRect.top);
         }
     }
 

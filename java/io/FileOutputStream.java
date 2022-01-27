@@ -20,10 +20,9 @@ package java.io;
 import dalvik.system.CloseGuard;
 import java.nio.NioUtils;
 import java.nio.channels.FileChannel;
-import java.util.Arrays;
 import libcore.io.IoBridge;
-import libcore.io.IoUtils;
-import static libcore.io.OsConstants.*;
+
+import static android.system.OsConstants.*;
 
 /**
  * An output stream that writes bytes to a file. If the output file exists, it
@@ -136,7 +135,7 @@ public class FileOutputStream extends OutputStream {
                 channel.close();
             }
             if (shouldClose) {
-                IoUtils.close(fd);
+                IoBridge.closeAndSignalBlockedThreads(fd);
             } else {
                 // An owned fd has been invalidated by IoUtils.close, but
                 // we need to explicitly stop using an unowned fd (http://b/4361076).

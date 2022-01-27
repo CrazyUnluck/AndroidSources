@@ -35,33 +35,44 @@ import android.provider.Browser;
 import android.util.Log;
 import android.view.KeyEvent;
 import android.view.View;
+import android.webkit.ClientCertRequest;
 import android.webkit.ConsoleMessage;
 import android.webkit.DownloadListener;
 import android.webkit.GeolocationPermissions;
 import android.webkit.JsDialogHelper;
 import android.webkit.JsPromptResult;
 import android.webkit.JsResult;
+import android.webkit.PermissionRequest;
 import android.webkit.SslErrorHandler;
 import android.webkit.ValueCallback;
 import android.webkit.WebChromeClient;
 import android.webkit.WebChromeClient.CustomViewCallback;
 import android.webkit.WebResourceResponse;
+import android.webkit.WebResourceRequest;
 import android.webkit.WebView;
 import android.webkit.WebViewClient;
 
 import org.chromium.android_webview.AwContentsClient;
+import org.chromium.android_webview.AwContentsClientBridge;
 import org.chromium.android_webview.AwHttpAuthHandler;
-import org.chromium.android_webview.InterceptedRequestData;
+import org.chromium.android_webview.AwWebResourceResponse;
 import org.chromium.android_webview.JsPromptResultReceiver;
 import org.chromium.android_webview.JsResultReceiver;
+import org.chromium.android_webview.permission.AwPermissionRequest;
 import org.chromium.base.ThreadUtils;
+import org.chromium.base.TraceEvent;
 import org.chromium.content.browser.ContentView;
 import org.chromium.content.browser.ContentViewClient;
-import org.chromium.content.common.TraceEvent;
 
+import java.lang.ref.WeakReference;
 import java.net.URISyntaxException;
-import java.util.concurrent.atomic.AtomicBoolean;
-
+import java.security.Principal;
+import java.security.PrivateKey;
+import java.security.cert.X509Certificate;
+import java.util.ArrayList;
+import java.util.HashMap;
+import java.util.Map;
+import java.util.WeakHashMap;
 
 /**
  * An adapter class that forwards the callbacks from {@link ContentViewClient}
@@ -102,6 +113,8 @@ public class WebViewContentsClientAdapter extends AwContentsClient {
 
     private static final int NEW_WEBVIEW_CREATED = 100;
 
+    private WeakHashMap<AwPermissionRequest, WeakReference<PermissionRequestAdapter>>
+            mOngoingPermissionRequests;
     /**
      * Adapter constructor.
      *
@@ -154,25 +167,9 @@ public class WebViewContentsClientAdapter extends AwContentsClient {
         @Override
         public boolean shouldOverrideKeyEvent(WebView view, KeyEvent event) {
             // TODO: Investigate more and add a test case.
-            // This is a copy of what Clank does. The WebViewCore key handling code and Clank key
-            // handling code differ enough that it's not trivial to figure out how keycodes are
-            // being filtered.
+            // This is reflecting Clank's behavior.
             int keyCode = event.getKeyCode();
-            if (keyCode == KeyEvent.KEYCODE_MENU ||
-                keyCode == KeyEvent.KEYCODE_HOME ||
-                keyCode == KeyEvent.KEYCODE_BACK ||
-                keyCode == KeyEvent.KEYCODE_CALL ||
-                keyCode == KeyEvent.KEYCODE_ENDCALL ||
-                keyCode == KeyEvent.KEYCODE_POWER ||
-                keyCode == KeyEvent.KEYCODE_HEADSETHOOK ||
-                keyCode == KeyEvent.KEYCODE_CAMERA ||
-                keyCode == KeyEvent.KEYCODE_FOCUS ||
-                keyCode == KeyEvent.KEYCODE_VOLUME_DOWN ||
-                keyCode == KeyEvent.KEYCODE_VOLUME_MUTE ||
-                keyCode == KeyEvent.KEYCODE_VOLUME_UP) {
-                return true;
-            }
-            return false;
+            return !ContentViewClient.shouldPropagateKey(keyCode);
         }
 
         @Override
@@ -273,20 +270,63 @@ public class WebViewContentsClientAdapter extends AwContentsClient {
         TraceEvent.end();
     }
 
+    private static class WebResourceRequestImpl implements WebResourceRequest {
+        private final ShouldInterceptRequestParams mParams;
+
+        public WebResourceRequestImpl(ShouldInterceptRequestParams params) {
+            mParams = params;
+        }
+
+        @Override
+        public Uri getUrl() {
+            return Uri.parse(mParams.url);
+        }
+
+        @Override
+        public boolean isForMainFrame() {
+            return mParams.isMainFrame;
+        }
+
+        @Override
+        public boolean hasGesture() {
+            return mParams.hasUserGesture;
+        }
+
+        @Override
+        public String getMethod() {
+            return mParams.method;
+        }
+
+        @Override
+        public Map<String, String> getRequestHeaders() {
+            return mParams.requestHeaders;
+        }
+    }
+
     /**
      * @see AwContentsClient#shouldInterceptRequest(java.lang.String)
      */
     @Override
-    public InterceptedRequestData shouldInterceptRequest(String url) {
+    public AwWebResourceResponse shouldInterceptRequest(ShouldInterceptRequestParams params) {
         TraceEvent.begin();
-        if (TRACE) Log.d(TAG, "shouldInterceptRequest=" + url);
-        WebResourceResponse response = mWebViewClient.shouldInterceptRequest(mWebView, url);
+        if (TRACE) Log.d(TAG, "shouldInterceptRequest=" + params.url);
+        WebResourceResponse response = mWebViewClient.shouldInterceptRequest(mWebView,
+                new WebResourceRequestImpl(params));
         TraceEvent.end();
         if (response == null) return null;
-        return new InterceptedRequestData(
+
+        // AwWebResourceResponse should support null headers. b/16332774.
+        Map<String, String> responseHeaders = response.getResponseHeaders();
+        if (responseHeaders == null)
+            responseHeaders = new HashMap<String, String>();
+
+        return new AwWebResourceResponse(
                 response.getMimeType(),
                 response.getEncoding(),
-                response.getData());
+                response.getData(),
+                response.getStatusCode(),
+                response.getReasonPhrase(),
+                responseHeaders);
     }
 
     /**
@@ -518,12 +558,12 @@ public class WebViewContentsClientAdapter extends AwContentsClient {
      */
     @Override
     public boolean shouldOverrideKeyEvent(KeyEvent event) {
-        // TODO(joth): The expression here is a workaround for http://b/7697782 :-
-        // 1. The check for system key should be made in AwContents or ContentViewCore,
-        //    before shouldOverrideKeyEvent() is called at all.
+        // The check below is reflecting Clank's behavior and is a workaround for http://b/7697782.
+        // 1. The check for system key should be made in AwContents or ContentViewCore, before
+        //    shouldOverrideKeyEvent() is called at all.
         // 2. shouldOverrideKeyEvent() should be called in onKeyDown/onKeyUp, not from
         //    dispatchKeyEvent().
-        if (event.isSystem()) return true;
+        if (!ContentViewClient.shouldPropagateKey(event.getKeyCode())) return true;
         TraceEvent.begin();
         if (TRACE) Log.d(TAG, "shouldOverrideKeyEvent");
         boolean result = mWebViewClient.shouldOverrideKeyEvent(mWebView, event);
@@ -561,6 +601,44 @@ public class WebViewContentsClientAdapter extends AwContentsClient {
         if (mWebChromeClient != null) {
             if (TRACE) Log.d(TAG, "onGeolocationPermissionsHidePrompt");
             mWebChromeClient.onGeolocationPermissionsHidePrompt();
+        }
+        TraceEvent.end();
+    }
+
+    @Override
+    public void onPermissionRequest(AwPermissionRequest permissionRequest) {
+        TraceEvent.begin();
+        if (mWebChromeClient != null) {
+            if (TRACE) Log.d(TAG, "onPermissionRequest");
+            if (mOngoingPermissionRequests == null) {
+                mOngoingPermissionRequests =
+                    new WeakHashMap<AwPermissionRequest, WeakReference<PermissionRequestAdapter>>();
+            }
+            PermissionRequestAdapter adapter = new PermissionRequestAdapter(permissionRequest);
+            mOngoingPermissionRequests.put(
+                    permissionRequest, new WeakReference<PermissionRequestAdapter>(adapter));
+            mWebChromeClient.onPermissionRequest(adapter);
+        } else {
+            // By default, we deny the permission.
+            permissionRequest.deny();
+        }
+        TraceEvent.end();
+    }
+
+    @Override
+    public void onPermissionRequestCanceled(AwPermissionRequest permissionRequest) {
+        TraceEvent.begin();
+        if (mWebChromeClient != null && mOngoingPermissionRequests != null) {
+            if (TRACE) Log.d(TAG, "onPermissionRequestCanceled");
+            WeakReference<PermissionRequestAdapter> weakRef =
+                    mOngoingPermissionRequests.get(permissionRequest);
+            // We don't hold strong reference to PermissionRequestAdpater and don't expect the
+            // user only holds weak reference to it either, if so, user has no way to call
+            // grant()/deny(), and no need to be notified the cancellation of request.
+            if (weakRef != null) {
+                PermissionRequestAdapter adapter = weakRef.get();
+                if (adapter != null) mWebChromeClient.onPermissionRequestCanceled(adapter);
+            }
         }
         TraceEvent.end();
     }
@@ -685,24 +763,84 @@ public class WebViewContentsClientAdapter extends AwContentsClient {
         SslErrorHandler handler = new SslErrorHandler() {
             @Override
             public void proceed() {
-                postProceed(true);
+                callback.onReceiveValue(true);
             }
             @Override
             public void cancel() {
-                postProceed(false);
-            }
-            private void postProceed(final boolean proceed) {
-                post(new Runnable() {
-                        @Override
-                        public void run() {
-                            callback.onReceiveValue(proceed);
-                        }
-                    });
+                callback.onReceiveValue(false);
             }
         };
         TraceEvent.begin();
         if (TRACE) Log.d(TAG, "onReceivedSslError");
         mWebViewClient.onReceivedSslError(mWebView, handler, error);
+        TraceEvent.end();
+    }
+
+    private static class ClientCertRequestImpl extends ClientCertRequest {
+
+        final private AwContentsClientBridge.ClientCertificateRequestCallback mCallback;
+        final private String[] mKeyTypes;
+        final private Principal[] mPrincipals;
+        final private String mHost;
+        final private int mPort;
+
+        public ClientCertRequestImpl(
+                AwContentsClientBridge.ClientCertificateRequestCallback callback,
+                String[] keyTypes, Principal[] principals, String host, int port) {
+            mCallback = callback;
+            mKeyTypes = keyTypes;
+            mPrincipals = principals;
+            mHost = host;
+            mPort = port;
+        }
+
+        @Override
+        public String[] getKeyTypes() {
+            // This is already a copy of native argument, so return directly.
+            return mKeyTypes;
+        }
+
+        @Override
+        public Principal[] getPrincipals() {
+            // This is already a copy of native argument, so return directly.
+            return mPrincipals;
+        }
+
+        @Override
+        public String getHost() {
+            return mHost;
+        }
+
+        @Override
+        public int getPort() {
+            return mPort;
+        }
+
+        @Override
+        public void proceed(final PrivateKey privateKey, final X509Certificate[] chain) {
+            mCallback.proceed(privateKey, chain);
+        }
+
+        @Override
+        public void ignore() {
+            mCallback.ignore();
+        }
+
+        @Override
+        public void cancel() {
+            mCallback.cancel();
+        }
+    }
+
+    @Override
+    public void onReceivedClientCertRequest(
+            AwContentsClientBridge.ClientCertificateRequestCallback callback,
+            String[] keyTypes, Principal[] principals, String host, int port) {
+        if (TRACE) Log.d(TAG, "onReceivedClientCertRequest");
+        TraceEvent.begin();
+        final ClientCertRequestImpl request = new ClientCertRequestImpl(callback,
+            keyTypes, principals, host, port);
+        mWebViewClient.onReceivedClientCertRequest(mWebView, request);
         TraceEvent.end();
     }
 
@@ -748,30 +886,43 @@ public class WebViewContentsClientAdapter extends AwContentsClient {
             return;
         }
         TraceEvent.begin();
-        /*
-        // TODO: Call new API here when it's added in frameworks/base - see http://ag/335990
-        WebChromeClient.FileChooserParams p = new WebChromeClient.FileChooserParams();
-        p.mode = fileChooserParams.mode;
-        p.acceptTypes = fileChooserParams.acceptTypes;
-        p.title = fileChooserParams.title;
-        p.defaultFilename = fileChooserParams.defaultFilename;
-        p.capture = fileChooserParams.capture;
+        FileChooserParamsAdapter adapter = new FileChooserParamsAdapter(
+                fileChooserParams, mWebView.getContext());
         if (TRACE) Log.d(TAG, "showFileChooser");
-        if (Build.VERSION.SDK_INT > VERSION_CODES.KIT_KAT &&
-               !mWebChromeClient.showFileChooser(mWebView, uploadFileCallback, p)) {
+        ValueCallback<Uri[]> callbackAdapter = new ValueCallback<Uri[]>() {
+            private boolean mCompleted;
+            @Override
+            public void onReceiveValue(Uri[] uriList) {
+                if (mCompleted) {
+                    throw new IllegalStateException("showFileChooser result was already called");
+                }
+                mCompleted = true;
+                String s[] = null;
+                if (uriList != null) {
+                    s = new String[uriList.length];
+                    for(int i = 0; i < uriList.length; i++) {
+                        s[i] = uriList[i].toString();
+                    }
+                }
+                uploadFileCallback.onReceiveValue(s);
+            }
+        };
+        if (mWebChromeClient.onShowFileChooser(mWebView, callbackAdapter, adapter)) {
             return;
         }
         if (mWebView.getContext().getApplicationInfo().targetSdkVersion >
-                Build.VERSION_CODES.KIT_KAT) {
+                Build.VERSION_CODES.KITKAT) {
             uploadFileCallback.onReceiveValue(null);
             return;
         }
-        */
         ValueCallback<Uri> innerCallback = new ValueCallback<Uri>() {
-            final AtomicBoolean completed = new AtomicBoolean(false);
+            private boolean mCompleted;
             @Override
             public void onReceiveValue(Uri uri) {
-                if (completed.getAndSet(true)) return;
+                if (mCompleted) {
+                    throw new IllegalStateException("showFileChooser result was already called");
+                }
+                mCompleted = true;
                 uploadFileCallback.onReceiveValue(
                         uri == null ? null : new String[] { uri.toString() });
             }
@@ -837,7 +988,7 @@ public class WebViewContentsClientAdapter extends AwContentsClient {
             // background.
             Bitmap poster = BitmapFactory.decodeResource(
                     mWebView.getContext().getResources(),
-                    com.android.internal.R.drawable.ic_media_video_poster);
+                    R.drawable.ic_media_video_poster);
             result = Bitmap.createBitmap(poster.getWidth(), poster.getHeight(), poster.getConfig());
             result.eraseColor(Color.GRAY);
             Canvas canvas = new Canvas(result);
@@ -847,6 +998,7 @@ public class WebViewContentsClientAdapter extends AwContentsClient {
         return result;
     }
 
+    // TODO: Move to upstream.
     private static class AwHttpAuthHandlerAdapter extends android.webkit.HttpAuthHandler {
         private AwHttpAuthHandler mAwHandler;
 
@@ -875,5 +1027,76 @@ public class WebViewContentsClientAdapter extends AwContentsClient {
         public boolean useHttpAuthUsernamePassword() {
             return mAwHandler.isFirstAttempt();
         }
+    }
+
+    // TODO: Move to the upstream once the PermissionRequest is part of SDK.
+    public static class PermissionRequestAdapter extends PermissionRequest {
+        // TODO: Move the below definitions to AwPermissionRequest.
+        private static long BITMASK_RESOURCE_VIDEO_CAPTURE = 1 << 1;
+        private static long BITMASK_RESOURCE_AUDIO_CAPTURE = 1 << 2;
+        private static long BITMASK_RESOURCE_PROTECTED_MEDIA_ID = 1 << 3;
+
+        public static long toAwPermissionResources(String[] resources) {
+            long result = 0;
+            for (String resource : resources) {
+                if (resource.equals(PermissionRequest.RESOURCE_VIDEO_CAPTURE))
+                    result |= BITMASK_RESOURCE_VIDEO_CAPTURE;
+                else if (resource.equals(PermissionRequest.RESOURCE_AUDIO_CAPTURE))
+                    result |= BITMASK_RESOURCE_AUDIO_CAPTURE;
+                else if (resource.equals(PermissionRequest.RESOURCE_PROTECTED_MEDIA_ID))
+                    result |= BITMASK_RESOURCE_PROTECTED_MEDIA_ID;
+            }
+            return result;
+        }
+
+        private static String[] toPermissionResources(long resources) {
+            ArrayList<String> result = new ArrayList<String>();
+            if ((resources & BITMASK_RESOURCE_VIDEO_CAPTURE) != 0)
+                result.add(PermissionRequest.RESOURCE_VIDEO_CAPTURE);
+            if ((resources & BITMASK_RESOURCE_AUDIO_CAPTURE) != 0)
+                result.add(PermissionRequest.RESOURCE_AUDIO_CAPTURE);
+            if ((resources & BITMASK_RESOURCE_PROTECTED_MEDIA_ID) != 0)
+                result.add(PermissionRequest.RESOURCE_PROTECTED_MEDIA_ID);
+            String[] resource_array = new String[result.size()];
+            return result.toArray(resource_array);
+        }
+
+        private AwPermissionRequest mAwPermissionRequest;
+        private String[] mResources;
+
+        public PermissionRequestAdapter(AwPermissionRequest awPermissionRequest) {
+            assert awPermissionRequest != null;
+            mAwPermissionRequest = awPermissionRequest;
+        }
+
+        @Override
+        public Uri getOrigin() {
+            return mAwPermissionRequest.getOrigin();
+        }
+
+        @Override
+        public String[] getResources() {
+            synchronized (this) {
+                if (mResources == null) {
+                    mResources = toPermissionResources(mAwPermissionRequest.getResources());
+                }
+                return mResources;
+            }
+        }
+
+        @Override
+        public void grant(String[] resources) {
+            long requestedResource = mAwPermissionRequest.getResources();
+            if ((requestedResource & toAwPermissionResources(resources)) == requestedResource)
+                mAwPermissionRequest.grant();
+            else
+                mAwPermissionRequest.deny();
+        }
+
+        @Override
+        public void deny() {
+            mAwPermissionRequest.deny();
+        }
+
     }
 }

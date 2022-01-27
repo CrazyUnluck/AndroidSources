@@ -40,6 +40,7 @@ import java.io.FileNotFoundException;
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.OutputStream;
+import java.util.Arrays;
 
 /**
  * The Media provider contains meta data for all available media on both internal
@@ -173,6 +174,18 @@ public final class MediaStore {
      */
     public static final String EXTRA_MEDIA_TITLE = "android.intent.extra.title";
     /**
+     * The name of the Intent-extra used to define the genre.
+     */
+    public static final String EXTRA_MEDIA_GENRE = "android.intent.extra.genre";
+    /**
+     * The name of the Intent-extra used to define the playlist.
+     */
+    public static final String EXTRA_MEDIA_PLAYLIST = "android.intent.extra.playlist";
+    /**
+     * The name of the Intent-extra used to define the radio channel.
+     */
+    public static final String EXTRA_MEDIA_RADIO_CHANNEL = "android.intent.extra.radio_channel";
+    /**
      * The name of the Intent-extra used to define the search focus. The search focus
      * indicates whether the search should be for things related to the artist, album
      * or song that is identified by the other extras.
@@ -243,6 +256,11 @@ public final class MediaStore {
      * object in the extra field. This is useful for applications that only need a small image.
      * If the EXTRA_OUTPUT is present, then the full-sized image will be written to the Uri
      * value of EXTRA_OUTPUT.
+     * As of {@link android.os.Build.VERSION_CODES#LOLLIPOP}, this uri can also be supplied through
+     * {@link android.content.Intent#setClipData(ClipData)}. If using this approach, you still must
+     * supply the uri through the EXTRA_OUTPUT field for compatibility with old applications.
+     * If you don't set a ClipData, it will be copied there for you when calling
+     * {@link Context#startActivity(Intent)}.
      * @see #EXTRA_OUTPUT
      */
     @SdkConstant(SdkConstantType.ACTIVITY_INTENT_ACTION)
@@ -263,6 +281,11 @@ public final class MediaStore {
      * object in the extra field. This is useful for applications that only need a small image.
      * If the EXTRA_OUTPUT is present, then the full-sized image will be written to the Uri
      * value of EXTRA_OUTPUT.
+     * As of {@link android.os.Build.VERSION_CODES#LOLLIPOP}, this uri can also be supplied through
+     * {@link android.content.Intent#setClipData(ClipData)}. If using this approach, you still must
+     * supply the uri through the EXTRA_OUTPUT field for compatibility with old applications.
+     * If you don't set a ClipData, it will be copied there for you when calling
+     * {@link Context#startActivity(Intent)}.
      *
      * @see #ACTION_IMAGE_CAPTURE
      * @see #EXTRA_OUTPUT
@@ -281,6 +304,11 @@ public final class MediaStore {
      * where the video is written. If EXTRA_OUTPUT is not present the video will be
      * written to the standard location for videos, and the Uri of that location will be
      * returned in the data field of the Uri.
+     * As of {@link android.os.Build.VERSION_CODES#LOLLIPOP}, this uri can also be supplied through
+     * {@link android.content.Intent#setClipData(ClipData)}. If using this approach, you still must
+     * supply the uri through the EXTRA_OUTPUT field for compatibility with old applications.
+     * If you don't set a ClipData, it will be copied there for you when calling
+     * {@link Context#startActivity(Intent)}.
      * @see #EXTRA_OUTPUT
      * @see #EXTRA_VIDEO_QUALITY
      * @see #EXTRA_SIZE_LIMIT
@@ -659,6 +687,7 @@ public final class MediaStore {
                         if (sThumbBuf == null) {
                             sThumbBuf = new byte[MiniThumbFile.BYTES_PER_MINTHUMB];
                         }
+                        Arrays.fill(sThumbBuf, (byte)0);
                         if (thumbFile.getMiniThumbFromFile(origId, sThumbBuf) != null) {
                             bitmap = BitmapFactory.decodeByteArray(sThumbBuf, 0, sThumbBuf.length);
                             if (bitmap == null) {
@@ -1393,6 +1422,11 @@ public final class MediaStore {
             public static final String CONTENT_TYPE = "vnd.android.cursor.dir/audio";
 
             /**
+             * The MIME type for an audio track.
+             */
+            public static final String ENTRY_CONTENT_TYPE = "vnd.android.cursor.item/audio";
+
+            /**
              * The default sort order for this table
              */
             public static final String DEFAULT_SORT_ORDER = TITLE_KEY;
@@ -1862,6 +1896,16 @@ public final class MediaStore {
              * The default sort order for this table
              */
             public static final String DEFAULT_SORT_ORDER = ALBUM_KEY;
+        }
+
+        public static final class Radio {
+            /**
+             * The MIME type for entries in this table.
+             */
+            public static final String ENTRY_CONTENT_TYPE = "vnd.android.cursor.item/radio";
+
+            // Not instantiable.
+            private Radio() { }
         }
     }
 

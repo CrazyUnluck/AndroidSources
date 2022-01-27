@@ -346,6 +346,16 @@ import java.net.UnknownHostException;
  *             <td>11+</td>
  *         </tr>
  *         <tr>
+ *             <td>TLS_ECDHE_PSK_WITH_AES_128_CBC_SHA</td>
+ *             <td>21+</td>
+ *             <td>21+</td>
+ *         </tr>
+ *         <tr>
+ *             <td>TLS_ECDHE_PSK_WITH_AES_256_CBC_SHA</td>
+ *             <td>21+</td>
+ *             <td>21+</td>
+ *         </tr>
+ *         <tr>
  *             <td>TLS_ECDHE_RSA_WITH_3DES_EDE_CBC_SHA</td>
  *             <td>11+</td>
  *             <td>11-19</td>
@@ -501,13 +511,38 @@ import java.net.UnknownHostException;
  *             <td></td>
  *         </tr>
  *         <tr>
+ *             <td>TLS_ECDH_anon_WITH_RC4_128_SHA</td>
+ *             <td>11+</td>
+ *             <td></td>
+ *         </tr>
+ *         <tr>
  *             <td>TLS_EMPTY_RENEGOTIATION_INFO_SCSV</td>
  *             <td>11+</td>
  *             <td>11+</td>
  *         </tr>
  *         <tr>
- *             <td>TLS_ECDH_anon_WITH_RC4_128_SHA</td>
- *             <td>11+</td>
+ *             <td>TLS_FALLBACK_SCSV</td>
+ *             <td>21+</td>
+ *             <td></td>
+ *         </tr>
+ *         <tr>
+ *             <td>TLS_PSK_WITH_3DES_EDE_CBC_SHA</td>
+ *             <td>21+</td>
+ *             <td></td>
+ *         </tr>
+ *         <tr>
+ *             <td>TLS_PSK_WITH_AES_128_CBC_SHA</td>
+ *             <td>21+</td>
+ *             <td>21+</td>
+ *         </tr>
+ *         <tr>
+ *             <td>TLS_PSK_WITH_AES_256_CBC_SHA</td>
+ *             <td>21+</td>
+ *             <td>21+</td>
+ *         </tr>
+ *         <tr>
+ *             <td>TLS_PSK_WITH_RC4_128_SHA</td>
+ *             <td>21+</td>
  *             <td></td>
  *         </tr>
  *         <tr>
@@ -547,6 +582,9 @@ import java.net.UnknownHostException;
  *         </tr>
  *     </tbody>
  * </table>
+ *
+ * <p><em>NOTE</em>: PSK cipher suites are enabled by default only if the {@code SSLContext} through
+ * which the socket was created has been initialized with a {@code PSKKeyManager}.
  *
  * <p>API Levels 1 to 8 use OpenSSL names for cipher suites. The table below
  * lists these OpenSSL names and their corresponding standard names used in API
@@ -859,13 +897,11 @@ public abstract class SSLSocket extends Socket {
     public abstract SSLSession getSession();
 
     /**
-     * Registers the specified listener to receive notification on completion of a
-     * handshake on this connection.
+     * Registers the specified listener to receive notification on completion of
+     * a handshake on this connection.
      *
-     * @param listener
-     *            the listener to register.
-     * @throws IllegalArgumentException
-     *             if {@code listener} is {@code null}.
+     * @param listener the listener to register.
+     * @throws IllegalArgumentException if {@code listener} is {@code null}.
      */
     public abstract void addHandshakeCompletedListener(HandshakeCompletedListener listener);
 

@@ -39,7 +39,7 @@ import java.util.concurrent.TimeUnit;
  * ForkJoinPool}s may also be appropriate for use with event-style
  * tasks that are never joined.
  *
- * <p>A static {@link #commonPool()} is available and appropriate for
+ * <p>A static {@code commonPool()} is available and appropriate for
  * most applications. The common pool is used by any ForkJoinTask that
  * is not explicitly submitted to a specified pool. Using the common
  * pool normally reduces resource usage (its threads are slowly
@@ -127,7 +127,6 @@ import java.util.concurrent.TimeUnit;
  * or internal resources have been exhausted.
  *
  * @since 1.7
- * @hide
  * @author Doug Lea
  */
 public class ForkJoinPool extends AbstractExecutorService {
@@ -213,8 +212,7 @@ public class ForkJoinPool extends AbstractExecutorService {
      * choosing existing queues, and may be randomly repositioned upon
      * contention with other submitters.  In essence, submitters act
      * like workers except that they are restricted to executing local
-     * tasks that they submitted (or in the case of CountedCompleters,
-     * others with the same root task).  However, because most
+     * tasks that they submitted. However, because most
      * shared/external queue operations are more expensive than
      * internal, and because, at steady state, external submitters
      * will compete for CPU with workers, ForkJoinTask.join and
@@ -418,12 +416,6 @@ public class ForkJoinPool extends AbstractExecutorService {
      * is usually a good idea).  (4) We bound the number of attempts
      * to find work (see MAX_HELP) and fall back to suspending the
      * worker and if necessary replacing it with another.
-     *
-     * Helping actions for CountedCompleters are much simpler: Method
-     * helpComplete can take and execute any task with the same root
-     * as the task being waited on. However, this still entails some
-     * traversal of completer chains, so is less efficient than using
-     * CountedCompleters without explicit joins.
      *
      * It is impossible to keep exactly the target parallelism number
      * of threads running at any given time.  Determining the
@@ -2907,7 +2899,7 @@ public class ForkJoinPool extends AbstractExecutorService {
      * Possibly initiates an orderly shutdown in which previously
      * submitted tasks are executed, but no new tasks will be
      * accepted. Invocation has no effect on execution state if this
-     * is the {@link #commonPool()}, and no additional effect if
+     * is the {@code commonPool()}, and no additional effect if
      * already shut down.  Tasks that are in the process of being
      * submitted concurrently during the course of this method may or
      * may not be rejected.
@@ -2920,7 +2912,7 @@ public class ForkJoinPool extends AbstractExecutorService {
     /**
      * Possibly attempts to cancel and/or stop all tasks, and reject
      * all subsequently submitted tasks.  Invocation has no effect on
-     * execution state if this is the {@link #commonPool()}, and no
+     * execution state if this is the {@code commonPool()}, and no
      * additional effect if already shut down. Otherwise, tasks that
      * are in the process of being submitted or executed concurrently
      * during the course of this method may or may not be
@@ -2979,8 +2971,8 @@ public class ForkJoinPool extends AbstractExecutorService {
     /**
      * Blocks until all tasks have completed execution after a
      * shutdown request, or the timeout occurs, or the current thread
-     * is interrupted, whichever happens first. Because the {@link
-     * #commonPool()} never terminates until program shutdown, when
+     * is interrupted, whichever happens first. Because the {@code
+     * commonPool()} never terminates until program shutdown, when
      * applied to the common pool, this method is equivalent to {@link
      * #awaitQuiescence(long, TimeUnit)} but always returns {@code false}.
      *
@@ -3064,7 +3056,7 @@ public class ForkJoinPool extends AbstractExecutorService {
 
     /**
      * Waits and/or attempts to assist performing tasks indefinitely
-     * until the {@link #commonPool()} {@link #isQuiescent}.
+     * until the {@code commonPool()} {@link #isQuiescent}.
      */
     static void quiesceCommonPool() {
         common.awaitQuiescence(Long.MAX_VALUE, TimeUnit.NANOSECONDS);

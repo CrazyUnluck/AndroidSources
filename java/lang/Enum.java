@@ -37,14 +37,16 @@ public abstract class Enum<E extends Enum<E>> implements Serializable, Comparabl
             if (!enumType.isEnum()) {
                 return null;
             }
-            Method method = (Method) Class.getDeclaredConstructorOrMethod(
-                    enumType, "values", EmptyArray.CLASS);
             try {
+                Method method = enumType.getDeclaredMethod("values", EmptyArray.CLASS);
+                method.setAccessible(true);
                 return (Object[]) method.invoke((Object[]) null);
+            } catch (NoSuchMethodException impossible) {
+                throw new AssertionError("impossible", impossible);
             } catch (IllegalAccessException impossible) {
-                throw new AssertionError();
+                throw new AssertionError("impossible", impossible);
             } catch (InvocationTargetException impossible) {
-                throw new AssertionError();
+                throw new AssertionError("impossible", impossible);
             }
         }
     };
@@ -147,7 +149,7 @@ public abstract class Enum<E extends Enum<E>> implements Serializable, Comparabl
      * @see java.lang.Comparable
      */
     public final int compareTo(E o) {
-        return ordinal - o.ordinal();
+        return ordinal - ((Enum<?>) o).ordinal;
     }
 
     /**

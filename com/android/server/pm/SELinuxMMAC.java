@@ -25,11 +25,15 @@ import android.util.Xml;
 
 import com.android.internal.util.XmlUtils;
 
+import libcore.io.IoUtils;
+
 import java.io.File;
-import java.io.FileInputStream;
 import java.io.FileNotFoundException;
+import java.io.FileOutputStream;
 import java.io.FileReader;
 import java.io.IOException;
+import java.security.MessageDigest;
+import java.security.NoSuchAlgorithmException;
 
 import java.util.HashMap;
 
@@ -48,17 +52,48 @@ public final class SELinuxMMAC {
     private static final boolean DEBUG_POLICY_INSTALL = DEBUG_POLICY || false;
 
     // Signature seinfo values read from policy.
-    private static HashMap<Signature, Policy> sSigSeinfo =
-        new HashMap<Signature, Policy>();
+    private static HashMap<Signature, Policy> sSigSeinfo = new HashMap<Signature, Policy>();
 
     // Default seinfo read from policy.
     private static String sDefaultSeinfo = null;
 
-    // Locations of potential install policy files.
-    private static final File[] INSTALL_POLICY_FILE = {
-        new File(Environment.getDataDirectory(), "security/mac_permissions.xml"),
-        new File(Environment.getRootDirectory(), "etc/security/mac_permissions.xml"),
-        null};
+    // Data policy override version file.
+    private static final String DATA_VERSION_FILE =
+            Environment.getDataDirectory() + "/security/current/selinux_version";
+
+    // Base policy version file.
+    private static final String BASE_VERSION_FILE = "/selinux_version";
+
+    // Whether override security policies should be loaded.
+    private static final boolean USE_OVERRIDE_POLICY = useOverridePolicy();
+
+    // Data override mac_permissions.xml policy file.
+    private static final String DATA_MAC_PERMISSIONS =
+            Environment.getDataDirectory() + "/security/current/mac_permissions.xml";
+
+    // Base mac_permissions.xml policy file.
+    private static final String BASE_MAC_PERMISSIONS =
+            Environment.getRootDirectory() + "/etc/security/mac_permissions.xml";
+
+    // Determine which mac_permissions.xml file to use.
+    private static final String MAC_PERMISSIONS = USE_OVERRIDE_POLICY ?
+            DATA_MAC_PERMISSIONS : BASE_MAC_PERMISSIONS;
+
+    // Data override seapp_contexts policy file.
+    private static final String DATA_SEAPP_CONTEXTS =
+            Environment.getDataDirectory() + "/security/current/seapp_contexts";
+
+    // Base seapp_contexts policy file.
+    private static final String BASE_SEAPP_CONTEXTS = "/seapp_contexts";
+
+    // Determine which seapp_contexts file to use.
+    private static final String SEAPP_CONTEXTS = USE_OVERRIDE_POLICY ?
+            DATA_SEAPP_CONTEXTS : BASE_SEAPP_CONTEXTS;
+
+    // Stores the hash of the last used seapp_contexts file.
+    private static final String SEAPP_HASH_FILE =
+            Environment.getDataDirectory().toString() + "/system/seapp_hash";
+
 
     // Signature policy stanzas
     static class Policy {
@@ -101,52 +136,17 @@ public final class SELinuxMMAC {
         sDefaultSeinfo = null;
     }
 
-    /**
-     * Parses an MMAC install policy from a predefined list of locations.
-     * @param none
-     * @return boolean indicating whether an install policy was correctly parsed.
-     */
     public static boolean readInstallPolicy() {
-
-        return readInstallPolicy(INSTALL_POLICY_FILE);
-    }
-
-    /**
-     * Parses an MMAC install policy given as an argument.
-     * @param File object representing the path of the policy.
-     * @return boolean indicating whether the install policy was correctly parsed.
-     */
-    public static boolean readInstallPolicy(File policyFile) {
-
-        return readInstallPolicy(new File[]{policyFile,null});
-    }
-
-    private static boolean readInstallPolicy(File[] policyFiles) {
         // Temp structures to hold the rules while we parse the xml file.
         // We add all the rules together once we know there's no structural problems.
         HashMap<Signature, Policy> sigSeinfo = new HashMap<Signature, Policy>();
         String defaultSeinfo = null;
 
         FileReader policyFile = null;
-        int i = 0;
-        while (policyFile == null && policyFiles != null && policyFiles[i] != null) {
-            try {
-                policyFile = new FileReader(policyFiles[i]);
-                break;
-            } catch (FileNotFoundException e) {
-                Slog.d(TAG,"Couldn't find install policy " + policyFiles[i].getPath());
-            }
-            i++;
-        }
-
-        if (policyFile == null) {
-            Slog.d(TAG, "No policy file found. All seinfo values will be null.");
-            return false;
-        }
-
-        Slog.d(TAG, "Using install policy file " + policyFiles[i].getPath());
-
         try {
+            policyFile = new FileReader(MAC_PERMISSIONS);
+            Slog.d(TAG, "Using policy file " + MAC_PERMISSIONS);
+
             XmlPullParser parser = Xml.newPullParser();
             parser.setInput(policyFile);
 
@@ -189,20 +189,14 @@ public final class SELinuxMMAC {
                     XmlUtils.skipCurrentTag(parser);
                 }
             }
-        } catch (XmlPullParserException e) {
-            // An error outside of a stanza means a structural problem
-            // with the xml file. So ignore it.
-            Slog.w(TAG, "Got exception parsing ", e);
+        } catch (XmlPullParserException xpe) {
+            Slog.w(TAG, "Got exception parsing " + MAC_PERMISSIONS, xpe);
             return false;
-        } catch (IOException e) {
-            Slog.w(TAG, "Got exception parsing ", e);
+        } catch (IOException ioe) {
+            Slog.w(TAG, "Got exception parsing " + MAC_PERMISSIONS, ioe);
             return false;
         } finally {
-            try {
-                policyFile.close();
-            } catch (IOException e) {
-                //omit
-            }
+            IoUtils.closeQuietly(policyFile);
         }
 
         flushInstallPolicy();
@@ -345,39 +339,28 @@ public final class SELinuxMMAC {
     /**
      * Labels a package based on an seinfo tag from install policy.
      * The label is attached to the ApplicationInfo instance of the package.
-     * @param PackageParser.Package object representing the package
-     *         to labeled.
+     * @param pkg object representing the package to be labeled.
      * @return boolean which determines whether a non null seinfo label
      *         was assigned to the package. A null value simply meaning that
      *         no policy matched.
      */
     public static boolean assignSeinfoValue(PackageParser.Package pkg) {
 
-        /*
-         * Non system installed apps should be treated the same. This
-         * means that any post-loaded apk will be assigned the default
-         * tag, if one exists in the policy, else null, without respect
-         * to the signing key.
-         */
-        if (((pkg.applicationInfo.flags & ApplicationInfo.FLAG_SYSTEM) != 0) ||
-            ((pkg.applicationInfo.flags & ApplicationInfo.FLAG_UPDATED_SYSTEM_APP) != 0)) {
+        // We just want one of the signatures to match.
+        for (Signature s : pkg.mSignatures) {
+            if (s == null)
+                continue;
 
-            // We just want one of the signatures to match.
-            for (Signature s : pkg.mSignatures) {
-                if (s == null)
-                    continue;
+            Policy policy = sSigSeinfo.get(s);
+            if (policy != null) {
+                String seinfo = policy.checkPolicy(pkg.packageName);
+                if (seinfo != null) {
+                    pkg.applicationInfo.seinfo = seinfo;
+                    if (DEBUG_POLICY_INSTALL)
+                        Slog.i(TAG, "package (" + pkg.packageName +
+                               ") labeled with seinfo=" + seinfo);
 
-                Policy policy = sSigSeinfo.get(s);
-                if (policy != null) {
-                    String seinfo = policy.checkPolicy(pkg.packageName);
-                    if (seinfo != null) {
-                        pkg.applicationInfo.seinfo = seinfo;
-                        if (DEBUG_POLICY_INSTALL)
-                            Slog.i(TAG, "package (" + pkg.packageName +
-                                   ") labeled with seinfo=" + seinfo);
-
-                        return true;
-                    }
+                    return true;
                 }
             }
         }
@@ -390,5 +373,107 @@ public final class SELinuxMMAC {
                    + (sDefaultSeinfo == null ? "null" : sDefaultSeinfo));
 
         return (sDefaultSeinfo != null);
+    }
+
+    /**
+     * Determines if a recursive restorecon on /data/data and /data/user is needed.
+     * It does this by comparing the SHA-1 of the seapp_contexts file against the
+     * stored hash at /data/system/seapp_hash.
+     *
+     * @return Returns true if the restorecon should occur or false otherwise.
+     */
+    public static boolean shouldRestorecon() {
+        // Any error with the seapp_contexts file should be fatal
+        byte[] currentHash = null;
+        try {
+            currentHash = returnHash(SEAPP_CONTEXTS);
+        } catch (IOException ioe) {
+            Slog.e(TAG, "Error with hashing seapp_contexts.", ioe);
+            return false;
+        }
+
+        // Push past any error with the stored hash file
+        byte[] storedHash = null;
+        try {
+            storedHash = IoUtils.readFileAsByteArray(SEAPP_HASH_FILE);
+        } catch (IOException ioe) {
+            Slog.w(TAG, "Error opening " + SEAPP_HASH_FILE + ". Assuming first boot.");
+        }
+
+        return (storedHash == null || !MessageDigest.isEqual(storedHash, currentHash));
+    }
+
+    /**
+     * Stores the SHA-1 of the seapp_contexts to /data/system/seapp_hash.
+     */
+    public static void setRestoreconDone() {
+        try {
+            final byte[] currentHash = returnHash(SEAPP_CONTEXTS);
+            dumpHash(new File(SEAPP_HASH_FILE), currentHash);
+        } catch (IOException ioe) {
+            Slog.e(TAG, "Error with saving hash to " + SEAPP_HASH_FILE, ioe);
+        }
+    }
+
+    /**
+     * Dump the contents of a byte array to a specified file.
+     *
+     * @param file The file that receives the byte array content.
+     * @param content A byte array that will be written to the specified file.
+     * @throws IOException if any failed I/O operation occured.
+     *         Included is the failure to atomically rename the tmp
+     *         file used in the process.
+     */
+    private static void dumpHash(File file, byte[] content) throws IOException {
+        FileOutputStream fos = null;
+        File tmp = null;
+        try {
+            tmp = File.createTempFile("seapp_hash", ".journal", file.getParentFile());
+            tmp.setReadable(true);
+            fos = new FileOutputStream(tmp);
+            fos.write(content);
+            fos.getFD().sync();
+            if (!tmp.renameTo(file)) {
+                throw new IOException("Failure renaming " + file.getCanonicalPath());
+            }
+        } finally {
+            if (tmp != null) {
+                tmp.delete();
+            }
+            IoUtils.closeQuietly(fos);
+        }
+    }
+
+    /**
+     * Return the SHA-1 of a file.
+     *
+     * @param file The path to the file given as a string.
+     * @return Returns the SHA-1 of the file as a byte array.
+     * @throws IOException if any failed I/O operations occured.
+     */
+    private static byte[] returnHash(String file) throws IOException {
+        try {
+            final byte[] contents = IoUtils.readFileAsByteArray(file);
+            return MessageDigest.getInstance("SHA-1").digest(contents);
+        } catch (NoSuchAlgorithmException nsae) {
+            throw new RuntimeException(nsae);  // impossible
+        }
+    }
+
+    private static boolean useOverridePolicy() {
+        try {
+            final String overrideVersion = IoUtils.readFileAsString(DATA_VERSION_FILE);
+            final String baseVersion = IoUtils.readFileAsString(BASE_VERSION_FILE);
+            if (overrideVersion.equals(baseVersion)) {
+                return true;
+            }
+            Slog.e(TAG, "Override policy version '" + overrideVersion + "' doesn't match " +
+                   "base version '" + baseVersion + "'. Skipping override policy files.");
+        } catch (FileNotFoundException fnfe) {
+            // Override version file doesn't have to exist so silently ignore.
+        } catch (IOException ioe) {
+            Slog.w(TAG, "Skipping override policy files.", ioe);
+        }
+        return false;
     }
 }

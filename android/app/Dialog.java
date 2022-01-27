@@ -17,8 +17,7 @@
 package android.app;
 
 import android.content.pm.ApplicationInfo;
-import android.content.pm.PackageManager;
-import com.android.internal.app.ActionBarImpl;
+import com.android.internal.app.WindowDecorActionBar;
 import com.android.internal.policy.PolicyManager;
 
 import android.content.ComponentName;
@@ -88,7 +87,7 @@ public class Dialog implements DialogInterface, Window.Callback,
     final WindowManager mWindowManager;
     Window mWindow;
     View mDecor;
-    private ActionBarImpl mActionBar;
+    private ActionBar mActionBar;
     /**
      * This field should be made private, so it is hidden from the SDK.
      * {@hide}
@@ -241,6 +240,18 @@ public class Dialog implements DialogInterface, Window.Callback,
     }
 
     /**
+     * Forces immediate creation of the dialog.
+     * <p>
+     * Note that you should not override this method to perform dialog creation.
+     * Rather, override {@link #onCreate(Bundle)}.
+     */
+    public void create() {
+        if (!mCreated) {
+            dispatchOnCreate(null);
+        }
+    }
+
+    /**
      * Start the dialog and display it on screen.  The window is placed in the
      * application layer and opaque.  Note that you should not override this
      * method to do initialization when the dialog is shown, instead implement
@@ -270,7 +281,7 @@ public class Dialog implements DialogInterface, Window.Callback,
             final ApplicationInfo info = mContext.getApplicationInfo();
             mWindow.setDefaultIcon(info.icon);
             mWindow.setDefaultLogo(info.logo);
-            mActionBar = new ActionBarImpl(this);
+            mActionBar = new WindowDecorActionBar(this);
         }
 
         WindowManager.LayoutParams l = mWindow.getAttributes();
@@ -458,11 +469,12 @@ public class Dialog implements DialogInterface, Window.Callback,
     }
 
     /**
-     * Finds a view that was identified by the id attribute from the XML that
-     * was processed in {@link #onStart}.
+     * Finds a child view with the given identifier. Returns null if the
+     * specified child view does not exist or the dialog has not yet been fully
+     * created (for example, via {@link #show()} or {@link #create()}).
      *
      * @param id the identifier of the view to find
-     * @return The view if found or null otherwise.
+     * @return The view with the given id or null.
      */
     public View findViewById(int id) {
         return mWindow.findViewById(id);
@@ -481,7 +493,7 @@ public class Dialog implements DialogInterface, Window.Callback,
     /**
      * Set the screen content to an explicit view.  This view is placed
      * directly into the screen's view hierarchy.  It can itself be a complex
-     * view hierarhcy.
+     * view hierarchy.
      * 
      * @param view The desired content to display.
      */

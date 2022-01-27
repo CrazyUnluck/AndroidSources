@@ -23,6 +23,7 @@ import java.net.SocketAddress;
 import java.nio.ByteBuffer;
 import java.nio.channels.spi.AbstractSelectableChannel;
 import java.nio.channels.spi.SelectorProvider;
+import java.util.Set;
 
 /**
  * A {@code SocketChannel} is a selectable channel that provides a partial

@@ -23,7 +23,6 @@ import java.lang.reflect.Array;
 import java.lang.reflect.Field;
 import java.lang.reflect.InvocationTargetException;
 import java.lang.reflect.Method;
-import java.lang.reflect.Modifier;
 import java.lang.reflect.Proxy;
 import java.util.ArrayList;
 import java.util.Arrays;
@@ -1053,7 +1052,8 @@ public class ObjectInputStream extends InputStream implements ObjectInput, Objec
      * @see #readFields
      * @see #readObject()
      */
-    private void readFieldValues(Object obj, ObjectStreamClass classDesc) throws OptionalDataException, ClassNotFoundException, IOException {
+    private void readFieldValues(Object obj, ObjectStreamClass classDesc)
+            throws OptionalDataException, ClassNotFoundException, IOException {
         // Now we must read all fields and assign them to the receiver
         ObjectStreamField[] fields = classDesc.getLoadFields();
         fields = (fields == null) ? ObjectStreamClass.NO_FIELDS : fields;
@@ -1063,12 +1063,10 @@ public class ObjectInputStream extends InputStream implements ObjectInput, Objec
         }
 
         for (ObjectStreamField fieldDesc : fields) {
-            Field field = classDesc.getReflectionField(fieldDesc);
-            if (field != null && Modifier.isTransient(field.getModifiers())) {
-                field = null; // No setting transient fields! (http://b/4471249)
-            }
-            // We may not have been able to find the field, or it may be transient, but we still
-            // need to read the value and do the other checking...
+            // checkAndGetReflectionField() can return null if it was not able to find the field or
+            // if it is transient or static. We still need to read the data and do the other
+            // checking...
+            Field field = classDesc.checkAndGetReflectionField(fieldDesc);
             try {
                 Class<?> type = fieldDesc.getTypeInternal();
                 if (type == byte.class) {
@@ -1577,6 +1575,9 @@ public class ObjectInputStream extends InputStream implements ObjectInput, Objec
             ClassNotFoundException, IOException {
         // read classdesc for Enum first
         ObjectStreamClass classDesc = readEnumDesc();
+
+        Class enumType = classDesc.checkAndGetTcEnumClass();
+
         int newHandle = nextHandle();
         // read name after class desc
         String name;
@@ -1598,9 +1599,11 @@ public class ObjectInputStream extends InputStream implements ObjectInput, Objec
 
         Enum<?> result;
         try {
-            result = Enum.valueOf((Class) classDesc.forClass(), name);
+            result = Enum.valueOf(enumType, name);
         } catch (IllegalArgumentException e) {
-            throw new InvalidObjectException(e.getMessage());
+            InvalidObjectException ioe = new InvalidObjectException(e.getMessage());
+            ioe.initCause(e);
+            throw ioe;
         }
         registerObjectRead(result, newHandle, unshared);
         return result;
@@ -1736,9 +1739,7 @@ public class ObjectInputStream extends InputStream implements ObjectInput, Objec
      */
     protected Class<?> resolveProxyClass(String[] interfaceNames)
             throws IOException, ClassNotFoundException {
-        // TODO: This method is opportunity for performance enhancement
-        //       We can cache the classloader and recently used interfaces.
-        ClassLoader loader = ClassLoader.getSystemClassLoader();
+        ClassLoader loader = callerClassLoader;
         Class<?>[] interfaces = new Class<?>[interfaceNames.length];
         for (int i = 0; i < interfaceNames.length; i++) {
             interfaces[i] = Class.forName(interfaceNames[i], false, loader);
@@ -1784,9 +1785,10 @@ public class ObjectInputStream extends InputStream implements ObjectInput, Objec
             throw missingClassDescriptor();
         }
 
+        Class<?> objectClass = classDesc.checkAndGetTcObjectClass();
+
         int newHandle = nextHandle();
-        Class<?> objectClass = classDesc.forClass();
-        Object result = null;
+        Object result;
         Object registeredResult = null;
         if (objectClass != null) {
             // Now we know which class to instantiate and which constructor to
@@ -2058,8 +2060,7 @@ public class ObjectInputStream extends InputStream implements ObjectInput, Objec
      *             if the source stream does not contain readable serialized
      *             objects.
      */
-    protected void readStreamHeader() throws IOException,
-            StreamCorruptedException {
+    protected void readStreamHeader() throws IOException, StreamCorruptedException {
         if (input.readShort() == STREAM_MAGIC
                 && input.readShort() == STREAM_VERSION) {
             return;
@@ -2259,7 +2260,7 @@ public class ObjectInputStream extends InputStream implements ObjectInput, Objec
                 // not primitive class
                 // Use the first non-null ClassLoader on the stack. If null, use
                 // the system class loader
-                cls = Class.forName(className, true, callerClassLoader);
+                cls = Class.forName(className, false, callerClassLoader);
             }
         }
         return cls;
@@ -2333,8 +2334,7 @@ public class ObjectInputStream extends InputStream implements ObjectInput, Objec
             throws InvalidClassException {
 
         Class<?> localClass = loadedStreamClass.forClass();
-        ObjectStreamClass localStreamClass = ObjectStreamClass
-                .lookupStreamClass(localClass);
+        ObjectStreamClass localStreamClass = ObjectStreamClass.lookupStreamClass(localClass);
 
         if (loadedStreamClass.getSerialVersionUID() != localStreamClass
                 .getSerialVersionUID()) {

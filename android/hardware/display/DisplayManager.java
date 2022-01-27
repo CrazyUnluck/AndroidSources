@@ -16,7 +16,10 @@
 
 package android.hardware.display;
 
+import android.annotation.NonNull;
+import android.annotation.Nullable;
 import android.content.Context;
+import android.media.projection.MediaProjection;
 import android.os.Handler;
 import android.util.SparseArray;
 import android.view.Display;
@@ -93,11 +96,9 @@ public final class DisplayManager {
      * windows on the display and the system may mirror the contents of other displays
      * onto it.
      * </p><p>
-     * Creating a public virtual display requires the
-     * {@link android.Manifest.permission#CAPTURE_VIDEO_OUTPUT}
-     * or {@link android.Manifest.permission#CAPTURE_SECURE_VIDEO_OUTPUT} permission.
-     * These permissions are reserved for use by system components and are not available to
-     * third-party applications.
+     * Creating a public virtual display that isn't restricted to own-content only implicitly
+     * creates an auto-mirroring display. See {@link #VIRTUAL_DISPLAY_FLAG_AUTO_MIRROR} for
+     * restrictions on who is allowed to create an auto-mirroring display.
      * </p>
      *
      * <h3>Private virtual displays</h3>
@@ -105,6 +106,8 @@ public final class DisplayManager {
      * When this flag is not set, the virtual display is private as defined by the
      * {@link Display#FLAG_PRIVATE} display flag.
      * </p>
+     *
+     * <p>
      * A private virtual display belongs to the application that created it.
      * Only the a owner of a private virtual display is allowed to place windows upon it.
      * The private virtual display also does not participate in display mirroring: it will
@@ -112,10 +115,11 @@ public final class DisplayManager {
      * be mirrored elsewhere.  More precisely, the only processes that are allowed to
      * enumerate or interact with the private display are those that have the same UID as the
      * application that originally created the private virtual display.
-      * </p>
+     * </p>
      *
      * @see #createVirtualDisplay
      * @see #VIRTUAL_DISPLAY_FLAG_OWN_CONTENT_ONLY
+     * @see #VIRTUAL_DISPLAY_FLAG_AUTO_MIRROR
      */
     public static final int VIRTUAL_DISPLAY_FLAG_PUBLIC = 1 << 0;
 
@@ -184,9 +188,51 @@ public final class DisplayManager {
      * will be blanked instead if it has no windows.
      * </p>
      *
+     * <p>
+     * This flag is mutually exclusive with {@link #VIRTUAL_DISPLAY_FLAG_AUTO_MIRROR}.  If both
+     * flags are specified then the own-content only behavior will be applied.
+     * </p>
+     *
+     * <p>
+     * This behavior of this flag is implied whenever neither {@link #VIRTUAL_DISPLAY_FLAG_PUBLIC}
+     * nor {@link #VIRTUAL_DISPLAY_FLAG_AUTO_MIRROR} have been set.  This flag is only required to
+     * override the default behavior when creating a public display.
+     * </p>
+     *
      * @see #createVirtualDisplay
      */
     public static final int VIRTUAL_DISPLAY_FLAG_OWN_CONTENT_ONLY = 1 << 3;
+
+
+    /**
+     * Virtual display flag: Allows content to be mirrored on private displays when no content is
+     * being shown.
+     *
+     * <p>
+     * This flag is mutually exclusive with {@link #VIRTUAL_DISPLAY_FLAG_OWN_CONTENT_ONLY}.
+     * If both flags are specified then the own-content only behavior will be applied.
+     * </p>
+     *
+     * <p>
+     * The behavior of this flag is implied whenever {@link #VIRTUAL_DISPLAY_FLAG_PUBLIC} is set
+     * and {@link #VIRTUAL_DISPLAY_FLAG_OWN_CONTENT_ONLY} has not been set.   This flag is only
+     * required to override the default behavior when creating a private display.
+     * </p>
+     *
+     * <p>
+     * Creating an auto-mirroing virtual display requires the
+     * {@link android.Manifest.permission#CAPTURE_VIDEO_OUTPUT}
+     * or {@link android.Manifest.permission#CAPTURE_SECURE_VIDEO_OUTPUT} permission.
+     * These permissions are reserved for use by system components and are not available to
+     * third-party applications.
+     *
+     * Alternatively, an appropriate {@link MediaProjection} may be used to create an
+     * auto-mirroring virtual display.
+     * </p>
+     *
+     * @see #createVirtualDisplay
+     */
+    public static final int VIRTUAL_DISPLAY_FLAG_AUTO_MIRROR = 1 << 4;
 
     /** @hide */
     public DisplayManager(Context context) {
@@ -303,7 +349,7 @@ public final class DisplayManager {
     }
 
     /**
-     * Unregisters an input device listener.
+     * Unregisters a display listener.
      *
      * @param listener The listener to unregister.
      *
@@ -425,6 +471,16 @@ public final class DisplayManager {
 
     /**
      * Creates a virtual display.
+     *
+     * @see #createVirtualDisplay(String, int, int, int, Surface, int, VirtualDisplay.Callback)
+     */
+    public VirtualDisplay createVirtualDisplay(@NonNull String name,
+            int width, int height, int densityDpi, @Nullable Surface surface, int flags) {
+        return createVirtualDisplay(name, width, height, densityDpi, surface, flags, null, null);
+    }
+
+    /**
+     * Creates a virtual display.
      * <p>
      * The content of a virtual display is rendered to a {@link Surface} provided
      * by the application.
@@ -455,17 +511,30 @@ public final class DisplayManager {
      * be rendered, or null if there is none initially.
      * @param flags A combination of virtual display flags:
      * {@link #VIRTUAL_DISPLAY_FLAG_PUBLIC}, {@link #VIRTUAL_DISPLAY_FLAG_PRESENTATION},
-     * {@link #VIRTUAL_DISPLAY_FLAG_SECURE}, or {@link #VIRTUAL_DISPLAY_FLAG_OWN_CONTENT_ONLY}.
+     * {@link #VIRTUAL_DISPLAY_FLAG_SECURE}, {@link #VIRTUAL_DISPLAY_FLAG_OWN_CONTENT_ONLY},
+     * or {@link #VIRTUAL_DISPLAY_FLAG_AUTO_MIRROR}.
+     * @param callback Callback to call when the state of the {@link VirtualDisplay} changes
+     * @param handler The handler on which the listener should be invoked, or null
+     * if the listener should be invoked on the calling thread's looper.
      * @return The newly created virtual display, or null if the application could
      * not create the virtual display.
      *
      * @throws SecurityException if the caller does not have permission to create
      * a virtual display with the specified flags.
      */
-    public VirtualDisplay createVirtualDisplay(String name,
-            int width, int height, int densityDpi, Surface surface, int flags) {
-        return mGlobal.createVirtualDisplay(mContext,
-                name, width, height, densityDpi, surface, flags);
+    public VirtualDisplay createVirtualDisplay(@NonNull String name,
+            int width, int height, int densityDpi, @Nullable Surface surface, int flags,
+            @Nullable VirtualDisplay.Callback callback, @Nullable Handler handler) {
+        return createVirtualDisplay(null,
+                name, width, height, densityDpi, surface, flags, callback, handler);
+    }
+
+    /** @hide */
+    public VirtualDisplay createVirtualDisplay(@Nullable MediaProjection projection,
+            @NonNull String name, int width, int height, int densityDpi, @Nullable Surface surface,
+            int flags, @Nullable VirtualDisplay.Callback callback, @Nullable Handler handler) {
+        return mGlobal.createVirtualDisplay(mContext, projection,
+                name, width, height, densityDpi, surface, flags, callback, handler);
     }
 
     /**

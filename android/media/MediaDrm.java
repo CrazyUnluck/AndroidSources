@@ -16,17 +16,16 @@
 
 package android.media;
 
-import android.media.MediaDrmException;
 import java.lang.ref.WeakReference;
 import java.util.UUID;
 import java.util.HashMap;
 import java.util.List;
+import android.annotation.SystemApi;
 import android.os.Binder;
 import android.os.Debug;
 import android.os.Handler;
 import android.os.Looper;
 import android.os.Message;
-import android.os.Bundle;
 import android.os.Parcel;
 import android.util.Log;
 
@@ -183,6 +182,49 @@ public final class MediaDrm {
     }
 
     /**
+     * Thrown when an unrecoverable failure occurs during a MediaDrm operation.
+     * Extends java.lang.IllegalStateException with the addition of an error
+     * code that may be useful in diagnosing the failure.
+     */
+    public static final class MediaDrmStateException extends java.lang.IllegalStateException {
+        private final int mErrorCode;
+        private final String mDiagnosticInfo;
+
+        /**
+         * @hide
+         */
+        public MediaDrmStateException(int errorCode, String detailMessage) {
+            super(detailMessage);
+            mErrorCode = errorCode;
+
+            // TODO get this from DRM session
+            final String sign = errorCode < 0 ? "neg_" : "";
+            mDiagnosticInfo =
+                "android.media.MediaDrm.error_" + sign + Math.abs(errorCode);
+
+        }
+
+        /**
+         * Retrieve the associated error code
+         *
+         * @hide
+         */
+        public int getErrorCode() {
+            return mErrorCode;
+        }
+
+        /**
+         * Retrieve a developer-readable diagnostic information string
+         * associated with the exception. Do not show this to end-users,
+         * since this string will not be localized or generally comprehensible
+         * to end-users.
+         */
+        public String getDiagnosticInfo() {
+            return mDiagnosticInfo;
+        }
+    }
+
+    /**
      * Register a callback to be invoked when an event occurs
      *
      * @param listener the callback that will be run
@@ -306,7 +348,8 @@ public final class MediaDrm {
      * @throws NotProvisionedException if provisioning is needed
      * @throws ResourceBusyException if required resources are in use
      */
-    public native byte[] openSession() throws NotProvisionedException;
+    public native byte[] openSession() throws NotProvisionedException,
+            ResourceBusyException;
 
     /**
      * Close a session on the MediaDrm object that was previously opened
@@ -499,6 +542,18 @@ public final class MediaDrm {
 
     private native Certificate provideProvisionResponseNative(byte[] response)
             throws DeniedByServerException;
+
+    /**
+     * Remove provisioning from a device.  Only system apps may unprovision a
+     * device.  Note that removing provisioning will invalidate any keys saved
+     * for offline use (KEY_TYPE_OFFLINE), which may render downloaded content
+     * unplayable until new licenses are acquired.  Since provisioning is global
+     * to the device, license invalidation will apply to all content downloaded
+     * by any app, so appropriate warnings should be given to the user.
+     * @hide
+     */
+    @SystemApi
+    public native void unprovisionDevice();
 
     /**
      * A means of enforcing limits on the number of concurrent streams per subscriber

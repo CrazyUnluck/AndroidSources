@@ -20,7 +20,9 @@ import android.net.LocalSocket;
 import android.net.LocalSocketAddress;
 import android.os.Build;
 import android.os.Handler;
+import android.os.Looper;
 import android.os.Message;
+import android.os.PowerManager;
 import android.os.SystemClock;
 import android.util.LocalLog;
 import android.util.Slog;
@@ -48,6 +50,8 @@ import java.util.LinkedList;
 final class NativeDaemonConnector implements Runnable, Handler.Callback, Watchdog.Monitor {
     private static final boolean LOGD = false;
 
+    private final static boolean VDBG = false;
+
     private final String TAG;
 
     private String mSocket;
@@ -55,6 +59,10 @@ final class NativeDaemonConnector implements Runnable, Handler.Callback, Watchdo
     private LocalLog mLocalLog;
 
     private final ResponseQueue mResponseQueue;
+
+    private final PowerManager.WakeLock mWakeLock;
+
+    private final Looper mLooper;
 
     private INativeDaemonConnectorCallbacks mCallbacks;
     private Handler mCallbackHandler;
@@ -70,10 +78,22 @@ final class NativeDaemonConnector implements Runnable, Handler.Callback, Watchdo
     private final int BUFFER_SIZE = 4096;
 
     NativeDaemonConnector(INativeDaemonConnectorCallbacks callbacks, String socket,
-            int responseQueueSize, String logTag, int maxLogSize) {
+            int responseQueueSize, String logTag, int maxLogSize, PowerManager.WakeLock wl) {
+        this(callbacks, socket, responseQueueSize, logTag, maxLogSize, wl,
+                FgThread.get().getLooper());
+    }
+
+    NativeDaemonConnector(INativeDaemonConnectorCallbacks callbacks, String socket,
+            int responseQueueSize, String logTag, int maxLogSize, PowerManager.WakeLock wl,
+            Looper looper) {
         mCallbacks = callbacks;
         mSocket = socket;
         mResponseQueue = new ResponseQueue(responseQueueSize);
+        mWakeLock = wl;
+        if (mWakeLock != null) {
+            mWakeLock.setReferenceCounted(true);
+        }
+        mLooper = looper;
         mSequenceNumber = new AtomicInteger(0);
         TAG = logTag != null ? logTag : "NativeDaemonConnector";
         mLocalLog = new LocalLog(maxLogSize);
@@ -81,7 +101,7 @@ final class NativeDaemonConnector implements Runnable, Handler.Callback, Watchdo
 
     @Override
     public void run() {
-        mCallbackHandler = new Handler(FgThread.get().getLooper(), this);
+        mCallbackHandler = new Handler(mLooper, this);
 
         while (true) {
             try {
@@ -102,6 +122,10 @@ final class NativeDaemonConnector implements Runnable, Handler.Callback, Watchdo
             }
         } catch (Exception e) {
             loge("Error handling '" + event + "': " + e);
+        } finally {
+            if (mCallbacks.onCheckHoldWakeLock(msg.what) && mWakeLock != null) {
+                mWakeLock.release();
+            }
         }
         return true;
     }
@@ -154,18 +178,30 @@ final class NativeDaemonConnector implements Runnable, Handler.Callback, Watchdo
                                 buffer, start, i - start, StandardCharsets.UTF_8);
                         log("RCV <- {" + rawEvent + "}");
 
+                        boolean releaseWl = false;
                         try {
                             final NativeDaemonEvent event = NativeDaemonEvent.parseRawEvent(
                                     rawEvent);
                             if (event.isClassUnsolicited()) {
                                 // TODO: migrate to sending NativeDaemonEvent instances
-                                mCallbackHandler.sendMessage(mCallbackHandler.obtainMessage(
-                                        event.getCode(), event.getRawEvent()));
+                                if (mCallbacks.onCheckHoldWakeLock(event.getCode())
+                                        && mWakeLock != null) {
+                                    mWakeLock.acquire();
+                                    releaseWl = true;
+                                }
+                                if (mCallbackHandler.sendMessage(mCallbackHandler.obtainMessage(
+                                        event.getCode(), event.getRawEvent()))) {
+                                    releaseWl = false;
+                                }
                             } else {
                                 mResponseQueue.add(event.getCmdNumber(), event);
                             }
                         } catch (IllegalArgumentException e) {
                             log("Problem parsing message: " + rawEvent + " - " + e);
+                        } finally {
+                            if (releaseWl) {
+                                mWakeLock.acquire();
+                            }
                         }
 
                         start = i + 1;
@@ -375,7 +411,7 @@ final class NativeDaemonConnector implements Runnable, Handler.Callback, Watchdo
                 loge("timed-out waiting for response to " + logCmd);
                 throw new NativeDaemonFailureException(logCmd, event);
             }
-            log("RMV <- {" + event + "}");
+            if (VDBG) log("RMV <- {" + event + "}");
             events.add(event);
         } while (event.isClassContinue());
 

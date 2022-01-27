@@ -16,7 +16,7 @@
 package com.android.ex.camera2.pos;
 
 import android.hardware.camera2.CameraDevice;
-import android.hardware.camera2.CameraMetadata.Key;
+import android.hardware.camera2.CaptureResult.Key;
 import android.hardware.camera2.CaptureRequest;
 import android.hardware.camera2.CaptureResult;
 import android.util.Log;
@@ -91,7 +91,7 @@ public class AutoFocusStateMachine {
 
     /**
      * Invoke every time we get a new CaptureResult via
-     * {@link CameraDevice.CaptureListener#onCaptureCompleted}.
+     * {@link CameraDevice.CaptureCallback#onCaptureCompleted}.
      *
      * <p>This function is responsible for dispatching updates via the
      * {@link AutoFocusStateListener} so without calling this on a regular basis, no

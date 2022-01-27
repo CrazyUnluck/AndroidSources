@@ -19,10 +19,13 @@ package java.nio.channels;
 
 import java.io.IOException;
 import java.net.DatagramSocket;
+import java.net.InetAddress;
+import java.net.NetworkInterface;
 import java.net.SocketAddress;
 import java.nio.ByteBuffer;
 import java.nio.channels.spi.AbstractSelectableChannel;
 import java.nio.channels.spi.SelectorProvider;
+import java.util.Set;
 
 /**
  * A {@code DatagramChannel} is a selectable channel that represents a partial

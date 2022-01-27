@@ -108,8 +108,6 @@ public abstract class FileLock implements AutoCloseable {
 
     /**
      * Returns the lock's {@link FileChannel}.
-     *
-     * @return the channel.
      */
     public final FileChannel channel() {
         return channel;

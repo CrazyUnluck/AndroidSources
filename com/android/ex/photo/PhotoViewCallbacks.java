@@ -31,6 +31,14 @@ public interface PhotoViewCallbacks {
         public void onViewActivated();
 
         /**
+         * This view is a candidate for being the next view.
+         *
+         * This will be called when the view is focused completely on the view immediately before
+         * or after this one, so that this view can reset itself if nessecary.
+         */
+        public void onViewUpNext();
+
+        /**
          * Called when a right-to-left touch move intercept is about to occur.
          *
          * @param origX the raw x coordinate of the initial touch

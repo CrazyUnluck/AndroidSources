@@ -60,9 +60,14 @@ public class FlpHardwareProvider {
     private static final int FLP_RESULT_ID_UNKNOWN = -5;
     private static final int FLP_RESULT_INVALID_GEOFENCE_TRANSITION = -6;
 
+    // FlpHal monitor status codes, they must be equal to the ones in fused_location.h
+    private static final int FLP_GEOFENCE_MONITOR_STATUS_UNAVAILABLE = 1<<0;
+    private static final int FLP_GEOFENCE_MONITOR_STATUS_AVAILABLE = 1<<1;
+
     public static FlpHardwareProvider getInstance(Context context) {
         if (sSingletonInstance == null) {
             sSingletonInstance = new FlpHardwareProvider(context);
+            sSingletonInstance.nativeInit();
         }
 
         return sSingletonInstance;
@@ -141,6 +146,8 @@ public class FlpHardwareProvider {
             int transition,
             long timestamp,
             int sourcesUsed) {
+        // the transition Id does not require translation because the values in fused_location.h
+        // and GeofenceHardware are in sync
         getGeofenceHardwareSink().reportGeofenceTransition(
                 geofenceId,
                 updateLocationInformation(location),
@@ -157,9 +164,23 @@ public class FlpHardwareProvider {
             updatedLocation = updateLocationInformation(location);
         }
 
+        int monitorStatus;
+        switch (status) {
+            case FLP_GEOFENCE_MONITOR_STATUS_UNAVAILABLE:
+                monitorStatus = GeofenceHardware.MONITOR_CURRENTLY_UNAVAILABLE;
+                break;
+            case FLP_GEOFENCE_MONITOR_STATUS_AVAILABLE:
+                monitorStatus = GeofenceHardware.MONITOR_CURRENTLY_AVAILABLE;
+                break;
+            default:
+                Log.e(TAG, "Invalid FlpHal Geofence monitor status: " + status);
+                monitorStatus = GeofenceHardware.MONITOR_CURRENTLY_UNAVAILABLE;
+                break;
+        }
+
         getGeofenceHardwareSink().reportGeofenceMonitorStatus(
                 GeofenceHardware.MONITORING_TYPE_FUSED_HARDWARE,
-                status,
+                monitorStatus,
                 updatedLocation,
                 source);
     }
@@ -238,12 +259,10 @@ public class FlpHardwareProvider {
     public static final String GEOFENCING = "Geofencing";
 
     public IFusedLocationHardware getLocationHardware() {
-        nativeInit();
         return mLocationHardware;
     }
 
     public IFusedGeofenceHardware getGeofenceHardware() {
-        nativeInit();
         return mGeofenceHardwareService;
     }
 
@@ -253,8 +272,7 @@ public class FlpHardwareProvider {
             synchronized (mLocationSinkLock) {
                 // only one sink is allowed at the moment
                 if (mLocationSink != null) {
-                    throw new RuntimeException(
-                            "IFusedLocationHardware does not support multiple sinks");
+                    Log.e(TAG, "Replacing an existing IFusedLocationHardware sink");
                 }
 
                 mLocationSink = eventSink;
@@ -401,9 +419,8 @@ public class FlpHardwareProvider {
                 return GeofenceHardware.GEOFENCE_SUCCESS;
             case FLP_RESULT_ERROR:
                 return GeofenceHardware.GEOFENCE_FAILURE;
-            // TODO: uncomment this once the ERROR definition is marked public
-            //case FLP_RESULT_INSUFFICIENT_MEMORY:
-            //    return GeofenceHardware.GEOFENCE_ERROR_INSUFFICIENT_MEMORY;
+            case FLP_RESULT_INSUFFICIENT_MEMORY:
+                return GeofenceHardware.GEOFENCE_ERROR_INSUFFICIENT_MEMORY;
             case FLP_RESULT_TOO_MANY_GEOFENCES:
                 return GeofenceHardware.GEOFENCE_ERROR_TOO_MANY_GEOFENCES;
             case FLP_RESULT_ID_EXISTS:

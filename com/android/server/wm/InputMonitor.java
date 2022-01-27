@@ -284,7 +284,7 @@ final class InputMonitor implements InputManagerService.WindowManagerCallbacks {
                 final boolean hasFocus = (child == mInputFocus);
                 final boolean isVisible = child.isVisibleLw();
                 final boolean hasWallpaper = (child == mService.mWallpaperTarget)
-                        && (type != WindowManager.LayoutParams.TYPE_KEYGUARD);
+                        && (privateFlags & WindowManager.LayoutParams.PRIVATE_FLAG_KEYGUARD) == 0;
                 final boolean onDefaultDisplay = (child.getDisplayId() == Display.DEFAULT_DISPLAY);
 
                 // If there's a drag in progress and 'child' is a potential drop target,
@@ -352,6 +352,12 @@ final class InputMonitor implements InputManagerService.WindowManagerCallbacks {
         mService.mPolicy.notifyLidSwitchChanged(whenNanos, lidOpen);
     }
 
+    /* Notifies that the camera lens cover state has changed. */
+    @Override
+    public void notifyCameraLensCoverSwitchChanged(long whenNanos, boolean lensCovered) {
+        mService.mPolicy.notifyCameraLensCoverSwitchChanged(whenNanos, lensCovered);
+    }
+
     /* Provides an opportunity for the window manager policy to intercept early key
      * processing as soon as the key has been read from the device. */
     @Override
@@ -359,12 +365,13 @@ final class InputMonitor implements InputManagerService.WindowManagerCallbacks {
         return mService.mPolicy.interceptKeyBeforeQueueing(event, policyFlags);
     }
 
-    /* Provides an opportunity for the window manager policy to intercept early
-     * motion event processing when the screen is off since these events are normally
+    /* Provides an opportunity for the window manager policy to intercept early motion event
+     * processing when the device is in a non-interactive state since these events are normally
      * dropped. */
     @Override
-    public int interceptWakeMotionBeforeQueueing(long whenNanos, int policyFlags) {
-        return mService.mPolicy.interceptWakeMotionBeforeQueueing(whenNanos, policyFlags);
+    public int interceptMotionBeforeQueueingNonInteractive(long whenNanos, int policyFlags) {
+        return mService.mPolicy.interceptMotionBeforeQueueingNonInteractive(
+                whenNanos, policyFlags);
     }
 
     /* Provides an opportunity for the window manager policy to process a key before

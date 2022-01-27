@@ -73,9 +73,12 @@ public abstract class SystemService {
     public static final int PHASE_THIRD_PARTY_APPS_CAN_START = 600;
 
     /**
-     * After receiving this boot phase, services must have finished all boot-related work.
+     * After receiving this boot phase, services can allow user interaction with the device.
+     * This phase occurs when boot has completed and the home application has started.
+     * System services may prefer to listen to this phase rather than registering a
+     * broadcast receiver for ACTION_BOOT_COMPLETED to reduce overall latency.
      */
-    public static final int PHASE_BOOT_COMPLETE = 1000;
+    public static final int PHASE_BOOT_COMPLETED = 1000;
 
     private final Context mContext;
 
@@ -123,6 +126,38 @@ public abstract class SystemService {
     public void onBootPhase(int phase) {}
 
     /**
+     * Called when a new user is starting, for system services to initialize any per-user
+     * state they maintain for running users.
+     * @param userHandle The identifier of the user.
+     */
+    public void onStartUser(int userHandle) {}
+
+    /**
+     * Called when switching to a different foreground user, for system services that have
+     * special behavior for whichever user is currently in the foreground.  This is called
+     * before any application processes are aware of the new user.
+     * @param userHandle The identifier of the user.
+     */
+    public void onSwitchUser(int userHandle) {}
+
+    /**
+     * Called when an existing user is stopping, for system services to finalize any per-user
+     * state they maintain for running users.  This is called prior to sending the SHUTDOWN
+     * broadcast to the user; it is a good place to stop making use of any resources of that
+     * user (such as binding to a service running in the user).
+     * @param userHandle The identifier of the user.
+     */
+    public void onStopUser(int userHandle) {}
+
+    /**
+     * Called when an existing user is stopping, for system services to finalize any per-user
+     * state they maintain for running users.  This is called after all application process
+     * teardown of the user is complete.
+     * @param userHandle The identifier of the user.
+     */
+    public void onCleanupUser(int userHandle) {}
+
+    /**
      * Publish the service so it is accessible to other services and apps.
      */
     protected final void publishBinderService(String name, IBinder service) {
@@ -161,58 +196,4 @@ public abstract class SystemService {
     private SystemServiceManager getManager() {
         return LocalServices.getService(SystemServiceManager.class);
     }
-
-//    /**
-//     * Called when a new user has been created. If your service deals with multiple users, this
-//     * method should be overridden.
-//     *
-//     * @param userHandle The user that was created.
-//     */
-//    public void onUserCreated(int userHandle) {
-//    }
-//
-//    /**
-//     * Called when an existing user has started a new session. If your service deals with multiple
-//     * users, this method should be overridden.
-//     *
-//     * @param userHandle The user who started a new session.
-//     */
-//    public void onUserStarted(int userHandle) {
-//    }
-//
-//    /**
-//     * Called when a background user session has entered the foreground. If your service deals with
-//     * multiple users, this method should be overridden.
-//     *
-//     * @param userHandle The user who's session entered the foreground.
-//     */
-//    public void onUserForeground(int userHandle) {
-//    }
-//
-//    /**
-//     * Called when a foreground user session has entered the background. If your service deals with
-//     * multiple users, this method should be overridden;
-//     *
-//     * @param userHandle The user who's session entered the background.
-//     */
-//    public void onUserBackground(int userHandle) {
-//    }
-//
-//    /**
-//     * Called when a user's active session has stopped. If your service deals with multiple users,
-//     * this method should be overridden.
-//     *
-//     * @param userHandle The user who's session has stopped.
-//     */
-//    public void onUserStopped(int userHandle) {
-//    }
-//
-//    /**
-//     * Called when a user has been removed from the system. If your service deals with multiple
-//     * users, this method should be overridden.
-//     *
-//     * @param userHandle The user who has been removed.
-//     */
-//    public void onUserRemoved(int userHandle) {
-//    }
 }

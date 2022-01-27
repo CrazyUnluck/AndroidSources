@@ -30,6 +30,7 @@ import android.content.res.Resources;
 import android.database.ContentObserver;
 import android.hardware.usb.UsbAccessory;
 import android.hardware.usb.UsbManager;
+import android.media.AudioManager;
 import android.os.FileUtils;
 import android.os.Handler;
 import android.os.Looper;
@@ -39,6 +40,7 @@ import android.os.SystemClock;
 import android.os.SystemProperties;
 import android.os.UEventObserver;
 import android.os.UserHandle;
+import android.os.UserManager;
 import android.os.storage.StorageManager;
 import android.os.storage.StorageVolume;
 import android.provider.Settings;
@@ -53,6 +55,7 @@ import java.io.FileDescriptor;
 import java.io.FileNotFoundException;
 import java.io.IOException;
 import java.io.PrintWriter;
+import java.util.Arrays;
 import java.util.HashMap;
 import java.util.LinkedList;
 import java.util.List;
@@ -297,12 +300,7 @@ public class UsbDeviceManager {
     }
 
     private static boolean containsFunction(String functions, String function) {
-        int index = functions.indexOf(function);
-        if (index < 0) return false;
-        if (index > 0 && functions.charAt(index - 1) != ',') return false;
-        int charAfter = index + function.length();
-        if (charAfter < functions.length() && functions.charAt(charAfter) != ',') return false;
-        return true;
+        return Arrays.asList(functions.split(",")).contains(function);
     }
 
     private final class UsbHandler extends Handler {
@@ -377,8 +375,9 @@ public class UsbDeviceManager {
                 mUEventObserver.startObserving(USB_STATE_MATCH);
                 mUEventObserver.startObserving(ACCESSORY_START_MATCH);
 
-                mContext.registerReceiver(
-                        mBootCompletedReceiver, new IntentFilter(Intent.ACTION_BOOT_COMPLETED));
+                IntentFilter filter = new IntentFilter(Intent.ACTION_BOOT_COMPLETED);
+                filter.setPriority(IntentFilter.SYSTEM_HIGH_PRIORITY);
+                mContext.registerReceiver(mBootCompletedReceiver, filter);
                 mContext.registerReceiver(
                         mUserSwitchedReceiver, new IntentFilter(Intent.ACTION_USER_SWITCHED));
             } catch (Exception e) {
@@ -589,19 +588,24 @@ public class UsbDeviceManager {
                     UsbManager.USB_FUNCTION_AUDIO_SOURCE);
             if (enabled != mAudioSourceEnabled) {
                 // send a sticky broadcast containing current USB state
-                Intent intent = new Intent(Intent.ACTION_USB_AUDIO_ACCESSORY_PLUG);
+                Intent intent = new Intent(AudioManager.ACTION_USB_AUDIO_ACCESSORY_PLUG);
                 intent.addFlags(Intent.FLAG_RECEIVER_REPLACE_PENDING);
                 intent.addFlags(Intent.FLAG_RECEIVER_REGISTERED_ONLY);
                 intent.putExtra("state", (enabled ? 1 : 0));
                 if (enabled) {
+                    Scanner scanner = null;
                     try {
-                        Scanner scanner = new Scanner(new File(AUDIO_SOURCE_PCM_PATH));
+                        scanner = new Scanner(new File(AUDIO_SOURCE_PCM_PATH));
                         int card = scanner.nextInt();
                         int device = scanner.nextInt();
                         intent.putExtra("card", card);
                         intent.putExtra("device", device);
                     } catch (FileNotFoundException e) {
                         Slog.e(TAG, "could not open audio source PCM file", e);
+                    } finally {
+                        if (scanner != null) {
+                            scanner.close();
+                        }
                     }
                 }
                 mContext.sendStickyBroadcastAsUser(intent, UserHandle.ALL);
@@ -653,6 +657,16 @@ public class UsbDeviceManager {
                     }
                     break;
                 case MSG_USER_SWITCHED: {
+                    UserManager userManager =
+                            (UserManager) mContext.getSystemService(Context.USER_SERVICE);
+                    if (userManager.hasUserRestriction(UserManager.DISALLOW_USB_FILE_TRANSFER)) {
+                        Slog.v(TAG, "Switched to user with DISALLOW_USB_FILE_TRANSFER restriction;"
+                                + " disabling USB.");
+                        setUsbConfig("none");
+                        mCurrentUser = msg.arg1;
+                        break;
+                    }
+
                     final boolean mtpActive =
                             containsFunction(mCurrentFunctions, UsbManager.USB_FUNCTION_MTP)
                             || containsFunction(mCurrentFunctions, UsbManager.USB_FUNCTION_PTP);
@@ -719,7 +733,10 @@ public class UsbDeviceManager {
                                     "com.android.settings.UsbSettings"));
                     PendingIntent pi = PendingIntent.getActivityAsUser(mContext, 0,
                             intent, 0, null, UserHandle.CURRENT);
+                    notification.color = mContext.getResources().getColor(
+                            com.android.internal.R.color.system_notification_accent_color);
                     notification.setLatestEventInfo(mContext, title, message, pi);
+                    notification.visibility = Notification.VISIBILITY_PUBLIC;
                     mNotificationManager.notifyAsUser(null, id, notification,
                             UserHandle.ALL);
                     mUsbNotificationId = id;
@@ -754,7 +771,10 @@ public class UsbDeviceManager {
                                     "com.android.settings.DevelopmentSettings"));
                     PendingIntent pi = PendingIntent.getActivityAsUser(mContext, 0,
                             intent, 0, null, UserHandle.CURRENT);
+                    notification.color = mContext.getResources().getColor(
+                            com.android.internal.R.color.system_notification_accent_color);
                     notification.setLatestEventInfo(mContext, title, message, pi);
+                    notification.visibility = Notification.VISIBILITY_PUBLIC;
                     mAdbNotificationShown = true;
                     mNotificationManager.notifyAsUser(null, id, notification,
                             UserHandle.ALL);

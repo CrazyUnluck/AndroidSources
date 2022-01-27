@@ -108,6 +108,140 @@ public class ServerSocketChannelTest extends TestCase {
     }
 
     // -------------------------------------------------------------------
+    // Tests for bind()
+    // -------------------------------------------------------------------
+
+    public void test_bind_null() throws Exception {
+        ServerSocketChannel ssc = ServerSocketChannel.open();
+        try {
+            assertNull(ssc.socket().getLocalSocketAddress());
+
+            ssc.socket().bind(null);
+
+            InetSocketAddress localAddress = (InetSocketAddress) ssc.socket().getLocalSocketAddress();
+            assertTrue(localAddress.getAddress().isAnyLocalAddress());
+            assertTrue(localAddress.getPort() > 0);
+        } finally {
+            ssc.close();
+        }
+    }
+
+    public void test_bind_failure() throws Exception {
+        ServerSocketChannel portHog = ServerSocketChannel.open();
+        portHog.socket().bind(null);
+
+        ServerSocketChannel ssc = ServerSocketChannel.open();
+        try {
+            // Bind to a local address that is in use
+            ssc.socket().bind(portHog.socket().getLocalSocketAddress());
+            fail();
+        } catch (IOException expected) {
+        } finally {
+            ssc.close();
+            portHog.close();
+        }
+    }
+
+    public void test_bind_closed() throws Exception {
+        ServerSocketChannel ssc = ServerSocketChannel.open();
+        ssc.close();
+
+        try {
+            ssc.socket().bind(null);
+            fail();
+        } catch (IOException expected) {
+        } finally {
+            ssc.close();
+        }
+    }
+
+    public void test_bind_explicitPort() throws Exception {
+        ServerSocketChannel portPickingChannel = ServerSocketChannel.open();
+        // Have the OS find a free port.
+        portPickingChannel.socket().bind(null);
+
+        InetSocketAddress address = (InetSocketAddress) portPickingChannel.socket().getLocalSocketAddress();
+        assertTrue(address.getPort() > 0);
+        portPickingChannel.close();
+
+        // There is a risk of flakiness here if the port is allocated to something else between
+        // close() and bind().
+        ServerSocketChannel ssc = ServerSocketChannel.open();
+        InetSocketAddress bindAddress = new InetSocketAddress("localhost", address.getPort());
+        ssc.socket().bind(bindAddress);
+
+        InetSocketAddress boundAddress = (InetSocketAddress) ssc.socket().getLocalSocketAddress();
+        assertEquals(bindAddress.getHostName(), boundAddress.getHostName());
+        assertEquals(bindAddress.getPort(), boundAddress.getPort());
+
+        ssc.close();
+    }
+
+    public void test_bind_socketSync() throws IOException {
+        ServerSocketChannel ssc = ServerSocketChannel.open();
+        assertNull(ssc.socket().getLocalSocketAddress());
+
+        ServerSocket socket = ssc.socket();
+        assertNull(socket.getLocalSocketAddress());
+        assertFalse(socket.isBound());
+
+        InetSocketAddress bindAddr = new InetSocketAddress("localhost", 0);
+        ssc.socket().bind(bindAddr);
+
+        InetSocketAddress actualAddr = (InetSocketAddress) ssc.socket().getLocalSocketAddress();
+        assertEquals(actualAddr, socket.getLocalSocketAddress());
+        assertEquals(bindAddr.getHostName(), actualAddr.getHostName());
+        assertTrue(socket.isBound());
+        assertFalse(socket.isClosed());
+
+        ssc.close();
+
+        assertFalse(ssc.isOpen());
+        assertTrue(socket.isClosed());
+    }
+
+    public void test_bind_socketSyncAfterBind() throws IOException {
+        ServerSocketChannel ssc = ServerSocketChannel.open();
+        assertNull(ssc.socket().getLocalSocketAddress());
+
+        InetSocketAddress bindAddr = new InetSocketAddress("localhost", 0);
+        ssc.socket().bind(bindAddr);
+
+        // Socket creation after bind().
+        ServerSocket socket = ssc.socket();
+        InetSocketAddress actualAddr = (InetSocketAddress) ssc.socket().getLocalSocketAddress();
+        assertEquals(actualAddr, socket.getLocalSocketAddress());
+        assertEquals(bindAddr.getHostName(), actualAddr.getHostName());
+        assertTrue(socket.isBound());
+        assertFalse(socket.isClosed());
+
+        ssc.close();
+
+        assertFalse(ssc.isOpen());
+        assertTrue(socket.isClosed());
+    }
+
+    // -------------------------------------------------------------------
+    // Test for getLocalSocketAddress()
+    // -------------------------------------------------------------------
+
+    public void test_getLocalSocketAddress_afterClose() throws IOException {
+        ServerSocketChannel ssc = ServerSocketChannel.open();
+        assertNull(ssc.socket().getLocalSocketAddress());
+
+        InetSocketAddress bindAddr = new InetSocketAddress("localhost", 0);
+        ssc.socket().bind(bindAddr);
+
+        assertNotNull(ssc.socket().getLocalSocketAddress());
+
+        ssc.close();
+
+        assertFalse(ssc.isOpen());
+
+        ssc.socket().getLocalSocketAddress();
+    }
+
+    // -------------------------------------------------------------------
     // Test for socket()
     // -------------------------------------------------------------------
 
@@ -235,8 +369,7 @@ public class ServerSocketChannelTest extends TestCase {
 
     public void testAccept_Block_NoConnect() throws IOException {
         assertTrue(this.serverChannel.isBlocking());
-        ServerSocket gotSocket = this.serverChannel.socket();
-        gotSocket.bind(null);
+        serverChannel.socket().bind(null);
         // blocking mode , will block and wait for ever...
         // so must close the server channel with another thread.
         new Thread() {
@@ -259,8 +392,7 @@ public class ServerSocketChannelTest extends TestCase {
     }
 
     public void testAccept_NonBlock_NoConnect() throws IOException {
-        ServerSocket gotSocket = this.serverChannel.socket();
-        gotSocket.bind(null);
+        this.serverChannel.socket().bind(null);
         this.serverChannel.configureBlocking(false);
         // non-blocking mode , will immediately return
         assertNull(this.serverChannel.accept());
@@ -328,8 +460,7 @@ public class ServerSocketChannelTest extends TestCase {
      */
     public void test_write_Blocking_RealData() throws IOException {
         assertTrue(serverChannel.isBlocking());
-        ServerSocket serverSocket = serverChannel.socket();
-        serverSocket.bind(null);
+        serverChannel.socket().bind(null);
 
         byte[] writeContent = new byte[CAPACITY_NORMAL];
         for (int i = 0; i < writeContent.length; i++) {
@@ -350,14 +481,13 @@ public class ServerSocketChannelTest extends TestCase {
      */
     public void test_write_NonBlocking_RealData() throws Exception {
         serverChannel.configureBlocking(false);
-        ServerSocket serverSocket = serverChannel.socket();
-        serverSocket.bind(null);
+        serverChannel.socket().bind(null);
 
         byte[] writeContent = new byte[CAPACITY_NORMAL];
         for (int i = 0; i < CAPACITY_NORMAL; i++) {
             writeContent[i] = (byte) i;
         }
-        clientChannel.connect(serverSocket.getLocalSocketAddress());
+        clientChannel.connect(serverChannel.socket().getLocalSocketAddress());
         Socket clientSocket = serverChannel.accept().socket();
         OutputStream out = clientSocket.getOutputStream();
         out.write(writeContent);
@@ -527,20 +657,35 @@ public class ServerSocketChannelTest extends TestCase {
      * @tests ServerSocketChannel#socket().getSoTimeout()
      */
     public void test_accept_SOTIMEOUT() throws IOException {
-        // regression test for Harmony-707
-        final int SO_TIMEOUT = 10;
+        // Regression test for Harmony-707
+        // The timeout actually used may be different from the one set due to
+        // rounding by the Linux Kernel (see sock_set_timeout() in net/core/sock.c).
+        // getSoTimeout() can return a different value from the one set with
+        // setSoTimeout(). Consequently we do not check for equality with what was
+        // set.
+
         ServerSocketChannel sc = ServerSocketChannel.open();
         try {
-            ServerSocket ss = sc.socket();
-            ss.bind(null);
+            sc.socket().bind(null);
+
+            // Non blocking mode, accept() will return NULL since there are no pending connections.
             sc.configureBlocking(false);
+
+            ServerSocket ss = sc.socket();
+
+            int defaultTimeout = ss.getSoTimeout();
+            assertEquals(0, defaultTimeout);
+            // The timeout value is unimportant, providing it is large enough to be accepted
+            // by the Kernel as distinct from the default.
+            final int SO_TIMEOUT = 200;
             ss.setSoTimeout(SO_TIMEOUT);
+            int nonDefaultTimeout = ss.getSoTimeout();
+            assertTrue(nonDefaultTimeout != defaultTimeout);
+
             SocketChannel client = sc.accept();
-            // non blocking mode, returns null since there are no pending connections.
             assertNull(client);
-            int soTimeout = ss.getSoTimeout();
-            // Harmony fails here.
-            assertEquals(SO_TIMEOUT, soTimeout);
+            // Confirm the timeout was unchanged.
+            assertEquals(nonDefaultTimeout, ss.getSoTimeout());
         } finally {
             sc.close();
         }
@@ -556,15 +701,13 @@ public class ServerSocketChannelTest extends TestCase {
         try {
             gotSocket.accept();
             fail("Should throw an IllegalBlockingModeException");
-        } catch (IllegalBlockingModeException e) {
-            // expected
+        } catch (IllegalBlockingModeException expected) {
         }
         serverChannel.close();
         try {
             gotSocket.accept();
             fail("Should throw an IllegalBlockingModeException");
-        } catch (IllegalBlockingModeException e) {
-            // expected
+        } catch (IllegalBlockingModeException expected) {
         }
     }
 
@@ -578,15 +721,13 @@ public class ServerSocketChannelTest extends TestCase {
         try {
             gotSocket.accept();
             fail("Should throw an IllegalBlockingModeException");
-        } catch (IllegalBlockingModeException e) {
-            // expected
+        } catch (IllegalBlockingModeException expected) {
         }
         serverChannel.close();
         try {
             gotSocket.accept();
             fail("Should throw an IllegalBlockingModeException");
-        } catch (IllegalBlockingModeException e) {
-            // expected
+        } catch (IllegalBlockingModeException expected) {
         }
     }
 
@@ -596,20 +737,18 @@ public class ServerSocketChannelTest extends TestCase {
     public void test_socket_accept_Nonblocking_Bound() throws IOException {
         // regression test for Harmony-748
         serverChannel.configureBlocking(false);
+        serverChannel.socket().bind(null);
         ServerSocket gotSocket = serverChannel.socket();
-        gotSocket.bind(null);
         try {
             gotSocket.accept();
             fail("Should throw an IllegalBlockingModeException");
-        } catch (IllegalBlockingModeException e) {
-            // expected
+        } catch (IllegalBlockingModeException expected) {
         }
         serverChannel.close();
         try {
             gotSocket.accept();
             fail("Should throw a ClosedChannelException");
-        } catch (ClosedChannelException e) {
-            // expected
+        } catch (ClosedChannelException expected) {
         }
     }
 
@@ -619,14 +758,12 @@ public class ServerSocketChannelTest extends TestCase {
     public void test_socket_accept_Blocking_Bound() throws IOException {
         // regression test for Harmony-748
         serverChannel.configureBlocking(true);
-        ServerSocket gotSocket = serverChannel.socket();
-        gotSocket.bind(null);
+        serverChannel.socket().bind(null);
         serverChannel.close();
         try {
-            gotSocket.accept();
+            serverChannel.socket().accept();
             fail("Should throw a ClosedChannelException");
-        } catch (ClosedChannelException e) {
-            // expected
+        } catch (ClosedChannelException expected) {
         }
     }
     /**
@@ -667,8 +804,7 @@ public class ServerSocketChannelTest extends TestCase {
         try {
             serverChannel.accept();
             fail("should throw AsynchronousCloseException");
-        } catch (AsynchronousCloseException e) {
-            // expected
+        } catch (AsynchronousCloseException expected) {
         }
         serverChannel.close();
     }

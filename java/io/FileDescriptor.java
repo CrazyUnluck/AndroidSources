@@ -17,9 +17,9 @@
 
 package java.io;
 
-import libcore.io.ErrnoException;
+import android.system.ErrnoException;
 import libcore.io.Libcore;
-import static libcore.io.OsConstants.*;
+import static android.system.OsConstants.*;
 
 /**
  * Wraps a Unix file descriptor. It's possible to get the file descriptor used by some
@@ -104,6 +104,15 @@ public final class FileDescriptor {
     public final void setInt$(int fd) {
         this.descriptor = fd;
     }
+
+    /**
+     * @hide internal use only
+     */
+    public boolean isSocket() {
+        return isSocket(descriptor);
+    }
+
+    private static native boolean isSocket(int fd);
 
     @Override public String toString() {
         return "FileDescriptor[" + descriptor + "]";

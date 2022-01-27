@@ -141,7 +141,6 @@ public final class NsdServiceInfo implements Parcelable {
      * <p> Keys should be short, ideally no more than 9 characters, and unique per instance of
      * {@link NsdServiceInfo}.  Calling {@link #setAttribute} twice with the same key will overwrite
      * first value.
-     * @hide
      */
     public void setAttribute(String key, String value) {
         try {
@@ -151,10 +150,7 @@ public final class NsdServiceInfo implements Parcelable {
         }
     }
 
-    /**
-     * Remove an attribute by key
-     * @hide
-     */
+    /** Remove an attribute by key */
     public void removeAttribute(String key) {
         mTxtRecord.remove(key);
     }
@@ -164,7 +160,6 @@ public final class NsdServiceInfo implements Parcelable {
      *
      * <p> The returned map is unmodifiable; changes must be made through {@link #setAttribute} and
      * {@link #removeAttribute}.
-     * @hide
      */
     public Map<String, byte[]> getAttributes() {
         return Collections.unmodifiableMap(mTxtRecord);

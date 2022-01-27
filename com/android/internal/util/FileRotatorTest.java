@@ -43,6 +43,8 @@ import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Random;
 
+import junit.framework.Assert;
+
 import libcore.io.IoUtils;
 
 /**
@@ -365,6 +367,16 @@ public class FileRotatorTest extends AndroidTestCase {
         // verify backup value was recovered; no_backup indicates that
         // corresponding file had no backup and should be discarded.
         assertReadAll(rotate, "bar");
+    }
+
+    public void testFileSystemInaccessible() throws Exception {
+        File inaccessibleDir = null;
+        String dirPath = getContext().getFilesDir() + File.separator + "inaccessible";
+        inaccessibleDir = new File(dirPath);
+        final FileRotator rotate = new FileRotator(inaccessibleDir, PREFIX, SECOND_IN_MILLIS, SECOND_IN_MILLIS);
+
+        // rotate should not throw on dir not mkdir-ed (or otherwise inaccessible)
+        rotate.maybeRotate(TEST_TIME);
     }
 
     private void touch(String... names) throws IOException {

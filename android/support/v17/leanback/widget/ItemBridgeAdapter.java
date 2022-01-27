@@ -14,7 +14,6 @@
 package android.support.v17.leanback.widget;
 
 import android.support.v7.widget.RecyclerView;
-import android.support.v17.leanback.R;
 import android.util.Log;
 import android.view.View;
 import android.view.ViewGroup;
@@ -33,7 +32,7 @@ public class ItemBridgeAdapter extends RecyclerView.Adapter {
      * Interface for listening to view holder operations.
      */
     public static class AdapterListener {
-        public void onAddPresenter(Presenter presenter) {
+        public void onAddPresenter(Presenter presenter, int type) {
         }
         public void onCreate(ViewHolder viewHolder) {
         }
@@ -59,7 +58,7 @@ public class ItemBridgeAdapter extends RecyclerView.Adapter {
     private ObjectAdapter mAdapter;
     private Wrapper mWrapper;
     private PresenterSelector mPresenterSelector;
-    private FocusHighlight mFocusHighlight;
+    private FocusHighlightHandler mFocusHighlight;
     private AdapterListener mAdapterListener;
     private ArrayList<Presenter> mPresenters = new ArrayList<Presenter>();
 
@@ -189,13 +188,21 @@ public class ItemBridgeAdapter extends RecyclerView.Adapter {
         return mWrapper;
     }
 
-    void setFocusHighlight(FocusHighlight listener) {
+    void setFocusHighlight(FocusHighlightHandler listener) {
         mFocusHighlight = listener;
         if (DEBUG) Log.v(TAG, "setFocusHighlight " + mFocusHighlight);
     }
 
     public void clear() {
         setAdapter(null);
+    }
+
+    public void setPresenterMapper(ArrayList<Presenter> presenters) {
+        mPresenters = presenters;
+    }
+
+    public ArrayList<Presenter> getPresenterMapper() {
+        return mPresenters;
     }
 
     @Override
@@ -213,8 +220,9 @@ public class ItemBridgeAdapter extends RecyclerView.Adapter {
         if (type < 0) {
             mPresenters.add(presenter);
             type = mPresenters.indexOf(presenter);
+            if (DEBUG) Log.v(TAG, "getItemViewType added presenter " + presenter + " type " + type);
             if (mAdapterListener != null) {
-                mAdapterListener.onAddPresenter(presenter);
+                mAdapterListener.onAddPresenter(presenter, type);
             }
         }
         return type;
@@ -247,6 +255,9 @@ public class ItemBridgeAdapter extends RecyclerView.Adapter {
         if (presenterView != null) {
             viewHolder.mFocusChangeListener.mChainedListener = presenterView.getOnFocusChangeListener();
             presenterView.setOnFocusChangeListener(viewHolder.mFocusChangeListener);
+        }
+        if (mFocusHighlight != null) {
+            mFocusHighlight.onInitializeView(view);
         }
         return viewHolder;
     }

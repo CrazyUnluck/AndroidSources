@@ -45,6 +45,7 @@ import android.util.TimeUtils;
 import java.io.PrintWriter;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Objects;
 
 /**
  * A running application service.
@@ -70,9 +71,6 @@ final class ServiceRecord extends Binder {
     final String packageName; // the package implementing intent's component
     final String processName; // process where this component wants to run
     final String permission;// permission needed to access service
-    final String baseDir;   // where activity source (resources etc) located
-    final String resDir;   // where public activity source (public resources etc) located
-    final String dataDir;   // where activity data should go
     final boolean exported; // from ServiceInfo.exported
     final Runnable restarter; // used to schedule retries of starting the service
     final long createTime;  // when this service was created
@@ -193,14 +191,7 @@ final class ServiceRecord extends Binder {
                         pw.println(si.neededGrants);
             }
             if (si.uriPermissions != null) {
-                if (si.uriPermissions.readUriPermissions != null) {
-                    pw.print(prefix); pw.print("  readUriPermissions=");
-                            pw.println(si.uriPermissions.readUriPermissions);
-                }
-                if (si.uriPermissions.writeUriPermissions != null) {
-                    pw.print(prefix); pw.print("  writeUriPermissions=");
-                            pw.println(si.uriPermissions.writeUriPermissions);
-                }
+                si.uriPermissions.dump(pw, prefix);
             }
         }
     }
@@ -216,11 +207,13 @@ final class ServiceRecord extends Binder {
         }
         long now = SystemClock.uptimeMillis();
         long nowReal = SystemClock.elapsedRealtime();
-        pw.print(prefix); pw.print("baseDir="); pw.println(baseDir);
-        if (!resDir.equals(baseDir)) {
-            pw.print(prefix); pw.print("resDir="); pw.println(resDir);
+        if (appInfo != null) {
+            pw.print(prefix); pw.print("baseDir="); pw.println(appInfo.sourceDir);
+            if (!Objects.equals(appInfo.sourceDir, appInfo.publicSourceDir)) {
+                pw.print(prefix); pw.print("resDir="); pw.println(appInfo.publicSourceDir);
+            }
+            pw.print(prefix); pw.print("dataDir="); pw.println(appInfo.dataDir);
         }
-        pw.print(prefix); pw.print("dataDir="); pw.println(dataDir);
         pw.print(prefix); pw.print("app="); pw.println(app);
         if (isolatedProc != null) {
             pw.print(prefix); pw.print("isolatedProc="); pw.println(isolatedProc);
@@ -312,9 +305,6 @@ final class ServiceRecord extends Binder {
         packageName = sInfo.applicationInfo.packageName;
         processName = sInfo.processName;
         permission = sInfo.permission;
-        baseDir = sInfo.applicationInfo.sourceDir;
-        resDir = sInfo.applicationInfo.publicSourceDir;
-        dataDir = sInfo.applicationInfo.dataDir;
         exported = sInfo.exported;
         this.restarter = restarter;
         createTime = SystemClock.elapsedRealtime();
@@ -329,7 +319,8 @@ final class ServiceRecord extends Binder {
         }
         if ((serviceInfo.applicationInfo.flags&ApplicationInfo.FLAG_PERSISTENT) == 0) {
             tracker = ams.mProcessStats.getServiceStateLocked(serviceInfo.packageName,
-                    serviceInfo.applicationInfo.uid, serviceInfo.processName, serviceInfo.name);
+                    serviceInfo.applicationInfo.uid, serviceInfo.applicationInfo.versionCode,
+                    serviceInfo.processName, serviceInfo.name);
             tracker.applyNewOwner(this);
         }
         return tracker;
@@ -346,7 +337,8 @@ final class ServiceRecord extends Binder {
         if (restartTracker == null) {
             if ((serviceInfo.applicationInfo.flags&ApplicationInfo.FLAG_PERSISTENT) == 0) {
                 restartTracker = ams.mProcessStats.getServiceStateLocked(serviceInfo.packageName,
-                        serviceInfo.applicationInfo.uid, serviceInfo.processName, serviceInfo.name);
+                        serviceInfo.applicationInfo.uid, serviceInfo.applicationInfo.versionCode,
+                        serviceInfo.processName, serviceInfo.name);
             }
             if (restartTracker == null) {
                 return;
@@ -458,6 +450,9 @@ final class ServiceRecord extends Binder {
                                         appInfo.packageName, null));
                                 PendingIntent pi = PendingIntent.getActivity(ams.mContext, 0,
                                         runningIntent, PendingIntent.FLAG_UPDATE_CURRENT);
+                                localForegroundNoti.color = ams.mContext.getResources().getColor(
+                                        com.android.internal
+                                                .R.color.system_notification_accent_color);
                                 localForegroundNoti.setLatestEventInfo(ctx,
                                         ams.mContext.getString(
                                                 com.android.internal.R.string
@@ -521,6 +516,31 @@ final class ServiceRecord extends Binder {
                 }
             });
         }
+    }
+
+    public void stripForegroundServiceFlagFromNotification() {
+        if (foregroundId == 0) {
+            return;
+        }
+
+        final int localForegroundId = foregroundId;
+        final int localUserId = userId;
+        final String localPackageName = packageName;
+
+        // Do asynchronous communication with notification manager to
+        // avoid deadlocks.
+        ams.mHandler.post(new Runnable() {
+            @Override
+            public void run() {
+                NotificationManagerInternal nmi = LocalServices.getService(
+                        NotificationManagerInternal.class);
+                if (nmi == null) {
+                    return;
+                }
+                nmi.removeForegroundServiceFlagFromNotification(localPackageName, localForegroundId,
+                        localUserId);
+            }
+        });
     }
     
     public void clearDeliveredStartsLocked() {

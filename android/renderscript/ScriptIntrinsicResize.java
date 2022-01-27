@@ -22,7 +22,7 @@ package android.renderscript;
 public final class ScriptIntrinsicResize extends ScriptIntrinsic {
     private Allocation mInput;
 
-    private ScriptIntrinsicResize(int id, RenderScript rs) {
+    private ScriptIntrinsicResize(long id, RenderScript rs) {
         super(id, rs);
     }
 
@@ -35,7 +35,7 @@ public final class ScriptIntrinsicResize extends ScriptIntrinsic {
      * @return ScriptIntrinsicResize
      */
     public static ScriptIntrinsicResize create(RenderScript rs) {
-        int id = rs.nScriptIntrinsicCreate(12, 0);
+        long id = rs.nScriptIntrinsicCreate(12, 0);
         ScriptIntrinsicResize si = new ScriptIntrinsicResize(id, rs);
         return si;
 
@@ -95,7 +95,7 @@ public final class ScriptIntrinsicResize extends ScriptIntrinsic {
      * @param opt LaunchOptions for clipping
      */
     public void forEach_bicubic(Allocation aout, Script.LaunchOptions opt) {
-        forEach(0, null, aout, null, opt);
+        forEach(0, (Allocation) null, aout, null, opt);
     }
 
     /**
@@ -109,4 +109,3 @@ public final class ScriptIntrinsicResize extends ScriptIntrinsic {
 
 
 }
-

@@ -28,14 +28,14 @@ import java.io.PrintStream;
  */
 public abstract class InstrumentationRunListener extends RunListener {
 
-    private final Instrumentation mInstr;
-
-    public InstrumentationRunListener(Instrumentation instr) {
-        mInstr = instr;
-    }
+    private Instrumentation mInstr;
 
     public Instrumentation getInstrumentation() {
         return mInstr;
+    }
+    
+    public void setInstrumentation(Instrumentation instr) {
+        mInstr = instr;
     }
 
     /**
@@ -43,6 +43,15 @@ public abstract class InstrumentationRunListener extends RunListener {
      */
     public void sendStatus(int code, Bundle bundle) {
         getInstrumentation().sendStatus(code, bundle);
+    }
+
+    /**
+     * Convenience method to output a string on instrumentation output
+     */
+    public void sendString(String msg) {
+        Bundle b = new Bundle();
+        b.putString(Instrumentation.REPORT_KEY_STREAMRESULT, msg);
+        sendStatus(0, b);
     }
 
     /**

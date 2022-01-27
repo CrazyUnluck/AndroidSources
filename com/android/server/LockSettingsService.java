@@ -16,10 +16,12 @@
 
 package com.android.server;
 
-import android.app.ActivityManagerNative;
+import android.content.BroadcastReceiver;
 import android.content.ContentResolver;
 import android.content.ContentValues;
 import android.content.Context;
+import android.content.Intent;
+import android.content.IntentFilter;
 import android.content.pm.PackageManager;
 import android.content.pm.UserInfo;
 
@@ -29,29 +31,37 @@ import android.database.Cursor;
 import android.database.sqlite.SQLiteDatabase;
 import android.database.sqlite.SQLiteOpenHelper;
 import android.database.sqlite.SQLiteStatement;
-import android.media.AudioManager;
-import android.media.AudioService;
 import android.os.Binder;
 import android.os.Environment;
+import android.os.IBinder;
+import android.os.Process;
 import android.os.RemoteException;
+import android.os.storage.IMountService;
+import android.os.ServiceManager;
+import android.os.storage.StorageManager;
 import android.os.SystemProperties;
 import android.os.UserHandle;
 import android.os.UserManager;
 import android.provider.Settings;
 import android.provider.Settings.Secure;
 import android.provider.Settings.SettingNotFoundException;
+import android.security.KeyChain;
+import android.security.KeyChain.KeyChainConnection;
 import android.security.KeyStore;
 import android.text.TextUtils;
 import android.util.Log;
 import android.util.Slog;
 
+import com.android.internal.os.BackgroundThread;
 import com.android.internal.widget.ILockSettings;
+import com.android.internal.widget.ILockSettingsObserver;
 import com.android.internal.widget.LockPatternUtils;
 
 import java.io.File;
 import java.io.FileNotFoundException;
 import java.io.IOException;
 import java.io.RandomAccessFile;
+import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
 
@@ -64,6 +74,9 @@ import java.util.List;
 public class LockSettingsService extends ILockSettings.Stub {
 
     private static final String PERMISSION = "android.permission.ACCESS_KEYGUARD_SECURE_STORAGE";
+
+    private static final String SYSTEM_DEBUGGABLE = "ro.debuggable";
+
     private final DatabaseHelper mOpenHelper;
     private static final String TAG = "LockSettingsService";
 
@@ -82,6 +95,9 @@ public class LockSettingsService extends ILockSettings.Stub {
 
     private final Context mContext;
     private LockPatternUtils mLockPatternUtils;
+    private boolean mFirstCallToVold;
+
+    private final ArrayList<LockSettingsObserver> mObservers = new ArrayList<>();
 
     public LockSettingsService(Context context) {
         mContext = context;
@@ -89,7 +105,34 @@ public class LockSettingsService extends ILockSettings.Stub {
         mOpenHelper = new DatabaseHelper(mContext);
 
         mLockPatternUtils = new LockPatternUtils(context);
+        mFirstCallToVold = true;
+
+        IntentFilter filter = new IntentFilter();
+        filter.addAction(Intent.ACTION_USER_ADDED);
+        mContext.registerReceiverAsUser(mBroadcastReceiver, UserHandle.ALL, filter, null, null);
     }
+
+    private final BroadcastReceiver mBroadcastReceiver = new BroadcastReceiver() {
+        @Override
+        public void onReceive(Context context, Intent intent) {
+            if (Intent.ACTION_USER_ADDED.equals(intent.getAction())) {
+                final int userHandle = intent.getIntExtra(Intent.EXTRA_USER_HANDLE, 0);
+                final int userSysUid = UserHandle.getUid(userHandle, Process.SYSTEM_UID);
+                final KeyStore ks = KeyStore.getInstance();
+
+                // Clear up keystore in case anything was left behind by previous users
+                ks.resetUid(userSysUid);
+
+                // If this user has a parent, sync with its keystore password
+                final UserManager um = (UserManager) mContext.getSystemService(USER_SERVICE);
+                final UserInfo parentInfo = um.getProfileParent(userHandle);
+                if (parentInfo != null) {
+                    final int parentSysUid = UserHandle.getUid(parentInfo.id, Process.SYSTEM_UID);
+                    ks.syncUid(parentSysUid, userSysUid);
+                }
+            }
+        }
+    };
 
     public void systemReady() {
         migrateOldData();
@@ -219,10 +262,68 @@ public class LockSettingsService extends ILockSettings.Stub {
         return readFromDb(key, defaultValue, userId);
     }
 
+    @Override
+    public void registerObserver(ILockSettingsObserver remote) throws RemoteException {
+        synchronized (mObservers) {
+            for (int i = 0; i < mObservers.size(); i++) {
+                if (mObservers.get(i).remote.asBinder() == remote.asBinder()) {
+                    boolean isDebuggable = "1".equals(SystemProperties.get(SYSTEM_DEBUGGABLE, "0"));
+                    if (isDebuggable) {
+                        throw new IllegalStateException("Observer was already registered.");
+                    } else {
+                        Log.e(TAG, "Observer was already registered.");
+                        return;
+                    }
+                }
+            }
+            LockSettingsObserver o = new LockSettingsObserver();
+            o.remote = remote;
+            o.remote.asBinder().linkToDeath(o, 0);
+            mObservers.add(o);
+        }
+    }
+
+    @Override
+    public void unregisterObserver(ILockSettingsObserver remote) throws RemoteException {
+        synchronized (mObservers) {
+            for (int i = 0; i < mObservers.size(); i++) {
+                if (mObservers.get(i).remote.asBinder() == remote.asBinder()) {
+                    mObservers.remove(i);
+                    return;
+                }
+            }
+        }
+    }
+
+    public void notifyObservers(String key, int userId) {
+        synchronized (mObservers) {
+            for (int i = 0; i < mObservers.size(); i++) {
+                try {
+                    mObservers.get(i).remote.onLockSettingChanged(key, userId);
+                } catch (RemoteException e) {
+                    // The stack trace is not really helpful here.
+                    Log.e(TAG, "Failed to notify ILockSettingsObserver: " + e);
+                }
+            }
+        }
+    }
+
+    private int getUserParentOrSelfId(int userId) {
+        if (userId != 0) {
+            final UserManager um = (UserManager) mContext.getSystemService(USER_SERVICE);
+            final UserInfo pi = um.getProfileParent(userId);
+            if (pi != null) {
+                return pi.id;
+            }
+        }
+        return userId;
+    }
+
     private String getLockPatternFilename(int userId) {
         String dataSystemDirectory =
                 android.os.Environment.getDataDirectory().getAbsolutePath() +
                 SYSTEM_DIRECTORY;
+        userId = getUserParentOrSelfId(userId);
         if (userId == 0) {
             // Leave it in the same place for user 0
             return dataSystemDirectory + LOCK_PATTERN_FILE;
@@ -233,6 +334,7 @@ public class LockSettingsService extends ILockSettings.Stub {
     }
 
     private String getLockPasswordFilename(int userId) {
+        userId = getUserParentOrSelfId(userId);
         String dataSystemDirectory =
                 android.os.Environment.getDataDirectory().getAbsolutePath() +
                 SYSTEM_DIRECTORY;
@@ -240,7 +342,7 @@ public class LockSettingsService extends ILockSettings.Stub {
             // Leave it in the same place for user 0
             return dataSystemDirectory + LOCK_PASSWORD_FILE;
         } else {
-            return  new File(Environment.getUserSystemDirectory(userId), LOCK_PASSWORD_FILE)
+            return new File(Environment.getUserSystemDirectory(userId), LOCK_PASSWORD_FILE)
                     .getAbsolutePath();
         }
     }
@@ -259,16 +361,27 @@ public class LockSettingsService extends ILockSettings.Stub {
         return new File(getLockPatternFilename(userId)).length() > 0;
     }
 
-    private void maybeUpdateKeystore(String password, int userId) {
-        if (userId == UserHandle.USER_OWNER) {
-            final KeyStore keyStore = KeyStore.getInstance();
-            // Conditionally reset the keystore if empty. If non-empty, we are just
-            // switching key guard type
-            if (TextUtils.isEmpty(password) && keyStore.isEmpty()) {
-                keyStore.reset();
+    private void maybeUpdateKeystore(String password, int userHandle) {
+        final UserManager um = (UserManager) mContext.getSystemService(USER_SERVICE);
+        final KeyStore ks = KeyStore.getInstance();
+
+        final List<UserInfo> profiles = um.getProfiles(userHandle);
+        boolean shouldReset = TextUtils.isEmpty(password);
+
+        // For historical reasons, don't wipe a non-empty keystore if we have a single user with a
+        // single profile.
+        if (userHandle == UserHandle.USER_OWNER && profiles.size() == 1) {
+            if (!ks.isEmpty()) {
+                shouldReset = false;
+            }
+        }
+
+        for (UserInfo pi : profiles) {
+            final int profileUid = UserHandle.getUid(pi.id, Process.SYSTEM_UID);
+            if (shouldReset) {
+                ks.resetUid(profileUid);
             } else {
-                // Update the keystore password
-                keyStore.password(password);
+                ks.passwordUid(password, profileUid);
             }
         }
     }
@@ -290,7 +403,8 @@ public class LockSettingsService extends ILockSettings.Stub {
 
         maybeUpdateKeystore(password, userId);
 
-        writeFile(getLockPasswordFilename(userId), mLockPatternUtils.passwordToHash(password));
+        writeFile(getLockPasswordFilename(userId),
+                mLockPatternUtils.passwordToHash(password, userId));
     }
 
     @Override
@@ -335,7 +449,7 @@ public class LockSettingsService extends ILockSettings.Stub {
                 return true;
             }
             // Compare the hash from the file with the entered password's hash
-            final byte[] hash = mLockPatternUtils.passwordToHash(password);
+            final byte[] hash = mLockPatternUtils.passwordToHash(password, userId);
             final boolean matched = Arrays.equals(stored, hash);
             if (matched && !TextUtils.isEmpty(password)) {
                 maybeUpdateKeystore(password, userId);
@@ -350,18 +464,68 @@ public class LockSettingsService extends ILockSettings.Stub {
     }
 
     @Override
+        public boolean checkVoldPassword(int userId) throws RemoteException {
+        if (!mFirstCallToVold) {
+            return false;
+        }
+        mFirstCallToVold = false;
+
+        checkPasswordReadPermission(userId);
+
+        // There's no guarantee that this will safely connect, but if it fails
+        // we will simply show the lock screen when we shouldn't, so relatively
+        // benign. There is an outside chance something nasty would happen if
+        // this service restarted before vold stales out the password in this
+        // case. The nastiness is limited to not showing the lock screen when
+        // we should, within the first minute of decrypting the phone if this
+        // service can't connect to vold, it restarts, and then the new instance
+        // does successfully connect.
+        final IMountService service = getMountService();
+        String password = service.getPassword();
+        service.clearPassword();
+        if (password == null) {
+            return false;
+        }
+
+        try {
+            if (mLockPatternUtils.isLockPatternEnabled()) {
+                if (checkPattern(password, userId)) {
+                    return true;
+                }
+            }
+        } catch (Exception e) {
+        }
+
+        try {
+            if (mLockPatternUtils.isLockPasswordEnabled()) {
+                if (checkPassword(password, userId)) {
+                    return true;
+                }
+            }
+        } catch (Exception e) {
+        }
+
+        return false;
+    }
+
+    @Override
     public void removeUser(int userId) {
         checkWritePermission(userId);
 
         SQLiteDatabase db = mOpenHelper.getWritableDatabase();
         try {
-            File file = new File(getLockPasswordFilename(userId));
-            if (file.exists()) {
-                file.delete();
-            }
-            file = new File(getLockPatternFilename(userId));
-            if (file.exists()) {
-                file.delete();
+            final UserManager um = (UserManager) mContext.getSystemService(USER_SERVICE);
+            final UserInfo parentInfo = um.getProfileParent(userId);
+            if (parentInfo == null) {
+                // This user owns its lock settings files - safe to delete them
+                File file = new File(getLockPasswordFilename(userId));
+                if (file.exists()) {
+                    file.delete();
+                }
+                file = new File(getLockPatternFilename(userId));
+                if (file.exists()) {
+                    file.delete();
+                }
             }
 
             db.beginTransaction();
@@ -370,6 +534,10 @@ public class LockSettingsService extends ILockSettings.Stub {
         } finally {
             db.endTransaction();
         }
+
+        final KeyStore ks = KeyStore.getInstance();
+        final int userUid = UserHandle.getUid(userId, Process.SYSTEM_UID);
+        ks.resetUid(userUid);
     }
 
     private void writeFile(String name, byte[] hash) {
@@ -390,6 +558,7 @@ public class LockSettingsService extends ILockSettings.Stub {
 
     private void writeToDb(String key, String value, int userId) {
         writeToDb(mOpenHelper.getWritableDatabase(), key, value, userId);
+        notifyObservers(key, userId);
     }
 
     private void writeToDb(SQLiteDatabase db, String key, String value, int userId) {
@@ -527,4 +696,21 @@ public class LockSettingsService extends ILockSettings.Stub {
         Secure.LOCK_SCREEN_OWNER_INFO_ENABLED,
         Secure.LOCK_SCREEN_OWNER_INFO
     };
+
+    private IMountService getMountService() {
+        final IBinder service = ServiceManager.getService("mount");
+        if (service != null) {
+            return IMountService.Stub.asInterface(service);
+        }
+        return null;
+    }
+
+    private class LockSettingsObserver implements DeathRecipient {
+        ILockSettingsObserver remote;
+
+        @Override
+        public void binderDied() {
+            mObservers.remove(this);
+        }
+    }
 }

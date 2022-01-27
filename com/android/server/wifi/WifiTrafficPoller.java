@@ -26,9 +26,9 @@ import android.net.TrafficStats;
 import android.net.wifi.WifiManager;
 import android.os.Messenger;
 import android.os.RemoteException;
-import android.util.Log;
 import android.os.Handler;
 import android.os.Message;
+import android.util.Log;
 
 import java.io.FileDescriptor;
 import java.io.PrintWriter;
@@ -36,10 +36,13 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.concurrent.atomic.AtomicBoolean;
 
-import com.android.internal.util.AsyncChannel;
-
 /* Polls for traffic stats and notifies the clients */
 final class WifiTrafficPoller {
+
+    private boolean DBG = false;
+    private boolean VDBG = false;
+
+    private final String TAG = "WifiTrafficPoller";
     /**
      * Interval in milliseconds between polling for traffic
      * statistics
@@ -101,12 +104,24 @@ final class WifiTrafficPoller {
         Message.obtain(mTrafficHandler, REMOVE_CLIENT, client).sendToTarget();
     }
 
+    void enableVerboseLogging(int verbose) {
+        if (verbose > 0 ) {
+            DBG = true;
+        } else {
+            DBG = false;
+        }
+    }
 
     private class TrafficHandler extends Handler {
         public void handleMessage(Message msg) {
             switch (msg.what) {
                 case ENABLE_TRAFFIC_STATS_POLL:
                     mEnableTrafficStatsPoll = (msg.arg1 == 1);
+                    if (DBG) {
+                        Log.e(TAG, "ENABLE_TRAFFIC_STATS_POLL "
+                                + mEnableTrafficStatsPoll + " Token "
+                                + Integer.toString(mTrafficStatsPollToken));
+                    }
                     mTrafficStatsPollToken++;
                     if (mEnableTrafficStatsPoll) {
                         notifyOnDataActivity();
@@ -115,6 +130,12 @@ final class WifiTrafficPoller {
                     }
                     break;
                 case TRAFFIC_STATS_POLL:
+                    if (VDBG) {
+                        Log.e(TAG, "TRAFFIC_STATS_POLL "
+                                + mEnableTrafficStatsPoll + " Token "
+                                + Integer.toString(mTrafficStatsPollToken)
+                                + " num clients " + mClients.size());
+                    }
                     if (msg.arg1 == mTrafficStatsPollToken) {
                         notifyOnDataActivity();
                         sendMessageDelayed(Message.obtain(this, TRAFFIC_STATS_POLL,
@@ -123,6 +144,10 @@ final class WifiTrafficPoller {
                     break;
                 case ADD_CLIENT:
                     mClients.add((Messenger) msg.obj);
+                    if (DBG) {
+                        Log.e(TAG, "ADD_CLIENT: "
+                                + Integer.toString(mClients.size()));
+                    }
                     break;
                 case REMOVE_CLIENT:
                     mClients.remove(msg.obj);
@@ -153,6 +178,13 @@ final class WifiTrafficPoller {
         mTxPkts = TrafficStats.getTxPackets(mInterface);
         mRxPkts = TrafficStats.getRxPackets(mInterface);
 
+        if (VDBG) {
+            Log.e(TAG, " packet count Tx="
+                    + Long.toString(mTxPkts)
+                    + " Rx="
+                    + Long.toString(mRxPkts));
+        }
+
         if (preTxPkts > 0 || preRxPkts > 0) {
             sent = mTxPkts - preTxPkts;
             received = mRxPkts - preRxPkts;
@@ -165,6 +197,10 @@ final class WifiTrafficPoller {
 
             if (dataActivity != mDataActivity && mScreenOn.get()) {
                 mDataActivity = dataActivity;
+                if (DBG) {
+                    Log.e(TAG, "notifying of data activity "
+                            + Integer.toString(mDataActivity));
+                }
                 for (Messenger client : mClients) {
                     Message msg = Message.obtain();
                     msg.what = WifiManager.DATA_ACTIVITY_NOTIFICATION;

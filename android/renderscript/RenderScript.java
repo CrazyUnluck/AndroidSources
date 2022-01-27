@@ -17,16 +17,12 @@
 package android.renderscript;
 
 import java.io.File;
-import java.lang.reflect.Field;
 import java.lang.reflect.Method;
 import java.util.concurrent.locks.ReentrantReadWriteLock;
 
 import android.content.Context;
-import android.content.pm.ApplicationInfo;
-import android.content.pm.PackageManager;
 import android.content.res.AssetManager;
 import android.graphics.Bitmap;
-import android.graphics.BitmapFactory;
 import android.graphics.SurfaceTexture;
 import android.os.Process;
 import android.util.Log;
@@ -67,6 +63,31 @@ public class RenderScript {
     static Method registerNativeAllocation;
     static Method registerNativeFree;
 
+    /*
+     * Context creation flag that specifies a normal context.
+    */
+    public static final int CREATE_FLAG_NONE = 0x0000;
+
+    /*
+     * Context creation flag which specifies a context optimized for low
+     * latency over peak performance. This is a hint and may have no effect
+     * on some implementations.
+    */
+    public static final int CREATE_FLAG_LOW_LATENCY = 0x0002;
+
+    /*
+     * Context creation flag which specifies a context optimized for long
+     * battery life over peak performance. This is a hint and may have no effect
+     * on some implementations.
+    */
+    public static final int CREATE_FLAG_LOW_POWER = 0x0004;
+
+    /*
+     * Detect the bitness of the VM to allow FieldPacker to do the right thing.
+     */
+    static native int rsnSystemGetPointerSize();
+    static int sPointerSize;
+
     static {
         sInitialized = false;
         if (!SystemProperties.getBoolean("config.disable_renderscript", false)) {
@@ -84,6 +105,7 @@ public class RenderScript {
                 System.loadLibrary("rs_jni");
                 _nInit();
                 sInitialized = true;
+                sPointerSize = rsnSystemGetPointerSize();
             } catch (UnsatisfiedLinkError e) {
                 Log.e(LOG_TAG, "Error loading RS jni library: " + e);
                 throw new RSRuntimeException("Error loading RS jni library: " + e);
@@ -92,14 +114,14 @@ public class RenderScript {
     }
 
     // Non-threadsafe functions.
-    native int  nDeviceCreate();
-    native void nDeviceDestroy(int dev);
-    native void nDeviceSetConfig(int dev, int param, int value);
-    native int nContextGetUserMessage(int con, int[] data);
-    native String nContextGetErrorMessage(int con);
-    native int  nContextPeekMessage(int con, int[] subID);
-    native void nContextInitToClient(int con);
-    native void nContextDeinitToClient(int con);
+    native long  nDeviceCreate();
+    native void nDeviceDestroy(long dev);
+    native void nDeviceSetConfig(long dev, int param, int value);
+    native int nContextGetUserMessage(long con, int[] data);
+    native String nContextGetErrorMessage(long con);
+    native int  nContextPeekMessage(long con, int[] subID);
+    native void nContextInitToClient(long con);
+    native void nContextDeinitToClient(long con);
 
     static File mCacheDir;
 
@@ -170,13 +192,13 @@ public class RenderScript {
 
     // Methods below are wrapped to protect the non-threadsafe
     // lockless fifo.
-    native int  rsnContextCreateGL(int dev, int ver, int sdkVer,
+    native long  rsnContextCreateGL(long dev, int ver, int sdkVer,
                  int colorMin, int colorPref,
                  int alphaMin, int alphaPref,
                  int depthMin, int depthPref,
                  int stencilMin, int stencilPref,
                  int samplesMin, int samplesPref, float samplesQ, int dpi);
-    synchronized int nContextCreateGL(int dev, int ver, int sdkVer,
+    synchronized long nContextCreateGL(long dev, int ver, int sdkVer,
                  int colorMin, int colorPref,
                  int alphaMin, int alphaPref,
                  int depthMin, int depthPref,
@@ -187,11 +209,11 @@ public class RenderScript {
                                   stencilMin, stencilPref,
                                   samplesMin, samplesPref, samplesQ, dpi);
     }
-    native int  rsnContextCreate(int dev, int ver, int sdkVer, int contextType);
-    synchronized int nContextCreate(int dev, int ver, int sdkVer, int contextType) {
+    native long  rsnContextCreate(long dev, int ver, int sdkVer, int contextType);
+    synchronized long nContextCreate(long dev, int ver, int sdkVer, int contextType) {
         return rsnContextCreate(dev, ver, sdkVer, contextType);
     }
-    native void rsnContextDestroy(int con);
+    native void rsnContextDestroy(long con);
     synchronized void nContextDestroy() {
         validate();
 
@@ -200,99 +222,100 @@ public class RenderScript {
         ReentrantReadWriteLock.WriteLock wlock = mRWLock.writeLock();
         wlock.lock();
 
-        int curCon = mContext;
+        long curCon = mContext;
         // context is considered dead as of this point
         mContext = 0;
 
         wlock.unlock();
         rsnContextDestroy(curCon);
     }
-    native void rsnContextSetSurface(int con, int w, int h, Surface sur);
+    native void rsnContextSetSurface(long con, int w, int h, Surface sur);
     synchronized void nContextSetSurface(int w, int h, Surface sur) {
         validate();
         rsnContextSetSurface(mContext, w, h, sur);
     }
-    native void rsnContextSetSurfaceTexture(int con, int w, int h, SurfaceTexture sur);
+    native void rsnContextSetSurfaceTexture(long con, int w, int h, SurfaceTexture sur);
     synchronized void nContextSetSurfaceTexture(int w, int h, SurfaceTexture sur) {
         validate();
         rsnContextSetSurfaceTexture(mContext, w, h, sur);
     }
-    native void rsnContextSetPriority(int con, int p);
+    native void rsnContextSetPriority(long con, int p);
     synchronized void nContextSetPriority(int p) {
         validate();
         rsnContextSetPriority(mContext, p);
     }
-    native void rsnContextDump(int con, int bits);
+    native void rsnContextDump(long con, int bits);
     synchronized void nContextDump(int bits) {
         validate();
         rsnContextDump(mContext, bits);
     }
-    native void rsnContextFinish(int con);
+    native void rsnContextFinish(long con);
     synchronized void nContextFinish() {
         validate();
         rsnContextFinish(mContext);
     }
 
-    native void rsnContextSendMessage(int con, int id, int[] data);
+    native void rsnContextSendMessage(long con, int id, int[] data);
     synchronized void nContextSendMessage(int id, int[] data) {
         validate();
         rsnContextSendMessage(mContext, id, data);
     }
 
-    native void rsnContextBindRootScript(int con, int script);
-    synchronized void nContextBindRootScript(int script) {
+    native void rsnContextBindRootScript(long con, long script);
+    synchronized void nContextBindRootScript(long script) {
         validate();
         rsnContextBindRootScript(mContext, script);
     }
-    native void rsnContextBindSampler(int con, int sampler, int slot);
+    native void rsnContextBindSampler(long con, int sampler, int slot);
     synchronized void nContextBindSampler(int sampler, int slot) {
         validate();
         rsnContextBindSampler(mContext, sampler, slot);
     }
-    native void rsnContextBindProgramStore(int con, int pfs);
-    synchronized void nContextBindProgramStore(int pfs) {
+    native void rsnContextBindProgramStore(long con, long pfs);
+    synchronized void nContextBindProgramStore(long pfs) {
         validate();
         rsnContextBindProgramStore(mContext, pfs);
     }
-    native void rsnContextBindProgramFragment(int con, int pf);
-    synchronized void nContextBindProgramFragment(int pf) {
+    native void rsnContextBindProgramFragment(long con, long pf);
+    synchronized void nContextBindProgramFragment(long pf) {
         validate();
         rsnContextBindProgramFragment(mContext, pf);
     }
-    native void rsnContextBindProgramVertex(int con, int pv);
-    synchronized void nContextBindProgramVertex(int pv) {
+    native void rsnContextBindProgramVertex(long con, long pv);
+    synchronized void nContextBindProgramVertex(long pv) {
         validate();
         rsnContextBindProgramVertex(mContext, pv);
     }
-    native void rsnContextBindProgramRaster(int con, int pr);
-    synchronized void nContextBindProgramRaster(int pr) {
+    native void rsnContextBindProgramRaster(long con, long pr);
+    synchronized void nContextBindProgramRaster(long pr) {
         validate();
         rsnContextBindProgramRaster(mContext, pr);
     }
-    native void rsnContextPause(int con);
+    native void rsnContextPause(long con);
     synchronized void nContextPause() {
         validate();
         rsnContextPause(mContext);
     }
-    native void rsnContextResume(int con);
+    native void rsnContextResume(long con);
     synchronized void nContextResume() {
         validate();
         rsnContextResume(mContext);
     }
 
-    native void rsnAssignName(int con, int obj, byte[] name);
-    synchronized void nAssignName(int obj, byte[] name) {
+    native void rsnAssignName(long con, long obj, byte[] name);
+    synchronized void nAssignName(long obj, byte[] name) {
         validate();
         rsnAssignName(mContext, obj, name);
     }
-    native String rsnGetName(int con, int obj);
-    synchronized String nGetName(int obj) {
+    native String rsnGetName(long con, long obj);
+    synchronized String nGetName(long obj) {
         validate();
         return rsnGetName(mContext, obj);
     }
+
     // nObjDestroy is explicitly _not_ synchronous to prevent crashes in finalizers
-    native void rsnObjDestroy(int con, int id);
-    void nObjDestroy(int id) {
+    native void rsnObjDestroy(long con, long id);
+    void nObjDestroy(long id) {
         // There is a race condition here.  The calling code may be run
         // by the gc while teardown is occuring.  This protects againts
         // deleting dead objects.
@@ -301,156 +324,140 @@ public class RenderScript {
         }
     }
 
-    native int  rsnElementCreate(int con, int type, int kind, boolean norm, int vecSize);
-    synchronized int nElementCreate(int type, int kind, boolean norm, int vecSize) {
+    native long rsnElementCreate(long con, long type, int kind, boolean norm, int vecSize);
+    synchronized long nElementCreate(long type, int kind, boolean norm, int vecSize) {
         validate();
         return rsnElementCreate(mContext, type, kind, norm, vecSize);
     }
-    native int  rsnElementCreate2(int con, int[] elements, String[] names, int[] arraySizes);
-    synchronized int nElementCreate2(int[] elements, String[] names, int[] arraySizes) {
+    native long rsnElementCreate2(long con, long[] elements, String[] names, int[] arraySizes);
+    synchronized long nElementCreate2(long[] elements, String[] names, int[] arraySizes) {
         validate();
         return rsnElementCreate2(mContext, elements, names, arraySizes);
     }
-    native void rsnElementGetNativeData(int con, int id, int[] elementData);
-    synchronized void nElementGetNativeData(int id, int[] elementData) {
+    native void rsnElementGetNativeData(long con, long id, int[] elementData);
+    synchronized void nElementGetNativeData(long id, int[] elementData) {
         validate();
         rsnElementGetNativeData(mContext, id, elementData);
     }
-    native void rsnElementGetSubElements(int con, int id,
-                                         int[] IDs, String[] names, int[] arraySizes);
-    synchronized void nElementGetSubElements(int id, int[] IDs, String[] names, int[] arraySizes) {
+    native void rsnElementGetSubElements(long con, long id,
+                                         long[] IDs, String[] names, int[] arraySizes);
+    synchronized void nElementGetSubElements(long id, long[] IDs, String[] names, int[] arraySizes) {
         validate();
         rsnElementGetSubElements(mContext, id, IDs, names, arraySizes);
     }
 
-    native int rsnTypeCreate(int con, int eid, int x, int y, int z, boolean mips, boolean faces, int yuv);
-    synchronized int nTypeCreate(int eid, int x, int y, int z, boolean mips, boolean faces, int yuv) {
+    native long rsnTypeCreate(long con, long eid, int x, int y, int z, boolean mips, boolean faces, int yuv);
+    synchronized long nTypeCreate(long eid, int x, int y, int z, boolean mips, boolean faces, int yuv) {
         validate();
         return rsnTypeCreate(mContext, eid, x, y, z, mips, faces, yuv);
     }
-    native void rsnTypeGetNativeData(int con, int id, int[] typeData);
-    synchronized void nTypeGetNativeData(int id, int[] typeData) {
+    native void rsnTypeGetNativeData(long con, long id, long[] typeData);
+    synchronized void nTypeGetNativeData(long id, long[] typeData) {
         validate();
         rsnTypeGetNativeData(mContext, id, typeData);
     }
 
-    native int  rsnAllocationCreateTyped(int con, int type, int mip, int usage, int pointer);
-    synchronized int nAllocationCreateTyped(int type, int mip, int usage, int pointer) {
+    native long rsnAllocationCreateTyped(long con, long type, int mip, int usage, long pointer);
+    synchronized long nAllocationCreateTyped(long type, int mip, int usage, long pointer) {
         validate();
         return rsnAllocationCreateTyped(mContext, type, mip, usage, pointer);
     }
-    native int  rsnAllocationCreateFromBitmap(int con, int type, int mip, Bitmap bmp, int usage);
-    synchronized int nAllocationCreateFromBitmap(int type, int mip, Bitmap bmp, int usage) {
+    native long rsnAllocationCreateFromBitmap(long con, long type, int mip, Bitmap bmp, int usage);
+    synchronized long nAllocationCreateFromBitmap(long type, int mip, Bitmap bmp, int usage) {
         validate();
         return rsnAllocationCreateFromBitmap(mContext, type, mip, bmp, usage);
     }
 
-    native int  rsnAllocationCreateBitmapBackedAllocation(int con, int type, int mip, Bitmap bmp, int usage);
-    synchronized int nAllocationCreateBitmapBackedAllocation(int type, int mip, Bitmap bmp, int usage) {
+    native long rsnAllocationCreateBitmapBackedAllocation(long con, long type, int mip, Bitmap bmp, int usage);
+    synchronized long nAllocationCreateBitmapBackedAllocation(long type, int mip, Bitmap bmp, int usage) {
         validate();
         return rsnAllocationCreateBitmapBackedAllocation(mContext, type, mip, bmp, usage);
     }
 
-
-    native int  rsnAllocationCubeCreateFromBitmap(int con, int type, int mip, Bitmap bmp, int usage);
-    synchronized int nAllocationCubeCreateFromBitmap(int type, int mip, Bitmap bmp, int usage) {
+    native long rsnAllocationCubeCreateFromBitmap(long con, long type, int mip, Bitmap bmp, int usage);
+    synchronized long nAllocationCubeCreateFromBitmap(long type, int mip, Bitmap bmp, int usage) {
         validate();
         return rsnAllocationCubeCreateFromBitmap(mContext, type, mip, bmp, usage);
     }
-    native int  rsnAllocationCreateBitmapRef(int con, int type, Bitmap bmp);
-    synchronized int nAllocationCreateBitmapRef(int type, Bitmap bmp) {
+    native long  rsnAllocationCreateBitmapRef(long con, long type, Bitmap bmp);
+    synchronized long nAllocationCreateBitmapRef(long type, Bitmap bmp) {
         validate();
         return rsnAllocationCreateBitmapRef(mContext, type, bmp);
     }
-    native int  rsnAllocationCreateFromAssetStream(int con, int mips, int assetStream, int usage);
-    synchronized int nAllocationCreateFromAssetStream(int mips, int assetStream, int usage) {
+    native long  rsnAllocationCreateFromAssetStream(long con, int mips, int assetStream, int usage);
+    synchronized long nAllocationCreateFromAssetStream(int mips, int assetStream, int usage) {
         validate();
         return rsnAllocationCreateFromAssetStream(mContext, mips, assetStream, usage);
     }
 
-    native void  rsnAllocationCopyToBitmap(int con, int alloc, Bitmap bmp);
-    synchronized void nAllocationCopyToBitmap(int alloc, Bitmap bmp) {
+    native void  rsnAllocationCopyToBitmap(long con, long alloc, Bitmap bmp);
+    synchronized void nAllocationCopyToBitmap(long alloc, Bitmap bmp) {
         validate();
         rsnAllocationCopyToBitmap(mContext, alloc, bmp);
     }
 
 
-    native void rsnAllocationSyncAll(int con, int alloc, int src);
-    synchronized void nAllocationSyncAll(int alloc, int src) {
+    native void rsnAllocationSyncAll(long con, long alloc, int src);
+    synchronized void nAllocationSyncAll(long alloc, int src) {
         validate();
         rsnAllocationSyncAll(mContext, alloc, src);
     }
-    native Surface rsnAllocationGetSurface(int con, int alloc);
-    synchronized Surface nAllocationGetSurface(int alloc) {
+    native Surface rsnAllocationGetSurface(long con, long alloc);
+    synchronized Surface nAllocationGetSurface(long alloc) {
         validate();
         return rsnAllocationGetSurface(mContext, alloc);
     }
-    native void rsnAllocationSetSurface(int con, int alloc, Surface sur);
-    synchronized void nAllocationSetSurface(int alloc, Surface sur) {
+    native void rsnAllocationSetSurface(long con, long alloc, Surface sur);
+    synchronized void nAllocationSetSurface(long alloc, Surface sur) {
         validate();
         rsnAllocationSetSurface(mContext, alloc, sur);
     }
-    native void rsnAllocationIoSend(int con, int alloc);
-    synchronized void nAllocationIoSend(int alloc) {
+    native void rsnAllocationIoSend(long con, long alloc);
+    synchronized void nAllocationIoSend(long alloc) {
         validate();
         rsnAllocationIoSend(mContext, alloc);
     }
-    native void rsnAllocationIoReceive(int con, int alloc);
-    synchronized void nAllocationIoReceive(int alloc) {
+    native void rsnAllocationIoReceive(long con, long alloc);
+    synchronized void nAllocationIoReceive(long alloc) {
         validate();
         rsnAllocationIoReceive(mContext, alloc);
     }
 
 
-    native void rsnAllocationGenerateMipmaps(int con, int alloc);
-    synchronized void nAllocationGenerateMipmaps(int alloc) {
+    native void rsnAllocationGenerateMipmaps(long con, long alloc);
+    synchronized void nAllocationGenerateMipmaps(long alloc) {
         validate();
         rsnAllocationGenerateMipmaps(mContext, alloc);
     }
-    native void  rsnAllocationCopyFromBitmap(int con, int alloc, Bitmap bmp);
-    synchronized void nAllocationCopyFromBitmap(int alloc, Bitmap bmp) {
+    native void  rsnAllocationCopyFromBitmap(long con, long alloc, Bitmap bmp);
+    synchronized void nAllocationCopyFromBitmap(long alloc, Bitmap bmp) {
         validate();
         rsnAllocationCopyFromBitmap(mContext, alloc, bmp);
     }
 
 
-    native void rsnAllocationData1D(int con, int id, int off, int mip, int count, int[] d, int sizeBytes);
-    synchronized void nAllocationData1D(int id, int off, int mip, int count, int[] d, int sizeBytes) {
+    native void rsnAllocationData1D(long con, long id, int off, int mip, int count, Object d, int sizeBytes, int dt);
+    synchronized void nAllocationData1D(long id, int off, int mip, int count, Object d, int sizeBytes, Element.DataType dt) {
         validate();
-        rsnAllocationData1D(mContext, id, off, mip, count, d, sizeBytes);
-    }
-    native void rsnAllocationData1D(int con, int id, int off, int mip, int count, short[] d, int sizeBytes);
-    synchronized void nAllocationData1D(int id, int off, int mip, int count, short[] d, int sizeBytes) {
-        validate();
-        rsnAllocationData1D(mContext, id, off, mip, count, d, sizeBytes);
-    }
-    native void rsnAllocationData1D(int con, int id, int off, int mip, int count, byte[] d, int sizeBytes);
-    synchronized void nAllocationData1D(int id, int off, int mip, int count, byte[] d, int sizeBytes) {
-        validate();
-        rsnAllocationData1D(mContext, id, off, mip, count, d, sizeBytes);
-    }
-    native void rsnAllocationData1D(int con, int id, int off, int mip, int count, float[] d, int sizeBytes);
-    synchronized void nAllocationData1D(int id, int off, int mip, int count, float[] d, int sizeBytes) {
-        validate();
-        rsnAllocationData1D(mContext, id, off, mip, count, d, sizeBytes);
+        rsnAllocationData1D(mContext, id, off, mip, count, d, sizeBytes, dt.mID);
     }
 
-    native void rsnAllocationElementData1D(int con, int id, int xoff, int mip, int compIdx, byte[] d, int sizeBytes);
-    synchronized void nAllocationElementData1D(int id, int xoff, int mip, int compIdx, byte[] d, int sizeBytes) {
+    native void rsnAllocationElementData1D(long con,long id, int xoff, int mip, int compIdx, byte[] d, int sizeBytes);
+    synchronized void nAllocationElementData1D(long id, int xoff, int mip, int compIdx, byte[] d, int sizeBytes) {
         validate();
         rsnAllocationElementData1D(mContext, id, xoff, mip, compIdx, d, sizeBytes);
     }
 
-    native void rsnAllocationData2D(int con,
-                                    int dstAlloc, int dstXoff, int dstYoff,
+    native void rsnAllocationData2D(long con,
+                                    long dstAlloc, int dstXoff, int dstYoff,
                                     int dstMip, int dstFace,
                                     int width, int height,
-                                    int srcAlloc, int srcXoff, int srcYoff,
+                                    long srcAlloc, int srcXoff, int srcYoff,
                                     int srcMip, int srcFace);
-    synchronized void nAllocationData2D(int dstAlloc, int dstXoff, int dstYoff,
+    synchronized void nAllocationData2D(long dstAlloc, int dstXoff, int dstYoff,
                                         int dstMip, int dstFace,
                                         int width, int height,
-                                        int srcAlloc, int srcXoff, int srcYoff,
+                                        long srcAlloc, int srcXoff, int srcYoff,
                                         int srcMip, int srcFace) {
         validate();
         rsnAllocationData2D(mContext,
@@ -461,42 +468,30 @@ public class RenderScript {
                             srcMip, srcFace);
     }
 
-    native void rsnAllocationData2D(int con, int id, int xoff, int yoff, int mip, int face, int w, int h, byte[] d, int sizeBytes);
-    synchronized void nAllocationData2D(int id, int xoff, int yoff, int mip, int face, int w, int h, byte[] d, int sizeBytes) {
+    native void rsnAllocationData2D(long con, long id, int xoff, int yoff, int mip, int face,
+                                    int w, int h, Object d, int sizeBytes, int dt);
+    synchronized void nAllocationData2D(long id, int xoff, int yoff, int mip, int face,
+                                        int w, int h, Object d, int sizeBytes, Element.DataType dt) {
         validate();
-        rsnAllocationData2D(mContext, id, xoff, yoff, mip, face, w, h, d, sizeBytes);
+        rsnAllocationData2D(mContext, id, xoff, yoff, mip, face, w, h, d, sizeBytes, dt.mID);
     }
-    native void rsnAllocationData2D(int con, int id, int xoff, int yoff, int mip, int face, int w, int h, short[] d, int sizeBytes);
-    synchronized void nAllocationData2D(int id, int xoff, int yoff, int mip, int face, int w, int h, short[] d, int sizeBytes) {
-        validate();
-        rsnAllocationData2D(mContext, id, xoff, yoff, mip, face, w, h, d, sizeBytes);
-    }
-    native void rsnAllocationData2D(int con, int id, int xoff, int yoff, int mip, int face, int w, int h, int[] d, int sizeBytes);
-    synchronized void nAllocationData2D(int id, int xoff, int yoff, int mip, int face, int w, int h, int[] d, int sizeBytes) {
-        validate();
-        rsnAllocationData2D(mContext, id, xoff, yoff, mip, face, w, h, d, sizeBytes);
-    }
-    native void rsnAllocationData2D(int con, int id, int xoff, int yoff, int mip, int face, int w, int h, float[] d, int sizeBytes);
-    synchronized void nAllocationData2D(int id, int xoff, int yoff, int mip, int face, int w, int h, float[] d, int sizeBytes) {
-        validate();
-        rsnAllocationData2D(mContext, id, xoff, yoff, mip, face, w, h, d, sizeBytes);
-    }
-    native void rsnAllocationData2D(int con, int id, int xoff, int yoff, int mip, int face, Bitmap b);
-    synchronized void nAllocationData2D(int id, int xoff, int yoff, int mip, int face, Bitmap b) {
+
+    native void rsnAllocationData2D(long con, long id, int xoff, int yoff, int mip, int face, Bitmap b);
+    synchronized void nAllocationData2D(long id, int xoff, int yoff, int mip, int face, Bitmap b) {
         validate();
         rsnAllocationData2D(mContext, id, xoff, yoff, mip, face, b);
     }
 
-    native void rsnAllocationData3D(int con,
-                                    int dstAlloc, int dstXoff, int dstYoff, int dstZoff,
+    native void rsnAllocationData3D(long con,
+                                    long dstAlloc, int dstXoff, int dstYoff, int dstZoff,
                                     int dstMip,
                                     int width, int height, int depth,
-                                    int srcAlloc, int srcXoff, int srcYoff, int srcZoff,
+                                    long srcAlloc, int srcXoff, int srcYoff, int srcZoff,
                                     int srcMip);
-    synchronized void nAllocationData3D(int dstAlloc, int dstXoff, int dstYoff, int dstZoff,
+    synchronized void nAllocationData3D(long dstAlloc, int dstXoff, int dstYoff, int dstZoff,
                                         int dstMip,
                                         int width, int height, int depth,
-                                        int srcAlloc, int srcXoff, int srcYoff, int srcZoff,
+                                        long srcAlloc, int srcXoff, int srcYoff, int srcZoff,
                                         int srcMip) {
         validate();
         rsnAllocationData3D(mContext,
@@ -505,130 +500,118 @@ public class RenderScript {
                             srcAlloc, srcXoff, srcYoff, srcZoff, srcMip);
     }
 
-    native void rsnAllocationData3D(int con, int id, int xoff, int yoff, int zoff, int mip, int w, int h, int depth, byte[] d, int sizeBytes);
-    synchronized void nAllocationData3D(int id, int xoff, int yoff, int zoff, int mip, int w, int h, int depth, byte[] d, int sizeBytes) {
+    native void rsnAllocationData3D(long con, long id, int xoff, int yoff, int zoff, int mip,
+                                    int w, int h, int depth, Object d, int sizeBytes, int dt);
+    synchronized void nAllocationData3D(long id, int xoff, int yoff, int zoff, int mip,
+                                        int w, int h, int depth, Object d, int sizeBytes, Element.DataType dt) {
         validate();
-        rsnAllocationData3D(mContext, id, xoff, yoff, zoff, mip, w, h, depth, d, sizeBytes);
-    }
-    native void rsnAllocationData3D(int con, int id, int xoff, int yoff, int zoff, int mip, int w, int h, int depth, short[] d, int sizeBytes);
-    synchronized void nAllocationData3D(int id, int xoff, int yoff, int zoff, int mip, int w, int h, int depth, short[] d, int sizeBytes) {
-        validate();
-        rsnAllocationData3D(mContext, id, xoff, yoff, zoff, mip, w, h, depth, d, sizeBytes);
-    }
-    native void rsnAllocationData3D(int con, int id, int xoff, int yoff, int zoff, int mip, int w, int h, int depth, int[] d, int sizeBytes);
-    synchronized void nAllocationData3D(int id, int xoff, int yoff, int zoff, int mip, int w, int h, int depth, int[] d, int sizeBytes) {
-        validate();
-        rsnAllocationData3D(mContext, id, xoff, yoff, zoff, mip, w, h, depth, d, sizeBytes);
-    }
-    native void rsnAllocationData3D(int con, int id, int xoff, int yoff, int zoff, int mip, int w, int h, int depth, float[] d, int sizeBytes);
-    synchronized void nAllocationData3D(int id, int xoff, int yoff, int zoff, int mip, int w, int h, int depth, float[] d, int sizeBytes) {
-        validate();
-        rsnAllocationData3D(mContext, id, xoff, yoff, zoff, mip, w, h, depth, d, sizeBytes);
+        rsnAllocationData3D(mContext, id, xoff, yoff, zoff, mip, w, h, depth, d, sizeBytes, dt.mID);
     }
 
+    native void rsnAllocationRead(long con, long id, Object d, int dt);
+    synchronized void nAllocationRead(long id, Object d, Element.DataType dt) {
+        validate();
+        rsnAllocationRead(mContext, id, d, dt.mID);
+    }
 
-    native void rsnAllocationRead(int con, int id, byte[] d);
-    synchronized void nAllocationRead(int id, byte[] d) {
+    native void rsnAllocationRead1D(long con, long id, int off, int mip, int count, Object d,
+                                    int sizeBytes, int dt);
+    synchronized void nAllocationRead1D(long id, int off, int mip, int count, Object d,
+                                        int sizeBytes, Element.DataType dt) {
         validate();
-        rsnAllocationRead(mContext, id, d);
+        rsnAllocationRead1D(mContext, id, off, mip, count, d, sizeBytes, dt.mID);
     }
-    native void rsnAllocationRead(int con, int id, short[] d);
-    synchronized void nAllocationRead(int id, short[] d) {
+
+    native void rsnAllocationRead2D(long con, long id, int xoff, int yoff, int mip, int face,
+                                    int w, int h, Object d, int sizeBytes, int dt);
+    synchronized void nAllocationRead2D(long id, int xoff, int yoff, int mip, int face,
+                                        int w, int h, Object d, int sizeBytes, Element.DataType dt) {
         validate();
-        rsnAllocationRead(mContext, id, d);
+        rsnAllocationRead2D(mContext, id, xoff, yoff, mip, face, w, h, d, sizeBytes, dt.mID);
     }
-    native void rsnAllocationRead(int con, int id, int[] d);
-    synchronized void nAllocationRead(int id, int[] d) {
-        validate();
-        rsnAllocationRead(mContext, id, d);
-    }
-    native void rsnAllocationRead(int con, int id, float[] d);
-    synchronized void nAllocationRead(int id, float[] d) {
-        validate();
-        rsnAllocationRead(mContext, id, d);
-    }
-    native int  rsnAllocationGetType(int con, int id);
-    synchronized int nAllocationGetType(int id) {
+
+    native long  rsnAllocationGetType(long con, long id);
+    synchronized long nAllocationGetType(long id) {
         validate();
         return rsnAllocationGetType(mContext, id);
     }
 
-    native void rsnAllocationResize1D(int con, int id, int dimX);
-    synchronized void nAllocationResize1D(int id, int dimX) {
+    native void rsnAllocationResize1D(long con, long id, int dimX);
+    synchronized void nAllocationResize1D(long id, int dimX) {
         validate();
         rsnAllocationResize1D(mContext, id, dimX);
     }
 
-    native int  rsnFileA3DCreateFromAssetStream(int con, int assetStream);
-    synchronized int nFileA3DCreateFromAssetStream(int assetStream) {
+    native long rsnFileA3DCreateFromAssetStream(long con, long assetStream);
+    synchronized long nFileA3DCreateFromAssetStream(long assetStream) {
         validate();
         return rsnFileA3DCreateFromAssetStream(mContext, assetStream);
     }
-    native int  rsnFileA3DCreateFromFile(int con, String path);
-    synchronized int nFileA3DCreateFromFile(String path) {
+    native long rsnFileA3DCreateFromFile(long con, String path);
+    synchronized long nFileA3DCreateFromFile(String path) {
         validate();
         return rsnFileA3DCreateFromFile(mContext, path);
     }
-    native int  rsnFileA3DCreateFromAsset(int con, AssetManager mgr, String path);
-    synchronized int nFileA3DCreateFromAsset(AssetManager mgr, String path) {
+    native long rsnFileA3DCreateFromAsset(long con, AssetManager mgr, String path);
+    synchronized long nFileA3DCreateFromAsset(AssetManager mgr, String path) {
         validate();
         return rsnFileA3DCreateFromAsset(mContext, mgr, path);
     }
-    native int  rsnFileA3DGetNumIndexEntries(int con, int fileA3D);
-    synchronized int nFileA3DGetNumIndexEntries(int fileA3D) {
+    native int  rsnFileA3DGetNumIndexEntries(long con, long fileA3D);
+    synchronized int nFileA3DGetNumIndexEntries(long fileA3D) {
         validate();
         return rsnFileA3DGetNumIndexEntries(mContext, fileA3D);
     }
-    native void rsnFileA3DGetIndexEntries(int con, int fileA3D, int numEntries, int[] IDs, String[] names);
-    synchronized void nFileA3DGetIndexEntries(int fileA3D, int numEntries, int[] IDs, String[] names) {
+    native void rsnFileA3DGetIndexEntries(long con, long fileA3D, int numEntries, int[] IDs, String[] names);
+    synchronized void nFileA3DGetIndexEntries(long fileA3D, int numEntries, int[] IDs, String[] names) {
         validate();
         rsnFileA3DGetIndexEntries(mContext, fileA3D, numEntries, IDs, names);
     }
-    native int  rsnFileA3DGetEntryByIndex(int con, int fileA3D, int index);
-    synchronized int nFileA3DGetEntryByIndex(int fileA3D, int index) {
+    native long rsnFileA3DGetEntryByIndex(long con, long fileA3D, int index);
+    synchronized long nFileA3DGetEntryByIndex(long fileA3D, int index) {
         validate();
         return rsnFileA3DGetEntryByIndex(mContext, fileA3D, index);
     }
 
-    native int  rsnFontCreateFromFile(int con, String fileName, float size, int dpi);
-    synchronized int nFontCreateFromFile(String fileName, float size, int dpi) {
+    native long rsnFontCreateFromFile(long con, String fileName, float size, int dpi);
+    synchronized long nFontCreateFromFile(String fileName, float size, int dpi) {
         validate();
         return rsnFontCreateFromFile(mContext, fileName, size, dpi);
     }
-    native int  rsnFontCreateFromAssetStream(int con, String name, float size, int dpi, int assetStream);
-    synchronized int nFontCreateFromAssetStream(String name, float size, int dpi, int assetStream) {
+    native long rsnFontCreateFromAssetStream(long con, String name, float size, int dpi, long assetStream);
+    synchronized long nFontCreateFromAssetStream(String name, float size, int dpi, long assetStream) {
         validate();
         return rsnFontCreateFromAssetStream(mContext, name, size, dpi, assetStream);
     }
-    native int  rsnFontCreateFromAsset(int con, AssetManager mgr, String path, float size, int dpi);
-    synchronized int nFontCreateFromAsset(AssetManager mgr, String path, float size, int dpi) {
+    native long rsnFontCreateFromAsset(long con, AssetManager mgr, String path, float size, int dpi);
+    synchronized long nFontCreateFromAsset(AssetManager mgr, String path, float size, int dpi) {
         validate();
         return rsnFontCreateFromAsset(mContext, mgr, path, size, dpi);
     }
 
 
-    native void rsnScriptBindAllocation(int con, int script, int alloc, int slot);
-    synchronized void nScriptBindAllocation(int script, int alloc, int slot) {
+    native void rsnScriptBindAllocation(long con, long script, long alloc, int slot);
+    synchronized void nScriptBindAllocation(long script, long alloc, int slot) {
         validate();
         rsnScriptBindAllocation(mContext, script, alloc, slot);
     }
-    native void rsnScriptSetTimeZone(int con, int script, byte[] timeZone);
-    synchronized void nScriptSetTimeZone(int script, byte[] timeZone) {
+    native void rsnScriptSetTimeZone(long con, long script, byte[] timeZone);
+    synchronized void nScriptSetTimeZone(long script, byte[] timeZone) {
         validate();
         rsnScriptSetTimeZone(mContext, script, timeZone);
     }
-    native void rsnScriptInvoke(int con, int id, int slot);
-    synchronized void nScriptInvoke(int id, int slot) {
+    native void rsnScriptInvoke(long con, long id, int slot);
+    synchronized void nScriptInvoke(long id, int slot) {
         validate();
         rsnScriptInvoke(mContext, id, slot);
     }
-    native void rsnScriptForEach(int con, int id, int slot, int ain, int aout, byte[] params);
-    native void rsnScriptForEach(int con, int id, int slot, int ain, int aout);
-    native void rsnScriptForEachClipped(int con, int id, int slot, int ain, int aout, byte[] params,
+    native void rsnScriptForEach(long con, long id, int slot, long ain, long aout, byte[] params);
+    native void rsnScriptForEach(long con, long id, int slot, long ain, long aout);
+    native void rsnScriptForEachClipped(long con, long id, int slot, long ain, long aout, byte[] params,
                                         int xstart, int xend, int ystart, int yend, int zstart, int zend);
-    native void rsnScriptForEachClipped(int con, int id, int slot, int ain, int aout,
+    native void rsnScriptForEachClipped(long con, long id, int slot, long ain, long aout,
                                         int xstart, int xend, int ystart, int yend, int zstart, int zend);
-    synchronized void nScriptForEach(int id, int slot, int ain, int aout, byte[] params) {
+    synchronized void nScriptForEach(long id, int slot, long ain, long aout, byte[] params) {
         validate();
         if (params == null) {
             rsnScriptForEach(mContext, id, slot, ain, aout);
@@ -637,7 +620,7 @@ public class RenderScript {
         }
     }
 
-    synchronized void nScriptForEachClipped(int id, int slot, int ain, int aout, byte[] params,
+    synchronized void nScriptForEachClipped(long id, int slot, long ain, long aout, byte[] params,
                                             int xstart, int xend, int ystart, int yend, int zstart, int zend) {
         validate();
         if (params == null) {
@@ -647,138 +630,161 @@ public class RenderScript {
         }
     }
 
-    native void rsnScriptInvokeV(int con, int id, int slot, byte[] params);
-    synchronized void nScriptInvokeV(int id, int slot, byte[] params) {
+    /**
+     * Multi-input code.
+     *
+     */
+
+    // @hide
+    native void rsnScriptForEachMultiClipped(long con, long id, int slot, long[] ains, long aout, byte[] params,
+                                             int xstart, int xend, int ystart, int yend, int zstart, int zend);
+    // @hide
+    native void rsnScriptForEachMultiClipped(long con, long id, int slot, long[] ains, long aout,
+                                             int xstart, int xend, int ystart, int yend, int zstart, int zend);
+
+    // @hide
+    synchronized void nScriptForEachMultiClipped(long id, int slot, long[] ains, long aout, byte[] params,
+                                                 int xstart, int xend, int ystart, int yend, int zstart, int zend) {
+        validate();
+        if (params == null) {
+            rsnScriptForEachMultiClipped(mContext, id, slot, ains, aout, xstart, xend, ystart, yend, zstart, zend);
+        } else {
+            rsnScriptForEachMultiClipped(mContext, id, slot, ains, aout, params, xstart, xend, ystart, yend, zstart, zend);
+        }
+    }
+
+    native void rsnScriptInvokeV(long con, long id, int slot, byte[] params);
+    synchronized void nScriptInvokeV(long id, int slot, byte[] params) {
         validate();
         rsnScriptInvokeV(mContext, id, slot, params);
     }
 
-    native void rsnScriptSetVarI(int con, int id, int slot, int val);
-    synchronized void nScriptSetVarI(int id, int slot, int val) {
+    native void rsnScriptSetVarI(long con, long id, int slot, int val);
+    synchronized void nScriptSetVarI(long id, int slot, int val) {
         validate();
         rsnScriptSetVarI(mContext, id, slot, val);
     }
-    native int rsnScriptGetVarI(int con, int id, int slot);
-    synchronized int nScriptGetVarI(int id, int slot) {
+    native int rsnScriptGetVarI(long con, long id, int slot);
+    synchronized int nScriptGetVarI(long id, int slot) {
         validate();
         return rsnScriptGetVarI(mContext, id, slot);
     }
 
-    native void rsnScriptSetVarJ(int con, int id, int slot, long val);
-    synchronized void nScriptSetVarJ(int id, int slot, long val) {
+    native void rsnScriptSetVarJ(long con, long id, int slot, long val);
+    synchronized void nScriptSetVarJ(long id, int slot, long val) {
         validate();
         rsnScriptSetVarJ(mContext, id, slot, val);
     }
-    native long rsnScriptGetVarJ(int con, int id, int slot);
-    synchronized long nScriptGetVarJ(int id, int slot) {
+    native long rsnScriptGetVarJ(long con, long id, int slot);
+    synchronized long nScriptGetVarJ(long id, int slot) {
         validate();
         return rsnScriptGetVarJ(mContext, id, slot);
     }
 
-    native void rsnScriptSetVarF(int con, int id, int slot, float val);
-    synchronized void nScriptSetVarF(int id, int slot, float val) {
+    native void rsnScriptSetVarF(long con, long id, int slot, float val);
+    synchronized void nScriptSetVarF(long id, int slot, float val) {
         validate();
         rsnScriptSetVarF(mContext, id, slot, val);
     }
-    native float rsnScriptGetVarF(int con, int id, int slot);
-    synchronized float nScriptGetVarF(int id, int slot) {
+    native float rsnScriptGetVarF(long con, long id, int slot);
+    synchronized float nScriptGetVarF(long id, int slot) {
         validate();
         return rsnScriptGetVarF(mContext, id, slot);
     }
-    native void rsnScriptSetVarD(int con, int id, int slot, double val);
-    synchronized void nScriptSetVarD(int id, int slot, double val) {
+    native void rsnScriptSetVarD(long con, long id, int slot, double val);
+    synchronized void nScriptSetVarD(long id, int slot, double val) {
         validate();
         rsnScriptSetVarD(mContext, id, slot, val);
     }
-    native double rsnScriptGetVarD(int con, int id, int slot);
-    synchronized double nScriptGetVarD(int id, int slot) {
+    native double rsnScriptGetVarD(long con, long id, int slot);
+    synchronized double nScriptGetVarD(long id, int slot) {
         validate();
         return rsnScriptGetVarD(mContext, id, slot);
     }
-    native void rsnScriptSetVarV(int con, int id, int slot, byte[] val);
-    synchronized void nScriptSetVarV(int id, int slot, byte[] val) {
+    native void rsnScriptSetVarV(long con, long id, int slot, byte[] val);
+    synchronized void nScriptSetVarV(long id, int slot, byte[] val) {
         validate();
         rsnScriptSetVarV(mContext, id, slot, val);
     }
-    native void rsnScriptGetVarV(int con, int id, int slot, byte[] val);
-    synchronized void nScriptGetVarV(int id, int slot, byte[] val) {
+    native void rsnScriptGetVarV(long con, long id, int slot, byte[] val);
+    synchronized void nScriptGetVarV(long id, int slot, byte[] val) {
         validate();
         rsnScriptGetVarV(mContext, id, slot, val);
     }
-    native void rsnScriptSetVarVE(int con, int id, int slot, byte[] val,
-                                  int e, int[] dims);
-    synchronized void nScriptSetVarVE(int id, int slot, byte[] val,
-                                      int e, int[] dims) {
+    native void rsnScriptSetVarVE(long con, long id, int slot, byte[] val,
+                                  long e, int[] dims);
+    synchronized void nScriptSetVarVE(long id, int slot, byte[] val,
+                                      long e, int[] dims) {
         validate();
         rsnScriptSetVarVE(mContext, id, slot, val, e, dims);
     }
-    native void rsnScriptSetVarObj(int con, int id, int slot, int val);
-    synchronized void nScriptSetVarObj(int id, int slot, int val) {
+    native void rsnScriptSetVarObj(long con, long id, int slot, long val);
+    synchronized void nScriptSetVarObj(long id, int slot, long val) {
         validate();
         rsnScriptSetVarObj(mContext, id, slot, val);
     }
 
-    native int  rsnScriptCCreate(int con, String resName, String cacheDir,
+    native long rsnScriptCCreate(long con, String resName, String cacheDir,
                                  byte[] script, int length);
-    synchronized int nScriptCCreate(String resName, String cacheDir, byte[] script, int length) {
+    synchronized long nScriptCCreate(String resName, String cacheDir, byte[] script, int length) {
         validate();
         return rsnScriptCCreate(mContext, resName, cacheDir, script, length);
     }
 
-    native int  rsnScriptIntrinsicCreate(int con, int id, int eid);
-    synchronized int nScriptIntrinsicCreate(int id, int eid) {
+    native long rsnScriptIntrinsicCreate(long con, int id, long eid);
+    synchronized long nScriptIntrinsicCreate(int id, long eid) {
         validate();
         return rsnScriptIntrinsicCreate(mContext, id, eid);
     }
 
-    native int  rsnScriptKernelIDCreate(int con, int sid, int slot, int sig);
-    synchronized int nScriptKernelIDCreate(int sid, int slot, int sig) {
+    native long  rsnScriptKernelIDCreate(long con, long sid, int slot, int sig);
+    synchronized long nScriptKernelIDCreate(long sid, int slot, int sig) {
         validate();
         return rsnScriptKernelIDCreate(mContext, sid, slot, sig);
     }
 
-    native int  rsnScriptFieldIDCreate(int con, int sid, int slot);
-    synchronized int nScriptFieldIDCreate(int sid, int slot) {
+    native long  rsnScriptFieldIDCreate(long con, long sid, int slot);
+    synchronized long nScriptFieldIDCreate(long sid, int slot) {
         validate();
         return rsnScriptFieldIDCreate(mContext, sid, slot);
     }
 
-    native int  rsnScriptGroupCreate(int con, int[] kernels, int[] src, int[] dstk, int[] dstf, int[] types);
-    synchronized int nScriptGroupCreate(int[] kernels, int[] src, int[] dstk, int[] dstf, int[] types) {
+    native long rsnScriptGroupCreate(long con, long[] kernels, long[] src, long[] dstk, long[] dstf, long[] types);
+    synchronized long nScriptGroupCreate(long[] kernels, long[] src, long[] dstk, long[] dstf, long[] types) {
         validate();
         return rsnScriptGroupCreate(mContext, kernels, src, dstk, dstf, types);
     }
 
-    native void rsnScriptGroupSetInput(int con, int group, int kernel, int alloc);
-    synchronized void nScriptGroupSetInput(int group, int kernel, int alloc) {
+    native void rsnScriptGroupSetInput(long con, long group, long kernel, long alloc);
+    synchronized void nScriptGroupSetInput(long group, long kernel, long alloc) {
         validate();
         rsnScriptGroupSetInput(mContext, group, kernel, alloc);
     }
 
-    native void rsnScriptGroupSetOutput(int con, int group, int kernel, int alloc);
-    synchronized void nScriptGroupSetOutput(int group, int kernel, int alloc) {
+    native void rsnScriptGroupSetOutput(long con, long group, long kernel, long alloc);
+    synchronized void nScriptGroupSetOutput(long group, long kernel, long alloc) {
         validate();
         rsnScriptGroupSetOutput(mContext, group, kernel, alloc);
     }
 
-    native void rsnScriptGroupExecute(int con, int group);
-    synchronized void nScriptGroupExecute(int group) {
+    native void rsnScriptGroupExecute(long con, long group);
+    synchronized void nScriptGroupExecute(long group) {
         validate();
         rsnScriptGroupExecute(mContext, group);
     }
 
-    native int  rsnSamplerCreate(int con, int magFilter, int minFilter,
+    native long  rsnSamplerCreate(long con, int magFilter, int minFilter,
                                  int wrapS, int wrapT, int wrapR, float aniso);
-    synchronized int nSamplerCreate(int magFilter, int minFilter,
+    synchronized long nSamplerCreate(int magFilter, int minFilter,
                                  int wrapS, int wrapT, int wrapR, float aniso) {
         validate();
         return rsnSamplerCreate(mContext, magFilter, minFilter, wrapS, wrapT, wrapR, aniso);
     }
 
-    native int  rsnProgramStoreCreate(int con, boolean r, boolean g, boolean b, boolean a,
+    native long rsnProgramStoreCreate(long con, boolean r, boolean g, boolean b, boolean a,
                                       boolean depthMask, boolean dither,
                                       int srcMode, int dstMode, int depthFunc);
-    synchronized int nProgramStoreCreate(boolean r, boolean g, boolean b, boolean a,
+    synchronized long nProgramStoreCreate(boolean r, boolean g, boolean b, boolean a,
                                          boolean depthMask, boolean dither,
                                          int srcMode, int dstMode, int depthFunc) {
         validate();
@@ -786,72 +792,72 @@ public class RenderScript {
                                      dstMode, depthFunc);
     }
 
-    native int  rsnProgramRasterCreate(int con, boolean pointSprite, int cullMode);
-    synchronized int nProgramRasterCreate(boolean pointSprite, int cullMode) {
+    native long rsnProgramRasterCreate(long con, boolean pointSprite, int cullMode);
+    synchronized long nProgramRasterCreate(boolean pointSprite, int cullMode) {
         validate();
         return rsnProgramRasterCreate(mContext, pointSprite, cullMode);
     }
 
-    native void rsnProgramBindConstants(int con, int pv, int slot, int mID);
-    synchronized void nProgramBindConstants(int pv, int slot, int mID) {
+    native void rsnProgramBindConstants(long con, long pv, int slot, long mID);
+    synchronized void nProgramBindConstants(long pv, int slot, long mID) {
         validate();
         rsnProgramBindConstants(mContext, pv, slot, mID);
     }
-    native void rsnProgramBindTexture(int con, int vpf, int slot, int a);
-    synchronized void nProgramBindTexture(int vpf, int slot, int a) {
+    native void rsnProgramBindTexture(long con, long vpf, int slot, long a);
+    synchronized void nProgramBindTexture(long vpf, int slot, long a) {
         validate();
         rsnProgramBindTexture(mContext, vpf, slot, a);
     }
-    native void rsnProgramBindSampler(int con, int vpf, int slot, int s);
-    synchronized void nProgramBindSampler(int vpf, int slot, int s) {
+    native void rsnProgramBindSampler(long con, long vpf, int slot, long s);
+    synchronized void nProgramBindSampler(long vpf, int slot, long s) {
         validate();
         rsnProgramBindSampler(mContext, vpf, slot, s);
     }
-    native int  rsnProgramFragmentCreate(int con, String shader, String[] texNames, int[] params);
-    synchronized int nProgramFragmentCreate(String shader, String[] texNames, int[] params) {
+    native long rsnProgramFragmentCreate(long con, String shader, String[] texNames, long[] params);
+    synchronized long nProgramFragmentCreate(String shader, String[] texNames, long[] params) {
         validate();
         return rsnProgramFragmentCreate(mContext, shader, texNames, params);
     }
-    native int  rsnProgramVertexCreate(int con, String shader, String[] texNames, int[] params);
-    synchronized int nProgramVertexCreate(String shader, String[] texNames, int[] params) {
+    native long rsnProgramVertexCreate(long con, String shader, String[] texNames, long[] params);
+    synchronized long nProgramVertexCreate(String shader, String[] texNames, long[] params) {
         validate();
         return rsnProgramVertexCreate(mContext, shader, texNames, params);
     }
 
-    native int  rsnMeshCreate(int con, int[] vtx, int[] idx, int[] prim);
-    synchronized int nMeshCreate(int[] vtx, int[] idx, int[] prim) {
+    native long rsnMeshCreate(long con, long[] vtx, long[] idx, int[] prim);
+    synchronized long nMeshCreate(long[] vtx, long[] idx, int[] prim) {
         validate();
         return rsnMeshCreate(mContext, vtx, idx, prim);
     }
-    native int  rsnMeshGetVertexBufferCount(int con, int id);
-    synchronized int nMeshGetVertexBufferCount(int id) {
+    native int  rsnMeshGetVertexBufferCount(long con, long id);
+    synchronized int nMeshGetVertexBufferCount(long id) {
         validate();
         return rsnMeshGetVertexBufferCount(mContext, id);
     }
-    native int  rsnMeshGetIndexCount(int con, int id);
-    synchronized int nMeshGetIndexCount(int id) {
+    native int  rsnMeshGetIndexCount(long con, long id);
+    synchronized int nMeshGetIndexCount(long id) {
         validate();
         return rsnMeshGetIndexCount(mContext, id);
     }
-    native void rsnMeshGetVertices(int con, int id, int[] vtxIds, int vtxIdCount);
-    synchronized void nMeshGetVertices(int id, int[] vtxIds, int vtxIdCount) {
+    native void rsnMeshGetVertices(long con, long id, long[] vtxIds, int vtxIdCount);
+    synchronized void nMeshGetVertices(long id, long[] vtxIds, int vtxIdCount) {
         validate();
         rsnMeshGetVertices(mContext, id, vtxIds, vtxIdCount);
     }
-    native void rsnMeshGetIndices(int con, int id, int[] idxIds, int[] primitives, int vtxIdCount);
-    synchronized void nMeshGetIndices(int id, int[] idxIds, int[] primitives, int vtxIdCount) {
+    native void rsnMeshGetIndices(long con, long id, long[] idxIds, int[] primitives, int vtxIdCount);
+    synchronized void nMeshGetIndices(long id, long[] idxIds, int[] primitives, int vtxIdCount) {
         validate();
         rsnMeshGetIndices(mContext, id, idxIds, primitives, vtxIdCount);
     }
 
-    native int  rsnPathCreate(int con, int prim, boolean isStatic, int vtx, int loop, float q);
-    synchronized int nPathCreate(int prim, boolean isStatic, int vtx, int loop, float q) {
+    native long rsnPathCreate(long con, int prim, boolean isStatic, long vtx, long loop, float q);
+    synchronized long nPathCreate(int prim, boolean isStatic, long vtx, long loop, float q) {
         validate();
         return rsnPathCreate(mContext, prim, isStatic, vtx, loop, q);
     }
 
-    int     mDev;
-    int     mContext;
+    long     mDev;
+    long     mContext;
     @SuppressWarnings({"FieldCanBeLocal"})
     MessageThread mMessageThread;
 
@@ -1043,6 +1049,14 @@ public class RenderScript {
         }
     }
 
+    void validateObject(BaseObj o) {
+        if (o != null) {
+            if (o.mRS != this) {
+                throw new RSIllegalArgumentException("Attempting to use an object across contexts.");
+            }
+        }
+    }
+
     void validate() {
         if (mContext == 0) {
             throw new RSInvalidStateException("Calling RS with no Context active.");
@@ -1142,7 +1156,12 @@ public class RenderScript {
                 }
 
                 if (msg == RS_MESSAGE_TO_CLIENT_NEW_BUFFER) {
-                    Allocation.sendBufferNotification(subID);
+                    if (mRS.nContextGetUserMessage(mRS.mContext, rbuf) !=
+                        RS_MESSAGE_TO_CLIENT_NEW_BUFFER) {
+                        throw new RSDriverException("Error processing message from RenderScript.");
+                    }
+                    long bufferID = ((long)rbuf[1] << 32L) + ((long)rbuf[0] & 0xffffffffL);
+                    Allocation.sendBufferNotification(bufferID);
                     continue;
                 }
 
@@ -1180,7 +1199,7 @@ public class RenderScript {
      * @hide
      */
     public static RenderScript create(Context ctx, int sdkVersion) {
-        return create(ctx, sdkVersion, ContextType.NORMAL);
+        return create(ctx, sdkVersion, ContextType.NORMAL, CREATE_FLAG_NONE);
     }
 
     /**
@@ -1190,16 +1209,20 @@ public class RenderScript {
      * @param ctx The context.
      * @return RenderScript
      */
-    public static RenderScript create(Context ctx, int sdkVersion, ContextType ct) {
+    public static RenderScript create(Context ctx, int sdkVersion, ContextType ct, int flags) {
         if (!sInitialized) {
             Log.e(LOG_TAG, "RenderScript.create() called when disabled; someone is likely to crash");
             return null;
         }
 
+        if ((flags & ~(CREATE_FLAG_LOW_LATENCY | CREATE_FLAG_LOW_POWER)) != 0) {
+            throw new RSIllegalArgumentException("Invalid flags passed.");
+        }
+
         RenderScript rs = new RenderScript(ctx);
 
         rs.mDev = rs.nDeviceCreate();
-        rs.mContext = rs.nContextCreate(rs.mDev, 0, sdkVersion, ct.mID);
+        rs.mContext = rs.nContextCreate(rs.mDev, flags, sdkVersion, ct.mID);
         rs.mContextType = ct;
         if (rs.mContext == 0) {
             throw new RSDriverException("Failed to create RS context.");
@@ -1229,7 +1252,21 @@ public class RenderScript {
      */
     public static RenderScript create(Context ctx, ContextType ct) {
         int v = ctx.getApplicationInfo().targetSdkVersion;
-        return create(ctx, v, ct);
+        return create(ctx, v, ct, CREATE_FLAG_NONE);
+    }
+
+     /**
+     * Create a RenderScript context.
+     *
+     *
+     * @param ctx The context.
+     * @param ct The type of context to be created.
+     * @param flags The OR of the CREATE_FLAG_* options desired
+     * @return RenderScript
+     */
+    public static RenderScript create(Context ctx, ContextType ct, int flags) {
+        int v = ctx.getApplicationInfo().targetSdkVersion;
+        return create(ctx, v, ct, flags);
     }
 
     /**
@@ -1278,7 +1315,7 @@ public class RenderScript {
         return mContext != 0;
     }
 
-    int safeID(BaseObj o) {
+    long safeID(BaseObj o) {
         if(o != null) {
             return o.getID(this);
         }

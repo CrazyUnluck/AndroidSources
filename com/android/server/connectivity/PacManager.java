@@ -24,18 +24,15 @@ import android.content.Context;
 import android.content.Intent;
 import android.content.IntentFilter;
 import android.content.ServiceConnection;
-import android.net.Proxy;
-import android.net.ProxyProperties;
-import android.os.Binder;
+import android.net.ProxyInfo;
+import android.net.Uri;
 import android.os.Handler;
 import android.os.IBinder;
 import android.os.RemoteException;
 import android.os.ServiceManager;
 import android.os.SystemClock;
 import android.os.SystemProperties;
-import android.os.UserHandle;
 import android.provider.Settings;
-import android.text.TextUtils;
 import android.util.Log;
 
 import com.android.internal.annotations.GuardedBy;
@@ -74,7 +71,7 @@ public class PacManager {
     public static final String KEY_PROXY = "keyProxy";
     private String mCurrentPac;
     @GuardedBy("mProxyLock")
-    private String mPacUrl;
+    private Uri mPacUrl = Uri.EMPTY;
 
     private AlarmManager mAlarmManager;
     @GuardedBy("mProxyLock")
@@ -103,7 +100,7 @@ public class PacManager {
         public void run() {
             String file;
             synchronized (mProxyLock) {
-                if (mPacUrl == null) return;
+                if (Uri.EMPTY.equals(mPacUrl)) return;
                 try {
                     file = get(mPacUrl);
                 } catch (IOException ioe) {
@@ -160,8 +157,8 @@ public class PacManager {
      * @param proxy Proxy information that is about to be broadcast.
      * @return Returns true when the broadcast should not be sent
      */
-    public synchronized boolean setCurrentProxyScriptUrl(ProxyProperties proxy) {
-        if (!TextUtils.isEmpty(proxy.getPacFileUrl())) {
+    public synchronized boolean setCurrentProxyScriptUrl(ProxyInfo proxy) {
+        if (!Uri.EMPTY.equals(proxy.getPacFileUrl())) {
             if (proxy.getPacFileUrl().equals(mPacUrl) && (proxy.getPort() > 0)) {
                 // Allow to send broadcast, nothing to do.
                 return false;
@@ -178,7 +175,7 @@ public class PacManager {
         } else {
             getAlarmManager().cancel(mPacRefreshIntent);
             synchronized (mProxyLock) {
-                mPacUrl = null;
+                mPacUrl = Uri.EMPTY;
                 mCurrentPac = null;
                 if (mProxyService != null) {
                     try {
@@ -199,8 +196,8 @@ public class PacManager {
      *
      * @throws IOException
      */
-    private static String get(String urlString) throws IOException {
-        URL url = new URL(urlString);
+    private static String get(Uri pacUri) throws IOException {
+        URL url = new URL(pacUri.toString());
         URLConnection urlConnection = url.openConnection(java.net.Proxy.NO_PROXY);
         return new String(Streams.readFully(urlConnection.getInputStream()));
     }
@@ -271,7 +268,7 @@ public class PacManager {
         // Already bound no need to bind again.
         if ((mProxyConnection != null) && (mConnection != null)) {
             if (mLastPort != -1) {
-                sendPacBroadcast(new ProxyProperties(mPacUrl, mLastPort));
+                sendPacBroadcast(new ProxyInfo(mPacUrl, mLastPort));
             } else {
                 Log.e(TAG, "Received invalid port from Local Proxy,"
                         + " PAC will not be operational");
@@ -365,7 +362,7 @@ public class PacManager {
         mLastPort = -1;
     }
 
-    private void sendPacBroadcast(ProxyProperties proxy) {
+    private void sendPacBroadcast(ProxyInfo proxy) {
         mConnectivityHandler.sendMessage(mConnectivityHandler.obtainMessage(mProxyMessage, proxy));
     }
 
@@ -374,7 +371,7 @@ public class PacManager {
             return;
         }
         if (!mHasSentBroadcast) {
-            sendPacBroadcast(new ProxyProperties(mPacUrl, mLastPort));
+            sendPacBroadcast(new ProxyInfo(mPacUrl, mLastPort));
             mHasSentBroadcast = true;
         }
     }

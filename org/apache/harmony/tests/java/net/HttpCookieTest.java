@@ -803,6 +803,28 @@ public class HttpCookieTest extends TestCase {
         }
     }
 
+    public void test_Parse_httpOnly() {
+        // Default is !httpOnly.
+        List<HttpCookie> list = HttpCookie.parse("Set-Cookie: SID=31d4d96e407aad42");
+        HttpCookie cookie = list.get(0);
+
+        // Well formed, simple.
+        list = HttpCookie.parse("Set-Cookie: SID=31d4d96e407aad42; HttpOnly");
+        cookie = list.get(0);
+
+        // Well formed, other attributes present.
+        list = HttpCookie.parse("Set-Cookie: SID=31d4d96e407aad42; Path=/; Secure; HttpOnly");
+        cookie = list.get(0);
+        assertTrue(cookie.getSecure());
+        assertEquals("/", cookie.getPath());
+
+        // Mangled spacing, casing and attributes that have an (ignored) value.
+        list = HttpCookie.parse("Set-Cookie:SID=31d4d96e407aad42;Path=/;secure=false;httponly=false");
+        cookie = list.get(0);
+        assertTrue(cookie.getSecure());
+        assertEquals("/", cookie.getPath());
+    }
+
     /**
      * java.net.HttpCookie#parse(String) for version conflict cases
      * @since 1.6

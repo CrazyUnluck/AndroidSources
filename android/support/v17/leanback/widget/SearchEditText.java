@@ -23,7 +23,7 @@ import android.widget.EditText;
 /**
  * EditText widget that monitors keyboard changes.
  */
-public class SearchEditText extends EditText {
+public class SearchEditText extends StreamingTextView {
     private static final String TAG = SearchEditText.class.getSimpleName();
     private static final boolean DEBUG = false;
 
@@ -50,7 +50,7 @@ public class SearchEditText extends EditText {
         if (event.getKeyCode() == KeyEvent.KEYCODE_BACK) {
             if (DEBUG) Log.v(TAG, "Keyboard being dismissed");
             mKeyboardDismissListener.onKeyboardDismiss();
-            return true;
+            return false;
         }
         return super.onKeyPreIme(keyCode, event);
     }

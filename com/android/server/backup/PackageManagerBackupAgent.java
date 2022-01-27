@@ -19,15 +19,19 @@ package com.android.server.backup;
 import android.app.backup.BackupAgent;
 import android.app.backup.BackupDataInput;
 import android.app.backup.BackupDataOutput;
+import android.content.ComponentName;
 import android.content.pm.ApplicationInfo;
 import android.content.pm.PackageInfo;
 import android.content.pm.PackageManager;
+import android.content.pm.ResolveInfo;
 import android.content.pm.PackageManager.NameNotFoundException;
 import android.content.pm.Signature;
 import android.os.Build;
 import android.os.ParcelFileDescriptor;
 import android.util.Slog;
 
+import java.io.BufferedInputStream;
+import java.io.BufferedOutputStream;
 import java.io.ByteArrayInputStream;
 import java.io.ByteArrayOutputStream;
 import java.io.DataInputStream;
@@ -41,6 +45,8 @@ import java.util.HashMap;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Set;
+
+import java.util.Objects;
 
 /**
  * We back up the signatures of each package so that during a system restore,
@@ -58,6 +64,16 @@ public class PackageManagerBackupAgent extends BackupAgent {
     // is stored using the package name as a key)
     private static final String GLOBAL_METADATA_KEY = "@meta@";
 
+    // key under which we store the identity of the user's chosen default home app
+    private static final String DEFAULT_HOME_KEY = "@home@";
+
+    // Sentinel: start of state file, followed by a version number
+    private static final String STATE_FILE_HEADER = "=state=";
+    private static final int STATE_FILE_VERSION = 2;
+
+    // Current version of the saved ancestral-dataset file format
+    private static final int ANCESTRAL_RECORD_VERSION = 1;
+
     private List<PackageInfo> mAllPackages;
     private PackageManager mPackageManager;
     // version & signature info of each app in a restore set
@@ -68,25 +84,67 @@ public class PackageManagerBackupAgent extends BackupAgent {
     private final HashSet<String> mExisting = new HashSet<String>();
     private int mStoredSdkVersion;
     private String mStoredIncrementalVersion;
-    private boolean mHasMetadata;
+    private ComponentName mStoredHomeComponent;
+    private long mStoredHomeVersion;
+    private ArrayList<byte[]> mStoredHomeSigHashes;
 
+    private boolean mHasMetadata;
+    private ComponentName mRestoredHome;
+    private long mRestoredHomeVersion;
+    private String mRestoredHomeInstaller;
+    private ArrayList<byte[]> mRestoredHomeSigHashes;
+
+    // For compactness we store the SHA-256 hash of each app's Signatures
+    // rather than the Signature blocks themselves.
     public class Metadata {
         public int versionCode;
-        public Signature[] signatures;
+        public ArrayList<byte[]> sigHashes;
 
-        Metadata(int version, Signature[] sigs) {
+        Metadata(int version, ArrayList<byte[]> hashes) {
             versionCode = version;
-            signatures = sigs;
+            sigHashes = hashes;
         }
     }
 
     // We're constructed with the set of applications that are participating
     // in backup.  This set changes as apps are installed & removed.
     PackageManagerBackupAgent(PackageManager packageMgr, List<PackageInfo> packages) {
+        init(packageMgr, packages);
+    }
+
+    PackageManagerBackupAgent(PackageManager packageMgr) {
+        init(packageMgr, null);
+
+        evaluateStorablePackages();
+    }
+
+    private void init(PackageManager packageMgr, List<PackageInfo> packages) {
         mPackageManager = packageMgr;
         mAllPackages = packages;
         mRestoredSignatures = null;
         mHasMetadata = false;
+
+        mStoredSdkVersion = Build.VERSION.SDK_INT;
+        mStoredIncrementalVersion = Build.VERSION.INCREMENTAL;
+    }
+
+    // We will need to refresh our understanding of what is eligible for
+    // backup periodically; this entry point serves that purpose.
+    public void evaluateStorablePackages() {
+        mAllPackages = getStorableApplications(mPackageManager);
+    }
+
+    public static List<PackageInfo> getStorableApplications(PackageManager pm) {
+        List<PackageInfo> pkgs;
+        pkgs = pm.getInstalledPackages(PackageManager.GET_SIGNATURES);
+        int N = pkgs.size();
+        for (int a = N-1; a >= 0; a--) {
+            PackageInfo pkg = pkgs.get(a);
+            if (!BackupManagerService.appIsEligibleForBackup(pkg.applicationInfo)) {
+                pkgs.remove(a);
+            }
+        }
+        return pkgs;
     }
 
     public boolean hasMetadata() {
@@ -136,7 +194,50 @@ public class PackageManagerBackupAgent extends BackupAgent {
             mExisting.clear();
         }
 
+        long homeVersion = 0;
+        ArrayList<byte[]> homeSigHashes = null;
+        PackageInfo homeInfo = null;
+        String homeInstaller = null;
+        ComponentName home = getPreferredHomeComponent();
+        if (home != null) {
+            try {
+                homeInfo = mPackageManager.getPackageInfo(home.getPackageName(),
+                        PackageManager.GET_SIGNATURES);
+                homeInstaller = mPackageManager.getInstallerPackageName(home.getPackageName());
+                homeVersion = homeInfo.versionCode;
+                homeSigHashes = hashSignatureArray(homeInfo.signatures);
+            } catch (NameNotFoundException e) {
+                Slog.w(TAG, "Can't access preferred home info");
+                // proceed as though there were no preferred home set
+                home = null;
+            }
+        }
+
         try {
+            // We need to push a new preferred-home-app record if:
+            //    1. the version of the home app has changed since our last backup;
+            //    2. the home app [or absence] we now use differs from the prior state,
+            // OR 3. it looks like we use the same home app + version as before, but
+            //       the signatures don't match so we treat them as different apps.
+            final boolean needHomeBackup = (homeVersion != mStoredHomeVersion)
+                    || Objects.equals(home, mStoredHomeComponent)
+                    || (home != null
+                        && !BackupManagerService.signaturesMatch(mStoredHomeSigHashes, homeInfo));
+            if (needHomeBackup) {
+                if (DEBUG) {
+                    Slog.i(TAG, "Home preference changed; backing up new state " + home);
+                }
+                if (home != null) {
+                    outputBufferStream.writeUTF(home.flattenToString());
+                    outputBufferStream.writeLong(homeVersion);
+                    outputBufferStream.writeUTF(homeInstaller != null ? homeInstaller : "" );
+                    writeSignatureHashArray(outputBufferStream, homeSigHashes);
+                    writeEntity(data, DEFAULT_HOME_KEY, outputBuffer.toByteArray());
+                } else {
+                    data.writeEntityHeader(DEFAULT_HOME_KEY, -1);
+                }
+            }
+
             /*
              * Global metadata:
              *
@@ -146,6 +247,7 @@ public class PackageManagerBackupAgent extends BackupAgent {
              * String incremental -- the incremental release name of the OS stored in
              *                       the backup set.
              */
+            outputBuffer.reset();
             if (!mExisting.contains(GLOBAL_METADATA_KEY)) {
                 if (DEBUG) Slog.v(TAG, "Storing global metadata key");
                 outputBufferStream.writeInt(Build.VERSION.SDK_INT);
@@ -200,13 +302,14 @@ public class PackageManagerBackupAgent extends BackupAgent {
                      * Metadata for each package:
                      *
                      * int version       -- [4] the package's versionCode
-                     * byte[] signatures -- [len] flattened Signature[] of the package
+                     * byte[] signatures -- [len] flattened signature hash array of the package
                      */
 
                     // marshal the version code in a canonical form
                     outputBuffer.reset();
                     outputBufferStream.writeInt(info.versionCode);
-                    writeSignatureArray(outputBufferStream, info.signatures);
+                    writeSignatureHashArray(outputBufferStream,
+                            hashSignatureArray(info.signatures));
 
                     if (DEBUG) {
                         Slog.v(TAG, "+ writing metadata for " + packName
@@ -238,7 +341,7 @@ public class PackageManagerBackupAgent extends BackupAgent {
         }
 
         // Finally, write the new state blob -- just the list of all apps we handled
-        writeStateFile(mAllPackages, newState);
+        writeStateFile(mAllPackages, home, homeVersion, homeSigHashes, newState);
     }
     
     private static void writeEntity(BackupDataOutput data, String key, byte[] bytes)
@@ -286,17 +389,29 @@ public class PackageManagerBackupAgent extends BackupAgent {
                             + " (" + mStoredIncrementalVersion + " vs "
                             + Build.VERSION.INCREMENTAL + ")");
                 }
+            } else if (key.equals(DEFAULT_HOME_KEY)) {
+                String cn = inputBufferStream.readUTF();
+                mRestoredHome = ComponentName.unflattenFromString(cn);
+                mRestoredHomeVersion = inputBufferStream.readLong();
+                mRestoredHomeInstaller = inputBufferStream.readUTF();
+                mRestoredHomeSigHashes = readSignatureHashArray(inputBufferStream);
+                if (DEBUG) {
+                    Slog.i(TAG, "   read preferred home app " + mRestoredHome
+                            + " version=" + mRestoredHomeVersion
+                            + " installer=" + mRestoredHomeInstaller
+                            + " sig=" + mRestoredHomeSigHashes);
+                }
             } else {
                 // it's a file metadata record
                 int versionCode = inputBufferStream.readInt();
-                Signature[] sigs = readSignatureArray(inputBufferStream);
+                ArrayList<byte[]> sigs = readSignatureHashArray(inputBufferStream);
                 if (DEBUG) {
                     Slog.i(TAG, "   read metadata for " + key
                             + " dataSize=" + dataSize
                             + " versionCode=" + versionCode + " sigs=" + sigs);
                 }
                 
-                if (sigs == null || sigs.length == 0) {
+                if (sigs == null || sigs.size() == 0) {
                     Slog.w(TAG, "Not restoring package " + key
                             + " since it appears to have no signatures.");
                     continue;
@@ -313,20 +428,31 @@ public class PackageManagerBackupAgent extends BackupAgent {
         mRestoredSignatures = sigMap;
     }
 
-    private static void writeSignatureArray(DataOutputStream out, Signature[] sigs)
-            throws IOException {
-        // write the number of signatures in the array
-        out.writeInt(sigs.length);
+    private static ArrayList<byte[]> hashSignatureArray(Signature[] sigs) {
+        if (sigs == null) {
+            return null;
+        }
 
-        // write the signatures themselves, length + flattened buffer
-        for (Signature sig : sigs) {
-            byte[] flat = sig.toByteArray();
-            out.writeInt(flat.length);
-            out.write(flat);
+        ArrayList<byte[]> hashes = new ArrayList<byte[]>(sigs.length);
+        for (Signature s : sigs) {
+            hashes.add(BackupManagerService.hashSignature(s));
+        }
+        return hashes;
+    }
+
+    private static void writeSignatureHashArray(DataOutputStream out, ArrayList<byte[]> hashes)
+            throws IOException {
+        // the number of entries in the array
+        out.writeInt(hashes.size());
+
+        // the hash arrays themselves as length + contents
+        for (byte[] buffer : hashes) {
+            out.writeInt(buffer.length);
+            out.write(buffer);
         }
     }
 
-    private static Signature[] readSignatureArray(DataInputStream in) {
+    private static ArrayList<byte[]> readSignatureHashArray(DataInputStream in) {
         try {
             int num;
             try {
@@ -344,14 +470,33 @@ public class PackageManagerBackupAgent extends BackupAgent {
                 Slog.e(TAG, "Suspiciously large sig count in restore data; aborting");
                 throw new IllegalStateException("Bad restore state");
             }
-            
-            Signature[] sigs = new Signature[num];
+
+            // This could be a "legacy" block of actual signatures rather than their hashes.
+            // If this is the case, convert them now.  We judge based on the payload size:
+            // if the blocks are all 256 bits (32 bytes) then we take them to be SHA-256 hashes;
+            // otherwise we take them to be Signatures.
+            boolean nonHashFound = false;
+            ArrayList<byte[]> sigs = new ArrayList<byte[]>(num);
             for (int i = 0; i < num; i++) {
                 int len = in.readInt();
-                byte[] flatSig = new byte[len];
-                in.read(flatSig);
-                sigs[i] = new Signature(flatSig);
+                byte[] readHash = new byte[len];
+                in.read(readHash);
+                sigs.add(readHash);
+                if (len != 32) {
+                    nonHashFound = true;
+                }
             }
+
+            if (nonHashFound) {
+                ArrayList<byte[]> hashes =
+                        new ArrayList<byte[]>(sigs.size());
+                for (int i = 0; i < sigs.size(); i++) {
+                    Signature s = new Signature(sigs.get(i));
+                    hashes.add(BackupManagerService.hashSignature(s));
+                }
+                sigs = hashes;
+            }
+
             return sigs;
         } catch (IOException e) {
             Slog.e(TAG, "Unable to read signatures");
@@ -365,32 +510,72 @@ public class PackageManagerBackupAgent extends BackupAgent {
         mStateVersions.clear();
         mStoredSdkVersion = 0;
         mStoredIncrementalVersion = null;
+        mStoredHomeComponent = null;
+        mStoredHomeVersion = 0;
+        mStoredHomeSigHashes = null;
 
         // The state file is just the list of app names we have stored signatures for
         // with the exception of the metadata block, to which is also appended the
         // version numbers corresponding with the last time we wrote this PM block.
         // If they mismatch the current system, we'll re-store the metadata key.
         FileInputStream instream = new FileInputStream(stateFile.getFileDescriptor());
-        DataInputStream in = new DataInputStream(instream);
+        BufferedInputStream inbuffer = new BufferedInputStream(instream);
+        DataInputStream in = new DataInputStream(inbuffer);
 
-        int bufSize = 256;
-        byte[] buf = new byte[bufSize];
         try {
+            boolean ignoreExisting = false;
             String pkg = in.readUTF();
+
+            // Validate the state file version is sensical to us
+            if (pkg.equals(STATE_FILE_HEADER)) {
+                int stateVersion = in.readInt();
+                if (stateVersion > STATE_FILE_VERSION) {
+                    Slog.w(TAG, "Unsupported state file version " + stateVersion
+                            + ", redoing from start");
+                    return;
+                }
+            } else {
+                // This is an older version of the state file in which the lead element
+                // is not a STATE_FILE_VERSION string.  If that's the case, we want to
+                // make sure to write our full backup dataset when given an opportunity.
+                // We trigger that by simply not marking the restored package metadata
+                // as known-to-exist-in-archive.
+                Slog.i(TAG, "Older version of saved state - rewriting");
+                ignoreExisting = true;
+            }
+
+            // First comes the preferred home app data, if any, headed by the DEFAULT_HOME_KEY tag
+            if (pkg.equals(DEFAULT_HOME_KEY)) {
+                // flattened component name, version, signature of the home app
+                mStoredHomeComponent = ComponentName.unflattenFromString(in.readUTF());
+                mStoredHomeVersion = in.readLong();
+                mStoredHomeSigHashes = readSignatureHashArray(in);
+
+                pkg = in.readUTF(); // set up for the next block of state
+            } else {
+                // else no preferred home app on the ancestral device - fall through to the rest
+            }
+
+            // After (possible) home app data comes the global metadata block
             if (pkg.equals(GLOBAL_METADATA_KEY)) {
                 mStoredSdkVersion = in.readInt();
                 mStoredIncrementalVersion = in.readUTF();
-                mExisting.add(GLOBAL_METADATA_KEY);
+                if (!ignoreExisting) {
+                    mExisting.add(GLOBAL_METADATA_KEY);
+                }
             } else {
                 Slog.e(TAG, "No global metadata in state file!");
                 return;
             }
 
-            // The global metadata was first; now read all the apps
+            // The global metadata was last; now read all the apps
             while (true) {
                 pkg = in.readUTF();
                 int versionCode = in.readInt();
-                mExisting.add(pkg);
+
+                if (!ignoreExisting) {
+                    mExisting.add(pkg);
+                }
                 mStateVersions.put(pkg, new Metadata(versionCode, null));
             }
         } catch (EOFException eof) {
@@ -401,25 +586,45 @@ public class PackageManagerBackupAgent extends BackupAgent {
         }
     }
 
-    // Util: write out our new backup state file
-    private void writeStateFile(List<PackageInfo> pkgs, ParcelFileDescriptor stateFile) {
-        FileOutputStream outstream = new FileOutputStream(stateFile.getFileDescriptor());
-        DataOutputStream out = new DataOutputStream(outstream);
+    private ComponentName getPreferredHomeComponent() {
+        return mPackageManager.getHomeActivities(new ArrayList<ResolveInfo>());
+    }
 
+    // Util: write out our new backup state file
+    private void writeStateFile(List<PackageInfo> pkgs, ComponentName preferredHome,
+            long homeVersion, ArrayList<byte[]> homeSigHashes, ParcelFileDescriptor stateFile) {
+        FileOutputStream outstream = new FileOutputStream(stateFile.getFileDescriptor());
+        BufferedOutputStream outbuf = new BufferedOutputStream(outstream);
+        DataOutputStream out = new DataOutputStream(outbuf);
+
+        // by the time we get here we know we've done all our backing up
         try {
-            // by the time we get here we know we've stored the global metadata record
+            // state file version header
+            out.writeUTF(STATE_FILE_HEADER);
+            out.writeInt(STATE_FILE_VERSION);
+
+            // If we remembered a preferred home app, record that
+            if (preferredHome != null) {
+                out.writeUTF(DEFAULT_HOME_KEY);
+                out.writeUTF(preferredHome.flattenToString());
+                out.writeLong(homeVersion);
+                writeSignatureHashArray(out, homeSigHashes);
+            }
+
+            // Conclude with the metadata block
             out.writeUTF(GLOBAL_METADATA_KEY);
             out.writeInt(Build.VERSION.SDK_INT);
             out.writeUTF(Build.VERSION.INCREMENTAL);
 
-            // now write all the app names too
+            // now write all the app names + versions
             for (PackageInfo pkg : pkgs) {
                 out.writeUTF(pkg.packageName);
                 out.writeInt(pkg.versionCode);
             }
+
+            out.flush();
         } catch (IOException e) {
             Slog.e(TAG, "Unable to write package manager state file!");
-            return;
         }
     }
 }

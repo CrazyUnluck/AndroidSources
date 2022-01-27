@@ -16,17 +16,12 @@
 
 package android.renderscript;
 
-import java.io.IOException;
-import java.io.InputStream;
 import java.util.HashMap;
 import android.content.res.Resources;
-import android.content.res.AssetManager;
 import android.graphics.Bitmap;
 import android.graphics.BitmapFactory;
 import android.view.Surface;
-import android.graphics.SurfaceTexture;
 import android.util.Log;
-import android.util.TypedValue;
 import android.graphics.Canvas;
 import android.os.Trace;
 
@@ -78,9 +73,68 @@ public class Allocation extends BaseObj {
     int mCurrentDimY;
     int mCurrentDimZ;
     int mCurrentCount;
-    static HashMap<Integer, Allocation> mAllocationMap =
-            new HashMap<Integer, Allocation>();
+    static HashMap<Long, Allocation> mAllocationMap =
+            new HashMap<Long, Allocation>();
     OnBufferAvailableListener mBufferNotifier;
+
+    private Element.DataType validateObjectIsPrimitiveArray(Object d, boolean checkType) {
+        final Class c = d.getClass();
+        if (!c.isArray()) {
+            throw new RSIllegalArgumentException("Object passed is not an array of primitives.");
+        }
+        final Class cmp = c.getComponentType();
+        if (!cmp.isPrimitive()) {
+            throw new RSIllegalArgumentException("Object passed is not an Array of primitives.");
+        }
+
+        if (cmp == Long.TYPE) {
+            if (checkType) {
+                validateIsInt64();
+                return mType.mElement.mType;
+            }
+            return Element.DataType.SIGNED_64;
+        }
+
+        if (cmp == Integer.TYPE) {
+            if (checkType) {
+                validateIsInt32();
+                return mType.mElement.mType;
+            }
+            return Element.DataType.SIGNED_32;
+        }
+
+        if (cmp == Short.TYPE) {
+            if (checkType) {
+                validateIsInt16();
+                return mType.mElement.mType;
+            }
+            return Element.DataType.SIGNED_16;
+        }
+
+        if (cmp == Byte.TYPE) {
+            if (checkType) {
+                validateIsInt8();
+                return mType.mElement.mType;
+            }
+            return Element.DataType.SIGNED_8;
+        }
+
+        if (cmp == Float.TYPE) {
+            if (checkType) {
+                validateIsFloat32();
+            }
+            return Element.DataType.FLOAT_32;
+        }
+
+        if (cmp == Double.TYPE) {
+            if (checkType) {
+                validateIsFloat64();
+            }
+            return Element.DataType.FLOAT_64;
+        }
+        return null;
+    }
+
 
     /**
      * The usage of the Allocation.  These signal to RenderScript where to place
@@ -127,17 +181,17 @@ public class Allocation extends BaseObj {
     public static final int USAGE_GRAPHICS_RENDER_TARGET = 0x0010;
 
     /**
-     * The Allocation will be used as a {@link android.graphics.SurfaceTexture}
-     * consumer.  This usage will cause the Allocation to be created as
-     * read-only.
+     * The Allocation will be used as a {@link android.view.Surface}
+     * consumer.  This usage will cause the Allocation to be created
+     * as read-only.
      *
      */
     public static final int USAGE_IO_INPUT = 0x0020;
 
     /**
-     * The Allocation will be used as a {@link android.graphics.SurfaceTexture}
+     * The Allocation will be used as a {@link android.view.Surface}
      * producer.  The dimensions and format of the {@link
-     * android.graphics.SurfaceTexture} will be forced to those of the
+     * android.view.Surface} will be forced to those of the
      * Allocation.
      *
      */
@@ -188,7 +242,7 @@ public class Allocation extends BaseObj {
     }
 
 
-    private int getIDSafe() {
+    private long getIDSafe() {
         if (mAdaptedAllocation != null) {
             return mAdaptedAllocation.getID(mRS);
         }
@@ -224,6 +278,9 @@ public class Allocation extends BaseObj {
      *
      */
     public int getBytesSize() {
+        if (mType.mDimYuv != 0) {
+            return (int)Math.ceil(mType.getCount() * mType.getElement().getBytesSize() * 1.5);
+        }
         return mType.getCount() * mType.getElement().getBytesSize();
     }
 
@@ -244,7 +301,7 @@ public class Allocation extends BaseObj {
         mBitmap = b;
     }
 
-    Allocation(int id, RenderScript rs, Type t, int usage) {
+    Allocation(long id, RenderScript rs, Type t, int usage) {
         super(id, rs);
         if ((usage & ~(USAGE_SCRIPT |
                        USAGE_GRAPHICS_TEXTURE |
@@ -290,6 +347,15 @@ public class Allocation extends BaseObj {
         super.finalize();
     }
 
+    private void validateIsInt64() {
+        if ((mType.mElement.mType == Element.DataType.SIGNED_64) ||
+            (mType.mElement.mType == Element.DataType.UNSIGNED_64)) {
+            return;
+        }
+        throw new RSIllegalArgumentException(
+            "64 bit integer source does not match allocation type " + mType.mElement.mType);
+    }
+
     private void validateIsInt32() {
         if ((mType.mElement.mType == Element.DataType.SIGNED_32) ||
             (mType.mElement.mType == Element.DataType.UNSIGNED_32)) {
@@ -325,6 +391,14 @@ public class Allocation extends BaseObj {
             "32 bit float source does not match allocation type " + mType.mElement.mType);
     }
 
+    private void validateIsFloat64() {
+        if (mType.mElement.mType == Element.DataType.FLOAT_64) {
+            return;
+        }
+        throw new RSIllegalArgumentException(
+            "64 bit float source does not match allocation type " + mType.mElement.mType);
+    }
+
     private void validateIsObject() {
         if ((mType.mElement.mType == Element.DataType.RS_ELEMENT) ||
             (mType.mElement.mType == Element.DataType.RS_TYPE) ||
@@ -345,7 +419,7 @@ public class Allocation extends BaseObj {
     @Override
     void updateFromNative() {
         super.updateFromNative();
-        int typeID = mRS.nAllocationGetType(getID(mRS));
+        long typeID = mRS.nAllocationGetType(getID(mRS));
         if(typeID != 0) {
             mType = new Type(typeID, mRS);
             mType.updateFromNative();
@@ -412,14 +486,6 @@ public class Allocation extends BaseObj {
     }
 
     /**
-     * Delete once code is updated.
-     * @hide
-     */
-    public void ioSendOutput() {
-        ioSend();
-    }
-
-    /**
      * Receive the latest input into the Allocation. This operation
      * is only valid if {@link #USAGE_IO_INPUT} is set on the Allocation.
      *
@@ -448,11 +514,20 @@ public class Allocation extends BaseObj {
             throw new RSIllegalArgumentException("Array size mismatch, allocation sizeX = " +
                                                  mCurrentCount + ", array length = " + d.length);
         }
-        int i[] = new int[d.length];
-        for (int ct=0; ct < d.length; ct++) {
-            i[ct] = d[ct].getID(mRS);
+
+        if (RenderScript.sPointerSize == 8) {
+            long i[] = new long[d.length * 4];
+            for (int ct=0; ct < d.length; ct++) {
+                i[ct * 4] = d[ct].getID(mRS);
+            }
+            copy1DRangeFromUnchecked(0, mCurrentCount, i);
+        } else {
+            int i[] = new int[d.length];
+            for (int ct=0; ct < d.length; ct++) {
+                i[ct] = (int)d[ct].getID(mRS);
+            }
+            copy1DRangeFromUnchecked(0, mCurrentCount, i);
         }
-        copy1DRangeFromUnchecked(0, mCurrentCount, i);
         Trace.traceEnd(RenderScript.TRACE_TAG);
     }
 
@@ -511,6 +586,33 @@ public class Allocation extends BaseObj {
         }
     }
 
+    private void copyFromUnchecked(Object array, Element.DataType dt, int arrayLen) {
+        Trace.traceBegin(RenderScript.TRACE_TAG, "copyFromUnchecked");
+        mRS.validate();
+        if (mCurrentDimZ > 0) {
+            copy3DRangeFromUnchecked(0, 0, 0, mCurrentDimX, mCurrentDimY, mCurrentDimZ, array, dt, arrayLen);
+        } else if (mCurrentDimY > 0) {
+            copy2DRangeFromUnchecked(0, 0, mCurrentDimX, mCurrentDimY, array, dt, arrayLen);
+        } else {
+            copy1DRangeFromUnchecked(0, mCurrentCount, array, dt, arrayLen);
+        }
+        Trace.traceEnd(RenderScript.TRACE_TAG);
+    }
+
+    /**
+     * Copy into this Allocation from an array. This method does not guarantee
+     * that the Allocation is compatible with the input buffer; it copies memory
+     * without reinterpretation.
+     *
+     * @param array The source data array
+     */
+    public void copyFromUnchecked(Object array) {
+        Trace.traceBegin(RenderScript.TRACE_TAG, "copyFromUnchecked");
+        copyFromUnchecked(array, validateObjectIsPrimitiveArray(array, false),
+                          java.lang.reflect.Array.getLength(array));
+        Trace.traceEnd(RenderScript.TRACE_TAG);
+    }
+
     /**
      * Copy into this Allocation from an array. This method does not guarantee
      * that the Allocation is compatible with the input buffer; it copies memory
@@ -519,16 +621,7 @@ public class Allocation extends BaseObj {
      * @param d the source data array
      */
     public void copyFromUnchecked(int[] d) {
-        Trace.traceBegin(RenderScript.TRACE_TAG, "copyFromUnchecked");
-        mRS.validate();
-        if (mCurrentDimZ > 0) {
-            copy3DRangeFromUnchecked(0, 0, 0, mCurrentDimX, mCurrentDimY, mCurrentDimZ, d);
-        } else if (mCurrentDimY > 0) {
-            copy2DRangeFromUnchecked(0, 0, mCurrentDimX, mCurrentDimY, d);
-        } else {
-            copy1DRangeFromUnchecked(0, mCurrentCount, d);
-        }
-        Trace.traceEnd(RenderScript.TRACE_TAG);
+        copyFromUnchecked(d, Element.DataType.SIGNED_32, d.length);
     }
 
     /**
@@ -539,16 +632,7 @@ public class Allocation extends BaseObj {
      * @param d the source data array
      */
     public void copyFromUnchecked(short[] d) {
-        Trace.traceBegin(RenderScript.TRACE_TAG, "copyFromUnchecked");
-        mRS.validate();
-        if (mCurrentDimZ > 0) {
-            copy3DRangeFromUnchecked(0, 0, 0, mCurrentDimX, mCurrentDimY, mCurrentDimZ, d);
-        } else if (mCurrentDimY > 0) {
-            copy2DRangeFromUnchecked(0, 0, mCurrentDimX, mCurrentDimY, d);
-        } else {
-            copy1DRangeFromUnchecked(0, mCurrentCount, d);
-        }
-        Trace.traceEnd(RenderScript.TRACE_TAG);
+        copyFromUnchecked(d, Element.DataType.SIGNED_16, d.length);
     }
 
     /**
@@ -559,16 +643,7 @@ public class Allocation extends BaseObj {
      * @param d the source data array
      */
     public void copyFromUnchecked(byte[] d) {
-        Trace.traceBegin(RenderScript.TRACE_TAG, "copyFromUnchecked");
-        mRS.validate();
-        if (mCurrentDimZ > 0) {
-            copy3DRangeFromUnchecked(0, 0, 0, mCurrentDimX, mCurrentDimY, mCurrentDimZ, d);
-        } else if (mCurrentDimY > 0) {
-            copy2DRangeFromUnchecked(0, 0, mCurrentDimX, mCurrentDimY, d);
-        } else {
-            copy1DRangeFromUnchecked(0, mCurrentCount, d);
-        }
-        Trace.traceEnd(RenderScript.TRACE_TAG);
+        copyFromUnchecked(d, Element.DataType.SIGNED_8, d.length);
     }
 
     /**
@@ -579,18 +654,24 @@ public class Allocation extends BaseObj {
      * @param d the source data array
      */
     public void copyFromUnchecked(float[] d) {
-        Trace.traceBegin(RenderScript.TRACE_TAG, "copyFromUnchecked");
-        mRS.validate();
-        if (mCurrentDimZ > 0) {
-            copy3DRangeFromUnchecked(0, 0, 0, mCurrentDimX, mCurrentDimY, mCurrentDimZ, d);
-        } else if (mCurrentDimY > 0) {
-            copy2DRangeFromUnchecked(0, 0, mCurrentDimX, mCurrentDimY, d);
-        } else {
-            copy1DRangeFromUnchecked(0, mCurrentCount, d);
-        }
-        Trace.traceEnd(RenderScript.TRACE_TAG);
+        copyFromUnchecked(d, Element.DataType.FLOAT_32, d.length);
     }
 
+
+    /**
+     * Copy into this Allocation from an array.  This variant is type checked
+     * and will generate exceptions if the Allocation's {@link
+     * android.renderscript.Element} does not match the array's
+     * primitive type.
+     *
+     * @param array The source data array
+     */
+    public void copyFrom(Object array) {
+        Trace.traceBegin(RenderScript.TRACE_TAG, "copyFrom");
+        copyFromUnchecked(array, validateObjectIsPrimitiveArray(array, true),
+                          java.lang.reflect.Array.getLength(array));
+        Trace.traceEnd(RenderScript.TRACE_TAG);
+    }
 
     /**
      * Copy into this Allocation from an array.  This variant is type checked
@@ -600,16 +681,8 @@ public class Allocation extends BaseObj {
      * @param d the source data array
      */
     public void copyFrom(int[] d) {
-        Trace.traceBegin(RenderScript.TRACE_TAG, "copyFrom");
-        mRS.validate();
-        if (mCurrentDimZ > 0) {
-            copy3DRangeFrom(0, 0, 0, mCurrentDimX, mCurrentDimY, mCurrentDimZ, d);
-        } else if (mCurrentDimY > 0) {
-            copy2DRangeFrom(0, 0, mCurrentDimX, mCurrentDimY, d);
-        } else {
-            copy1DRangeFrom(0, mCurrentCount, d);
-        }
-        Trace.traceEnd(RenderScript.TRACE_TAG);
+        validateIsInt32();
+        copyFromUnchecked(d, Element.DataType.SIGNED_32, d.length);
     }
 
     /**
@@ -620,16 +693,8 @@ public class Allocation extends BaseObj {
      * @param d the source data array
      */
     public void copyFrom(short[] d) {
-        Trace.traceBegin(RenderScript.TRACE_TAG, "copyFrom");
-        mRS.validate();
-        if (mCurrentDimZ > 0) {
-            copy3DRangeFrom(0, 0, 0, mCurrentDimX, mCurrentDimY, mCurrentDimZ, d);
-        } else if (mCurrentDimY > 0) {
-            copy2DRangeFrom(0, 0, mCurrentDimX, mCurrentDimY, d);
-        } else {
-            copy1DRangeFrom(0, mCurrentCount, d);
-        }
-        Trace.traceEnd(RenderScript.TRACE_TAG);
+        validateIsInt16();
+        copyFromUnchecked(d, Element.DataType.SIGNED_16, d.length);
     }
 
     /**
@@ -640,16 +705,8 @@ public class Allocation extends BaseObj {
      * @param d the source data array
      */
     public void copyFrom(byte[] d) {
-        Trace.traceBegin(RenderScript.TRACE_TAG, "copyFrom");
-        mRS.validate();
-        if (mCurrentDimZ > 0) {
-            copy3DRangeFrom(0, 0, 0, mCurrentDimX, mCurrentDimY, mCurrentDimZ, d);
-        } else if (mCurrentDimY > 0) {
-            copy2DRangeFrom(0, 0, mCurrentDimX, mCurrentDimY, d);
-        } else {
-            copy1DRangeFrom(0, mCurrentCount, d);
-        }
-        Trace.traceEnd(RenderScript.TRACE_TAG);
+        validateIsInt8();
+        copyFromUnchecked(d, Element.DataType.SIGNED_8, d.length);
     }
 
     /**
@@ -660,16 +717,8 @@ public class Allocation extends BaseObj {
      * @param d the source data array
      */
     public void copyFrom(float[] d) {
-        Trace.traceBegin(RenderScript.TRACE_TAG, "copyFrom");
-        mRS.validate();
-        if (mCurrentDimZ > 0) {
-            copy3DRangeFrom(0, 0, 0, mCurrentDimX, mCurrentDimY, mCurrentDimZ, d);
-        } else if (mCurrentDimY > 0) {
-            copy2DRangeFrom(0, 0, mCurrentDimX, mCurrentDimY, d);
-        } else {
-            copy1DRangeFrom(0, mCurrentCount, d);
-        }
-        Trace.traceEnd(RenderScript.TRACE_TAG);
+        validateIsFloat32();
+        copyFromUnchecked(d, Element.DataType.FLOAT_32, d.length);
     }
 
     /**
@@ -728,10 +777,11 @@ public class Allocation extends BaseObj {
         mRS.validate();
         int eSize = mType.mElement.getBytesSize();
         final byte[] data = fp.getData();
+        int data_length = fp.getPos();
 
-        int count = data.length / eSize;
-        if ((eSize * count) != data.length) {
-            throw new RSIllegalArgumentException("Field packer length " + data.length +
+        int count = data_length / eSize;
+        if ((eSize * count) != data_length) {
+            throw new RSIllegalArgumentException("Field packer length " + data_length +
                                                " not divisible by element size " + eSize + ".");
         }
         copy1DRangeFromUnchecked(xoff, count, data);
@@ -755,16 +805,17 @@ public class Allocation extends BaseObj {
         }
 
         final byte[] data = fp.getData();
+        int data_length = fp.getPos();
         int eSize = mType.mElement.mElements[component_number].getBytesSize();
         eSize *= mType.mElement.mArraySizes[component_number];
 
-        if (data.length != eSize) {
-            throw new RSIllegalArgumentException("Field packer sizelength " + data.length +
+        if (data_length != eSize) {
+            throw new RSIllegalArgumentException("Field packer sizelength " + data_length +
                                                " does not match component size " + eSize + ".");
         }
 
         mRS.nAllocationElementData1D(getIDSafe(), xoff, mSelectedLOD,
-                                     component_number, data, data.length);
+                                     component_number, data, data_length);
     }
 
     private void data1DChecks(int off, int count, int len, int dataSize) {
@@ -798,6 +849,29 @@ public class Allocation extends BaseObj {
         mRS.nAllocationGenerateMipmaps(getID(mRS));
     }
 
+    private void copy1DRangeFromUnchecked(int off, int count, Object array,
+                                          Element.DataType dt, int arrayLen) {
+        Trace.traceBegin(RenderScript.TRACE_TAG, "copy1DRangeFromUnchecked");
+        final int dataSize = mType.mElement.getBytesSize() * count;
+        data1DChecks(off, count, arrayLen * dt.mSize, dataSize);
+        mRS.nAllocationData1D(getIDSafe(), off, mSelectedLOD, count, array, dataSize, dt);
+        Trace.traceEnd(RenderScript.TRACE_TAG);
+    }
+
+    /**
+     * Copy an array into part of this Allocation.  This method does not
+     * guarantee that the Allocation is compatible with the input buffer.
+     *
+     * @param off The offset of the first element to be copied.
+     * @param count The number of elements to be copied.
+     * @param array The source data array
+     */
+    public void copy1DRangeFromUnchecked(int off, int count, Object array) {
+        copy1DRangeFromUnchecked(off, count, array,
+                                 validateObjectIsPrimitiveArray(array, false),
+                                 java.lang.reflect.Array.getLength(array));
+    }
+
     /**
      * Copy an array into part of this Allocation.  This method does not
      * guarantee that the Allocation is compatible with the input buffer.
@@ -807,11 +881,7 @@ public class Allocation extends BaseObj {
      * @param d the source data array
      */
     public void copy1DRangeFromUnchecked(int off, int count, int[] d) {
-        Trace.traceBegin(RenderScript.TRACE_TAG, "copy1DRangeFromUnchecked");
-        int dataSize = mType.mElement.getBytesSize() * count;
-        data1DChecks(off, count, d.length * 4, dataSize);
-        mRS.nAllocationData1D(getIDSafe(), off, mSelectedLOD, count, d, dataSize);
-        Trace.traceEnd(RenderScript.TRACE_TAG);
+        copy1DRangeFromUnchecked(off, count, (Object)d, Element.DataType.SIGNED_32, d.length);
     }
 
     /**
@@ -823,11 +893,7 @@ public class Allocation extends BaseObj {
      * @param d the source data array
      */
     public void copy1DRangeFromUnchecked(int off, int count, short[] d) {
-        Trace.traceBegin(RenderScript.TRACE_TAG, "copy1DRangeFromUnchecked");
-        int dataSize = mType.mElement.getBytesSize() * count;
-        data1DChecks(off, count, d.length * 2, dataSize);
-        mRS.nAllocationData1D(getIDSafe(), off, mSelectedLOD, count, d, dataSize);
-        Trace.traceEnd(RenderScript.TRACE_TAG);
+        copy1DRangeFromUnchecked(off, count, (Object)d, Element.DataType.SIGNED_16, d.length);
     }
 
     /**
@@ -839,11 +905,7 @@ public class Allocation extends BaseObj {
      * @param d the source data array
      */
     public void copy1DRangeFromUnchecked(int off, int count, byte[] d) {
-        Trace.traceBegin(RenderScript.TRACE_TAG, "copy1DRangeFromUnchecked");
-        int dataSize = mType.mElement.getBytesSize() * count;
-        data1DChecks(off, count, d.length, dataSize);
-        mRS.nAllocationData1D(getIDSafe(), off, mSelectedLOD, count, d, dataSize);
-        Trace.traceEnd(RenderScript.TRACE_TAG);
+        copy1DRangeFromUnchecked(off, count, (Object)d, Element.DataType.SIGNED_8, d.length);
     }
 
     /**
@@ -855,11 +917,23 @@ public class Allocation extends BaseObj {
      * @param d the source data array
      */
     public void copy1DRangeFromUnchecked(int off, int count, float[] d) {
-        Trace.traceBegin(RenderScript.TRACE_TAG, "copy1DRangeFromUnchecked");
-        int dataSize = mType.mElement.getBytesSize() * count;
-        data1DChecks(off, count, d.length * 4, dataSize);
-        mRS.nAllocationData1D(getIDSafe(), off, mSelectedLOD, count, d, dataSize);
-        Trace.traceEnd(RenderScript.TRACE_TAG);
+        copy1DRangeFromUnchecked(off, count, (Object)d, Element.DataType.FLOAT_32, d.length);
+    }
+
+
+    /**
+     * Copy an array into part of this Allocation.  This variant is type checked
+     * and will generate exceptions if the Allocation type does not
+     * match the component type of the array passed in.
+     *
+     * @param off The offset of the first element to be copied.
+     * @param count The number of elements to be copied.
+     * @param array The source data array.
+     */
+    public void copy1DRangeFrom(int off, int count, Object array) {
+        copy1DRangeFromUnchecked(off, count, array,
+                                 validateObjectIsPrimitiveArray(array, true),
+                                 java.lang.reflect.Array.getLength(array));
     }
 
     /**
@@ -872,10 +946,8 @@ public class Allocation extends BaseObj {
      * @param d the source data array
      */
     public void copy1DRangeFrom(int off, int count, int[] d) {
-        Trace.traceBegin(RenderScript.TRACE_TAG, "copy1DRangeFrom");
         validateIsInt32();
-        copy1DRangeFromUnchecked(off, count, d);
-        Trace.traceEnd(RenderScript.TRACE_TAG);
+        copy1DRangeFromUnchecked(off, count, d, Element.DataType.SIGNED_32, d.length);
     }
 
     /**
@@ -888,10 +960,8 @@ public class Allocation extends BaseObj {
      * @param d the source data array
      */
     public void copy1DRangeFrom(int off, int count, short[] d) {
-        Trace.traceBegin(RenderScript.TRACE_TAG, "copy1DRangeFrom");
         validateIsInt16();
-        copy1DRangeFromUnchecked(off, count, d);
-        Trace.traceEnd(RenderScript.TRACE_TAG);
+        copy1DRangeFromUnchecked(off, count, d, Element.DataType.SIGNED_16, d.length);
     }
 
     /**
@@ -904,10 +974,8 @@ public class Allocation extends BaseObj {
      * @param d the source data array
      */
     public void copy1DRangeFrom(int off, int count, byte[] d) {
-        Trace.traceBegin(RenderScript.TRACE_TAG, "copy1DRangeFrom");
         validateIsInt8();
-        copy1DRangeFromUnchecked(off, count, d);
-        Trace.traceEnd(RenderScript.TRACE_TAG);
+        copy1DRangeFromUnchecked(off, count, d, Element.DataType.SIGNED_8, d.length);
     }
 
     /**
@@ -920,11 +988,10 @@ public class Allocation extends BaseObj {
      * @param d the source data array.
      */
     public void copy1DRangeFrom(int off, int count, float[] d) {
-        Trace.traceBegin(RenderScript.TRACE_TAG, "copy1DRangeFrom");
         validateIsFloat32();
-        copy1DRangeFromUnchecked(off, count, d);
-        Trace.traceEnd(RenderScript.TRACE_TAG);
+        copy1DRangeFromUnchecked(off, count, d, Element.DataType.FLOAT_32, d.length);
     }
+
      /**
      * Copy part of an Allocation into this Allocation.
      *
@@ -959,39 +1026,31 @@ public class Allocation extends BaseObj {
         }
     }
 
-    void copy2DRangeFromUnchecked(int xoff, int yoff, int w, int h, byte[] data) {
+    void copy2DRangeFromUnchecked(int xoff, int yoff, int w, int h, Object array,
+                                  Element.DataType dt, int arrayLen) {
         Trace.traceBegin(RenderScript.TRACE_TAG, "copy2DRangeFromUnchecked");
         mRS.validate();
         validate2DRange(xoff, yoff, w, h);
-        mRS.nAllocationData2D(getIDSafe(), xoff, yoff, mSelectedLOD, mSelectedFace.mID,
-                              w, h, data, data.length);
+        mRS.nAllocationData2D(getIDSafe(), xoff, yoff, mSelectedLOD, mSelectedFace.mID, w, h,
+                              array, arrayLen * dt.mSize, dt);
         Trace.traceEnd(RenderScript.TRACE_TAG);
     }
 
-    void copy2DRangeFromUnchecked(int xoff, int yoff, int w, int h, short[] data) {
-        Trace.traceBegin(RenderScript.TRACE_TAG, "copy2DRangeFromUnchecked");
-        mRS.validate();
-        validate2DRange(xoff, yoff, w, h);
-        mRS.nAllocationData2D(getIDSafe(), xoff, yoff, mSelectedLOD, mSelectedFace.mID,
-                              w, h, data, data.length * 2);
-        Trace.traceEnd(RenderScript.TRACE_TAG);
-    }
-
-    void copy2DRangeFromUnchecked(int xoff, int yoff, int w, int h, int[] data) {
-        Trace.traceBegin(RenderScript.TRACE_TAG, "copy2DRangeFromUnchecked");
-        mRS.validate();
-        validate2DRange(xoff, yoff, w, h);
-        mRS.nAllocationData2D(getIDSafe(), xoff, yoff, mSelectedLOD, mSelectedFace.mID,
-                              w, h, data, data.length * 4);
-        Trace.traceEnd(RenderScript.TRACE_TAG);
-    }
-
-    void copy2DRangeFromUnchecked(int xoff, int yoff, int w, int h, float[] data) {
-        Trace.traceBegin(RenderScript.TRACE_TAG, "copy2DRangeFromUnchecked");
-        mRS.validate();
-        validate2DRange(xoff, yoff, w, h);
-        mRS.nAllocationData2D(getIDSafe(), xoff, yoff, mSelectedLOD, mSelectedFace.mID,
-                              w, h, data, data.length * 4);
+    /**
+     * Copy from an array into a rectangular region in this Allocation.  The
+     * array is assumed to be tightly packed.
+     *
+     * @param xoff X offset of the region to update in this Allocation
+     * @param yoff Y offset of the region to update in this Allocation
+     * @param w Width of the region to update
+     * @param h Height of the region to update
+     * @param array Data to be placed into the Allocation
+     */
+    public void copy2DRangeFrom(int xoff, int yoff, int w, int h, Object array) {
+        Trace.traceBegin(RenderScript.TRACE_TAG, "copy2DRangeFrom");
+        copy2DRangeFromUnchecked(xoff, yoff, w, h, array,
+                                 validateObjectIsPrimitiveArray(array, true),
+                                 java.lang.reflect.Array.getLength(array));
         Trace.traceEnd(RenderScript.TRACE_TAG);
     }
 
@@ -1006,10 +1065,9 @@ public class Allocation extends BaseObj {
      * @param data to be placed into the Allocation
      */
     public void copy2DRangeFrom(int xoff, int yoff, int w, int h, byte[] data) {
-        Trace.traceBegin(RenderScript.TRACE_TAG, "copy2DRangeFrom");
         validateIsInt8();
-        copy2DRangeFromUnchecked(xoff, yoff, w, h, data);
-        Trace.traceEnd(RenderScript.TRACE_TAG);
+        copy2DRangeFromUnchecked(xoff, yoff, w, h, data,
+                                 Element.DataType.SIGNED_8, data.length);
     }
 
     /**
@@ -1023,10 +1081,9 @@ public class Allocation extends BaseObj {
      * @param data to be placed into the Allocation
      */
     public void copy2DRangeFrom(int xoff, int yoff, int w, int h, short[] data) {
-        Trace.traceBegin(RenderScript.TRACE_TAG, "copy2DRangeFrom");
         validateIsInt16();
-        copy2DRangeFromUnchecked(xoff, yoff, w, h, data);
-        Trace.traceEnd(RenderScript.TRACE_TAG);
+        copy2DRangeFromUnchecked(xoff, yoff, w, h, data,
+                                 Element.DataType.SIGNED_16, data.length);
     }
 
     /**
@@ -1040,10 +1097,9 @@ public class Allocation extends BaseObj {
      * @param data to be placed into the Allocation
      */
     public void copy2DRangeFrom(int xoff, int yoff, int w, int h, int[] data) {
-        Trace.traceBegin(RenderScript.TRACE_TAG, "copy2DRangeFrom");
         validateIsInt32();
-        copy2DRangeFromUnchecked(xoff, yoff, w, h, data);
-        Trace.traceEnd(RenderScript.TRACE_TAG);
+        copy2DRangeFromUnchecked(xoff, yoff, w, h, data,
+                                 Element.DataType.SIGNED_32, data.length);
     }
 
     /**
@@ -1057,10 +1113,9 @@ public class Allocation extends BaseObj {
      * @param data to be placed into the Allocation
      */
     public void copy2DRangeFrom(int xoff, int yoff, int w, int h, float[] data) {
-        Trace.traceBegin(RenderScript.TRACE_TAG, "copy2DRangeFrom");
         validateIsFloat32();
-        copy2DRangeFromUnchecked(xoff, yoff, w, h, data);
-        Trace.traceEnd(RenderScript.TRACE_TAG);
+        copy2DRangeFromUnchecked(xoff, yoff, w, h, data,
+                                 Element.DataType.FLOAT_32, data.length);
     }
 
     /**
@@ -1133,46 +1188,15 @@ public class Allocation extends BaseObj {
      * @hide
      *
      */
-    void copy3DRangeFromUnchecked(int xoff, int yoff, int zoff, int w, int h, int d, byte[] data) {
+    private void copy3DRangeFromUnchecked(int xoff, int yoff, int zoff, int w, int h, int d,
+                                          Object array, Element.DataType dt, int arrayLen) {
+        Trace.traceBegin(RenderScript.TRACE_TAG, "copy3DRangeFromUnchecked");
         mRS.validate();
         validate3DRange(xoff, yoff, zoff, w, h, d);
-        mRS.nAllocationData3D(getIDSafe(), xoff, yoff, zoff, mSelectedLOD,
-                              w, h, d, data, data.length);
+        mRS.nAllocationData3D(getIDSafe(), xoff, yoff, zoff, mSelectedLOD, w, h, d,
+                              array, arrayLen * dt.mSize, dt);
+        Trace.traceEnd(RenderScript.TRACE_TAG);
     }
-
-    /**
-     * @hide
-     *
-     */
-    void copy3DRangeFromUnchecked(int xoff, int yoff, int zoff, int w, int h, int d, short[] data) {
-        mRS.validate();
-        validate3DRange(xoff, yoff, zoff, w, h, d);
-        mRS.nAllocationData3D(getIDSafe(), xoff, yoff, zoff, mSelectedLOD,
-                              w, h, d, data, data.length * 2);
-    }
-
-    /**
-     * @hide
-     *
-     */
-    void copy3DRangeFromUnchecked(int xoff, int yoff, int zoff, int w, int h, int d, int[] data) {
-        mRS.validate();
-        validate3DRange(xoff, yoff, zoff, w, h, d);
-        mRS.nAllocationData3D(getIDSafe(), xoff, yoff, zoff, mSelectedLOD,
-                              w, h, d, data, data.length * 4);
-    }
-
-    /**
-     * @hide
-     *
-     */
-    void copy3DRangeFromUnchecked(int xoff, int yoff, int zoff, int w, int h, int d, float[] data) {
-        mRS.validate();
-        validate3DRange(xoff, yoff, zoff, w, h, d);
-        mRS.nAllocationData3D(getIDSafe(), xoff, yoff, zoff, mSelectedLOD,
-                              w, h, d, data, data.length * 4);
-    }
-
 
     /**
      * @hide
@@ -1187,36 +1211,12 @@ public class Allocation extends BaseObj {
      * @param d Depth of the region to update
      * @param data to be placed into the allocation
      */
-    public void copy3DRangeFrom(int xoff, int yoff, int zoff, int w, int h, int d, byte[] data) {
-        validateIsInt8();
-        copy3DRangeFromUnchecked(xoff, yoff, zoff, w, h, d, data);
-    }
-
-    /**
-     * @hide
-     *
-     */
-    public void copy3DRangeFrom(int xoff, int yoff, int zoff, int w, int h, int d, short[] data) {
-        validateIsInt16();
-        copy3DRangeFromUnchecked(xoff, yoff, zoff, w, h, d, data);
-    }
-
-    /**
-     * @hide
-     *
-     */
-    public void copy3DRangeFrom(int xoff, int yoff, int zoff, int w, int h, int d, int[] data) {
-        validateIsInt32();
-        copy3DRangeFromUnchecked(xoff, yoff, zoff, w, h, d, data);
-    }
-
-    /**
-     * @hide
-     *
-     */
-    public void copy3DRangeFrom(int xoff, int yoff, int zoff, int w, int h, int d, float[] data) {
-        validateIsFloat32();
-        copy3DRangeFromUnchecked(xoff, yoff, zoff, w, h, d, data);
+    public void copy3DRangeFrom(int xoff, int yoff, int zoff, int w, int h, int d, Object array) {
+        Trace.traceBegin(RenderScript.TRACE_TAG, "copy3DRangeFrom");
+        copy3DRangeFromUnchecked(xoff, yoff, zoff, w, h, d, array,
+                                 validateObjectIsPrimitiveArray(array, true),
+                                 java.lang.reflect.Array.getLength(array));
+        Trace.traceEnd(RenderScript.TRACE_TAG);
     }
 
     /**
@@ -1260,6 +1260,26 @@ public class Allocation extends BaseObj {
         Trace.traceEnd(RenderScript.TRACE_TAG);
     }
 
+    private void copyTo(Object array, Element.DataType dt, int arrayLen) {
+        Trace.traceBegin(RenderScript.TRACE_TAG, "copyTo");
+        mRS.validate();
+        mRS.nAllocationRead(getID(mRS), array, dt);
+        Trace.traceEnd(RenderScript.TRACE_TAG);
+    }
+
+    /**
+     * Copy from the Allocation into an array.  The array must be at
+     * least as large as the Allocation.  The
+     * {@link android.renderscript.Element} must match the component
+     * type of the array passed in.
+     *
+     * @param array The array to be set from the Allocation.
+     */
+    public void copyTo(Object array) {
+        copyTo(array, validateObjectIsPrimitiveArray(array, true),
+               java.lang.reflect.Array.getLength(array));
+    }
+
     /**
      * Copy from the Allocation into a byte array.  The array must be at least
      * as large as the Allocation.  The allocation must be of an 8 bit integer
@@ -1268,11 +1288,8 @@ public class Allocation extends BaseObj {
      * @param d The array to be set from the Allocation.
      */
     public void copyTo(byte[] d) {
-        Trace.traceBegin(RenderScript.TRACE_TAG, "copyTo");
         validateIsInt8();
-        mRS.validate();
-        mRS.nAllocationRead(getID(mRS), d);
-        Trace.traceEnd(RenderScript.TRACE_TAG);
+        copyTo(d, Element.DataType.SIGNED_8, d.length);
     }
 
     /**
@@ -1283,11 +1300,8 @@ public class Allocation extends BaseObj {
      * @param d The array to be set from the Allocation.
      */
     public void copyTo(short[] d) {
-        Trace.traceBegin(RenderScript.TRACE_TAG, "copyTo");
         validateIsInt16();
-        mRS.validate();
-        mRS.nAllocationRead(getID(mRS), d);
-        Trace.traceEnd(RenderScript.TRACE_TAG);
+        copyTo(d, Element.DataType.SIGNED_16, d.length);
     }
 
     /**
@@ -1298,11 +1312,8 @@ public class Allocation extends BaseObj {
      * @param d The array to be set from the Allocation.
      */
     public void copyTo(int[] d) {
-        Trace.traceBegin(RenderScript.TRACE_TAG, "copyTo");
         validateIsInt32();
-        mRS.validate();
-        mRS.nAllocationRead(getID(mRS), d);
-        Trace.traceEnd(RenderScript.TRACE_TAG);
+        copyTo(d, Element.DataType.SIGNED_32, d.length);
     }
 
     /**
@@ -1313,11 +1324,8 @@ public class Allocation extends BaseObj {
      * @param d The array to be set from the Allocation.
      */
     public void copyTo(float[] d) {
-        Trace.traceBegin(RenderScript.TRACE_TAG, "copyTo");
         validateIsFloat32();
-        mRS.validate();
-        mRS.nAllocationRead(getID(mRS), d);
-        Trace.traceEnd(RenderScript.TRACE_TAG);
+        copyTo(d, Element.DataType.FLOAT_32, d.length);
     }
 
     /**
@@ -1333,16 +1341,20 @@ public class Allocation extends BaseObj {
      * @param dimX The new size of the allocation.
      *
      * @deprecated RenderScript objects should be immutable once created.  The
-     * replacement is to create a new allocation and copy the contents.
+     * replacement is to create a new allocation and copy the contents. This
+     * function will throw an exception if API 21 or higher is used.
      */
     public synchronized void resize(int dimX) {
+        if (mRS.getApplicationContext().getApplicationInfo().targetSdkVersion >= 21) {
+            throw new RSRuntimeException("Resize is not allowed in API 21+.");
+        }
         if ((mType.getY() > 0)|| (mType.getZ() > 0) || mType.hasFaces() || mType.hasMipmaps()) {
             throw new RSInvalidStateException("Resize only support for 1D allocations at this time.");
         }
         mRS.nAllocationResize1D(getID(mRS), dimX);
         mRS.finish();  // Necessary because resize is fifoed and update is async.
 
-        int typeID = mRS.nAllocationGetType(getID(mRS));
+        long typeID = mRS.nAllocationGetType(getID(mRS));
         mType = new Type(typeID, mRS);
         mType.updateFromNative();
         updateCacheInfo(mType);
@@ -1372,7 +1384,7 @@ public class Allocation extends BaseObj {
         if (type.getID(rs) == 0) {
             throw new RSInvalidStateException("Bad Type");
         }
-        int id = rs.nAllocationCreateTyped(type.getID(rs), mips.mID, usage, 0);
+        long id = rs.nAllocationCreateTyped(type.getID(rs), mips.mID, usage, 0);
         if (id == 0) {
             throw new RSRuntimeException("Allocation creation failed.");
         }
@@ -1427,7 +1439,7 @@ public class Allocation extends BaseObj {
         b.setX(count);
         Type t = b.create();
 
-        int id = rs.nAllocationCreateTyped(t.getID(rs), MipmapControl.MIPMAP_NONE.mID, usage, 0);
+        long id = rs.nAllocationCreateTyped(t.getID(rs), MipmapControl.MIPMAP_NONE.mID, usage, 0);
         if (id == 0) {
             throw new RSRuntimeException("Allocation creation failed.");
         }
@@ -1511,7 +1523,7 @@ public class Allocation extends BaseObj {
         if (mips == MipmapControl.MIPMAP_NONE &&
             t.getElement().isCompatible(Element.RGBA_8888(rs)) &&
             usage == (USAGE_SHARED | USAGE_SCRIPT | USAGE_GRAPHICS_TEXTURE)) {
-            int id = rs.nAllocationCreateBitmapBackedAllocation(t.getID(rs), mips.mID, b, usage);
+            long id = rs.nAllocationCreateBitmapBackedAllocation(t.getID(rs), mips.mID, b, usage);
             if (id == 0) {
                 throw new RSRuntimeException("Load failed.");
             }
@@ -1523,7 +1535,7 @@ public class Allocation extends BaseObj {
         }
 
 
-        int id = rs.nAllocationCreateFromBitmap(t.getID(rs), mips.mID, b, usage);
+        long id = rs.nAllocationCreateFromBitmap(t.getID(rs), mips.mID, b, usage);
         if (id == 0) {
             throw new RSRuntimeException("Load failed.");
         }
@@ -1544,13 +1556,6 @@ public class Allocation extends BaseObj {
             throw new RSInvalidStateException("Allocation is not a surface texture.");
         }
         return mRS.nAllocationGetSurface(getID(mRS));
-    }
-
-    /**
-     * @hide
-     */
-    public void setSurfaceTexture(SurfaceTexture st) {
-        setSurface(new Surface(st));
     }
 
     /**
@@ -1633,7 +1638,7 @@ public class Allocation extends BaseObj {
         tb.setMipmaps(mips == MipmapControl.MIPMAP_FULL);
         Type t = tb.create();
 
-        int id = rs.nAllocationCubeCreateFromBitmap(t.getID(rs), mips.mID, b, usage);
+        long id = rs.nAllocationCubeCreateFromBitmap(t.getID(rs), mips.mID, b, usage);
         if(id == 0) {
             throw new RSRuntimeException("Load failed for bitmap " + b + " element " + e);
         }
@@ -1858,14 +1863,14 @@ public class Allocation extends BaseObj {
      */
     public void setOnBufferAvailableListener(OnBufferAvailableListener callback) {
         synchronized(mAllocationMap) {
-            mAllocationMap.put(new Integer(getID(mRS)), this);
+            mAllocationMap.put(new Long(getID(mRS)), this);
             mBufferNotifier = callback;
         }
     }
 
-    static void sendBufferNotification(int id) {
+    static void sendBufferNotification(long id) {
         synchronized(mAllocationMap) {
-            Allocation a = mAllocationMap.get(new Integer(id));
+            Allocation a = mAllocationMap.get(new Long(id));
 
             if ((a != null) && (a.mBufferNotifier != null)) {
                 a.mBufferNotifier.onBufferAvailable(a);
@@ -1874,4 +1879,3 @@ public class Allocation extends BaseObj {
     }
 
 }
-

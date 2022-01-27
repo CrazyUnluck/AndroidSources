@@ -185,26 +185,46 @@ public class ObjectStreamClass implements Serializable {
         return constructor;
     }
 
-    Field getReflectionField(ObjectStreamField osf) {
+    /**
+     * Returns the {@link Field} referred to by {@link ObjectStreamField} for the class described by
+     * this {@link ObjectStreamClass}. A {@code null} value is returned if the local definition of
+     * the field does not meet the criteria for a serializable / deserializable field, i.e. the
+     * field must be non-static and non-transient. Caching of each field lookup is performed. The
+     * first time a field is returned it is made accessible with a call to
+     * {@link Field#setAccessible(boolean)}.
+     */
+    Field checkAndGetReflectionField(ObjectStreamField osf) {
         synchronized (reflectionFields) {
             Field field = reflectionFields.get(osf);
-            if (field != null) {
+            // null might indicate a cache miss or a hit and a non-serializable field so we
+            // check for a mapping.
+            if (field != null || reflectionFields.containsKey(osf)) {
                 return field;
             }
         }
 
+        Field field;
         try {
             Class<?> declaringClass = forClass();
-            Field field = declaringClass.getDeclaredField(osf.getName());
-            field.setAccessible(true);
-            synchronized (reflectionFields) {
-                reflectionFields.put(osf, field);
+            field = declaringClass.getDeclaredField(osf.getName());
+
+            int modifiers = field.getModifiers();
+            if (Modifier.isStatic(modifiers) || Modifier.isTransient(modifiers)) {
+                // No serialization or deserialization of transient or static fields!
+                // See http://b/4471249 and http://b/17202597.
+                field = null;
+            } else {
+                field.setAccessible(true);
             }
-            return reflectionFields.get(osf);
         } catch (NoSuchFieldException ex) {
             // The caller messed up. We'll return null and won't try to resolve this again.
-            return null;
+            field = null;
         }
+
+        synchronized (reflectionFields) {
+            reflectionFields.put(osf, field);
+        }
+        return field;
     }
 
     /*
@@ -1068,7 +1088,6 @@ public class ObjectStreamClass implements Serializable {
             tlc.put(cl, cachedValue);
         }
         return cachedValue;
-
     }
 
     /**
@@ -1297,5 +1316,73 @@ public class ObjectStreamClass implements Serializable {
     @Override
     public String toString() {
         return getName() + ": static final long serialVersionUID =" + getSerialVersionUID() + "L;";
+    }
+
+    /**
+     * Checks the local class to make sure it is valid for {@link ObjectStreamConstants#TC_OBJECT}
+     * deserialization. Also performs some sanity checks of the stream data. This method is used
+     * during deserialization to confirm the local class is likely to be compatible with the coming
+     * stream data, but before an instance is instantiated.
+     *
+     * @hide used internally during deserialization
+     */
+    public Class<?> checkAndGetTcObjectClass() throws InvalidClassException {
+        // We check some error possibilities that might cause problems later.
+        boolean wasSerializable = (flags & ObjectStreamConstants.SC_SERIALIZABLE) != 0;
+        boolean wasExternalizable = (flags & ObjectStreamConstants.SC_EXTERNALIZABLE) != 0;
+        if (wasSerializable == wasExternalizable) {
+            throw new InvalidClassException(
+                    getName() + " stream data is corrupt: SC_SERIALIZABLE=" + wasSerializable
+                            + " SC_EXTERNALIZABLE=" + wasExternalizable
+                            + ", classDescFlags must have one or the other");
+        }
+
+        // TC_ENUM is handled elsewhere. See checkAndGetTcEnumClass().
+        if (isEnum()) {
+            throw new InvalidClassException(
+                    getName() + " local class is incompatible: Local class is an enum, streamed"
+                            + " data is tagged with TC_OBJECT");
+        }
+
+        // isSerializable() is true if the local class implements Serializable. Externalizable
+        // classes are also Serializable via inheritance.
+        if (!isSerializable()) {
+            throw new InvalidClassException(getName() + " local class is incompatible: Not"
+                    + " Serializable");
+        }
+
+        // The stream class was externalizable, but is only serializable locally.
+        if (wasExternalizable != isExternalizable()) {
+            throw new InvalidClassException(
+                    getName() + " local class is incompatible: Local class is Serializable, stream"
+                            + " data requires Externalizable");
+        }
+
+        // The following are left unchecked and thus are treated leniently at this point.
+        // SC_BLOCK_DATA may be set iff SC_EXTERNALIZABLE is set AND version 2 of the protocol is in
+        // use.
+        // SC_ENUM should not be set.
+
+        return forClass();
+    }
+
+    /**
+     * Checks the local class to make sure it is valid for {@link ObjectStreamConstants#TC_ENUM}
+     * deserialization. This method is used during deserialization to confirm the local class is
+     * likely to be compatible with the coming stream data, but before an instance is instantiated.
+     *
+     * @hide used internally during deserialization
+     */
+    public Class<?> checkAndGetTcEnumClass() throws InvalidClassException {
+        if (!isEnum()) {
+            throw new InvalidClassException(
+                    getName() + " local class is incompatible: Local class is not an enum,"
+                            + " streamed data is tagged with TC_ENUM");
+        }
+
+        // The stream flags are expected to be SC_SERIALIZABLE | SC_ENUM but these and the
+        // other flags are not used when reading enum data so they are treated leniently.
+
+        return forClass();
     }
 }

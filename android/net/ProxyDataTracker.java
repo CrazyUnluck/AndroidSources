@@ -105,18 +105,19 @@ public class ProxyDataTracker extends BaseNetworkStateTracker {
     public ProxyDataTracker() {
         mNetworkInfo = new NetworkInfo(ConnectivityManager.TYPE_PROXY, 0, NETWORK_TYPE, "");
         mLinkProperties = new LinkProperties();
-        mLinkCapabilities = new LinkCapabilities();
+        mNetworkCapabilities = new NetworkCapabilities();
         mNetworkInfo.setIsAvailable(true);
         try {
-            mLinkProperties.addDns(InetAddress.getByName(DNS1));
-            mLinkProperties.addDns(InetAddress.getByName(DNS2));
+            mLinkProperties.addDnsServer(InetAddress.getByName(DNS1));
+            mLinkProperties.addDnsServer(InetAddress.getByName(DNS2));
             mLinkProperties.setInterfaceName(INTERFACE_NAME);
         } catch (UnknownHostException e) {
             Log.e(TAG, "Could not add DNS address", e);
         }
     }
 
-    public Object Clone() throws CloneNotSupportedException {
+    @Override
+    public Object clone() throws CloneNotSupportedException {
         throw new CloneNotSupportedException();
     }
 

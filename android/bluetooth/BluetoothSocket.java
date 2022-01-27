@@ -16,21 +16,16 @@
 
 package android.bluetooth;
 
-import android.os.IBinder;
 import android.os.ParcelUuid;
 import android.os.ParcelFileDescriptor;
 import android.os.RemoteException;
-import android.os.ServiceManager;
 import android.util.Log;
 
 import java.io.Closeable;
 import java.io.FileDescriptor;
-import java.io.FileInputStream;
-import java.io.FileOutputStream;
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.OutputStream;
-import java.util.List;
 import java.util.Locale;
 import java.util.UUID;
 import android.net.LocalSocket;
@@ -330,6 +325,7 @@ public final class BluetoothSocket implements Closeable {
             }
         } catch (RemoteException e) {
             Log.e(TAG, Log.getStackTraceString(new Throwable()));
+            throw new IOException("unable to send RPC: " + e.getMessage());
         }
     }
 
@@ -379,6 +375,14 @@ public final class BluetoothSocket implements Closeable {
             } // else ASSERT(mPort == channel)
             ret = 0;
         } catch (IOException e) {
+            if (mPfd != null) {
+                try {
+                    mPfd.close();
+                } catch (IOException e1) {
+                    Log.e(TAG, "bindListen, close mPfd: " + e1);
+                }
+                mPfd = null;
+            }
             Log.e(TAG, "bindListen, fail to get port number, exception: " + e);
             return -1;
         }
@@ -462,8 +466,10 @@ public final class BluetoothSocket implements Closeable {
                     mSocket.close();
                     mSocket = null;
                 }
-                if(mPfd != null)
-                    mPfd.detachFd();
+                if (mPfd != null) {
+                    mPfd.close();
+                    mPfd = null;
+                }
            }
         }
     }

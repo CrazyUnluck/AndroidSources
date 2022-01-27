@@ -80,21 +80,25 @@ import libcore.icu.ICU;
  *     <td><a href="http://cldr.unicode.org/index/downloads/cldr-1-8">CLDR 1.8</a></td>
  *     <td><a href="http://www.unicode.org/versions/Unicode5.2.0/">Unicode 5.2</a></td></tr>
  * <tr><td>Android 4.0 (Ice Cream Sandwich)</td>
- *     <td>ICU 4.6</td>
+ *     <td><a href="http://site.icu-project.org/download/46">ICU 4.6</a></td>
  *     <td><a href="http://cldr.unicode.org/index/downloads/cldr-1-9">CLDR 1.9</a></td>
  *     <td><a href="http://www.unicode.org/versions/Unicode6.0.0/">Unicode 6.0</a></td></tr>
  * <tr><td>Android 4.1 (Jelly Bean)</td>
- *     <td>ICU 4.8</td>
+ *     <td><a href="http://site.icu-project.org/download/48">ICU 4.8</a></td>
  *     <td><a href="http://cldr.unicode.org/index/downloads/cldr-2-0">CLDR 2.0</a></td>
  *     <td><a href="http://www.unicode.org/versions/Unicode6.0.0/">Unicode 6.0</a></td></tr>
  * <tr><td>Android 4.3 (Jelly Bean MR2)</td>
- *     <td>ICU 50</td>
+ *     <td><a href="http://site.icu-project.org/download/50">ICU 50</a></td>
  *     <td><a href="http://cldr.unicode.org/index/downloads/cldr-22-1">CLDR 22.1</a></td>
  *     <td><a href="http://www.unicode.org/versions/Unicode6.2.0/">Unicode 6.2</a></td></tr>
  * <tr><td>Android 4.4 (KitKat)</td>
- *     <td>ICU 51</td>
+ *     <td><a href="http://site.icu-project.org/download/51">ICU 51</a></td>
  *     <td><a href="http://cldr.unicode.org/index/downloads/cldr-23">CLDR 23</a></td>
  *     <td><a href="http://www.unicode.org/versions/Unicode6.2.0/">Unicode 6.2</a></td></tr>
+ * <tr><td>Android 4.? (STOPSHIP)</td>
+ *     <td><a href="http://site.icu-project.org/download/53">ICU 53</a></td>
+ *     <td><a href="http://cldr.unicode.org/index/downloads/cldr-25">CLDR 25</a></td>
+ *     <td><a href="http://www.unicode.org/versions/Unicode6.3.0/">Unicode 6.3</a></td></tr>
  * </table>
  *
  * <a name="default_locale"><h3>Be wary of the default locale</h3></a>
@@ -249,7 +253,6 @@ public final class Locale implements Cloneable, Serializable {
      *
      * See {@link #getExtension(char)} and {@link Builder#setExtension(char, String)}.
      *
-     * @hide
      * @since 1.7
      */
     public static final char PRIVATE_USE_EXTENSION = 'x';
@@ -260,10 +263,14 @@ public final class Locale implements Cloneable, Serializable {
      *
      * See {@link #getExtension(char)} and {@link Builder#setExtension(char, String)}.
      *
-     * @hide
      * @since 1.7
      */
     public static final char UNICODE_LOCALE_EXTENSION = 'u';
+
+    /**
+     * ISO 639-3 generic code for undetermined languages.
+     */
+    private static final String UNDETERMINED_LANGUAGE = "und";
 
     /**
      * The current default locale. It is temporarily assigned to US because we
@@ -293,7 +300,6 @@ public final class Locale implements Cloneable, Serializable {
      * the structured state (keywords and attributes) specified therein.
      *
      * @since 1.7
-     * @hide
      */
     public static final class Builder {
         private String language;
@@ -336,18 +342,25 @@ public final class Locale implements Cloneable, Serializable {
          * @throws IllformedLocaleException if the language was invalid.
          */
         public Builder setLanguage(String language) {
+            this.language = normalizeAndValidateLanguage(language, true /* strict */);
+            return this;
+        }
+
+        private static String normalizeAndValidateLanguage(String language, boolean strict) {
             if (language == null || language.isEmpty()) {
-                this.language = "";
-                return this;
+                return "";
             }
 
             final String lowercaseLanguage = language.toLowerCase(Locale.ROOT);
             if (!isValidBcp47Alpha(lowercaseLanguage, 2, 3)) {
-                throw new IllformedLocaleException("Invalid language: " + language);
+                if (strict) {
+                    throw new IllformedLocaleException("Invalid language: " + language);
+                } else {
+                    return UNDETERMINED_LANGUAGE;
+                }
             }
 
-            this.language = lowercaseLanguage;
-            return this;
+            return lowercaseLanguage;
         }
 
         /**
@@ -370,7 +383,7 @@ public final class Locale implements Cloneable, Serializable {
                 return this;
             }
 
-            final Locale fromIcu = ICU.forLanguageTag(languageTag, true /* strict */);
+            final Locale fromIcu = forLanguageTag(languageTag, true /* strict */);
             // When we ask ICU for strict parsing, it might return a null locale
             // if the language tag is malformed.
             if (fromIcu == null) {
@@ -393,19 +406,26 @@ public final class Locale implements Cloneable, Serializable {
          * @throws IllformedLocaleException if {@code} region is invalid.
          */
         public Builder setRegion(String region) {
+            this.region = normalizeAndValidateRegion(region, true /* strict */);
+            return this;
+        }
+
+        private static String normalizeAndValidateRegion(String region, boolean strict) {
             if (region == null || region.isEmpty()) {
-                this.region = "";
-                return this;
+                return "";
             }
 
             final String uppercaseRegion = region.toUpperCase(Locale.ROOT);
             if (!isValidBcp47Alpha(uppercaseRegion, 2, 2) &&
                     !isUnM49AreaCode(uppercaseRegion)) {
-                throw new IllformedLocaleException("Invalid region: " + region);
+                if (strict) {
+                    throw new IllformedLocaleException("Invalid region: " + region);
+                } else {
+                    return "";
+                }
             }
 
-            this.region = uppercaseRegion;
-            return this;
+            return uppercaseRegion;
         }
 
         /**
@@ -428,9 +448,13 @@ public final class Locale implements Cloneable, Serializable {
          * @throws IllformedLocaleException if {@code} variant is invalid.
          */
         public Builder setVariant(String variant) {
+            this.variant = normalizeAndValidateVariant(variant);
+            return this;
+        }
+
+        private static String normalizeAndValidateVariant(String variant) {
             if (variant == null || variant.isEmpty()) {
-                this.variant = "";
-                return this;
+                return "";
             }
 
             // Note that unlike extensions, we canonicalize to lower case alphabets
@@ -439,26 +463,30 @@ public final class Locale implements Cloneable, Serializable {
             String[] subTags = normalizedVariant.split("_");
 
             for (String subTag : subTags) {
-                // The BCP-47 spec states that :
-                // - Subtags can be between [5, 8] alphanumeric chars in length.
-                // - Subtags that start with a number are allowed to be 4 chars in length.
-                if (subTag.length() >= 5 && subTag.length() <= 8) {
-                    if (!isAsciiAlphaNum(subTag)) {
-                        throw new IllformedLocaleException("Invalid variant: " + variant);
-                    }
-                } else if (subTag.length() == 4) {
-                    final char firstChar = subTag.charAt(0);
-                    if (!(firstChar >= '0' && firstChar <= '9') || !isAsciiAlphaNum(subTag)) {
-                        throw new IllformedLocaleException("Invalid variant: " + variant);
-                    }
-                } else {
+                if (!isValidVariantSubtag(subTag)) {
                     throw new IllformedLocaleException("Invalid variant: " + variant);
                 }
             }
 
+            return normalizedVariant;
+        }
 
-            this.variant = normalizedVariant;
-            return this;
+        private static boolean isValidVariantSubtag(String subTag) {
+            // The BCP-47 spec states that :
+            // - Subtags can be between [5, 8] alphanumeric chars in length.
+            // - Subtags that start with a number are allowed to be 4 chars in length.
+            if (subTag.length() >= 5 && subTag.length() <= 8) {
+                if (isAsciiAlphaNum(subTag)) {
+                    return true;
+                }
+            } else if (subTag.length() == 4) {
+                final char firstChar = subTag.charAt(0);
+                if ((firstChar >= '0' && firstChar <= '9') && isAsciiAlphaNum(subTag)) {
+                    return true;
+                }
+            }
+
+            return false;
         }
 
         /**
@@ -476,17 +504,24 @@ public final class Locale implements Cloneable, Serializable {
          * @throws IllformedLocaleException if {@code script} is invalid.
          */
         public Builder setScript(String script) {
+            this.script = normalizeAndValidateScript(script, true /* strict */);
+            return this;
+        }
+
+        private static String normalizeAndValidateScript(String script, boolean strict) {
             if (script == null || script.isEmpty()) {
-                this.script = "";
-                return this;
+                return "";
             }
 
             if (!isValidBcp47Alpha(script, 4, 4)) {
-                throw new IllformedLocaleException("Invalid script: " + script);
+                if (strict) {
+                    throw new IllformedLocaleException("Invalid script: " + script);
+                } else {
+                    return "";
+                }
             }
 
-            this.script = titleCaseAsciiWord(script);
-            return this;
+            return titleCaseAsciiWord(script);
         }
 
         /**
@@ -762,18 +797,18 @@ public final class Locale implements Cloneable, Serializable {
             // because the RI allows this builder to reused.
             return new Locale(language, region, variant, script,
                     attributes, keywords, extensions,
-                    false /* from public constructor */);
+                    true /* has validated fields */);
         }
     }
 
     /**
      * Returns a locale for a given BCP-47 language tag. This method is more
      * lenient than {@link Builder#setLanguageTag}. For a given language tag, parsing
-     * will proceed upto the first malformed subtag. All subsequent tags are discarded.
+     * will proceed up to the first malformed subtag. All subsequent tags are discarded.
+     * Note that language tags use {@code -} rather than {@code _}, for example {@code en-US}.
      *
      * @throws NullPointerException if {@code languageTag} is {@code null}.
      *
-     * @hide
      * @since 1.7
      */
     public static Locale forLanguageTag(String languageTag) {
@@ -781,17 +816,13 @@ public final class Locale implements Cloneable, Serializable {
             throw new NullPointerException("languageTag == null");
         }
 
-        return ICU.forLanguageTag(languageTag, false /* strict */);
+        return forLanguageTag(languageTag, false /* strict */);
     }
 
     private transient String countryCode;
     private transient String languageCode;
     private transient String variantCode;
     private transient String scriptCode;
-
-    private transient String cachedToStringResult;
-    private transient String cachedLanguageTag;
-    private transient String cachedIcuLocaleId;
 
     /* Sorted, Unmodifiable */
     private transient Set<String> unicodeAttributes;
@@ -801,13 +832,23 @@ public final class Locale implements Cloneable, Serializable {
     private transient Map<Character, String> extensions;
 
     /**
+     * Whether this instance was constructed from a builder. We can make
+     * stronger assumptions about the validity of Locale fields if this was
+     * constructed by a builder.
+     */
+    private transient final boolean hasValidatedFields;
+
+    private transient String cachedToStringResult;
+    private transient String cachedLanguageTag;
+    private transient String cachedIcuLocaleId;
+
+    /**
      * There's a circular dependency between toLowerCase/toUpperCase and
      * Locale.US. Work around this by avoiding these methods when constructing
      * the built-in locales.
-     *
-     * @param unused required for this constructor to have a unique signature
      */
-    private Locale(boolean unused, String lowerCaseLanguageCode, String upperCaseCountryCode) {
+    private Locale(boolean hasValidatedFields, String lowerCaseLanguageCode,
+            String upperCaseCountryCode) {
         this.languageCode = lowerCaseLanguageCode;
         this.countryCode = upperCaseCountryCode;
         this.variantCode = "";
@@ -816,6 +857,8 @@ public final class Locale implements Cloneable, Serializable {
         this.unicodeAttributes = Collections.EMPTY_SET;
         this.unicodeKeywords = Collections.EMPTY_MAP;
         this.extensions = Collections.EMPTY_MAP;
+
+        this.hasValidatedFields = hasValidatedFields;
     }
 
     /**
@@ -823,7 +866,7 @@ public final class Locale implements Cloneable, Serializable {
      */
     public Locale(String language) {
         this(language, "", "", "", Collections.EMPTY_SET, Collections.EMPTY_MAP,
-                Collections.EMPTY_MAP, true /* from public constructor */);
+                Collections.EMPTY_MAP, false /* has validated fields */);
     }
 
     /**
@@ -831,7 +874,7 @@ public final class Locale implements Cloneable, Serializable {
      */
     public Locale(String language, String country) {
         this(language, country, "", "", Collections.EMPTY_SET, Collections.EMPTY_MAP,
-                Collections.EMPTY_MAP, true /* from public constructor */);
+                Collections.EMPTY_MAP, false /* has validated fields */);
     }
 
     /**
@@ -843,14 +886,18 @@ public final class Locale implements Cloneable, Serializable {
             /* nonnull */ Set<String> unicodeAttributes,
             /* nonnull */ Map<String, String> unicodeKeywords,
             /* nonnull */ Map<Character, String> extensions,
-            boolean fromPublicConstructor) {
+            boolean hasValidatedFields) {
         if (language == null || country == null || variant == null) {
             throw new NullPointerException("language=" + language +
                     ",country=" + country +
                     ",variant=" + variant);
         }
 
-        if (fromPublicConstructor) {
+        if (hasValidatedFields) {
+            this.languageCode = adjustLanguageCode(language);
+            this.countryCode = country;
+            this.variantCode = variant;
+        } else {
             if (language.isEmpty() && country.isEmpty()) {
                 languageCode = "";
                 countryCode = "";
@@ -860,36 +907,31 @@ public final class Locale implements Cloneable, Serializable {
                 countryCode = country.toUpperCase(Locale.US);
                 variantCode = variant;
             }
-        } else {
-            this.languageCode = adjustLanguageCode(language);
-            this.countryCode = country;
-            this.variantCode = variant;
         }
 
         this.scriptCode = scriptCode;
 
-        if (fromPublicConstructor) {
-            this.unicodeAttributes = unicodeAttributes;
-            this.unicodeKeywords = unicodeKeywords;
-            this.extensions = extensions;
-        } else {
+        if (hasValidatedFields) {
             Set<String> attribsCopy = new TreeSet<String>(unicodeAttributes);
-            Map<String, String> keywordsCopy = new TreeMap<String, String>(
-                    unicodeKeywords);
-            Map<Character, String> extensionsCopy = new TreeMap<Character, String>(
-                    extensions);
+            Map<String, String> keywordsCopy = new TreeMap<String, String>(unicodeKeywords);
+            Map<Character, String> extensionsCopy = new TreeMap<Character, String>(extensions);
 
             // We need to transform the list of attributes & keywords set on the
             // builder to a unicode locale extension. i.e, if we have any keywords
             // or attributes set, Locale#getExtension('u') should return a well
             // formed extension.
-            addUnicodeExtensionToExtensionsMap(attribsCopy, keywordsCopy,
-                    extensionsCopy);
+            addUnicodeExtensionToExtensionsMap(attribsCopy, keywordsCopy, extensionsCopy);
 
             this.unicodeAttributes = Collections.unmodifiableSet(attribsCopy);
             this.unicodeKeywords = Collections.unmodifiableMap(keywordsCopy);
             this.extensions = Collections.unmodifiableMap(extensionsCopy);
+        } else {
+            this.unicodeAttributes = unicodeAttributes;
+            this.unicodeKeywords = unicodeKeywords;
+            this.extensions = extensions;
         }
+
+        this.hasValidatedFields = hasValidatedFields;
     }
 
     /**
@@ -899,7 +941,7 @@ public final class Locale implements Cloneable, Serializable {
     public Locale(String language, String country, String variant) {
         this(language, country, variant, "", Collections.EMPTY_SET,
                 Collections.EMPTY_MAP, Collections.EMPTY_MAP,
-                true /* from public constructor */);
+                false /* has validated fields */);
     }
 
     @Override public Object clone() {
@@ -983,10 +1025,16 @@ public final class Locale implements Cloneable, Serializable {
         if (countryCode.isEmpty()) {
             return "";
         }
-        String result = ICU.getDisplayCountryNative(getIcuLocaleId(), locale.getIcuLocaleId());
+
+        final String normalizedRegion = Builder.normalizeAndValidateRegion(
+                countryCode, false /* strict */);
+        if (normalizedRegion.isEmpty()) {
+            return countryCode;
+        }
+
+        String result = ICU.getDisplayCountry(this, locale);
         if (result == null) { // TODO: do we need to do this, or does ICU do it for us?
-            result = ICU.getDisplayCountryNative(getIcuLocaleId(),
-                    Locale.getDefault().getIcuLocaleId());
+            result = ICU.getDisplayCountry(this, Locale.getDefault());
         }
         return result;
     }
@@ -1007,19 +1055,24 @@ public final class Locale implements Cloneable, Serializable {
             return "";
         }
 
-        // http://b/8049507 --- frameworks/base should use fil_PH instead of tl_PH.
-        // Until then, we're stuck covering their tracks, making it look like they're
-        // using "fil" when they're not.
-        String localeString = toString();
-        if (languageCode.equals("tl")) {
-            localeString = toNewString("fil", countryCode, variantCode, scriptCode,
-                    extensions);
+        // Hacks for backward compatibility.
+        //
+        // Our language tag will contain "und" if the languageCode is invalid
+        // or missing. ICU will then return "langue indéterminée" or the equivalent
+        // display language for the indeterminate language code.
+        //
+        // Sigh... ugh... and what not.
+        final String normalizedLanguage = Builder.normalizeAndValidateLanguage(
+                languageCode, false /* strict */);
+        if (UNDETERMINED_LANGUAGE.equals(normalizedLanguage)) {
+            return languageCode;
         }
 
-        String result = ICU.getDisplayLanguageNative(localeString, locale.getIcuLocaleId());
+        // TODO: We need a new hack or a complete fix for http://b/8049507 --- We would
+        // cover the frameworks' tracks when they were using "tl" instead of "fil".
+        String result = ICU.getDisplayLanguage(this, locale);
         if (result == null) { // TODO: do we need to do this, or does ICU do it for us?
-            result = ICU.getDisplayLanguageNative(localeString,
-                    Locale.getDefault().getIcuLocaleId());
+            result = ICU.getDisplayLanguage(this, Locale.getDefault());
         }
         return result;
     }
@@ -1034,13 +1087,14 @@ public final class Locale implements Cloneable, Serializable {
     /**
      * Returns this locale's language name, country name, and variant, localized
      * to {@code locale}. The exact output form depends on whether this locale
-     * corresponds to a specific language, country and variant.
+     * corresponds to a specific language, script, country and variant.
      *
      * <p>For example:
      * <ul>
      * <li>{@code new Locale("en").getDisplayName(Locale.US)} -> {@code English}
      * <li>{@code new Locale("en", "US").getDisplayName(Locale.US)} -> {@code English (United States)}
      * <li>{@code new Locale("en", "US", "POSIX").getDisplayName(Locale.US)} -> {@code English (United States,Computer)}
+     * <li>{@code Locale.fromLanguageTag("zh-Hant-CN").getDisplayName(Locale.US)} -> {@code Chinese (Traditional Han,China)}
      * <li>{@code new Locale("en").getDisplayName(Locale.FRANCE)} -> {@code anglais}
      * <li>{@code new Locale("en", "US").getDisplayName(Locale.FRANCE)} -> {@code anglais (États-Unis)}
      * <li>{@code new Locale("en", "US", "POSIX").getDisplayName(Locale.FRANCE)} -> {@code anglais (États-Unis,informatique)}.
@@ -1059,12 +1113,14 @@ public final class Locale implements Cloneable, Serializable {
                 buffer.append(" (");
             }
             String displayScript = getDisplayScript(locale);
-            buffer.append(displayScript.isEmpty() ? countryCode : displayScript);
+            buffer.append(displayScript.isEmpty() ? scriptCode : displayScript);
             ++count;
         }
         if (!countryCode.isEmpty()) {
             if (count == 1) {
                 buffer.append(" (");
+            } else if (count == 2) {
+                buffer.append(",");
             }
             String displayCountry = getDisplayCountry(locale);
             buffer.append(displayCountry.isEmpty() ? countryCode : displayCountry);
@@ -1073,7 +1129,7 @@ public final class Locale implements Cloneable, Serializable {
         if (!variantCode.isEmpty()) {
             if (count == 1) {
                 buffer.append(" (");
-            } else if (count == 2) {
+            } else if (count == 2 || count == 3) {
                 buffer.append(",");
             }
             String displayVariant = getDisplayVariant(locale);
@@ -1090,6 +1146,8 @@ public final class Locale implements Cloneable, Serializable {
      * Returns the full variant name in the default {@code Locale} for the variant code of
      * this {@code Locale}. If there is no matching variant name, the variant code is
      * returned.
+     *
+     * @since 1.7
      */
     public final String getDisplayVariant() {
         return getDisplayVariant(getDefault());
@@ -1099,15 +1157,31 @@ public final class Locale implements Cloneable, Serializable {
      * Returns the full variant name in the specified {@code Locale} for the variant code
      * of this {@code Locale}. If there is no matching variant name, the variant code is
      * returned.
+     *
+     * @since 1.7
      */
     public String getDisplayVariant(Locale locale) {
-        if (variantCode.length() == 0) {
+        if (variantCode.isEmpty()) {
+            return "";
+        }
+
+        try {
+            Builder.normalizeAndValidateVariant(variantCode);
+        } catch (IllformedLocaleException ilfe) {
             return variantCode;
         }
-        String result = ICU.getDisplayVariantNative(getIcuLocaleId(), locale.getIcuLocaleId());
+
+        String result = ICU.getDisplayVariant(this, locale);
         if (result == null) { // TODO: do we need to do this, or does ICU do it for us?
-            result = ICU.getDisplayVariantNative(getIcuLocaleId(),
-                    Locale.getDefault().getIcuLocaleId());
+            result = ICU.getDisplayVariant(this, Locale.getDefault());
+        }
+
+        // The "old style" locale constructors allow us to pass in variants that aren't
+        // valid BCP-47 variant subtags. When that happens, toLanguageTag will not emit
+        // them. Note that we know variantCode.length() > 0 due to the isEmpty check at
+        // the beginning of this function.
+        if (result.isEmpty()) {
+            return variantCode;
         }
         return result;
     }
@@ -1118,7 +1192,10 @@ public final class Locale implements Cloneable, Serializable {
      * @throws MissingResourceException if there's no 3-letter country code for this locale.
      */
     public String getISO3Country() {
-        String code = ICU.getISO3CountryNative(getIcuLocaleId());
+        // The results of getISO3Country do not depend on the languageCode,
+        // so we pass an arbitrarily selected language code here. This guards
+        // against errors caused by malformed or invalid language codes.
+        String code = ICU.getISO3Country("en-" + countryCode);
         if (!countryCode.isEmpty() && code.isEmpty()) {
             throw new MissingResourceException("No 3-letter country code for locale: " + this, "FormatData_" + this, "ShortCountry");
         }
@@ -1131,7 +1208,16 @@ public final class Locale implements Cloneable, Serializable {
      * @throws MissingResourceException if there's no 3-letter language code for this locale.
      */
     public String getISO3Language() {
-        String code = ICU.getISO3LanguageNative(getIcuLocaleId());
+        // For backward compatibility, we must return "" for an empty language
+        // code and not "und" which is the accurate ISO-639-3 code for an
+        // undetermined language.
+        if (languageCode.isEmpty()) {
+            return "";
+        }
+
+        // The results of getISO3Language do not depend on the country code
+        // or any of the other locale fields, so we pass just the language here.
+        String code = ICU.getISO3Language(languageCode);
         if (!languageCode.isEmpty() && code.isEmpty()) {
             throw new MissingResourceException("No 3-letter language code for locale: " + this, "FormatData_" + this, "ShortLanguage");
         }
@@ -1177,7 +1263,6 @@ public final class Locale implements Cloneable, Serializable {
      * If set, the script code will be a title cased string of length 4, as per the ISO 15924
      * specification.
      *
-     * @hide
      * @since 1.7
      */
     public String getScript() {
@@ -1187,7 +1272,6 @@ public final class Locale implements Cloneable, Serializable {
     /**
      * Equivalent to {@code getDisplayScript(Locale.getDefault()))}
      *
-     * @hide
      * @since 1.7
      */
     public String getDisplayScript() {
@@ -1199,7 +1283,6 @@ public final class Locale implements Cloneable, Serializable {
      * script code is unknown, the return value of this method is the same as that of
      * {@link #getScript()}.
      *
-     * @hide
      * @since 1.7
      */
     public String getDisplayScript(Locale locale) {
@@ -1207,10 +1290,9 @@ public final class Locale implements Cloneable, Serializable {
             return "";
         }
 
-        String result = ICU.getDisplayScriptNative(getIcuLocaleId(), locale.getIcuLocaleId());
+        String result = ICU.getDisplayScript(this, locale);
         if (result == null) { // TODO: do we need to do this, or does ICU do it for us?
-            result = ICU.getDisplayScriptNative(getIcuLocaleId(),
-                    Locale.getDefault().getIcuLocaleId());
+            result = ICU.getDisplayScript(this, Locale.getDefault());
         }
 
         return result;
@@ -1231,20 +1313,209 @@ public final class Locale implements Cloneable, Serializable {
      * where they will appear after a subtag whose value is {@code "lvariant"}.
      *
      * It's also important to note that the BCP-47 tag is well formed in the sense
-     * that it is unambiguously parsable into its specified components. We do not
+     * that it is unambiguously parseable into its specified components. We do not
      * require that any of the components are registered with the applicable registries.
      * For example, we do not require scripts to be a registered ISO 15924 scripts or
      * languages to appear in the ISO-639-2 code list.
      *
-     * @hide
      * @since 1.7
      */
     public String toLanguageTag() {
         if (cachedLanguageTag == null) {
-            cachedLanguageTag = ICU.toLanguageTag(this);
+            cachedLanguageTag = makeLanguageTag();
         }
 
         return cachedLanguageTag;
+    }
+
+    /**
+     * Constructs a valid BCP-47 language tag from locale fields. Additional validation
+     * is required when this Locale was not constructed using a Builder and variants
+     * set this way are treated specially.
+     *
+     * In both cases, we convert empty language tags to "und", omit invalid country tags
+     * and perform a special case conversion of "no-NO-NY" to "nn-NO".
+     */
+    private String makeLanguageTag() {
+        // We only need to revalidate the language, country and variant because
+        // the rest of the fields can only be set via the builder which validates
+        // them anyway.
+        String language = "";
+        String region = "";
+        String variant = "";
+        String illFormedVariantSubtags = "";
+
+        if (hasValidatedFields) {
+            language = languageCode;
+            region = countryCode;
+            // Note that we are required to normalize hyphens to underscores
+            // in the builder, but we must use hyphens in the BCP-47 language tag.
+            variant = variantCode.replace('_', '-');
+        } else {
+            language = Builder.normalizeAndValidateLanguage(languageCode, false /* strict */);
+            region = Builder.normalizeAndValidateRegion(countryCode, false /* strict */);
+
+            try {
+                variant = Builder.normalizeAndValidateVariant(variantCode);
+            } catch (IllformedLocaleException ilfe) {
+                // If our variant is ill formed, we must attempt to split it into
+                // its constituent subtags and preserve the well formed bits and
+                // move the rest to the private use extension (if they're well
+                // formed extension subtags).
+                String split[] = splitIllformedVariant(variantCode);
+
+                variant = split[0];
+                illFormedVariantSubtags = split[1];
+            }
+        }
+
+        if (language.isEmpty()) {
+            language = UNDETERMINED_LANGUAGE;
+        }
+
+        if ("no".equals(language) && "NO".equals(region) && "NY".equals(variant)) {
+            language = "nn";
+            region = "NO";
+            variant = "";
+        }
+
+        final StringBuilder sb = new StringBuilder(16);
+        sb.append(language);
+
+        if (!scriptCode.isEmpty()) {
+            sb.append('-');
+            sb.append(scriptCode);
+        }
+
+        if (!region.isEmpty()) {
+            sb.append('-');
+            sb.append(region);
+        }
+
+        if (!variant.isEmpty()) {
+            sb.append('-');
+            sb.append(variant);
+        }
+
+        // Extensions (optional, omitted if empty). Note that we don't
+        // emit the private use extension here, but add it in the end.
+        for (Map.Entry<Character, String> extension : extensions.entrySet()) {
+            if (!extension.getKey().equals('x')) {
+                sb.append('-').append(extension.getKey());
+                sb.append('-').append(extension.getValue());
+            }
+        }
+
+        // The private use extension comes right at the very end.
+        final String privateUse = extensions.get('x');
+        if (privateUse != null) {
+            sb.append("-x-");
+            sb.append(privateUse);
+        }
+
+        // If we have any ill-formed variant subtags, we append them to the
+        // private use extension (or add a private use extension if one doesn't
+        // exist).
+        if (!illFormedVariantSubtags.isEmpty()) {
+            if (privateUse == null) {
+                sb.append("-x-lvariant-");
+            } else {
+                sb.append('-');
+            }
+            sb.append(illFormedVariantSubtags);
+        }
+
+        return sb.toString();
+    }
+
+    /**
+     * Splits ill formed variants into a set of valid variant subtags (which
+     * can be used directly in language tag construction) and a set of invalid
+     * variant subtags (which can be appended to the private use extension),
+     * provided that each subtag is a valid private use extension subtag.
+     *
+     * This method returns a two element String array. The first element is a string
+     * containing the concatenation of valid variant subtags which can be appended
+     * to a BCP-47 tag directly and the second containing the concatenation of
+     * invalid variant subtags which can be appended to the private use extension
+     * directly.
+     *
+     * This method assumes that {@code variant} contains at least one ill formed
+     * variant subtag.
+     */
+    private static String[] splitIllformedVariant(String variant) {
+        final String normalizedVariant = variant.replace('_', '-');
+        final String[] subTags = normalizedVariant.split("-");
+
+        final String[] split = new String[] { "", "" };
+
+        // First go through the list of variant subtags and check if they're
+        // valid private use extension subtags. If they're not, we will omit
+        // the first such subtag and all subtags after.
+        //
+        // NOTE: |firstInvalidSubtag| is the index of the first variant
+        // subtag we decide to omit altogether, whereas |firstIllformedSubtag| is the
+        // index of the first subtag we decide to append to the private use extension.
+        //
+        // In other words:
+        // [0, firstIllformedSubtag) => expressed as variant subtags.
+        // [firstIllformedSubtag, firstInvalidSubtag) => expressed as private use
+        // extension subtags.
+        // [firstInvalidSubtag, subTags.length) => omitted.
+        int firstInvalidSubtag = subTags.length;
+        for (int i = 0; i < subTags.length; ++i) {
+            if (!isValidBcp47Alphanum(subTags[i], 1, 8)) {
+                firstInvalidSubtag = i;
+                break;
+            }
+        }
+
+        if (firstInvalidSubtag == 0) {
+            return split;
+        }
+
+        // We now consider each subtag that could potentially be appended to
+        // the private use extension and check if it's valid.
+        int firstIllformedSubtag = firstInvalidSubtag;
+        for (int i = 0; i < firstInvalidSubtag; ++i) {
+            final String subTag = subTags[i];
+            // The BCP-47 spec states that :
+            // - Subtags can be between [5, 8] alphanumeric chars in length.
+            // - Subtags that start with a number are allowed to be 4 chars in length.
+            if (subTag.length() >= 5 && subTag.length() <= 8) {
+                if (!isAsciiAlphaNum(subTag)) {
+                    firstIllformedSubtag = i;
+                }
+            } else if (subTag.length() == 4) {
+                final char firstChar = subTag.charAt(0);
+                if (!(firstChar >= '0' && firstChar <= '9') || !isAsciiAlphaNum(subTag)) {
+                    firstIllformedSubtag = i;
+                }
+            } else {
+                firstIllformedSubtag = i;
+            }
+        }
+
+        split[0] = concatenateRange(subTags, 0, firstIllformedSubtag);
+        split[1] = concatenateRange(subTags, firstIllformedSubtag, firstInvalidSubtag);
+
+        return split;
+    }
+
+    /**
+     * Builds a string by concatenating array elements within the range [start, end).
+     * The supplied range is assumed to be valid and no checks are performed.
+     */
+    private static String concatenateRange(String[] array, int start, int end) {
+        StringBuilder builder = new StringBuilder(32);
+        for (int i = start; i < end; ++i) {
+            if (i != start) {
+                builder.append('-');
+            }
+            builder.append(array[i]);
+        }
+
+        return builder.toString();
     }
 
     /**
@@ -1253,7 +1524,6 @@ public final class Locale implements Cloneable, Serializable {
      * See <a href="https://tools.ietf.org/html/bcp47#section-2.1">
      *     the IETF BCP-47 specification</a> (Section 2.2.6) for details.
      *
-     * @hide
      * @since 1.7
      */
     public Set<Character> getExtensionKeys() {
@@ -1268,7 +1538,6 @@ public final class Locale implements Cloneable, Serializable {
      * locale extension can be fetched using {@link #getUnicodeLocaleAttributes()},
      * {@link #getUnicodeLocaleKeys()}  and {@link #getUnicodeLocaleType}.
      *
-     * @hide
      * @since 1.7
      */
     public String getExtension(char extensionKey) {
@@ -1281,7 +1550,6 @@ public final class Locale implements Cloneable, Serializable {
      * For more information about types and keywords, see {@link Builder#setUnicodeLocaleKeyword}
      * and <a href="http://www.unicode.org/reports/tr35/#BCP47">Unicode Technical Standard #35</a>
      *
-     * @hide
      * @since 1.7
      */
     public String getUnicodeLocaleType(String keyWord) {
@@ -1294,7 +1562,6 @@ public final class Locale implements Cloneable, Serializable {
      * For more information about attributes, see {@link Builder#addUnicodeLocaleAttribute}
      * and <a href="http://www.unicode.org/reports/tr35/#BCP47">Unicode Technical Standard #35</a>
      *
-     * @hide
      * @since 1.7
      */
     public Set<String> getUnicodeLocaleAttributes() {
@@ -1307,7 +1574,6 @@ public final class Locale implements Cloneable, Serializable {
      * For more information about types and keywords, see {@link Builder#setUnicodeLocaleKeyword}
      * and <a href="http://www.unicode.org/reports/tr35/#BCP47">Unicode Technical Standard #35</a>
      *
-     * @hide
      * @since 1.7
      */
     public Set<String> getUnicodeLocaleKeys() {
@@ -1333,7 +1599,9 @@ public final class Locale implements Cloneable, Serializable {
         if (locale == null) {
             throw new NullPointerException("locale == null");
         }
+        String languageTag = locale.toLanguageTag();
         defaultLocale = locale;
+        ICU.setDefaultLocale(languageTag);
     }
 
     /**
@@ -1351,18 +1619,10 @@ public final class Locale implements Cloneable, Serializable {
     public final String toString() {
         String result = cachedToStringResult;
         if (result == null) {
-            result = cachedToStringResult = toNewString(languageCode, countryCode,
-                    variantCode, scriptCode, extensions);
+            result = cachedToStringResult = toNewString(languageCode, countryCode, variantCode,
+                                                        scriptCode, extensions);
         }
         return result;
-    }
-
-    private String getIcuLocaleId() {
-        if (cachedIcuLocaleId == null) {
-            cachedIcuLocaleId = ICU.localeIdFromLocale(this);
-        }
-
-        return cachedIcuLocaleId;
     }
 
     private static String toNewString(String languageCode, String countryCode,
@@ -1379,8 +1639,7 @@ public final class Locale implements Cloneable, Serializable {
         StringBuilder result = new StringBuilder(11);
         result.append(languageCode);
 
-        final boolean hasScriptOrExtensions = !scriptCode.isEmpty() ||
-                !extensions.isEmpty();
+        final boolean hasScriptOrExtensions = !scriptCode.isEmpty() || !extensions.isEmpty();
 
         if (!countryCode.isEmpty() || !variantCode.isEmpty() || hasScriptOrExtensions) {
             result.append('_');
@@ -1586,8 +1845,7 @@ public final class Locale implements Cloneable, Serializable {
         return true;
     }
 
-    private static boolean isValidBcp47Alpha(String string,
-            int lowerBound, int upperBound) {
+    private static boolean isValidBcp47Alpha(String string, int lowerBound, int upperBound) {
         final int length = string.length();
         if (length < lowerBound || length > upperBound) {
             return false;
@@ -1671,8 +1929,10 @@ public final class Locale implements Cloneable, Serializable {
             while (true) {
                 final Map.Entry<String, String> keyWord = keywordsIterator.next();
                 sb.append(keyWord.getKey());
-                sb.append('-');
-                sb.append(keyWord.getValue());
+                if (!keyWord.getValue().isEmpty()) {
+                    sb.append('-');
+                    sb.append(keyWord.getValue());
+                }
                 if (keywordsIterator.hasNext()) {
                     sb.append('-');
                 } else {
@@ -1719,6 +1979,8 @@ public final class Locale implements Cloneable, Serializable {
 
         if (subtagsForKeyword.size() > 0) {
             keywords.put(lastKeyword, joinBcp47Subtags(subtagsForKeyword));
+        } else if (lastKeyword != null) {
+            keywords.put(lastKeyword, "");
         }
     }
 
@@ -1740,7 +2002,10 @@ public final class Locale implements Cloneable, Serializable {
         return sb.toString();
     }
 
-    private static String adjustLanguageCode(String languageCode) {
+    /**
+     * @hide for internal use only.
+     */
+    public static String adjustLanguageCode(String languageCode) {
         String adjusted = languageCode.toLowerCase(Locale.US);
         // Map new language codes to the obsolete language
         // codes so the correct resource bundles will be used.
@@ -1753,5 +2018,231 @@ public final class Locale implements Cloneable, Serializable {
         }
 
         return adjusted;
+    }
+
+    /**
+     * Map of grandfathered language tags to their modern replacements.
+     */
+    private static final TreeMap<String, String> GRANDFATHERED_LOCALES;
+
+    static {
+        GRANDFATHERED_LOCALES = new TreeMap<String, String>(String.CASE_INSENSITIVE_ORDER);
+
+        // From http://tools.ietf.org/html/bcp47
+        //
+        // grandfathered = irregular           ; non-redundant tags registered
+        //               / regular             ; during the RFC 3066 era
+        //  irregular =
+        GRANDFATHERED_LOCALES.put("en-GB-oed", "en-GB-x-oed");
+        GRANDFATHERED_LOCALES.put("i-ami", "ami");
+        GRANDFATHERED_LOCALES.put("i-bnn", "bnn");
+        GRANDFATHERED_LOCALES.put("i-default", "en-x-i-default");
+        GRANDFATHERED_LOCALES.put("i-enochian", "und-x-i-enochian");
+        GRANDFATHERED_LOCALES.put("i-hak", "hak");
+        GRANDFATHERED_LOCALES.put("i-klingon", "tlh");
+        GRANDFATHERED_LOCALES.put("i-lux", "lb");
+        GRANDFATHERED_LOCALES.put("i-mingo", "see-x-i-mingo");
+        GRANDFATHERED_LOCALES.put("i-navajo", "nv");
+        GRANDFATHERED_LOCALES.put("i-pwn", "pwn");
+        GRANDFATHERED_LOCALES.put("i-tao", "tao");
+        GRANDFATHERED_LOCALES.put("i-tay", "tay");
+        GRANDFATHERED_LOCALES.put("i-tsu", "tsu");
+        GRANDFATHERED_LOCALES.put("sgn-BE-FR", "sfb");
+        GRANDFATHERED_LOCALES.put("sgn-BE-NL", "vgt");
+        GRANDFATHERED_LOCALES.put("sgn-CH-DE", "sgg");
+
+        // regular =
+        GRANDFATHERED_LOCALES.put("art-lojban", "jbo");
+        GRANDFATHERED_LOCALES.put("cel-gaulish", "xtg-x-cel-gaulish");
+        GRANDFATHERED_LOCALES.put("no-bok", "nb");
+        GRANDFATHERED_LOCALES.put("no-nyn", "nn");
+        GRANDFATHERED_LOCALES.put("zh-guoyu", "cmn");
+        GRANDFATHERED_LOCALES.put("zh-hakka", "hak");
+        GRANDFATHERED_LOCALES.put("zh-min", "nan-x-zh-min");
+        GRANDFATHERED_LOCALES.put("zh-min-nan", "nan");
+        GRANDFATHERED_LOCALES.put("zh-xiang", "hsn");
+    }
+
+    private static String convertGrandfatheredTag(String original) {
+        final String converted = GRANDFATHERED_LOCALES.get(original);
+        return converted != null ? converted : original;
+    }
+
+    /**
+     * Scans elements of {@code subtags} in the range {@code [startIndex, endIndex)}
+     * and appends valid variant subtags upto the first invalid subtag  (if any) to
+     * {@code normalizedVariants}.
+     */
+    private static void extractVariantSubtags(String[] subtags, int startIndex, int endIndex,
+            List<String> normalizedVariants) {
+        for (int i = startIndex; i < endIndex; i++) {
+            final String subtag = subtags[i];
+
+            if (Builder.isValidVariantSubtag(subtag)) {
+                normalizedVariants.add(subtag);
+            } else {
+                break;
+            }
+        }
+    }
+
+    /**
+     * Scans elements of {@code subtags} in the range {@code [startIndex, endIndex)}
+     * and inserts valid extensions into {@code extensions}. The scan is aborted
+     * when an invalid extension is encountered. Returns the index of the first
+     * unparsable element of {@code subtags}.
+     */
+    private static int extractExtensions(String[] subtags, int startIndex, int endIndex,
+            Map<Character, String> extensions) {
+        int privateUseExtensionIndex = -1;
+        int extensionKeyIndex = -1;
+
+        int i = startIndex;
+        for (; i < endIndex; i++) {
+            final String subtag = subtags[i];
+
+            final boolean parsingPrivateUse = (privateUseExtensionIndex != -1) &&
+                    (extensionKeyIndex == privateUseExtensionIndex);
+
+            // Note that private use extensions allow subtags of length 1.
+            // Private use extensions *must* come last, so there's no ambiguity
+            // in that case.
+            if (subtag.length() == 1 && !parsingPrivateUse) {
+                // Emit the last extension we encountered if any. First check
+                // whether we encountered two keys in a row (which is an error).
+                // Also checks if we already have an extension with the same key,
+                // which is again an error.
+                if (extensionKeyIndex != -1) {
+                    if ((i - 1) == extensionKeyIndex) {
+                        return extensionKeyIndex;
+                    }
+
+                    final String key = subtags[extensionKeyIndex];
+                    if (extensions.containsKey(key.charAt(0))) {
+                        return extensionKeyIndex;
+                    }
+
+                    final String value = concatenateRange(subtags, extensionKeyIndex + 1, i);
+                    extensions.put(key.charAt(0), value.toLowerCase(Locale.ROOT));
+                }
+
+                // Mark the start of the next extension. Also keep track of whether this
+                // is a private use extension, and throw an error if it doesn't come last.
+                extensionKeyIndex = i;
+                if ("x".equals(subtag)) {
+                    privateUseExtensionIndex = i;
+                } else if (privateUseExtensionIndex != -1) {
+                    // The private use extension must come last.
+                    return privateUseExtensionIndex;
+                }
+            } else if (extensionKeyIndex != -1) {
+                // We must have encountered a valid key in order to start parsing
+                // its subtags.
+                if (!isValidBcp47Alphanum(subtag, parsingPrivateUse ? 1 : 2, 8)) {
+                    return i;
+                }
+            } else {
+                // Encountered a value without a preceding key.
+                return i;
+            }
+        }
+
+        if (extensionKeyIndex != -1) {
+            if ((i - 1) == extensionKeyIndex) {
+                return extensionKeyIndex;
+            }
+
+            final String key = subtags[extensionKeyIndex];
+            if (extensions.containsKey(key.charAt(0))) {
+                return extensionKeyIndex;
+            }
+
+            final String value = concatenateRange(subtags, extensionKeyIndex + 1, i);
+            extensions.put(key.charAt(0), value.toLowerCase(Locale.ROOT));
+        }
+
+        return i;
+    }
+
+    private static Locale forLanguageTag(/* @Nonnull */ String tag, boolean strict) {
+        final String converted = convertGrandfatheredTag(tag);
+        final String[] subtags = converted.split("-");
+
+        int lastSubtag = subtags.length;
+        for (int i = 0; i < subtags.length; ++i) {
+            final String subtag = subtags[i];
+            if (subtag.isEmpty() || subtag.length() > 8) {
+                if (strict) {
+                    throw new IllformedLocaleException("Invalid subtag at index: " + i
+                            + " in tag: " + tag);
+                } else {
+                    lastSubtag = (i - 1);
+                }
+
+                break;
+            }
+        }
+
+        final String languageCode = Builder.normalizeAndValidateLanguage(subtags[0], strict);
+        String scriptCode = "";
+        int nextSubtag = 1;
+        if (lastSubtag > nextSubtag) {
+            scriptCode = Builder.normalizeAndValidateScript(subtags[nextSubtag], false /* strict */);
+            if (!scriptCode.isEmpty()) {
+                nextSubtag++;
+            }
+        }
+
+        String regionCode = "";
+        if (lastSubtag > nextSubtag) {
+            regionCode = Builder.normalizeAndValidateRegion(subtags[nextSubtag], false /* strict */);
+            if (!regionCode.isEmpty()) {
+                nextSubtag++;
+            }
+        }
+
+        List<String> variants = null;
+        if (lastSubtag > nextSubtag) {
+            variants = new ArrayList<String>();
+            extractVariantSubtags(subtags, nextSubtag, lastSubtag, variants);
+            nextSubtag += variants.size();
+        }
+
+        Map<Character, String> extensions = Collections.EMPTY_MAP;
+        if (lastSubtag > nextSubtag) {
+            extensions = new TreeMap<Character, String>();
+            nextSubtag = extractExtensions(subtags, nextSubtag, lastSubtag, extensions);
+        }
+
+        if (nextSubtag != lastSubtag) {
+            if (strict) {
+                throw new IllformedLocaleException("Unparseable subtag: " + subtags[nextSubtag]
+                        + " from language tag: " + tag);
+            }
+        }
+
+        Set<String> unicodeKeywords = Collections.EMPTY_SET;
+        Map<String, String> unicodeAttributes = Collections.EMPTY_MAP;
+        if (extensions.containsKey(UNICODE_LOCALE_EXTENSION)) {
+            unicodeKeywords = new TreeSet<String>();
+            unicodeAttributes = new TreeMap<String, String>();
+            parseUnicodeExtension(extensions.get(UNICODE_LOCALE_EXTENSION).split("-"),
+                    unicodeAttributes, unicodeKeywords);
+        }
+
+        String variantCode = "";
+        if (variants != null && !variants.isEmpty()) {
+            StringBuilder variantsBuilder = new StringBuilder(variants.size() * 8);
+            for (int i = 0; i < variants.size(); ++i) {
+                if (i != 0) {
+                    variantsBuilder.append('_');
+                }
+                variantsBuilder.append(variants.get(i));
+            }
+            variantCode = variantsBuilder.toString();
+        }
+
+        return new Locale(languageCode, regionCode, variantCode, scriptCode,
+                unicodeKeywords, unicodeAttributes, extensions, true /* has validated fields */);
     }
 }

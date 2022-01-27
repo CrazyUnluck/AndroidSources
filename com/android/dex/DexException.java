@@ -22,7 +22,7 @@ import com.android.dex.util.ExceptionWithContext;
  * Thrown when there's a format problem reading, writing, or generally
  * processing a dex file.
  */
-public final class DexException extends ExceptionWithContext {
+public class DexException extends ExceptionWithContext {
     public DexException(String message) {
         super(message);
     }

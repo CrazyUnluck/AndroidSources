@@ -68,13 +68,6 @@ class VMClassLoader {
         return list;
     }
 
-    /**
-     * Load class with bootstrap class loader.
-     */
-    native static Class loadClass(String name, boolean resolve) throws ClassNotFoundException;
-
-    native static Class getPrimitiveClass(char type);
-
     native static Class findLoadedClass(ClassLoader cl, String name);
 
     /**

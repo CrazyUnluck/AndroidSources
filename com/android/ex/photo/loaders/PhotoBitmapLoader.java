@@ -24,7 +24,7 @@ import android.net.Uri;
 import android.support.v4.content.AsyncTaskLoader;
 import android.util.DisplayMetrics;
 
-import com.android.ex.photo.fragments.PhotoViewFragment;
+import com.android.ex.photo.PhotoViewController;
 import com.android.ex.photo.loaders.PhotoBitmapLoaderInterface.BitmapResult;
 import com.android.ex.photo.util.ImageUtils;
 
@@ -54,7 +54,7 @@ public class PhotoBitmapLoader extends AsyncTaskLoader<BitmapResult>
             final ContentResolver resolver = context.getContentResolver();
             try {
                 result = ImageUtils.createLocalBitmap(resolver, Uri.parse(mPhotoUri),
-                        PhotoViewFragment.sPhotoSize);
+                        PhotoViewController.sMaxPhotoSize);
                 if (result.bitmap != null) {
                     result.bitmap.setDensity(DisplayMetrics.DENSITY_MEDIUM);
                 }

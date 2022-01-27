@@ -38,6 +38,7 @@ import android.os.Handler;
 import android.os.Looper;
 import android.os.Message;
 import android.os.PowerManager;
+import android.os.Process;
 import android.os.RemoteException;
 import android.os.SystemClock;
 import android.os.UserHandle;
@@ -83,7 +84,6 @@ final class Notifier {
     private final IBatteryStats mBatteryStats;
     private final IAppOpsService mAppOps;
     private final SuspendBlocker mSuspendBlocker;
-    private final ScreenOnBlocker mScreenOnBlocker;
     private final WindowManagerPolicy mPolicy;
     private final ActivityManagerInternal mActivityManagerInternal;
     private final InputManagerInternal mInputManagerInternal;
@@ -109,17 +109,13 @@ final class Notifier {
     // True if a user activity message should be sent.
     private boolean mUserActivityPending;
 
-    // True if the screen on blocker has been acquired.
-    private boolean mScreenOnBlockerAcquired;
-
     public Notifier(Looper looper, Context context, IBatteryStats batteryStats,
-            IAppOpsService appOps, SuspendBlocker suspendBlocker, ScreenOnBlocker screenOnBlocker,
+            IAppOpsService appOps, SuspendBlocker suspendBlocker,
             WindowManagerPolicy policy) {
         mContext = context;
         mBatteryStats = batteryStats;
         mAppOps = appOps;
         mSuspendBlocker = suspendBlocker;
-        mScreenOnBlocker = screenOnBlocker;
         mPolicy = policy;
         mActivityManagerInternal = LocalServices.getService(ActivityManagerInternal.class);
         mInputManagerInternal = LocalServices.getService(InputManagerInternal.class);
@@ -142,7 +138,7 @@ final class Notifier {
      * Called when a wake lock is acquired.
      */
     public void onWakeLockAcquired(int flags, String tag, String packageName,
-            int ownerUid, int ownerPid, WorkSource workSource) {
+            int ownerUid, int ownerPid, WorkSource workSource, String historyTag) {
         if (DEBUG) {
             Slog.d(TAG, "onWakeLockAcquired: flags=" + flags + ", tag=\"" + tag
                     + "\", packageName=" + packageName
@@ -152,10 +148,14 @@ final class Notifier {
 
         try {
             final int monitorType = getBatteryStatsWakeLockMonitorType(flags);
+            boolean unimportantForLogging = (flags&PowerManager.UNIMPORTANT_FOR_LOGGING) != 0
+                    && ownerUid == Process.SYSTEM_UID;
             if (workSource != null) {
-                mBatteryStats.noteStartWakelockFromSource(workSource, ownerPid, tag, monitorType);
+                mBatteryStats.noteStartWakelockFromSource(workSource, ownerPid, tag, historyTag,
+                        monitorType, unimportantForLogging);
             } else {
-                mBatteryStats.noteStartWakelock(ownerUid, ownerPid, tag, monitorType);
+                mBatteryStats.noteStartWakelock(ownerUid, ownerPid, tag, historyTag,
+                        monitorType, unimportantForLogging);
                 // XXX need to deal with disabled operations.
                 mAppOps.startOperation(AppOpsManager.getToken(mAppOps),
                         AppOpsManager.OP_WAKE_LOCK, ownerUid, packageName);
@@ -166,10 +166,43 @@ final class Notifier {
     }
 
     /**
+     * Called when a wake lock is changing.
+     */
+    public void onWakeLockChanging(int flags, String tag, String packageName,
+            int ownerUid, int ownerPid, WorkSource workSource, String historyTag,
+            int newFlags, String newTag, String newPackageName, int newOwnerUid,
+            int newOwnerPid, WorkSource newWorkSource, String newHistoryTag) {
+
+        if (workSource != null && newWorkSource != null) {
+            final int monitorType = getBatteryStatsWakeLockMonitorType(flags);
+            final int newMonitorType = getBatteryStatsWakeLockMonitorType(newFlags);
+            boolean unimportantForLogging = (newFlags&PowerManager.UNIMPORTANT_FOR_LOGGING) != 0
+                    && newOwnerUid == Process.SYSTEM_UID;
+            if (DEBUG) {
+                Slog.d(TAG, "onWakeLockChanging: flags=" + newFlags + ", tag=\"" + newTag
+                        + "\", packageName=" + newPackageName
+                        + ", ownerUid=" + newOwnerUid + ", ownerPid=" + newOwnerPid
+                        + ", workSource=" + newWorkSource);
+            }
+            try {
+                mBatteryStats.noteChangeWakelockFromSource(workSource, ownerPid, tag, historyTag,
+                        monitorType, newWorkSource, newOwnerPid, newTag, newHistoryTag,
+                        newMonitorType, unimportantForLogging);
+            } catch (RemoteException ex) {
+                // Ignore
+            }
+        } else {
+            onWakeLockReleased(flags, tag, packageName, ownerUid, ownerPid, workSource, historyTag);
+            onWakeLockAcquired(newFlags, newTag, newPackageName, newOwnerUid, newOwnerPid,
+                    newWorkSource, newHistoryTag);
+        }
+    }
+
+    /**
      * Called when a wake lock is released.
      */
     public void onWakeLockReleased(int flags, String tag, String packageName,
-            int ownerUid, int ownerPid, WorkSource workSource) {
+            int ownerUid, int ownerPid, WorkSource workSource, String historyTag) {
         if (DEBUG) {
             Slog.d(TAG, "onWakeLockReleased: flags=" + flags + ", tag=\"" + tag
                     + "\", packageName=" + packageName
@@ -180,9 +213,10 @@ final class Notifier {
         try {
             final int monitorType = getBatteryStatsWakeLockMonitorType(flags);
             if (workSource != null) {
-                mBatteryStats.noteStopWakelockFromSource(workSource, ownerPid, tag, monitorType);
+                mBatteryStats.noteStopWakelockFromSource(workSource, ownerPid, tag, historyTag,
+                        monitorType);
             } else {
-                mBatteryStats.noteStopWakelock(ownerUid, ownerPid, tag, monitorType);
+                mBatteryStats.noteStopWakelock(ownerUid, ownerPid, tag, historyTag, monitorType);
                 mAppOps.finishOperation(AppOpsManager.getToken(mAppOps),
                         AppOpsManager.OP_WAKE_LOCK, ownerUid, packageName);
             }
@@ -204,7 +238,7 @@ final class Notifier {
     /**
      * Notifies that the device is changing interactive state.
      */
-    public void onInteractiveStateChangeStarted(boolean interactive, int reason) {
+    public void onInteractiveStateChangeStarted(boolean interactive, final int reason) {
         if (DEBUG) {
             Slog.d(TAG, "onInteractiveChangeStarted: interactive=" + interactive
                     + ", reason=" + reason);
@@ -216,10 +250,14 @@ final class Notifier {
                 if (mActualPowerState != POWER_STATE_AWAKE) {
                     mActualPowerState = POWER_STATE_AWAKE;
                     mPendingWakeUpBroadcast = true;
-                    if (!mScreenOnBlockerAcquired) {
-                        mScreenOnBlockerAcquired = true;
-                        mScreenOnBlocker.acquire();
-                    }
+                    mHandler.post(new Runnable() {
+                        @Override
+                        public void run() {
+                            EventLog.writeEvent(EventLogTags.POWER_SCREEN_STATE, 1, 0, 0, 0);
+                            mPolicy.wakingUp();
+                            mActivityManagerInternal.wakingUp();
+                        }
+                    });
                     updatePendingBroadcastLocked();
                 }
             } else {
@@ -259,6 +297,23 @@ final class Notifier {
                         mUserActivityPending = false;
                         mHandler.removeMessages(MSG_USER_ACTIVITY);
                     }
+                    mHandler.post(new Runnable() {
+                        @Override
+                        public void run() {
+                            int why = WindowManagerPolicy.OFF_BECAUSE_OF_USER;
+                            switch (mLastGoToSleepReason) {
+                                case PowerManager.GO_TO_SLEEP_REASON_DEVICE_ADMIN:
+                                    why = WindowManagerPolicy.OFF_BECAUSE_OF_ADMIN;
+                                    break;
+                                case PowerManager.GO_TO_SLEEP_REASON_TIMEOUT:
+                                    why = WindowManagerPolicy.OFF_BECAUSE_OF_TIMEOUT;
+                                    break;
+                            }
+                            EventLog.writeEvent(EventLogTags.POWER_SCREEN_STATE, 0, why, 0, 0);
+                            mPolicy.goingToSleep(why);
+                            mActivityManagerInternal.goingToSleep();
+                        }
+                    });
                     updatePendingBroadcastLocked();
                 }
             }
@@ -340,7 +395,6 @@ final class Notifier {
 
     private void sendNextBroadcast() {
         final int powerState;
-        final int goToSleepReason;
         synchronized (mLock) {
             if (mBroadcastedPowerState == POWER_STATE_UNKNOWN) {
                 // Broadcasted power state is unknown.  Send wake up.
@@ -370,7 +424,6 @@ final class Notifier {
 
             mBroadcastStartTime = SystemClock.uptimeMillis();
             powerState = mBroadcastedPowerState;
-            goToSleepReason = mLastGoToSleepReason;
         }
 
         EventLog.writeEvent(EventLogTags.POWER_SCREEN_BROADCAST_SEND, 1);
@@ -378,7 +431,7 @@ final class Notifier {
         if (powerState == POWER_STATE_AWAKE) {
             sendWakeUpBroadcast();
         } else {
-            sendGoToSleepBroadcast(goToSleepReason);
+            sendGoToSleepBroadcast();
         }
     }
 
@@ -386,11 +439,6 @@ final class Notifier {
         if (DEBUG) {
             Slog.d(TAG, "Sending wake up broadcast.");
         }
-
-        EventLog.writeEvent(EventLogTags.POWER_SCREEN_STATE, 1, 0, 0, 0);
-
-        mPolicy.wakingUp(mScreenOnListener);
-        mActivityManagerInternal.wakingUp();
 
         if (ActivityManagerNative.isSystemReady()) {
             mContext.sendOrderedBroadcastAsUser(mScreenOnIntent, UserHandle.ALL, null,
@@ -401,19 +449,6 @@ final class Notifier {
         }
     }
 
-    private final WindowManagerPolicy.ScreenOnListener mScreenOnListener =
-            new WindowManagerPolicy.ScreenOnListener() {
-        @Override
-        public void onScreenOn() {
-            synchronized (mLock) {
-                if (mScreenOnBlockerAcquired && !mPendingWakeUpBroadcast) {
-                    mScreenOnBlockerAcquired = false;
-                    mScreenOnBlocker.release();
-                }
-            }
-        }
-    };
-
     private final BroadcastReceiver mWakeUpBroadcastDone = new BroadcastReceiver() {
         @Override
         public void onReceive(Context context, Intent intent) {
@@ -423,25 +458,10 @@ final class Notifier {
         }
     };
 
-    private void sendGoToSleepBroadcast(int reason) {
+    private void sendGoToSleepBroadcast() {
         if (DEBUG) {
             Slog.d(TAG, "Sending go to sleep broadcast.");
         }
-
-        int why = WindowManagerPolicy.OFF_BECAUSE_OF_USER;
-        switch (reason) {
-            case PowerManager.GO_TO_SLEEP_REASON_DEVICE_ADMIN:
-                why = WindowManagerPolicy.OFF_BECAUSE_OF_ADMIN;
-                break;
-            case PowerManager.GO_TO_SLEEP_REASON_TIMEOUT:
-                why = WindowManagerPolicy.OFF_BECAUSE_OF_TIMEOUT;
-                break;
-        }
-
-        EventLog.writeEvent(EventLogTags.POWER_SCREEN_STATE, 0, why, 0, 0);
-
-        mPolicy.goingToSleep(why);
-        mActivityManagerInternal.goingToSleep();
 
         if (ActivityManagerNative.isSystemReady()) {
             mContext.sendOrderedBroadcastAsUser(mScreenOffIntent, UserHandle.ALL, null,

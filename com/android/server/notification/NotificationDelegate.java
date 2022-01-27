@@ -18,10 +18,16 @@ package com.android.server.notification;
 
 public interface NotificationDelegate {
     void onSetDisabled(int status);
-    void onClearAll();
-    void onNotificationClick(String pkg, String tag, int id);
-    void onNotificationClear(String pkg, String tag, int id);
-    void onNotificationError(String pkg, String tag, int id,
-            int uid, int initialPid, String message);
+    void onClearAll(int callingUid, int callingPid, int userId);
+    void onNotificationClick(int callingUid, int callingPid, String key);
+    void onNotificationClear(int callingUid, int callingPid,
+            String pkg, String tag, int id, int userId);
+    void onNotificationError(int callingUid, int callingPid,
+            String pkg, String tag, int id,
+            int uid, int initialPid, String message, int userId);
     void onPanelRevealed();
+    void onPanelHidden();
+    void onNotificationVisibilityChanged(
+            String[] newlyVisibleKeys, String[] noLongerVisibleKeys);
+    void onNotificationExpansionChanged(String key, boolean userAction, boolean expanded);
 }

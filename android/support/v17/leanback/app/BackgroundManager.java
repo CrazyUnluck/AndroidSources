@@ -13,27 +13,34 @@
  */
 package android.support.v17.leanback.app;
 
+import java.lang.ref.WeakReference;
+
 import android.support.v17.leanback.R;
-import android.animation.ObjectAnimator;
+import android.animation.Animator;
+import android.animation.ValueAnimator;
 import android.app.Activity;
 import android.content.Context;
+import android.content.res.Resources;
 import android.content.res.TypedArray;
 import android.graphics.Bitmap;
+import android.graphics.Canvas;
 import android.graphics.Color;
+import android.graphics.ColorFilter;
 import android.graphics.Matrix;
-import android.graphics.drawable.BitmapDrawable;
+import android.graphics.Paint;
 import android.graphics.drawable.ColorDrawable;
 import android.graphics.drawable.Drawable;
 import android.graphics.drawable.LayerDrawable;
 import android.os.Handler;
 import android.util.Log;
-import android.view.Gravity;
 import android.view.LayoutInflater;
 import android.view.View;
 import android.view.ViewGroup;
 import android.view.Window;
 import android.view.WindowManager;
+import android.view.animation.Interpolator;
 import android.view.animation.LinearInterpolator;
+import android.support.v4.content.ContextCompat;
 
 /**
  * Supports background image continuity between multiple Activities.
@@ -75,8 +82,7 @@ public final class BackgroundManager {
     private static final int FULL_ALPHA = 255;
     private static final int DIM_ALPHA_ON_SOLID = (int) (0.8f * FULL_ALPHA);
     private static final int CHANGE_BG_DELAY_MS = 500;
-    private static final int FADE_DURATION_QUICK = 200;
-    private static final int FADE_DURATION_SLOW = 1000;
+    private static final int FADE_DURATION = 500;
 
     /**
      * Using a separate window for backgrounds can improve graphics performance by
@@ -84,15 +90,6 @@ public final class BackgroundManager {
      * TODO: support a leanback configuration option.
      */
     private static final boolean USE_SEPARATE_WINDOW = false;
-
-    /**
-     * If true, bitmaps will be scaled to the exact display size.
-     * Small bitmaps will be scaled up, using more memory but improving display quality.
-     * Large bitmaps will be scaled down to use less memory.
-     * Introduces an allocation overhead.
-     * TODO: support a leanback configuration option.
-     */
-    private static final boolean SCALE_BITMAPS_TO_FIT = true;
 
     private static final String WINDOW_NAME = "BackgroundManager";
     private static final String FRAGMENT_TAG = BackgroundManager.class.getCanonicalName();
@@ -111,11 +108,87 @@ public final class BackgroundManager {
     private int mBackgroundColor;
     private boolean mAttached;
 
-    private class DrawableWrapper {
+    private static class BitmapDrawable extends Drawable {
+
+        static class ConstantState extends Drawable.ConstantState {
+            Bitmap mBitmap;
+            Matrix mMatrix;
+            Paint mPaint;
+
+            @Override
+            public Drawable newDrawable() {
+                return new BitmapDrawable(null, mBitmap, mMatrix);
+            }
+
+            @Override
+            public int getChangingConfigurations() {
+                return 0;
+            }
+        }
+
+        private ConstantState mState = new ConstantState();
+
+        BitmapDrawable(Resources resources, Bitmap bitmap) {
+            this(resources, bitmap, null);
+        }
+
+        BitmapDrawable(Resources resources, Bitmap bitmap, Matrix matrix) {
+            mState.mBitmap = bitmap;
+            mState.mMatrix = matrix != null ? matrix : new Matrix();
+            mState.mPaint = new Paint();
+            mState.mPaint.setFilterBitmap(true);
+        }
+
+        Bitmap getBitmap() {
+            return mState.mBitmap;
+        }
+
+        @Override
+        public void draw(Canvas canvas) {
+            if (mState.mBitmap == null) {
+                return;
+            }
+            canvas.drawBitmap(mState.mBitmap, mState.mMatrix, mState.mPaint);
+        }
+
+        @Override
+        public int getOpacity() {
+            return android.graphics.PixelFormat.OPAQUE;
+        }
+
+        @Override
+        public void setAlpha(int alpha) {
+            if (mState.mPaint.getAlpha() != alpha) {
+                mState.mPaint.setAlpha(alpha);
+                invalidateSelf();
+            }
+        }
+
+        @Override
+        public void setColorFilter(ColorFilter cf) {
+            // Abstract in Drawable, not implemented
+        }
+
+        @Override
+        public ConstantState getConstantState() {
+            return mState;
+        }
+    }
+
+    private static class DrawableWrapper {
         protected int mAlpha;
         protected Drawable mDrawable;
-        protected ObjectAnimator mAnimator;
+        protected ValueAnimator mAnimator;
         protected boolean mAnimationPending;
+
+        private final Interpolator mInterpolator = new LinearInterpolator();
+        private final ValueAnimator.AnimatorUpdateListener mAnimationUpdateListener =
+                new ValueAnimator.AnimatorUpdateListener() {
+            @Override
+            public void onAnimationUpdate(ValueAnimator animation) {
+                setAlpha((Integer) animation.getAnimatedValue());
+            }
+        };
 
         public DrawableWrapper(Drawable drawable) {
             mDrawable = drawable;
@@ -145,8 +218,9 @@ public final class BackgroundManager {
             if (mAnimator != null && mAnimator.isStarted()) {
                 mAnimator.cancel();
             }
-            mAnimator = ObjectAnimator.ofInt(this, "alpha", alpha);
-            mAnimator.setInterpolator(new LinearInterpolator());
+            mAnimator = ValueAnimator.ofInt(getAlpha(), alpha);
+            mAnimator.addUpdateListener(mAnimationUpdateListener);
+            mAnimator.setInterpolator(mInterpolator);
             mAnimator.setDuration(durationMs);
             mAnimator.setStartDelay(delayMs);
             mAnimationPending = true;
@@ -158,6 +232,12 @@ public final class BackgroundManager {
             return mAnimator != null && mAnimator.isStarted();
         }
         public void startAnimation() {
+            startAnimation(null);
+        }
+        public void startAnimation(Animator.AnimatorListener listener) {
+            if (listener != null) {
+                mAnimator.addListener(listener);
+            }
             mAnimator.start();
             mAnimationPending = false;
         }
@@ -185,6 +265,10 @@ public final class BackgroundManager {
         private int mColor;
         private Drawable mDrawable;
         private int mCount;
+
+        /** Single cache of theme drawable */
+        private int mLastThemeDrawableId;
+        private WeakReference<Drawable> mLastThemeDrawable;
 
         private BackgroundContinuityService() {
             reset();
@@ -220,12 +304,24 @@ public final class BackgroundManager {
         public void setDrawable(Drawable drawable) {
             mDrawable = drawable;
         }
+        public Drawable getThemeDrawable(Context context, int themeDrawableId) {
+            Drawable drawable = null;
+            if (mLastThemeDrawable != null && mLastThemeDrawableId == themeDrawableId) {
+                drawable = mLastThemeDrawable.get();
+            }
+            if (drawable == null) {
+                drawable = ContextCompat.getDrawable(context, themeDrawableId);
+                mLastThemeDrawable = new WeakReference<Drawable>(drawable);
+                mLastThemeDrawableId = themeDrawableId;
+            }
+            return drawable.getConstantState().newDrawable(context.getResources()).mutate();
+        }
     }
 
     private Drawable getThemeDrawable() {
         Drawable drawable = null;
         if (mThemeDrawableResourceId != -1) {
-            drawable = mContext.getResources().getDrawable(mThemeDrawableResourceId);
+            drawable = mService.getThemeDrawable(mContext, mThemeDrawableResourceId);
         }
         if (drawable == null) {
             drawable = createEmptyDrawable();
@@ -254,13 +350,7 @@ public final class BackgroundManager {
         return new BackgroundManager(activity);
     }
 
-    /**
-     * Construct a BackgroundManager instance. The Initial background is set
-     * from the continuity service.
-     * @deprecated Use getInstance(Activity).
-     */
-    @Deprecated
-    public BackgroundManager(Activity activity) {
+    private BackgroundManager(Activity activity) {
         mContext = activity;
         mService = BackgroundContinuityService.getInstance();
         mHeightPx = mContext.getResources().getDisplayMetrics().heightPixels;
@@ -302,10 +392,11 @@ public final class BackgroundManager {
             return;
         }
         if (mLayerDrawable == null) {
-            if (DEBUG) Log.v(TAG, "onActivityResume: released state, syncing with service");
+            if (DEBUG) Log.v(TAG, "onActivityResume " + this +
+                    " released state, syncing with service");
             syncWithService();
         } else {
-            if (DEBUG) Log.v(TAG, "onActivityResume: updating service color "
+            if (DEBUG) Log.v(TAG, "onActivityResume " + this + " updating service color "
                     + mBackgroundColor + " drawable " + mBackgroundDrawable);
             mService.setColor(mBackgroundColor);
             mService.setDrawable(mBackgroundDrawable);
@@ -319,12 +410,9 @@ public final class BackgroundManager {
         if (DEBUG) Log.v(TAG, "syncWithService color " + Integer.toHexString(color)
                 + " drawable " + drawable);
 
-        if (drawable != null) {
-            drawable = drawable.getConstantState().newDrawable(mContext.getResources()).mutate();
-        }
-
         mBackgroundColor = color;
-        mBackgroundDrawable = drawable;
+        mBackgroundDrawable = drawable == null ? null :
+            drawable.getConstantState().newDrawable().mutate();
 
         updateImmediate();
     }
@@ -334,8 +422,8 @@ public final class BackgroundManager {
             return;
         }
 
-        mLayerDrawable = (LayerDrawable) mContext.getResources().getDrawable(
-                R.drawable.lb_background);
+        mLayerDrawable = (LayerDrawable) ContextCompat.getDrawable(mContext,
+                R.drawable.lb_background).mutate();
         mBgView.setBackground(mLayerDrawable);
 
         mLayerDrawable.setDrawableByLayerId(R.id.background_imageout, createEmptyDrawable());
@@ -394,7 +482,7 @@ public final class BackgroundManager {
      * @hide
      */
     void detach() {
-        if (DEBUG) Log.v(TAG, "detach");
+        if (DEBUG) Log.v(TAG, "detach " + this);
         release();
 
         if (mWindowManager != null && mBgView != null) {
@@ -422,7 +510,7 @@ public final class BackgroundManager {
      * inherits the current state from the continuity service.
      */
     public void release() {
-        if (DEBUG) Log.v(TAG, "release");
+        if (DEBUG) Log.v(TAG, "release " + this);
         if (mLayerDrawable != null) {
             mLayerDrawable.setDrawableByLayerId(R.id.background_imagein, createEmptyDrawable());
             mLayerDrawable.setDrawableByLayerId(R.id.background_imageout, createEmptyDrawable());
@@ -501,11 +589,19 @@ public final class BackgroundManager {
         }
 
         if (mChangeRunnable != null) {
+            if (sameDrawable(drawable, mChangeRunnable.mDrawable)) {
+                if (DEBUG) Log.v(TAG, "setting same drawable");
+                return;
+            }
             mChangeRunnable.cancel();
         }
         mChangeRunnable = new ChangeBackgroundRunnable(drawable);
 
-        mHandler.postDelayed(mChangeRunnable, CHANGE_BG_DELAY_MS);
+        if (mImageInWrapper != null && mImageInWrapper.isAnimationStarted()) {
+            if (DEBUG) Log.v(TAG, "animation in progress");
+        } else {
+            mHandler.postDelayed(mChangeRunnable, CHANGE_BG_DELAY_MS);
+        }
     }
 
     /**
@@ -531,52 +627,32 @@ public final class BackgroundManager {
             return;
         }
 
-        if (mBackgroundDrawable instanceof BitmapDrawable &&
-                ((BitmapDrawable) mBackgroundDrawable).getBitmap() == bitmap) {
-            if (DEBUG) {
-                Log.v(TAG, "same bitmap detected");
-            }
-            mService.setDrawable(mBackgroundDrawable);
-            return;
-        }
+        Matrix matrix = null;
 
-        if (SCALE_BITMAPS_TO_FIT &&
-                (bitmap.getWidth() != mWidthPx || bitmap.getHeight() != mHeightPx)) {
-            // Scale proportionately to fit width and height.
-
-            Matrix matrix = new Matrix();
-
+        if ((bitmap.getWidth() != mWidthPx || bitmap.getHeight() != mHeightPx)) {
             int dwidth = bitmap.getWidth();
             int dheight = bitmap.getHeight();
             float scale;
-            int dx;
 
-            if (DEBUG) {
-                Log.v(TAG, "original image size " + dwidth + "x" + dheight);
-            }
-
+            // Scale proportionately to fit width and height.
             if (dwidth * mHeightPx > mWidthPx * dheight) {
                 scale = (float) mHeightPx / (float) dheight;
             } else {
                 scale = (float) mWidthPx / (float) dwidth;
             }
 
-            matrix.setScale(scale, scale);
-
-            if (DEBUG) {
-                Log.v(TAG, "original image size " + bitmap.getWidth() + "x" + bitmap.getHeight());
-            }
             int subX = Math.min((int) (mWidthPx / scale), dwidth);
-            int subY = Math.min((int) (mHeightPx / scale), dheight);
-            dx = Math.max(0, (dwidth - subX) / 2);
+            int dx = Math.max(0, (dwidth - subX) / 2);
 
-            bitmap = Bitmap.createBitmap(bitmap, dx, 0, subX, subY, matrix, true);
-            if (DEBUG) {
-                Log.v(TAG, "new image size " + bitmap.getWidth() + "x" + bitmap.getHeight());
-            }
+            matrix = new Matrix();
+            matrix.setScale(scale, scale);
+            matrix.preTranslate(-dx, 0);
+
+            if (DEBUG) Log.v(TAG, "original image size " + bitmap.getWidth() + "x" + bitmap.getHeight() +
+                    " scale " + scale + " dx " + dx);
         }
 
-        BitmapDrawable bitmapDrawable = new BitmapDrawable(mContext.getResources(), bitmap);
+        BitmapDrawable bitmapDrawable = new BitmapDrawable(mContext.getResources(), bitmap, matrix);
 
         setDrawableInternal(bitmapDrawable);
     }
@@ -603,17 +679,36 @@ public final class BackgroundManager {
             mLayerDrawable.setDrawableByLayerId(R.id.background_imagein, mBackgroundDrawable);
             if (DEBUG) Log.v(TAG, "mImageInWrapper animation starting");
             mImageInWrapper.setAlpha(0);
-            mImageInWrapper.fadeIn(FADE_DURATION_SLOW, 0);
-            mImageInWrapper.startAnimation();
+            mImageInWrapper.fadeIn(FADE_DURATION, 0);
+            mImageInWrapper.startAnimation(mImageInListener);
             dimAlpha = FULL_ALPHA;
         }
 
         if (mDimWrapper != null && dimAlpha != 0) {
             if (DEBUG) Log.v(TAG, "dimwrapper animation starting to " + dimAlpha);
-            mDimWrapper.fade(FADE_DURATION_SLOW, 0, dimAlpha);
+            mDimWrapper.fade(FADE_DURATION, 0, dimAlpha);
             mDimWrapper.startAnimation();
         }
     }
+
+    private final Animator.AnimatorListener mImageInListener = new Animator.AnimatorListener() {
+        @Override
+        public void onAnimationStart(Animator animation) {
+        }
+        @Override
+        public void onAnimationRepeat(Animator animation) {
+        }
+        @Override
+        public void onAnimationEnd(Animator animation) {
+            if (mChangeRunnable != null) {
+                if (DEBUG) Log.v(TAG, "animation ended, found change runnable");
+                mChangeRunnable.run();
+            }
+        }
+        @Override
+        public void onAnimationCancel(Animator animation) {
+        }
+    };
 
     /**
      * Returns the current background color.
@@ -627,6 +722,21 @@ public final class BackgroundManager {
      */
     public Drawable getDrawable() {
         return mBackgroundDrawable;
+    }
+
+    private boolean sameDrawable(Drawable first, Drawable second) {
+        if (first == null || second == null) {
+            return false;
+        }
+        if (first == second) {
+            return true;
+        }
+        if (first instanceof BitmapDrawable && second instanceof BitmapDrawable) {
+            if (((BitmapDrawable) first).getBitmap().sameAs(((BitmapDrawable) second).getBitmap())) {
+                return true;
+            }
+        }
+        return false;
     }
 
     /**
@@ -652,22 +762,10 @@ public final class BackgroundManager {
         }
 
         private void runTask() {
-            boolean newBackground = false;
             lazyInit();
 
-            if (mDrawable != mBackgroundDrawable) {
-                newBackground = true;
-                if (mDrawable instanceof BitmapDrawable &&
-                        mBackgroundDrawable instanceof BitmapDrawable) {
-                    if (((BitmapDrawable) mDrawable).getBitmap() ==
-                            ((BitmapDrawable) mBackgroundDrawable).getBitmap()) {
-                        if (DEBUG) Log.v(TAG, "same underlying bitmap detected");
-                        newBackground = false;
-                    }
-                }
-            }
-
-            if (!newBackground) {
+            if (sameDrawable(mDrawable, mBackgroundDrawable)) {
+                if (DEBUG) Log.v(TAG, "same bitmap detected");
                 return;
             }
 
@@ -676,7 +774,7 @@ public final class BackgroundManager {
             if (mImageInWrapper != null) {
                 mImageOutWrapper = new DrawableWrapper(mImageInWrapper.getDrawable());
                 mImageOutWrapper.setAlpha(mImageInWrapper.getAlpha());
-                mImageOutWrapper.fadeOut(FADE_DURATION_QUICK);
+                mImageOutWrapper.fadeOut(FADE_DURATION);
 
                 // Order is important! Setting a drawable "removes" the
                 // previous one from the view
@@ -691,6 +789,8 @@ public final class BackgroundManager {
             mService.setDrawable(mBackgroundDrawable);
 
             applyBackgroundChanges();
+
+            mChangeRunnable = null;
         }
     }
 

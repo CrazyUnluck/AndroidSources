@@ -27,6 +27,7 @@ public class SSLParameters {
     private String[] protocols;
     private boolean needClientAuth;
     private boolean wantClientAuth;
+    private String endpointIdentificationAlgorithm;
 
     /**
      * The default SSLParameters constructor. Cipher suites and

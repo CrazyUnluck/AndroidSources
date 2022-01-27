@@ -19,6 +19,7 @@ package com.android.server;
 import static android.content.pm.PackageManager.PERMISSION_GRANTED;
 
 import android.Manifest;
+import android.app.ActivityManagerNative;
 import android.app.AppOpsManager;
 import android.content.BroadcastReceiver;
 import android.content.ComponentName;
@@ -28,6 +29,7 @@ import android.content.IntentFilter;
 import android.content.ServiceConnection;
 import android.content.pm.PackageManager;
 import android.content.pm.UserInfo;
+import android.content.res.Configuration;
 import android.content.res.ObbInfo;
 import android.content.res.Resources;
 import android.content.res.TypedArray;
@@ -47,11 +49,13 @@ import android.os.ServiceManager;
 import android.os.SystemClock;
 import android.os.SystemProperties;
 import android.os.UserHandle;
+import android.os.UserManager;
 import android.os.storage.IMountService;
 import android.os.storage.IMountServiceListener;
 import android.os.storage.IMountShutdownObserver;
 import android.os.storage.IObbActionListener;
 import android.os.storage.OnObbStateChangeListener;
+import android.os.storage.StorageManager;
 import android.os.storage.StorageResultCode;
 import android.os.storage.StorageVolume;
 import android.text.TextUtils;
@@ -59,6 +63,7 @@ import android.util.AttributeSet;
 import android.util.Slog;
 import android.util.Xml;
 
+import android.view.AccessibilityManagerInternal;
 import com.android.internal.annotations.GuardedBy;
 import com.android.internal.annotations.VisibleForTesting;
 import com.android.internal.app.IMediaContainerService;
@@ -73,6 +78,8 @@ import com.android.server.pm.UserManagerService;
 import com.google.android.collect.Lists;
 import com.google.android.collect.Maps;
 
+import org.apache.commons.codec.binary.Hex;
+import org.apache.commons.codec.DecoderException;
 import org.xmlpull.v1.XmlPullParserException;
 
 import java.io.File;
@@ -80,6 +87,7 @@ import java.io.FileDescriptor;
 import java.io.IOException;
 import java.io.PrintWriter;
 import java.math.BigInteger;
+import java.nio.charset.StandardCharsets;
 import java.security.NoSuchAlgorithmException;
 import java.security.spec.InvalidKeySpecException;
 import java.security.spec.KeySpec;
@@ -89,8 +97,10 @@ import java.util.HashSet;
 import java.util.Iterator;
 import java.util.LinkedList;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import java.util.Map.Entry;
+import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
 
@@ -106,6 +116,9 @@ import javax.crypto.spec.PBEKeySpec;
  */
 class MountService extends IMountService.Stub
         implements INativeDaemonConnectorCallbacks, Watchdog.Monitor {
+
+    // Static direct instance pointer for the tightly-coupled idle service to use
+    static MountService sSelf = null;
 
     // TODO: listen for user creation/deletion
 
@@ -151,6 +164,7 @@ class MountService extends IMountService.Stub
         public static final int VolumeListResult               = 110;
         public static final int AsecListResult                 = 111;
         public static final int StorageUsersListResult         = 112;
+        public static final int CryptfsGetfieldResult          = 113;
 
         /*
          * 200 series - Requestion action has been successfully completed.
@@ -186,8 +200,14 @@ class MountService extends IMountService.Stub
         public static final int FstrimCompleted                = 700;
     }
 
-    private Context mContext;
-    private NativeDaemonConnector mConnector;
+    /** List of crypto types.
+      * These must match CRYPT_TYPE_XXX in cryptfs.h AND their
+      * corresponding commands in CommandListener.cpp */
+    public static final String[] CRYPTO_TYPES
+        = { "password", "default", "pattern", "pin" };
+
+    private final Context mContext;
+    private final NativeDaemonConnector mConnector;
 
     private final Object mVolumesLock = new Object();
 
@@ -345,6 +365,7 @@ class MountService extends IMountService.Stub
     private static final int H_UNMOUNT_PM_DONE = 2;
     private static final int H_UNMOUNT_MS = 3;
     private static final int H_SYSTEM_READY = 4;
+    private static final int H_FSTRIM = 5;
 
     private static final int RETRY_UNMOUNT_DELAY = 30; // in ms
     private static final int MAX_UNMOUNT_RETRIES = 4;
@@ -384,18 +405,37 @@ class MountService extends IMountService.Stub
     }
 
     class ShutdownCallBack extends UnmountCallBack {
-        IMountShutdownObserver observer;
-        ShutdownCallBack(String path, IMountShutdownObserver observer) {
+        MountShutdownLatch mMountShutdownLatch;
+        ShutdownCallBack(String path, final MountShutdownLatch mountShutdownLatch) {
             super(path, true, false);
-            this.observer = observer;
+            mMountShutdownLatch = mountShutdownLatch;
         }
 
         @Override
         void handleFinished() {
             int ret = doUnmountVolume(path, true, removeEncryption);
-            if (observer != null) {
+            Slog.i(TAG, "Unmount completed: " + path + ", result code: " + ret);
+            mMountShutdownLatch.countDown();
+        }
+    }
+
+    static class MountShutdownLatch {
+        private IMountShutdownObserver mObserver;
+        private AtomicInteger mCount;
+
+        MountShutdownLatch(final IMountShutdownObserver observer, int count) {
+            mObserver = observer;
+            mCount = new AtomicInteger(count);
+        }
+
+        void countDown() {
+            boolean sendShutdown = false;
+            if (mCount.decrementAndGet() == 0) {
+                sendShutdown = true;
+            }
+            if (sendShutdown && mObserver != null) {
                 try {
-                    observer.onShutDownComplete(ret);
+                    mObserver.onShutDownComplete(StorageResultCode.OperationSucceeded);
                 } catch (RemoteException e) {
                     Slog.w(TAG, "RemoteException when shutting down");
                 }
@@ -494,11 +534,31 @@ class MountService extends IMountService.Stub
                     }
                     break;
                 }
+                case H_FSTRIM: {
+                    waitForReady();
+                    Slog.i(TAG, "Running fstrim idle maintenance");
+                    try {
+                        // This method must be run on the main (handler) thread,
+                        // so it is safe to directly call into vold.
+                        mConnector.execute("fstrim", "dotrim");
+                        EventLogTags.writeFstrimStart(SystemClock.elapsedRealtime());
+                    } catch (NativeDaemonConnectorException ndce) {
+                        Slog.e(TAG, "Failed to run fstrim!");
+                    }
+                    // invoke the completion callback, if any
+                    Runnable callback = (Runnable) msg.obj;
+                    if (callback != null) {
+                        callback.run();
+                    }
+                    break;
+                }
             }
         }
     };
 
     private final Handler mHandler;
+
+    private final AccessibilityManagerInternal mAccessibilityManagerInternal;
 
     void waitForAsecScan() {
         waitForLatch(mAsecsScanned);
@@ -520,6 +580,14 @@ class MountService extends IMountService.Stub
             } catch (InterruptedException e) {
                 Slog.w(TAG, "Interrupt while waiting for MountService to be ready.");
             }
+        }
+    }
+
+    private boolean isReady() {
+        try {
+            return mConnectedSignal.await(0, TimeUnit.MILLISECONDS);
+        } catch (InterruptedException e) {
+            return false;
         }
     }
 
@@ -568,6 +636,11 @@ class MountService extends IMountService.Stub
             sendUmsIntent(true);
             mSendUmsConnectedOnBoot = false;
         }
+
+        /*
+         * Start scheduling nominally-daily fstrim operations
+         */
+        MountServiceIdler.scheduleIdlePass(mContext);
     }
 
     private final BroadcastReceiver mUserReceiver = new BroadcastReceiver() {
@@ -608,27 +681,6 @@ class MountService extends IMountService.Stub
         }
     };
 
-    private final BroadcastReceiver mIdleMaintenanceReceiver = new BroadcastReceiver() {
-        @Override
-        public void onReceive(Context context, Intent intent) {
-            waitForReady();
-            String action = intent.getAction();
-            // Since fstrim will be run on a daily basis we do not expect
-            // fstrim to be too long, so it is not interruptible. We will
-            // implement interruption only in case we see issues.
-            if (Intent.ACTION_IDLE_MAINTENANCE_START.equals(action)) {
-                try {
-                    // This method runs on the handler thread,
-                    // so it is safe to directly call into vold.
-                    mConnector.execute("fstrim", "dotrim");
-                    EventLogTags.writeFstrimStart(SystemClock.elapsedRealtime());
-                } catch (NativeDaemonConnectorException ndce) {
-                    Slog.e(TAG, "Failed to run fstrim!");
-                }
-            }
-        }
-    };
-
     private final class MountServiceBinderListener implements IBinder.DeathRecipient {
         final IMountServiceListener mListener;
 
@@ -644,6 +696,10 @@ class MountService extends IMountService.Stub
                 mListener.asBinder().unlinkToDeath(this, 0);
             }
         }
+    }
+
+    void runIdleMaintenance(Runnable callback) {
+        mHandler.sendMessage(mHandler.obtainMessage(H_FSTRIM, callback));
     }
 
     private void doShareUnshareVolume(String path, String method, boolean enable) {
@@ -724,7 +780,7 @@ class MountService extends IMountService.Stub
                  */
                 try {
                     final String[] vols = NativeDaemonEvent.filterMessageList(
-                            mConnector.executeForList("volume", "list"),
+                            mConnector.executeForList("volume", "list", "broadcast"),
                             VoldResponseCode.VolumeListResult);
                     for (String volstr : vols) {
                         String[] tok = volstr.split(" ");
@@ -771,6 +827,10 @@ class MountService extends IMountService.Stub
                  */
                 mConnectedSignal.countDown();
 
+                // On an encrypted device we can't see system properties yet, so pull
+                // the system locale out of the mount service.
+                copyLocaleFromMountService();
+
                 // Let package manager load internal ASECs.
                 mPms.scanAvailableAsecs();
 
@@ -778,6 +838,40 @@ class MountService extends IMountService.Stub
                 mAsecsScanned.countDown();
             }
         }.start();
+    }
+
+    private void copyLocaleFromMountService() {
+        String systemLocale;
+        try {
+            systemLocale = getField(StorageManager.SYSTEM_LOCALE_KEY);
+        } catch (RemoteException e) {
+            return;
+        }
+        if (TextUtils.isEmpty(systemLocale)) {
+            return;
+        }
+
+        Slog.d(TAG, "Got locale " + systemLocale + " from mount service");
+        Locale locale = Locale.forLanguageTag(systemLocale);
+        Configuration config = new Configuration();
+        config.setLocale(locale);
+        try {
+            ActivityManagerNative.getDefault().updateConfiguration(config);
+        } catch (RemoteException e) {
+            Slog.e(TAG, "Error setting system locale from mount service", e);
+        }
+
+        // Temporary workaround for http://b/17945169.
+        Slog.d(TAG, "Setting system properties to " + systemLocale + " from mount service");
+        SystemProperties.set("persist.sys.language", locale.getLanguage());
+        SystemProperties.set("persist.sys.country", locale.getCountry());
+    }
+
+    /**
+     * Callback from NativeDaemonConnector
+     */
+    public boolean onCheckHoldWakeLock(int code) {
+        return false;
     }
 
     /**
@@ -982,6 +1076,11 @@ class MountService extends IMountService.Stub
             volume = mVolumesByPath.get(path);
         }
 
+        if (!volume.isEmulated() && hasUserRestriction(UserManager.DISALLOW_MOUNT_PHYSICAL_MEDIA)) {
+            Slog.w(TAG, "User has restriction DISALLOW_MOUNT_PHYSICAL_MEDIA; cannot mount volume.");
+            return StorageResultCode.OperationFailedInternalError;
+        }
+
         if (DEBUG_EVENTS) Slog.i(TAG, "doMountVolume: Mouting " + path);
         try {
             mConnector.execute("volume", "mount", path);
@@ -1181,6 +1280,17 @@ class MountService extends IMountService.Stub
         }
     }
 
+    private boolean hasUserRestriction(String restriction) {
+        UserManager um = (UserManager) mContext.getSystemService(Context.USER_SERVICE);
+        return um.hasUserRestriction(restriction, Binder.getCallingUserHandle());
+    }
+
+    private void validateUserRestriction(String restriction) {
+        if (hasUserRestriction(restriction)) {
+            throw new SecurityException("User has restriction " + restriction);
+        }
+    }
+
     // Storage list XML tags
     private static final String TAG_STORAGE_LIST = "StorageList";
     private static final String TAG_STORAGE = "storage";
@@ -1337,6 +1447,8 @@ class MountService extends IMountService.Stub
      * @param context  Binder context for this service
      */
     public MountService(Context context) {
+        sSelf = this;
+
         mContext = context;
 
         synchronized (mVolumesLock) {
@@ -1349,6 +1461,9 @@ class MountService extends IMountService.Stub
         HandlerThread hthread = new HandlerThread(TAG);
         hthread.start();
         mHandler = new MountServiceHandler(hthread.getLooper());
+
+        mAccessibilityManagerInternal = LocalServices.getService(
+                AccessibilityManagerInternal.class);
 
         // Watch for user changes
         final IntentFilter userFilter = new IntentFilter();
@@ -1363,12 +1478,6 @@ class MountService extends IMountService.Stub
                     mUsbReceiver, new IntentFilter(UsbManager.ACTION_USB_STATE), null, mHandler);
         }
 
-        // Watch for idle maintenance changes
-        IntentFilter idleMaintenanceFilter = new IntentFilter();
-        idleMaintenanceFilter.addAction(Intent.ACTION_IDLE_MAINTENANCE_START);
-        mContext.registerReceiverAsUser(mIdleMaintenanceReceiver, UserHandle.ALL,
-                idleMaintenanceFilter, null, mHandler);
-
         // Add OBB Action Handler to MountService thread.
         mObbActionHandler = new ObbActionHandler(IoThread.get().getLooper());
 
@@ -1377,7 +1486,8 @@ class MountService extends IMountService.Stub
          * amount of containers we'd ever expect to have. This keeps an
          * "asec list" from blocking a thread repeatedly.
          */
-        mConnector = new NativeDaemonConnector(this, "vold", MAX_CONTAINERS * 2, VOLD_TAG, 25);
+        mConnector = new NativeDaemonConnector(this, "vold", MAX_CONTAINERS * 2, VOLD_TAG, 25,
+                null);
 
         Thread thread = new Thread(mConnector, VOLD_TAG);
         thread.start();
@@ -1426,6 +1536,10 @@ class MountService extends IMountService.Stub
 
         Slog.i(TAG, "Shutting down");
         synchronized (mVolumesLock) {
+            // Get all volumes to be unmounted.
+            MountShutdownLatch mountShutdownLatch = new MountShutdownLatch(observer,
+                                                            mVolumeStates.size());
+
             for (String path : mVolumeStates.keySet()) {
                 String state = mVolumeStates.get(path);
 
@@ -1461,19 +1575,16 @@ class MountService extends IMountService.Stub
 
                 if (state.equals(Environment.MEDIA_MOUNTED)) {
                     // Post a unmount message.
-                    ShutdownCallBack ucb = new ShutdownCallBack(path, observer);
+                    ShutdownCallBack ucb = new ShutdownCallBack(path, mountShutdownLatch);
                     mHandler.sendMessage(mHandler.obtainMessage(H_UNMOUNT_PM_UPDATE, ucb));
                 } else if (observer != null) {
                     /*
-                     * Observer is waiting for onShutDownComplete when we are done.
-                     * Since nothing will be done send notification directly so shutdown
-                     * sequence can continue.
+                     * Count down, since nothing will be done. The observer will be
+                     * notified when we are done so shutdown sequence can continue.
                      */
-                    try {
-                        observer.onShutDownComplete(StorageResultCode.OperationSucceeded);
-                    } catch (RemoteException e) {
-                        Slog.w(TAG, "RemoteException when shutting down");
-                    }
+                    mountShutdownLatch.countDown();
+                    Slog.i(TAG, "Unmount completed: " + path +
+                        ", result code: " + StorageResultCode.OperationSucceeded);
                 }
             }
         }
@@ -1505,6 +1616,7 @@ class MountService extends IMountService.Stub
     public void setUsbMassStorageEnabled(boolean enable) {
         waitForReady();
         validatePermission(android.Manifest.permission.MOUNT_UNMOUNT_FILESYSTEMS);
+        validateUserRestriction(UserManager.DISALLOW_USB_FILE_TRANSFER);
 
         final StorageVolume primary = getPrimaryPhysicalVolume();
         if (primary == null) return;
@@ -1579,7 +1691,6 @@ class MountService extends IMountService.Stub
 
     public int mountVolume(String path) {
         validatePermission(android.Manifest.permission.MOUNT_UNMOUNT_FILESYSTEMS);
-
         waitForReady();
         return doMountVolume(path);
     }
@@ -1689,6 +1800,21 @@ class MountService extends IMountService.Stub
         return rc;
     }
 
+    @Override
+    public int resizeSecureContainer(String id, int sizeMb, String key) {
+        validatePermission(android.Manifest.permission.ASEC_CREATE);
+        waitForReady();
+        warnOnNotMounted();
+
+        int rc = StorageResultCode.OperationSucceeded;
+        try {
+            mConnector.execute("asec", "resize", id, sizeMb, new SensitiveArg(key));
+        } catch (NativeDaemonConnectorException e) {
+            rc = StorageResultCode.OperationFailedInternalError;
+        }
+        return rc;
+    }
+
     public int finalizeSecureContainer(String id) {
         validatePermission(android.Manifest.permission.ASEC_CREATE);
         warnOnNotMounted();
@@ -1763,7 +1889,7 @@ class MountService extends IMountService.Stub
         return rc;
     }
 
-    public int mountSecureContainer(String id, String key, int ownerUid) {
+    public int mountSecureContainer(String id, String key, int ownerUid, boolean readOnly) {
         validatePermission(android.Manifest.permission.ASEC_MOUNT_UNMOUNT);
         waitForReady();
         warnOnNotMounted();
@@ -1776,7 +1902,8 @@ class MountService extends IMountService.Stub
 
         int rc = StorageResultCode.OperationSucceeded;
         try {
-            mConnector.execute("asec", "mount", id, new SensitiveArg(key), ownerUid);
+            mConnector.execute("asec", "mount", id, new SensitiveArg(key), ownerUid,
+                    readOnly ? "ro" : "rw");
         } catch (NativeDaemonConnectorException e) {
             int code = e.getCode();
             if (code != VoldResponseCode.OpFailedStorageBusy) {
@@ -2035,6 +2162,27 @@ class MountService extends IMountService.Stub
         }
     }
 
+    private String toHex(String password) {
+        if (password == null) {
+            return new String();
+        }
+        byte[] bytes = password.getBytes(StandardCharsets.UTF_8);
+        return new String(Hex.encodeHex(bytes));
+    }
+
+    private String fromHex(String hexPassword) {
+        if (hexPassword == null) {
+            return null;
+        }
+
+        try {
+            byte[] bytes = Hex.decodeHex(hexPassword.toCharArray());
+            return new String(bytes, StandardCharsets.UTF_8);
+        } catch (DecoderException e) {
+            return null;
+        }
+    }
+
     @Override
     public int decryptStorage(String password) {
         if (TextUtils.isEmpty(password)) {
@@ -2052,7 +2200,7 @@ class MountService extends IMountService.Stub
 
         final NativeDaemonEvent event;
         try {
-            event = mConnector.execute("cryptfs", "checkpw", new SensitiveArg(password));
+            event = mConnector.execute("cryptfs", "checkpw", new SensitiveArg(toHex(password)));
 
             final int code = Integer.parseInt(event.getMessage());
             if (code == 0) {
@@ -2076,8 +2224,8 @@ class MountService extends IMountService.Stub
         }
     }
 
-    public int encryptStorage(String password) {
-        if (TextUtils.isEmpty(password)) {
+    public int encryptStorage(int type, String password) {
+        if (TextUtils.isEmpty(password) && type != StorageManager.CRYPT_TYPE_DEFAULT) {
             throw new IllegalArgumentException("password cannot be empty");
         }
 
@@ -2091,7 +2239,8 @@ class MountService extends IMountService.Stub
         }
 
         try {
-            mConnector.execute("cryptfs", "enablecrypto", "inplace", new SensitiveArg(password));
+            mConnector.execute("cryptfs", "enablecrypto", "inplace", CRYPTO_TYPES[type],
+                               new SensitiveArg(toHex(password)));
         } catch (NativeDaemonConnectorException e) {
             // Encryption failed
             return e.getCode();
@@ -2100,11 +2249,11 @@ class MountService extends IMountService.Stub
         return 0;
     }
 
-    public int changeEncryptionPassword(String password) {
-        if (TextUtils.isEmpty(password)) {
-            throw new IllegalArgumentException("password cannot be empty");
-        }
-
+    /** Set the password for encrypting the master key.
+     *  @param type One of the CRYPTO_TYPE_XXX consts defined in StorageManager.
+     *  @param password The password to set.
+     */
+    public int changeEncryptionPassword(int type, String password) {
         mContext.enforceCallingOrSelfPermission(Manifest.permission.CRYPT_KEEPER,
             "no permission to access the crypt keeper");
 
@@ -2116,7 +2265,15 @@ class MountService extends IMountService.Stub
 
         final NativeDaemonEvent event;
         try {
-            event = mConnector.execute("cryptfs", "changepw", new SensitiveArg(password));
+            // The accessibility layer may veto having a non-default encryption
+            // password because if there are enabled accessibility services the
+            // user cannot authenticate as the latter need access to the data.
+            if (!TextUtils.isEmpty(password)
+                    && !mAccessibilityManagerInternal.isNonDefaultEncryptionPasswordAllowed()) {
+                return getEncryptionState();
+            }
+            event = mConnector.execute("cryptfs", "changepw", CRYPTO_TYPES[type],
+                        new SensitiveArg(toHex(password)));
             return Integer.parseInt(event.getMessage());
         } catch (NativeDaemonConnectorException e) {
             // Encryption failed
@@ -2149,12 +2306,107 @@ class MountService extends IMountService.Stub
 
         final NativeDaemonEvent event;
         try {
-            event = mConnector.execute("cryptfs", "verifypw", new SensitiveArg(password));
+            event = mConnector.execute("cryptfs", "verifypw", new SensitiveArg(toHex(password)));
             Slog.i(TAG, "cryptfs verifypw => " + event.getMessage());
             return Integer.parseInt(event.getMessage());
         } catch (NativeDaemonConnectorException e) {
             // Encryption failed
             return e.getCode();
+        }
+    }
+
+    /**
+     * Get the type of encryption used to encrypt the master key.
+     * @return The type, one of the CRYPT_TYPE_XXX consts from StorageManager.
+     */
+    @Override
+    public int getPasswordType() {
+
+        waitForReady();
+
+        final NativeDaemonEvent event;
+        try {
+            event = mConnector.execute("cryptfs", "getpwtype");
+            for (int i = 0; i < CRYPTO_TYPES.length; ++i) {
+                if (CRYPTO_TYPES[i].equals(event.getMessage()))
+                    return i;
+            }
+
+            throw new IllegalStateException("unexpected return from cryptfs");
+        } catch (NativeDaemonConnectorException e) {
+            throw e.rethrowAsParcelableException();
+        }
+    }
+
+    /**
+     * Set a field in the crypto header.
+     * @param field field to set
+     * @param contents contents to set in field
+     */
+    @Override
+    public void setField(String field, String contents) throws RemoteException {
+
+        waitForReady();
+
+        final NativeDaemonEvent event;
+        try {
+            event = mConnector.execute("cryptfs", "setfield", field, contents);
+        } catch (NativeDaemonConnectorException e) {
+            throw e.rethrowAsParcelableException();
+        }
+    }
+
+    /**
+     * Gets a field from the crypto header.
+     * @param field field to get
+     * @return contents of field
+     */
+    @Override
+    public String getField(String field) throws RemoteException {
+
+        waitForReady();
+
+        final NativeDaemonEvent event;
+        try {
+            final String[] contents = NativeDaemonEvent.filterMessageList(
+                    mConnector.executeForList("cryptfs", "getfield", field),
+                    VoldResponseCode.CryptfsGetfieldResult);
+            String result = new String();
+            for (String content : contents) {
+                result += content;
+            }
+            return result;
+        } catch (NativeDaemonConnectorException e) {
+            throw e.rethrowAsParcelableException();
+        }
+    }
+
+    @Override
+    public String getPassword() throws RemoteException {
+        if (!isReady()) {
+            return new String();
+        }
+
+        final NativeDaemonEvent event;
+        try {
+            event = mConnector.execute("cryptfs", "getpw");
+            return fromHex(event.getMessage());
+        } catch (NativeDaemonConnectorException e) {
+            throw e.rethrowAsParcelableException();
+        }
+    }
+
+    @Override
+    public void clearPassword() throws RemoteException {
+        if (!isReady()) {
+            return;
+        }
+
+        final NativeDaemonEvent event;
+        try {
+            event = mConnector.execute("cryptfs", "clearpw");
+        } catch (NativeDaemonConnectorException e) {
+            throw e.rethrowAsParcelableException();
         }
     }
 
@@ -2196,6 +2448,18 @@ class MountService extends IMountService.Stub
         voldPath = maybeTranslatePathForVold(appPath,
                 userEnv.buildExternalStorageAppObbDirs(callingPkg),
                 userEnv.buildExternalStorageAppObbDirsForVold(callingPkg));
+        if (voldPath != null) {
+            try {
+                mConnector.execute("volume", "mkdirs", voldPath);
+                return 0;
+            } catch (NativeDaemonConnectorException e) {
+                return e.getCode();
+            }
+        }
+
+        voldPath = maybeTranslatePathForVold(appPath,
+                userEnv.buildExternalStorageAppMediaDirs(callingPkg),
+                userEnv.buildExternalStorageAppMediaDirsForVold(callingPkg));
         if (voldPath != null) {
             try {
                 mConnector.execute("volume", "mkdirs", voldPath);

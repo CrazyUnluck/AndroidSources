@@ -20,8 +20,8 @@ import android.content.BroadcastReceiver;
 import android.content.ContentResolver;
 import android.content.Context;
 import android.content.Intent;
+import android.net.Uri;
 import android.provider.Settings;
-import android.os.FileUtils;
 import android.util.Base64;
 import android.util.EventLog;
 import android.util.Slog;
@@ -30,20 +30,18 @@ import com.android.server.EventLogTags;
 
 import java.io.ByteArrayInputStream;
 import java.io.File;
-import java.io.FileNotFoundException;
 import java.io.FileOutputStream;
 import java.io.InputStream;
 import java.io.IOException;
-import java.security.cert.Certificate;
 import java.security.cert.CertificateException;
 import java.security.cert.CertificateFactory;
 import java.security.cert.X509Certificate;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
 import java.security.Signature;
-import java.security.SignatureException;
 
 import libcore.io.IoUtils;
+import libcore.io.Streams;
 
 public class ConfigUpdateInstallReceiver extends BroadcastReceiver {
 
@@ -77,7 +75,7 @@ public class ConfigUpdateInstallReceiver extends BroadcastReceiver {
                     // get the certificate from Settings.Secure
                     X509Certificate cert = getCert(context.getContentResolver());
                     // get the content path from the extras
-                    byte[] altContent = getAltContent(intent);
+                    byte[] altContent = getAltContent(context, intent);
                     // get the version from the extras
                     int altVersion = getVersionFromIntent(intent);
                     // get the previous value from the extras
@@ -131,12 +129,12 @@ public class ConfigUpdateInstallReceiver extends BroadcastReceiver {
         }
     }
 
-    private String getContentFromIntent(Intent i) {
-        String extraValue = i.getStringExtra(EXTRA_CONTENT_PATH);
-        if (extraValue == null) {
+    private Uri getContentFromIntent(Intent i) {
+        Uri data = i.getData();
+        if (data == null) {
             throw new IllegalStateException("Missing required content path, ignoring.");
         }
-        return extraValue;
+        return data;
     }
 
     private int getVersionFromIntent(Intent i) throws NumberFormatException {
@@ -173,8 +171,14 @@ public class ConfigUpdateInstallReceiver extends BroadcastReceiver {
         }
     }
 
-    private byte[] getAltContent(Intent i) throws IOException {
-        return IoUtils.readFileAsByteArray(getContentFromIntent(i));
+    private byte[] getAltContent(Context c, Intent i) throws IOException {
+        Uri content = getContentFromIntent(i);
+        InputStream is = c.getContentResolver().openInputStream(content);
+        try {
+            return Streams.readFullyNoClose(is);
+        } finally {
+            is.close();
+        }
     }
 
     private byte[] getCurrentContent() {

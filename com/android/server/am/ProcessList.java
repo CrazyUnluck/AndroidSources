@@ -16,12 +16,13 @@
 
 package com.android.server.am;
 
-import java.io.FileOutputStream;
 import java.io.IOException;
 import java.io.OutputStream;
 import java.nio.ByteBuffer;
 
 import android.app.ActivityManager;
+import android.os.Build;
+import android.os.SystemClock;
 import com.android.internal.util.MemInfoReader;
 import com.android.server.wm.WindowManagerService;
 
@@ -96,6 +97,10 @@ final class ProcessList {
     // rather not kill it!
     static final int FOREGROUND_APP_ADJ = 0;
 
+    // This is a process that the system or a persistent process has bound to,
+    // and indicated it is important.
+    static final int PERSISTENT_SERVICE_ADJ = -11;
+
     // This is a system persistent process, such as telephony.  Definitely
     // don't want to kill it, but doing so is not completely fatal.
     static final int PERSISTENT_PROC_ADJ = -12;
@@ -123,7 +128,7 @@ final class ProcessList {
     // we have no limit on the number of service, visible, foreground, or other such
     // processes and the number of those processes does not count against the cached
     // process limit.
-    static final int MAX_CACHED_APPS = 24;
+    static final int MAX_CACHED_APPS = 32;
 
     // We allow empty processes to stick around for at most 30 minutes.
     static final long MAX_EMPTY_TIME = 30*60*1000;
@@ -137,7 +142,7 @@ final class ProcessList {
 
     // The number of cached at which we don't consider it necessary to do
     // memory trimming.
-    static final int TRIM_CACHED_APPS = ((MAX_CACHED_APPS-MAX_EMPTY_APPS)*2)/3;
+    static final int TRIM_CACHED_APPS = (MAX_CACHED_APPS-MAX_EMPTY_APPS)/3;
 
     // Threshold of number of cached+empty where we consider memory critical.
     static final int TRIM_CRITICAL_THRESHOLD = 3;
@@ -165,14 +170,14 @@ final class ProcessList {
     // These are the low-end OOM level limits.  This is appropriate for an
     // HVGA or smaller phone with less than 512MB.  Values are in KB.
     private final int[] mOomMinFreeLow = new int[] {
-            8192, 12288, 16384,
-            24576, 28672, 32768
+            12288, 18432, 24576,
+            36864, 43008, 49152
     };
     // These are the high-end OOM level limits.  This is appropriate for a
     // 1280x800 or larger screen with around 1GB RAM.  Values are in KB.
     private final int[] mOomMinFreeHigh = new int[] {
-            49152, 61440, 73728,
-            86016, 98304, 122880
+            73728, 92160, 110592,
+            129024, 147456, 184320
     };
     // The actual OOM killer memory levels we are using.
     private final int[] mOomMinFree = new int[mOomAdj.length];
@@ -230,21 +235,35 @@ final class ProcessList {
             Slog.i("XXXXXX", "minfree_adj=" + minfree_adj + " minfree_abs=" + minfree_abs);
         }
 
+        // We've now baked in the increase to the basic oom values above, since
+        // they seem to be useful more generally for devices that are tight on
+        // memory than just for 64 bit.  This should probably have some more
+        // tuning done, so not deleting it quite yet...
+        final boolean is64bit = false; //Build.SUPPORTED_64_BIT_ABIS.length > 0;
+
         for (int i=0; i<mOomAdj.length; i++) {
             int low = mOomMinFreeLow[i];
             int high = mOomMinFreeHigh[i];
             mOomMinFree[i] = (int)(low + ((high-low)*scale));
+            if (is64bit) {
+                // On 64 bit devices, we consume more baseline RAM, because 64 bit is cool!
+                // To avoid being all pagey and stuff, scale up the memory levels to
+                // give us some breathing room.
+                mOomMinFree[i] = (3*mOomMinFree[i])/2;
+            }
         }
 
         if (minfree_abs >= 0) {
             for (int i=0; i<mOomAdj.length; i++) {
-                mOomMinFree[i] = (int)((float)minfree_abs * mOomMinFree[i] / mOomMinFree[mOomAdj.length - 1]);
+                mOomMinFree[i] = (int)((float)minfree_abs * mOomMinFree[i]
+                        / mOomMinFree[mOomAdj.length - 1]);
             }
         }
 
         if (minfree_adj != 0) {
             for (int i=0; i<mOomAdj.length; i++) {
-                mOomMinFree[i] += (int)((float)minfree_adj * mOomMinFree[i] / mOomMinFree[mOomAdj.length - 1]);
+                mOomMinFree[i] += (int)((float)minfree_adj * mOomMinFree[i]
+                        / mOomMinFree[mOomAdj.length - 1]);
                 if (mOomMinFree[i] < 0) {
                     mOomMinFree[i] = 0;
                 }
@@ -289,7 +308,7 @@ final class ProcessList {
     }
 
     public static int computeEmptyProcessLimit(int totalProcessLimit) {
-        return (totalProcessLimit*2)/3;
+        return totalProcessLimit/2;
     }
 
     private static String buildOomTag(String prefix, String space, int val, int base) {
@@ -321,6 +340,8 @@ final class ProcessList {
             return buildOomTag("vis  ", null, setAdj, ProcessList.VISIBLE_APP_ADJ);
         } else if (setAdj >= ProcessList.FOREGROUND_APP_ADJ) {
             return buildOomTag("fore ", null, setAdj, ProcessList.FOREGROUND_APP_ADJ);
+        } else if (setAdj >= ProcessList.PERSISTENT_SERVICE_ADJ) {
+            return buildOomTag("psvc ", null, setAdj, ProcessList.PERSISTENT_SERVICE_ADJ);
         } else if (setAdj >= ProcessList.PERSISTENT_PROC_ADJ) {
             return buildOomTag("pers ", null, setAdj, ProcessList.PERSISTENT_PROC_ADJ);
         } else if (setAdj >= ProcessList.SYSTEM_ADJ) {
@@ -520,19 +541,27 @@ final class ProcessList {
      * Set the out-of-memory badness adjustment for a process.
      *
      * @param pid The process identifier to set.
+     * @param uid The uid of the app
      * @param amt Adjustment value -- lmkd allows -16 to +15.
      *
      * {@hide}
      */
-    public static final void setOomAdj(int pid, int amt) {
+    public static final void setOomAdj(int pid, int uid, int amt) {
         if (amt == UNKNOWN_ADJ)
             return;
 
-        ByteBuffer buf = ByteBuffer.allocate(4 * 3);
+        long start = SystemClock.elapsedRealtime();
+        ByteBuffer buf = ByteBuffer.allocate(4 * 4);
         buf.putInt(LMK_PROCPRIO);
         buf.putInt(pid);
+        buf.putInt(uid);
         buf.putInt(amt);
         writeLmkd(buf);
+        long now = SystemClock.elapsedRealtime();
+        if ((now-start) > 250) {
+            Slog.w("ActivityManager", "SLOW OOM ADJ: " + (now-start) + "ms for pid " + pid
+                    + " = " + amt);
+        }
     }
 
     /*

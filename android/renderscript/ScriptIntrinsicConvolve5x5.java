@@ -16,8 +16,6 @@
 
 package android.renderscript;
 
-import android.util.Log;
-
 /**
  * Intrinsic for applying a 5x5 convolve to an allocation.
  *
@@ -26,7 +24,7 @@ public final class ScriptIntrinsicConvolve5x5 extends ScriptIntrinsic {
     private final float[] mValues = new float[25];
     private Allocation mInput;
 
-    private ScriptIntrinsicConvolve5x5(int id, RenderScript rs) {
+    private ScriptIntrinsicConvolve5x5(long id, RenderScript rs) {
         super(id, rs);
     }
 
@@ -62,7 +60,7 @@ public final class ScriptIntrinsicConvolve5x5 extends ScriptIntrinsic {
             throw new RSIllegalArgumentException("Unsuported element type.");
         }
 
-        int id = rs.nScriptIntrinsicCreate(4, e.getID(rs));
+        long id = rs.nScriptIntrinsicCreate(4, e.getID(rs));
         return new ScriptIntrinsicConvolve5x5(id, rs);
 
     }
@@ -109,8 +107,21 @@ public final class ScriptIntrinsicConvolve5x5 extends ScriptIntrinsic {
      *             type.
      */
     public void forEach(Allocation aout) {
-        forEach(0, null, aout, null);
+        forEach(0, (Allocation) null, aout, null);
     }
+
+    /**
+     * Apply the filter to the input and save to the specified
+     * allocation.
+     *
+     * @param aout Output allocation. Must match creation element
+     *             type.
+     * @param opt LaunchOptions for clipping
+     */
+    public void forEach(Allocation aout, Script.LaunchOptions opt) {
+        forEach(0, (Allocation) null, aout, null, opt);
+    }
+
 
     /**
      * Get a KernelID for this intrinsic kernel.
@@ -130,4 +141,3 @@ public final class ScriptIntrinsicConvolve5x5 extends ScriptIntrinsic {
         return createFieldID(1, null);
     }
 }
-

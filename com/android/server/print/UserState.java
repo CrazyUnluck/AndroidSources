@@ -71,6 +71,7 @@ import java.util.Collections;
 import java.util.HashSet;
 import java.util.Iterator;
 import java.util.List;
+import java.util.Map;
 import java.util.Set;
 
 /**
@@ -125,7 +126,8 @@ final class UserState implements PrintSpoolerCallbacks, PrintServiceCallbacks {
         mSpooler = new RemotePrintSpooler(context, userId, this);
         mHandler = new UserStateHandler(context.getMainLooper());
         synchronized (mLock) {
-            enableSystemPrintServicesOnFirstBootLocked();
+            enableSystemPrintServicesLocked();
+            onConfigurationChangedLocked();
         }
     }
 
@@ -594,6 +596,8 @@ final class UserState implements PrintSpoolerCallbacks, PrintServiceCallbacks {
                     .append(installedService.getSettingsActivityName()).println();
             pw.append(installedServicePrefix).append(tab).append("addPrintersActivity=")
                     .append(installedService.getAddPrintersActivityName()).println();
+            pw.append(installedServicePrefix).append(tab).append("avancedOptionsActivity=")
+                   .append(installedService.getAdvancedOptionsActivityName()).println();
         }
 
         pw.append(prefix).append(tab).append("enabled services:").println();
@@ -657,7 +661,33 @@ final class UserState implements PrintSpoolerCallbacks, PrintServiceCallbacks {
             tempPrintServices.add(PrintServiceInfo.create(installedService, mContext));
         }
 
-        if (!tempPrintServices.equals(mInstalledServices)) {
+        boolean someServiceChanged = false;
+
+        if (tempPrintServices.size() != mInstalledServices.size()) {
+            someServiceChanged = true;
+        } else {
+            for (PrintServiceInfo newService: tempPrintServices) {
+                final int oldServiceIndex = mInstalledServices.indexOf(newService);
+                if (oldServiceIndex < 0) {
+                    someServiceChanged = true;
+                    break;
+                }
+                // PrintServiceInfo#equals compares only the id not all members,
+                // so we are also comparing the members coming from meta-data.
+                PrintServiceInfo oldService = mInstalledServices.get(oldServiceIndex);
+                if (!TextUtils.equals(oldService.getAddPrintersActivityName(),
+                            newService.getAddPrintersActivityName())
+                        || !TextUtils.equals(oldService.getAdvancedOptionsActivityName(),
+                                newService.getAdvancedOptionsActivityName())
+                        || !TextUtils.equals(oldService.getSettingsActivityName(),
+                                newService.getSettingsActivityName())) {
+                    someServiceChanged = true;
+                    break;
+                }
+            }
+        }
+
+        if (someServiceChanged) {
             mInstalledServices.clear();
             mInstalledServices.addAll(tempPrintServices);
             return true;
@@ -698,7 +728,7 @@ final class UserState implements PrintSpoolerCallbacks, PrintServiceCallbacks {
         }
     }
 
-    private void enableSystemPrintServicesOnFirstBootLocked() {
+    private void enableSystemPrintServicesLocked() {
         // Load enabled and installed services.
         readEnabledPrintServicesLocked();
         readInstalledPrintServicesLocked();
@@ -761,11 +791,16 @@ final class UserState implements PrintSpoolerCallbacks, PrintServiceCallbacks {
     }
 
     private void onConfigurationChangedLocked() {
+        Set<ComponentName> installedComponents = new ArraySet<ComponentName>();
+
         final int installedCount = mInstalledServices.size();
         for (int i = 0; i < installedCount; i++) {
             ResolveInfo resolveInfo = mInstalledServices.get(i).getResolveInfo();
             ComponentName serviceName = new ComponentName(resolveInfo.serviceInfo.packageName,
                     resolveInfo.serviceInfo.name);
+
+            installedComponents.add(serviceName);
+
             if (mEnabledServices.contains(serviceName)) {
                 if (!mActiveServices.containsKey(serviceName)) {
                     RemotePrintService service = new RemotePrintService(
@@ -777,6 +812,18 @@ final class UserState implements PrintSpoolerCallbacks, PrintServiceCallbacks {
                 if (service != null) {
                     removeServiceLocked(service);
                 }
+            }
+        }
+
+        Iterator<Map.Entry<ComponentName, RemotePrintService>> iterator =
+                mActiveServices.entrySet().iterator();
+        while (iterator.hasNext()) {
+            Map.Entry<ComponentName, RemotePrintService> entry = iterator.next();
+            ComponentName serviceName = entry.getKey();
+            RemotePrintService service = entry.getValue();
+            if (!installedComponents.contains(serviceName)) {
+                removeServiceLocked(service);
+                iterator.remove();
             }
         }
     }
@@ -1113,6 +1160,7 @@ final class UserState implements PrintSpoolerCallbacks, PrintServiceCallbacks {
                 Log.w(LOG_TAG, "Not destroying - session destroyed");
                 return;
             }
+            mIsDestroyed = true;
             // Make sure printer tracking is stopped.
             final int printerCount = mStateTrackedPrinters.size();
             for (int i = 0; i < printerCount; i++) {
