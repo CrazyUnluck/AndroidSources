@@ -16,7 +16,7 @@
 
 package android.net.dhcp;
 
-import java.net.InetAddress;
+import java.net.Inet4Address;
 import java.nio.ByteBuffer;
 
 /**
@@ -26,10 +26,10 @@ class DhcpDeclinePacket extends DhcpPacket {
     /**
      * Generates a DECLINE packet with the specified parameters.
      */
-    DhcpDeclinePacket(int transId, InetAddress clientIp, InetAddress yourIp,
-                      InetAddress nextIp, InetAddress relayIp,
+    DhcpDeclinePacket(int transId, short secs, Inet4Address clientIp, Inet4Address yourIp,
+                      Inet4Address nextIp, Inet4Address relayIp,
                       byte[] clientMac) {
-        super(transId, clientIp, yourIp, nextIp, relayIp, clientMac, false);
+        super(transId, secs, clientIp, yourIp, nextIp, relayIp, clientMac, false);
     }
 
     public String toString() {
@@ -53,13 +53,9 @@ class DhcpDeclinePacket extends DhcpPacket {
      * Adds optional parameters to the DECLINE packet.
      */
     void finishPacket(ByteBuffer buffer) {
-        // None needed
-    }
-
-    /**
-     * Informs the state machine of the arrival of a DECLINE packet.
-     */
-    public void doNextOp(DhcpStateMachine machine) {
-        machine.onDeclineReceived(mClientMac, mRequestedIp);
+        addTlv(buffer, DHCP_MESSAGE_TYPE, DHCP_MESSAGE_TYPE_DECLINE);
+        addTlv(buffer, DHCP_CLIENT_IDENTIFIER, getClientId());
+        // RFC 2131 says we MUST NOT include our common client TLVs or the parameter request list.
+        addTlvEnd(buffer);
     }
 }

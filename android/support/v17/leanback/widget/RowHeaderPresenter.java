@@ -21,8 +21,8 @@ import android.view.ViewGroup;
 import android.widget.TextView;
 
 /**
- * RowHeaderPresenter provides a default implementation for header using TextView.
- * If subclass override and creates its own view, subclass must also override
+ * RowHeaderPresenter provides a default presentation for {@link HeaderItem} using a
+ * {@link RowHeaderView}. If a subclass creates its own view, the subclass must also override
  * {@link #onSelectLevelChanged(ViewHolder)}.
  */
 public class RowHeaderPresenter extends Presenter {
@@ -56,6 +56,9 @@ public class RowHeaderPresenter extends Presenter {
         return mNullItemVisibilityGone;
     }
 
+    /**
+     * A ViewHolder for the RowHeaderPresenter.
+     */
     public static class ViewHolder extends Presenter.ViewHolder {
         float mSelectLevel;
         int mOriginalTextColor;
@@ -78,12 +81,12 @@ public class RowHeaderPresenter extends Presenter {
         viewHolder.mOriginalTextColor = headerView.getCurrentTextColor();
         viewHolder.mUnselectAlpha = parent.getResources().getFraction(
                 R.fraction.lb_browse_header_unselect_alpha, 1, 1);
+        setSelectLevel(viewHolder, 0);
         return viewHolder;
     }
 
     @Override
     public void onBindViewHolder(Presenter.ViewHolder viewHolder, Object item) {
-        setSelectLevel((ViewHolder) viewHolder, 0);
         HeaderItem headerItem = item == null ? null : ((Row) item).getHeaderItem();
         if (headerItem == null) {
             ((RowHeaderView) viewHolder.view).setText(null);
@@ -99,13 +102,20 @@ public class RowHeaderPresenter extends Presenter {
     @Override
     public void onUnbindViewHolder(Presenter.ViewHolder viewHolder) {
         ((RowHeaderView) viewHolder.view).setText(null);
+        setSelectLevel((ViewHolder) viewHolder, 0);
     }
 
+    /**
+     * Sets the select level.
+     */
     public final void setSelectLevel(ViewHolder holder, float selectLevel) {
         holder.mSelectLevel = selectLevel;
         onSelectLevelChanged(holder);
     }
 
+    /**
+     * Called when the select level changes.  The default implementation sets the alpha on the view.
+     */
     protected void onSelectLevelChanged(ViewHolder holder) {
         holder.view.setAlpha(holder.mUnselectAlpha + holder.mSelectLevel *
                 (1f - holder.mUnselectAlpha));

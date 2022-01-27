@@ -22,10 +22,10 @@ import android.content.res.Resources;
 import android.graphics.drawable.Drawable;
 import android.support.annotation.Nullable;
 import android.support.v4.view.ViewCompat;
-import android.support.v4.view.WindowCompat;
 import android.support.v7.app.ActionBar;
-import android.support.v7.internal.view.WindowCallbackWrapper;
+import android.support.v7.app.AppCompatDelegate;
 import android.support.v7.appcompat.R;
+import android.support.v7.internal.view.WindowCallbackWrapper;
 import android.support.v7.internal.view.menu.ListMenuPresenter;
 import android.support.v7.internal.view.menu.MenuBuilder;
 import android.support.v7.internal.view.menu.MenuPresenter;
@@ -34,6 +34,7 @@ import android.support.v7.internal.widget.ToolbarWidgetWrapper;
 import android.support.v7.widget.Toolbar;
 import android.util.TypedValue;
 import android.view.ContextThemeWrapper;
+import android.view.KeyCharacterMap;
 import android.view.KeyEvent;
 import android.view.LayoutInflater;
 import android.view.Menu;
@@ -54,10 +55,8 @@ public class ToolbarActionBar extends ActionBar {
     private boolean mMenuCallbackSet;
 
     private boolean mLastMenuVisibility;
-    private ArrayList<OnMenuVisibilityListener> mMenuVisibilityListeners =
-            new ArrayList<OnMenuVisibilityListener>();
+    private ArrayList<OnMenuVisibilityListener> mMenuVisibilityListeners = new ArrayList<>();
 
-    private Window mWindow;
     private ListMenuPresenter mListMenuPresenter;
 
     private final Runnable mMenuInvalidator = new Runnable() {
@@ -75,14 +74,12 @@ public class ToolbarActionBar extends ActionBar {
                 }
             };
 
-    public ToolbarActionBar(Toolbar toolbar, CharSequence title, Window window) {
+    public ToolbarActionBar(Toolbar toolbar, CharSequence title, Window.Callback callback) {
         mDecorToolbar = new ToolbarWidgetWrapper(toolbar, false);
-        mWindowCallback = new ToolbarCallbackWrapper(window.getCallback());
+        mWindowCallback = new ToolbarCallbackWrapper(callback);
         mDecorToolbar.setWindowCallback(mWindowCallback);
         toolbar.setOnMenuItemClickListener(mMenuClicker);
         mDecorToolbar.setWindowTitle(title);
-
-        mWindow = window;
     }
 
     public Window.Callback getWrappedWindowCallback() {
@@ -96,7 +93,9 @@ public class ToolbarActionBar extends ActionBar {
 
     @Override
     public void setCustomView(View view, LayoutParams layoutParams) {
-        view.setLayoutParams(layoutParams);
+        if (view != null) {
+            view.setLayoutParams(layoutParams);
+        }
         mDecorToolbar.setCustomView(view);
     }
 
@@ -468,7 +467,16 @@ public class ToolbarActionBar extends ActionBar {
     @Override
     public boolean onKeyShortcut(int keyCode, KeyEvent ev) {
         Menu menu = getMenu();
-        return menu != null ? menu.performShortcut(keyCode, ev, 0) : false;
+        if (menu != null) {
+            final KeyCharacterMap kmap = KeyCharacterMap.load(
+                    ev != null ? ev.getDeviceId() : KeyCharacterMap.VIRTUAL_KEYBOARD);
+            menu.setQwertyMode(kmap.getKeyboardType() != KeyCharacterMap.NUMERIC);
+            menu.performShortcut(keyCode, ev, 0);
+        }
+        // This action bar always returns true for handling keyboard shortcuts.
+        // This will block the window from preparing a temporary panel to handle
+        // keyboard shortcuts.
+        return true;
     }
 
     public void addOnMenuVisibilityListener(OnMenuVisibilityListener listener) {
@@ -512,6 +520,12 @@ public class ToolbarActionBar extends ActionBar {
             final TypedValue outValue = new TypedValue();
             final Resources.Theme widgetTheme = context.getResources().newTheme();
             widgetTheme.setTo(context.getTheme());
+
+            // First apply the actionBarPopupTheme
+            widgetTheme.resolveAttribute(R.attr.actionBarPopupTheme, outValue, true);
+            if (outValue.resourceId != 0) {
+                widgetTheme.applyStyle(outValue.resourceId, true);
+            }
 
             // Apply the panelMenuListTheme
             widgetTheme.resolveAttribute(R.attr.panelMenuListTheme, outValue, true);
@@ -575,7 +589,7 @@ public class ToolbarActionBar extends ActionBar {
         @Override
         public boolean onOpenSubMenu(MenuBuilder subMenu) {
             if (mWindowCallback != null) {
-                mWindowCallback.onMenuOpened(WindowCompat.FEATURE_ACTION_BAR, subMenu);
+                mWindowCallback.onMenuOpened(AppCompatDelegate.FEATURE_SUPPORT_ACTION_BAR, subMenu);
                 return true;
             }
             return false;
@@ -590,7 +604,7 @@ public class ToolbarActionBar extends ActionBar {
             mClosingActionMenu = true;
             mDecorToolbar.dismissPopupMenus();
             if (mWindowCallback != null) {
-                mWindowCallback.onPanelClosed(WindowCompat.FEATURE_ACTION_BAR, menu);
+                mWindowCallback.onPanelClosed(AppCompatDelegate.FEATURE_SUPPORT_ACTION_BAR, menu);
             }
             mClosingActionMenu = false;
         }
@@ -624,10 +638,10 @@ public class ToolbarActionBar extends ActionBar {
         public void onMenuModeChange(MenuBuilder menu) {
             if (mWindowCallback != null) {
                 if (mDecorToolbar.isOverflowMenuShowing()) {
-                    mWindowCallback.onPanelClosed(WindowCompat.FEATURE_ACTION_BAR, menu);
+                    mWindowCallback.onPanelClosed(AppCompatDelegate.FEATURE_SUPPORT_ACTION_BAR, menu);
                 } else if (mWindowCallback.onPreparePanel(Window.FEATURE_OPTIONS_PANEL,
                         null, menu)) {
-                    mWindowCallback.onMenuOpened(WindowCompat.FEATURE_ACTION_BAR, menu);
+                    mWindowCallback.onMenuOpened(AppCompatDelegate.FEATURE_SUPPORT_ACTION_BAR, menu);
                 }
             }
         }

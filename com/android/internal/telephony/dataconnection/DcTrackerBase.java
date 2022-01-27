@@ -42,11 +42,13 @@ import android.os.SystemProperties;
 import android.preference.PreferenceManager;
 import android.provider.Settings;
 import android.provider.Settings.SettingNotFoundException;
+import android.telephony.ServiceState;
 import android.telephony.SubscriptionManager;
 import android.telephony.SubscriptionManager.OnSubscriptionsChangedListener;
 import android.telephony.TelephonyManager;
 import android.text.TextUtils;
 import android.util.EventLog;
+import android.util.LocalLog;
 import android.telephony.Rlog;
 
 import com.android.internal.R;
@@ -79,7 +81,7 @@ import java.util.PriorityQueue;
 public abstract class DcTrackerBase extends Handler {
     protected static final boolean DBG = true;
     protected static final boolean VDBG = false; // STOPSHIP if true
-    protected static final boolean VDBG_STALL = true; // STOPSHIP if true
+    protected static final boolean VDBG_STALL = false; // STOPSHIP if true
     protected static final boolean RADIO_TESTS = false;
 
     static boolean mIsCleanupRequired = false;
@@ -660,13 +662,9 @@ public abstract class DcTrackerBase extends Handler {
         mPhone.notifyDataActivity();
     }
 
-    public void incApnRefCount(String name) {
+    abstract public void incApnRefCount(String name, LocalLog log);
 
-    }
-
-    public void decApnRefCount(String name) {
-
-    }
+    abstract public void decApnRefCount(String name, LocalLog log);
 
     public boolean isApnSupported(String name) {
         return false;
@@ -693,21 +691,18 @@ public abstract class DcTrackerBase extends Handler {
             log("fetchDunApn: net.tethering.noprovisioning=true ret: null");
             return null;
         }
-        int bearer = -1;
+        int bearer = mPhone.getServiceState().getRilDataRadioTechnology();
         ApnSetting retDunSetting = null;
         String apnData = Settings.Global.getString(mResolver, Settings.Global.TETHER_DUN_APN);
         List<ApnSetting> dunSettings = ApnSetting.arrayFromString(apnData);
         IccRecords r = mIccRecords.get();
         for (ApnSetting dunSetting : dunSettings) {
             String operator = (r != null) ? r.getOperatorNumeric() : "";
-            if (dunSetting.bearer != 0) {
-                if (bearer == -1) bearer = mPhone.getServiceState().getRilDataRadioTechnology();
-                if (dunSetting.bearer != bearer) continue;
-            }
+            if (!ServiceState.bitmaskHasTech(dunSetting.bearerBitmask, bearer)) continue;
             if (dunSetting.numeric.equals(operator)) {
                 if (dunSetting.hasMvnoParams()) {
-                    if (r != null &&
-                            mvnoMatches(r, dunSetting.mvnoType, dunSetting.mvnoMatchData)) {
+                    if (r != null && ApnSetting.mvnoMatches(r, dunSetting.mvnoType,
+                            dunSetting.mvnoMatchData)) {
                         if (VDBG) {
                             log("fetchDunApn: global TETHER_DUN_APN dunSetting=" + dunSetting);
                         }
@@ -725,15 +720,13 @@ public abstract class DcTrackerBase extends Handler {
         for (String apn : apnArrayData) {
             ApnSetting dunSetting = ApnSetting.fromString(apn);
             if (dunSetting != null) {
-                if (dunSetting.bearer != 0) {
-                    if (bearer == -1) bearer = mPhone.getServiceState().getRilDataRadioTechnology();
-                    if (dunSetting.bearer != bearer) continue;
-                }
+                if (!ServiceState.bitmaskHasTech(dunSetting.bearerBitmask, bearer)) continue;
                 if (dunSetting.hasMvnoParams()) {
-                    if (r != null &&
-                            mvnoMatches(r, dunSetting.mvnoType, dunSetting.mvnoMatchData)) {
-                        if (VDBG) log("fetchDunApn: config_tether_apndata mvno dunSetting="
-                                + dunSetting);
+                    if (r != null && ApnSetting.mvnoMatches(r, dunSetting.mvnoType,
+                            dunSetting.mvnoMatchData)) {
+                        if (VDBG) {
+                            log("fetchDunApn: config_tether_apndata mvno dunSetting=" + dunSetting);
+                        }
                         return dunSetting;
                     }
                 } else {
@@ -894,7 +887,6 @@ public abstract class DcTrackerBase extends Handler {
     public abstract void setDataAllowed(boolean enable, Message response);
     public abstract String[] getPcscfAddress(String apnType);
     public abstract void setImsRegistrationState(boolean registered);
-    protected abstract boolean mvnoMatches(IccRecords r, String mvno_type, String mvno_match_data);
     protected abstract boolean isPermanentFail(DcFailCause dcFailCause);
 
     @Override
@@ -1310,58 +1302,7 @@ public abstract class DcTrackerBase extends Handler {
         sendMessage(msg);
     }
 
-    protected void onEnableApn(int apnId, int enabled) {
-        if (DBG) {
-            log("EVENT_APN_ENABLE_REQUEST apnId=" + apnId + ", apnType=" + apnIdToType(apnId) +
-                    ", enabled=" + enabled + ", dataEnabled = " + mDataEnabled[apnId] +
-                    ", enabledCount = " + mEnabledCount + ", isApnTypeActive = " +
-                    isApnTypeActive(apnIdToType(apnId)));
-        }
-        if (enabled == DctConstants.ENABLED) {
-            synchronized (this) {
-                if (!mDataEnabled[apnId]) {
-                    mDataEnabled[apnId] = true;
-                    mEnabledCount++;
-                }
-            }
-            String type = apnIdToType(apnId);
-            if (!isApnTypeActive(type)) {
-                mRequestedApnType = type;
-                onEnableNewApn();
-            } else {
-                notifyApnIdUpToCurrent(Phone.REASON_APN_SWITCHED, apnId);
-            }
-        } else {
-            // disable
-            boolean didDisable = false;
-            synchronized (this) {
-                if (mDataEnabled[apnId]) {
-                    mDataEnabled[apnId] = false;
-                    mEnabledCount--;
-                    didDisable = true;
-                }
-            }
-            if (didDisable) {
-                if ((mEnabledCount == 0) || (apnId == DctConstants.APN_DUN_ID)) {
-                    mRequestedApnType = PhoneConstants.APN_TYPE_DEFAULT;
-                    onCleanUpConnection(true, apnId, Phone.REASON_DATA_DISABLED);
-                }
-
-                // send the disconnect msg manually, since the normal route wont send
-                // it (it's not enabled)
-                notifyApnIdDisconnected(Phone.REASON_DATA_DISABLED, apnId);
-                if (mDataEnabled[DctConstants.APN_DEFAULT_ID] == true
-                        && !isApnTypeActive(PhoneConstants.APN_TYPE_DEFAULT)) {
-                    // TODO - this is an ugly way to restore the default conn - should be done
-                    // by a real contention manager and policy that disconnects the lower pri
-                    // stuff as enable requests come in and pops them back on as we disable back
-                    // down to the lower pri stuff
-                    mRequestedApnType = PhoneConstants.APN_TYPE_DEFAULT;
-                    onEnableNewApn();
-                }
-            }
-        }
-    }
+    abstract void onEnableApn(int apnId, int enabled);
 
     /**
      * Called when we switch APNs.

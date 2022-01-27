@@ -40,8 +40,6 @@ import java.util.List;
  */
 abstract class StaggeredGrid extends Grid {
 
-    private static final int OFFSET_UNDEFINED = Integer.MAX_VALUE;
-
     /**
      * Cached representation of Staggered item.
      */
@@ -152,7 +150,6 @@ abstract class StaggeredGrid extends Grid {
         if (mFirstVisibleIndex >= 0) {
             // prepend visible items from first visible index
             edge = mProvider.getEdge(mFirstVisibleIndex);
-            // Note offset of first visible item can be OFFSET_UNDEFINED.
             offset = getLocation(mFirstVisibleIndex).offset;
             itemIndex = mFirstVisibleIndex - 1;
         } else {
@@ -160,6 +157,14 @@ abstract class StaggeredGrid extends Grid {
             edge = Integer.MAX_VALUE;
             offset = 0;
             itemIndex = mStartIndex != START_DEFAULT ? mStartIndex : 0;
+            if (itemIndex > getLastIndex() || itemIndex < getFirstIndex() - 1) {
+                // if the item is not within or adjacent to cached items, clear cache.
+                mLocations.clear();
+                return false;
+            } else if (itemIndex < getFirstIndex()) {
+                // if the item is adjacent to first index, should prepend without cache.
+                return false;
+            }
         }
         for (; itemIndex >= mFirstIndex; itemIndex--) {
             Location loc = getLocation(itemIndex);
@@ -172,9 +177,6 @@ abstract class StaggeredGrid extends Grid {
                 mPendingItem = mTmpItem[0];
                 mPendingItemSize = size;
                 return false;
-            }
-            if (offset == OFFSET_UNDEFINED) {
-                offset = updateFirstVisibleOffset(size);
             }
             mFirstVisibleIndex = itemIndex;
             if (mLastVisibleIndex < 0) {
@@ -197,14 +199,34 @@ abstract class StaggeredGrid extends Grid {
     }
 
     /**
-     * When we append first visible item without cache after cached items, the offset
-     * of the first visible item cannot be determined until we prepend previous item with cache.
-     * This method is called from prependVisbleItemsWithCache() to update the offset
-     * of first visible item.
-     * @param prependedItemSize   Size of the prepended item.
-     * @return                    Updated size of current first visible item.
+     * Calculate offset of item after last cached item.
      */
-    protected abstract int updateFirstVisibleOffset(int prependedItemSize);
+    private int calculateOffsetAfterLastItem(int row) {
+        // Find a cached item in same row, if not found, just use last item.
+        int cachedIndex = getLastIndex();
+        boolean foundCachedItemInSameRow = false;
+        while (cachedIndex >= mFirstIndex) {
+            Location loc = getLocation(cachedIndex);
+            if (loc.row == row) {
+                foundCachedItemInSameRow = true;
+                break;
+            }
+            cachedIndex--;
+        }
+        if (!foundCachedItemInSameRow) {
+            cachedIndex = getLastIndex();
+        }
+        // Assuming the cachedIndex is next to item on the same row, so the
+        // sum of offset of [cachedIndex + 1, itemIndex] should be size of the
+        // cached item plus margin.
+        int offset = isReversedFlow() ?  -getLocation(cachedIndex).size - mMargin:
+                getLocation(cachedIndex).size + mMargin;
+        for (int i = cachedIndex + 1; i <= getLastIndex(); i++) {
+            offset -= getLocation(i).offset;
+        }
+        return offset;
+    }
+
 
     /**
      * This implements the algorithm of layout staggered grid, the method should only be called by
@@ -227,6 +249,7 @@ abstract class StaggeredGrid extends Grid {
         Location oldFirstLoc = mFirstIndex >= 0 ? getLocation(mFirstIndex) : null;
         int oldFirstEdge = mProvider.getEdge(mFirstIndex);
         Location loc = new Location(rowIndex, 0, 0);
+        mLocations.addFirst(loc);
         Object item;
         if (mPendingItem != null) {
             loc.size = mPendingItemSize;
@@ -240,7 +263,6 @@ abstract class StaggeredGrid extends Grid {
         if (mLastVisibleIndex < 0) {
             mLastVisibleIndex = itemIndex;
         }
-        mLocations.addFirst(loc);
         int thisEdge = !mReversedFlow ? edge - loc.size : edge + loc.size;
         if (oldFirstLoc != null) {
             oldFirstLoc.offset = oldFirstEdge - thisEdge;
@@ -288,11 +310,13 @@ abstract class StaggeredGrid extends Grid {
             // append first visible item
             edge = Integer.MAX_VALUE;
             itemIndex = mStartIndex != START_DEFAULT ? mStartIndex : 0;
-            for (int i = itemIndex - 1; i >= mFirstIndex; i--) {
-                if (getLocation(i).row == mNumRows - 1) {
-                    itemIndex = i + 1;
-                    break;
-                }
+            if (itemIndex > getLastIndex() + 1 || itemIndex < getFirstIndex()) {
+                // if the item is not within or adjacent to cached items, clear cache.
+                mLocations.clear();
+                return false;
+            } else if (itemIndex > getLastIndex()) {
+                // if the item is adjacent to first index, should prepend without cache.
+                return false;
             }
         }
         int lastIndex = getLastIndex();
@@ -350,11 +374,16 @@ abstract class StaggeredGrid extends Grid {
         if (mLastVisibleIndex < 0) {
             // if we append first visible item after existing cached items,  we need update
             // the offset later when prependVisbleItemsWithCache()
-            offset = OFFSET_UNDEFINED;
+            if (mLocations.size() > 0 && itemIndex == getLastIndex() + 1) {
+                offset = calculateOffsetAfterLastItem(rowIndex);
+            } else {
+                offset = 0;
+            }
         } else {
             offset = location - mProvider.getEdge(mLastVisibleIndex);
         }
         Location loc = new Location(rowIndex, offset, 0);
+        mLocations.addLast(loc);
         Object item;
         if (mPendingItem != null) {
             loc.size = mPendingItemSize;
@@ -364,7 +393,7 @@ abstract class StaggeredGrid extends Grid {
             loc.size = mProvider.createItem(itemIndex, true, mTmpItem);
             item = mTmpItem[0];
         }
-        if (mLocations.size() == 0) {
+        if (mLocations.size() == 1) {
             mFirstIndex = mFirstVisibleIndex = mLastVisibleIndex = itemIndex;
         } else {
             if (mLastVisibleIndex < 0) {
@@ -373,7 +402,6 @@ abstract class StaggeredGrid extends Grid {
                 mLastVisibleIndex++;
             }
         }
-        mLocations.addLast(loc);
         mProvider.addItem(item, itemIndex, loc.size, rowIndex, location);
         return loc.size;
     }

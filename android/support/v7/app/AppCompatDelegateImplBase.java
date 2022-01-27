@@ -17,11 +17,9 @@
 package android.support.v7.app;
 
 import android.app.Activity;
-import android.app.Dialog;
 import android.content.Context;
 import android.content.res.TypedArray;
 import android.graphics.drawable.Drawable;
-import android.os.Build;
 import android.os.Bundle;
 import android.support.v7.appcompat.R;
 import android.support.v7.internal.view.SupportMenuInflater;
@@ -40,10 +38,11 @@ abstract class AppCompatDelegateImplBase extends AppCompatDelegate {
     final Context mContext;
     final Window mWindow;
     final Window.Callback mOriginalWindowCallback;
+    final Window.Callback mAppCompatWindowCallback;
     final AppCompatCallback mAppCompatCallback;
 
-    private ActionBar mActionBar;
-    private MenuInflater mMenuInflater;
+    ActionBar mActionBar;
+    MenuInflater mMenuInflater;
 
     // true if this activity has an action bar.
     boolean mHasActionBar;
@@ -66,25 +65,26 @@ abstract class AppCompatDelegateImplBase extends AppCompatDelegate {
         mAppCompatCallback = callback;
 
         mOriginalWindowCallback = mWindow.getCallback();
-        if (mOriginalWindowCallback instanceof AppCompatWindowCallback) {
+        if (mOriginalWindowCallback instanceof AppCompatWindowCallbackBase) {
             throw new IllegalStateException(
                     "AppCompat has already installed itself into the Window");
         }
+        mAppCompatWindowCallback = wrapWindowCallback(mOriginalWindowCallback);
         // Now install the new callback
-        mWindow.setCallback(new AppCompatWindowCallback(mOriginalWindowCallback));
+        mWindow.setCallback(mAppCompatWindowCallback);
     }
 
-    abstract ActionBar createSupportActionBar();
+    abstract void initWindowDecorActionBar();
+
+    Window.Callback wrapWindowCallback(Window.Callback callback) {
+        return new AppCompatWindowCallbackBase(callback);
+    }
 
     @Override
     public ActionBar getSupportActionBar() {
         // The Action Bar should be lazily created as hasActionBar
         // could change after onCreate
-        if (mHasActionBar) {
-            if (mActionBar == null) {
-                mActionBar = createSupportActionBar();
-            }
-        }
+        initWindowDecorActionBar();
         return mActionBar;
     }
 
@@ -92,14 +92,13 @@ abstract class AppCompatDelegateImplBase extends AppCompatDelegate {
         return mActionBar;
     }
 
-    final void setSupportActionBar(ActionBar actionBar) {
-        mActionBar = actionBar;
-    }
-
     @Override
     public MenuInflater getMenuInflater() {
+        // Make sure that action views can get an appropriate theme.
         if (mMenuInflater == null) {
-            mMenuInflater = new SupportMenuInflater(getActionBarThemedContext());
+            initWindowDecorActionBar();
+            mMenuInflater = new SupportMenuInflater(
+                    mActionBar != null ? mActionBar.getThemedContext() : mContext);
         }
         return mMenuInflater;
     }
@@ -114,22 +113,24 @@ abstract class AppCompatDelegateImplBase extends AppCompatDelegate {
                     "You need to use a Theme.AppCompat theme (or descendant) with this activity.");
         }
 
-        if (a.getBoolean(R.styleable.Theme_windowActionBar, false)) {
-            mHasActionBar = true;
+        if (a.getBoolean(R.styleable.Theme_windowNoTitle, false)) {
+            requestWindowFeature(Window.FEATURE_NO_TITLE);
+        } else if (a.getBoolean(R.styleable.Theme_windowActionBar, false)) {
+            // Don't allow an action bar if there is no title.
+            requestWindowFeature(FEATURE_SUPPORT_ACTION_BAR);
         }
         if (a.getBoolean(R.styleable.Theme_windowActionBarOverlay, false)) {
-            mOverlayActionBar = true;
+            requestWindowFeature(FEATURE_SUPPORT_ACTION_BAR_OVERLAY);
         }
         if (a.getBoolean(R.styleable.Theme_windowActionModeOverlay, false)) {
-            mOverlayActionMode = true;
+            requestWindowFeature(FEATURE_ACTION_MODE_OVERLAY);
         }
         mIsFloating = a.getBoolean(R.styleable.Theme_android_windowIsFloating, false);
-        mWindowNoTitle = a.getBoolean(R.styleable.Theme_windowNoTitle, false);
         a.recycle();
     }
 
     // Methods used to create and respond to options menu
-    abstract boolean onPanelClosed(int featureId, Menu menu);
+    abstract void onPanelClosed(int featureId, Menu menu);
 
     abstract boolean onMenuOpened(int featureId, Menu menu);
 
@@ -203,6 +204,17 @@ abstract class AppCompatDelegateImplBase extends AppCompatDelegate {
         mIsDestroyed = true;
     }
 
+    @Override
+    public void setHandleNativeActionModesEnabled(boolean enabled) {
+        // no-op pre-v14
+    }
+
+    @Override
+    public boolean isHandleNativeActionModesEnabled() {
+        // Always false pre-v14
+        return false;
+    }
+
     final boolean isDestroyed() {
         return mIsDestroyed;
     }
@@ -228,17 +240,21 @@ abstract class AppCompatDelegateImplBase extends AppCompatDelegate {
         return mTitle;
     }
 
-    private class AppCompatWindowCallback extends WindowCallbackWrapper {
-        AppCompatWindowCallback(Window.Callback callback) {
+    class AppCompatWindowCallbackBase extends WindowCallbackWrapper {
+        AppCompatWindowCallbackBase(Window.Callback callback) {
             super(callback);
         }
 
         @Override
         public boolean dispatchKeyEvent(KeyEvent event) {
-            if (AppCompatDelegateImplBase.this.dispatchKeyEvent(event)) {
-                return true;
-            }
-            return super.dispatchKeyEvent(event);
+            return AppCompatDelegateImplBase.this.dispatchKeyEvent(event)
+                    || super.dispatchKeyEvent(event);
+        }
+
+        @Override
+        public boolean dispatchKeyShortcutEvent(KeyEvent event) {
+            return super.dispatchKeyShortcutEvent(event)
+                    || AppCompatDelegateImplBase.this.onKeyShortcut(event.getKeyCode(), event);
         }
 
         @Override
@@ -252,74 +268,48 @@ abstract class AppCompatDelegateImplBase extends AppCompatDelegate {
         }
 
         @Override
-        public boolean onPreparePanel(int featureId, View view, Menu menu) {
-            if (featureId == Window.FEATURE_OPTIONS_PANEL && !(menu instanceof MenuBuilder)) {
-                // If this is an options menu but it's not an AppCompat menu, we eat the event
-                // and return false
-                return false;
-            }
-
-            if (featureId == Window.FEATURE_OPTIONS_PANEL && bypassPrepareOptionsPanelIfNeeded()) {
-                // If this is an options menu and we need to bypass onPreparePanel, do so
-                if (mOriginalWindowCallback instanceof Activity) {
-                    return ((Activity) mOriginalWindowCallback).onPrepareOptionsMenu(menu);
-                } else if (mOriginalWindowCallback instanceof Dialog) {
-                    return ((Dialog) mOriginalWindowCallback).onPrepareOptionsMenu(menu);
-                }
-                return false;
-            }
-
-            // Else, defer to the default handling
-            return super.onPreparePanel(featureId, view, menu);
-        }
-
-        @Override
-        public boolean onMenuOpened(int featureId, Menu menu) {
-            if (AppCompatDelegateImplBase.this.onMenuOpened(featureId, menu)) {
-                return true;
-            }
-            return super.onMenuOpened(featureId, menu);
-        }
-
-        @Override
-        public boolean dispatchKeyShortcutEvent(KeyEvent event) {
-            if (AppCompatDelegateImplBase.this.onKeyShortcut(event.getKeyCode(), event)) {
-                return true;
-            }
-            return super.dispatchKeyShortcutEvent(event);
-        }
-
-        @Override
         public void onContentChanged() {
             // We purposely do not propagate this call as this is called when we install
             // our sub-decor rather than the user's content
         }
 
         @Override
-        public void onPanelClosed(int featureId, Menu menu) {
-            if (AppCompatDelegateImplBase.this.onPanelClosed(featureId, menu)) {
-                return;
+        public boolean onPreparePanel(int featureId, View view, Menu menu) {
+            final MenuBuilder mb = menu instanceof MenuBuilder ? (MenuBuilder) menu : null;
+
+            if (featureId == Window.FEATURE_OPTIONS_PANEL && mb == null) {
+                // If this is an options menu but it's not an AppCompat menu, we eat the event
+                // and return false
+                return false;
             }
-            super.onPanelClosed(featureId, menu);
+
+            // On ICS and below devices, onPreparePanel calls menu.hasVisibleItems() to determine
+            // if a panel is prepared. This interferes with any initially invisible items, which
+            // are later made visible. We workaround it by making hasVisibleItems() always
+            // return true during the onPreparePanel call.
+            if (mb != null) {
+                mb.setOverrideVisibleItems(true);
+            }
+
+            final boolean handled = super.onPreparePanel(featureId, view, menu);
+
+            if (mb != null) {
+                mb.setOverrideVisibleItems(false);
+            }
+
+            return handled;
         }
 
-        /**
-         * For the options menu, we may need to call onPrepareOptionsMenu() directly,
-         * bypassing onPreparePanel(). This is because onPreparePanel() in certain situations
-         * calls menu.hasVisibleItems(), which interferes with any initial invisible items.
-         *
-         * @return true if onPrepareOptionsMenu should be called directly.
-         */
-        private boolean bypassPrepareOptionsPanelIfNeeded() {
-            if (Build.VERSION.SDK_INT < Build.VERSION_CODES.JELLY_BEAN
-                    && mOriginalWindowCallback instanceof Activity) {
-                // For Activities, we only need to bypass onPreparePanel if we're running pre-JB
-                return true;
-            } else if (mOriginalWindowCallback instanceof Dialog) {
-                // For Dialogs, we always need to bypass onPreparePanel
-                return true;
-            }
-            return false;
+        @Override
+        public boolean onMenuOpened(int featureId, Menu menu) {
+            return super.onMenuOpened(featureId, menu)
+                    || AppCompatDelegateImplBase.this.onMenuOpened(featureId, menu);
+        }
+
+        @Override
+        public void onPanelClosed(int featureId, Menu menu) {
+            super.onPanelClosed(featureId, menu);
+            AppCompatDelegateImplBase.this.onPanelClosed(featureId, menu);
         }
     }
 }

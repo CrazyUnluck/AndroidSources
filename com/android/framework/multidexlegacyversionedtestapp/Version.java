@@ -20,6 +20,6 @@ package com.android.framework.multidexlegacyversionedtestapp;
 public class Version {
 
     public static int getVersion() {
-        return 1;
+        return 2;
     }
 }

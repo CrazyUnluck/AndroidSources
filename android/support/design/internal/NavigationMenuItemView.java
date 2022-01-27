@@ -17,13 +17,18 @@
 package android.support.design.internal;
 
 import android.content.Context;
+import android.content.res.ColorStateList;
+import android.graphics.Color;
+import android.graphics.drawable.ColorDrawable;
 import android.graphics.drawable.Drawable;
+import android.graphics.drawable.StateListDrawable;
 import android.support.design.R;
+import android.support.v4.graphics.drawable.DrawableCompat;
 import android.support.v4.widget.TextViewCompat;
 import android.support.v7.internal.view.menu.MenuItemImpl;
 import android.support.v7.internal.view.menu.MenuView;
 import android.util.AttributeSet;
-import android.view.View;
+import android.util.TypedValue;
 import android.widget.TextView;
 
 /**
@@ -31,29 +36,52 @@ import android.widget.TextView;
  */
 public class NavigationMenuItemView extends TextView implements MenuView.ItemView {
 
-    private MenuItemImpl mItemData;
+    private static final int[] CHECKED_STATE_SET = {android.R.attr.state_checked};
 
     private int mIconSize;
+    private MenuItemImpl mItemData;
+    private ColorStateList mIconTintList;
 
     public NavigationMenuItemView(Context context) {
         this(context, null);
     }
 
     public NavigationMenuItemView(Context context, AttributeSet attrs) {
-        super(context, attrs);
-        mIconSize = context.getResources().getDimensionPixelSize(R.dimen.drawer_icon_size);
+        this(context, attrs, 0);
+    }
+
+    public NavigationMenuItemView(Context context, AttributeSet attrs, int defStyleAttr) {
+        super(context, attrs, defStyleAttr);
+        mIconSize = context.getResources().getDimensionPixelSize(
+                R.dimen.design_navigation_icon_size);
     }
 
     @Override
     public void initialize(MenuItemImpl itemData, int menuType) {
         mItemData = itemData;
 
-        setVisibility(itemData.isVisible() ? View.VISIBLE : View.GONE);
+        setVisibility(itemData.isVisible() ? VISIBLE : GONE);
 
-        setTitle(itemData.getTitle());
+        if (getBackground() == null) {
+            setBackgroundDrawable(createDefaultBackground());
+        }
+
         setCheckable(itemData.isCheckable());
-        setIcon(itemData.getIcon());
+        setChecked(itemData.isChecked());
         setEnabled(itemData.isEnabled());
+        setTitle(itemData.getTitle());
+        setIcon(itemData.getIcon());
+    }
+
+    private StateListDrawable createDefaultBackground() {
+        TypedValue value = new TypedValue();
+        if (getContext().getTheme().resolveAttribute(R.attr.colorControlHighlight, value, true)) {
+            StateListDrawable drawable = new StateListDrawable();
+            drawable.addState(CHECKED_STATE_SET, new ColorDrawable(value.data));
+            drawable.addState(EMPTY_STATE_SET, new ColorDrawable(Color.TRANSPARENT));
+            return drawable;
+        }
+        return null;
     }
 
     @Override
@@ -68,10 +96,12 @@ public class NavigationMenuItemView extends TextView implements MenuView.ItemVie
 
     @Override
     public void setCheckable(boolean checkable) {
+        refreshDrawableState();
     }
 
     @Override
     public void setChecked(boolean checked) {
+        refreshDrawableState();
     }
 
     @Override
@@ -81,7 +111,9 @@ public class NavigationMenuItemView extends TextView implements MenuView.ItemVie
     @Override
     public void setIcon(Drawable icon) {
         if (icon != null) {
+            icon = DrawableCompat.wrap(icon.getConstantState().newDrawable()).mutate();
             icon.setBounds(0, 0, mIconSize, mIconSize);
+            DrawableCompat.setTintList(icon, mIconTintList);
         }
         TextViewCompat.setCompoundDrawablesRelative(this, icon, null, null, null);
     }
@@ -96,4 +128,20 @@ public class NavigationMenuItemView extends TextView implements MenuView.ItemVie
         return true;
     }
 
+    @Override
+    protected int[] onCreateDrawableState(int extraSpace) {
+        final int[] drawableState = super.onCreateDrawableState(extraSpace + 1);
+        if (mItemData != null && mItemData.isCheckable() && mItemData.isChecked()) {
+            mergeDrawableStates(drawableState, CHECKED_STATE_SET);
+        }
+        return drawableState;
+    }
+
+    void setIconTintList(ColorStateList tintList) {
+        mIconTintList = tintList;
+        if (mItemData != null) {
+            // Update the icon so that the tint takes effect
+            setIcon(mItemData.getIcon());
+        }
+    }
 }

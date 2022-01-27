@@ -19,6 +19,7 @@ package android.support.v7.app;
 import android.content.Intent;
 import android.content.res.Configuration;
 import android.os.Bundle;
+import android.support.annotation.CallSuper;
 import android.support.annotation.LayoutRes;
 import android.support.annotation.Nullable;
 import android.support.v4.app.ActivityCompat;
@@ -27,6 +28,7 @@ import android.support.v4.app.NavUtils;
 import android.support.v4.app.TaskStackBuilder;
 import android.support.v7.view.ActionMode;
 import android.support.v7.widget.Toolbar;
+import android.view.Menu;
 import android.view.MenuInflater;
 import android.view.View;
 import android.view.ViewGroup;
@@ -53,14 +55,14 @@ public class AppCompatActivity extends FragmentActivity implements AppCompatCall
     private AppCompatDelegate mDelegate;
 
     @Override
-    protected void onCreate(Bundle savedInstanceState) {
+    protected void onCreate(@Nullable Bundle savedInstanceState) {
         getDelegate().installViewFactory();
-        super.onCreate(savedInstanceState);
         getDelegate().onCreate(savedInstanceState);
+        super.onCreate(savedInstanceState);
     }
 
     @Override
-    protected void onPostCreate(Bundle savedInstanceState) {
+    protected void onPostCreate(@Nullable Bundle savedInstanceState) {
         super.onPostCreate(savedInstanceState);
         getDelegate().onPostCreate(savedInstanceState);
     }
@@ -72,6 +74,7 @@ public class AppCompatActivity extends FragmentActivity implements AppCompatCall
      *
      * @return The Activity's ActionBar, or null if it does not have one.
      */
+    @Nullable
     public ActionBar getSupportActionBar() {
         return getDelegate().getSupportActionBar();
     }
@@ -87,7 +90,8 @@ public class AppCompatActivity extends FragmentActivity implements AppCompatCall
      * {@link android.R.id#home home} menu select action.</p>
      *
      * <p>In order to use a Toolbar within the Activity's window content the application
-     * must not request the window feature {@link android.view.Window#FEATURE_ACTION_BAR FEATURE_ACTION_BAR}.</p>
+     * must not request the window feature
+     * {@link android.view.Window#FEATURE_ACTION_BAR FEATURE_SUPPORT_ACTION_BAR}.</p>
      *
      * @param toolbar Toolbar to set as the Activity's action bar
      */
@@ -200,6 +204,7 @@ public class AppCompatActivity extends FragmentActivity implements AppCompatCall
      *
      * @param mode The new action mode.
      */
+    @CallSuper
     public void onSupportActionModeStarted(ActionMode mode) {
     }
 
@@ -209,7 +214,23 @@ public class AppCompatActivity extends FragmentActivity implements AppCompatCall
      *
      * @param mode The action mode that just finished.
      */
+    @CallSuper
     public void onSupportActionModeFinished(ActionMode mode) {
+    }
+
+    /**
+     * Called when a support action mode is being started for this window. Gives the
+     * callback an opportunity to handle the action mode in its own unique and
+     * beautiful way. If this method returns null the system can choose a way
+     * to present the mode or choose not to start the mode at all.
+     *
+     * @param callback Callback to control the lifecycle of this action mode
+     * @return The ActionMode that was started, or null if the system should present it
+     */
+    @Nullable
+    @Override
+    public ActionMode onWindowStartingSupportActionMode(ActionMode.Callback callback) {
+        return null;
     }
 
     public ActionMode startSupportActionMode(ActionMode.Callback callback) {
@@ -348,6 +369,7 @@ public class AppCompatActivity extends FragmentActivity implements AppCompatCall
      *
      * @return a new Intent targeting the defined parent activity of sourceActivity
      */
+    @Nullable
     public Intent getSupportParentActivityIntent() {
         return NavUtils.getParentActivityIntent(this);
     }
@@ -402,6 +424,28 @@ public class AppCompatActivity extends FragmentActivity implements AppCompatCall
     @Override
     public ActionBarDrawerToggle.Delegate getDrawerToggleDelegate() {
         return getDelegate().getDrawerToggleDelegate();
+    }
+
+    /**
+     * {@inheritDoc}
+     *
+     * <p>Please note: AppCompat uses it's own feature id for the action bar:
+     * {@link AppCompatDelegate#FEATURE_SUPPORT_ACTION_BAR FEATURE_SUPPORT_ACTION_BAR}.</p>
+     */
+    @Override
+    public boolean onMenuOpened(int featureId, Menu menu) {
+        return super.onMenuOpened(featureId, menu);
+    }
+
+    /**
+     * {@inheritDoc}
+     *
+     * <p>Please note: AppCompat uses it's own feature id for the action bar:
+     * {@link AppCompatDelegate#FEATURE_SUPPORT_ACTION_BAR FEATURE_SUPPORT_ACTION_BAR}.</p>
+     */
+    @Override
+    public void onPanelClosed(int featureId, Menu menu) {
+        super.onPanelClosed(featureId, menu);
     }
 
     /**

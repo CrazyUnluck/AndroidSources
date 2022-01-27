@@ -18,19 +18,13 @@ package com.android.keyguard;
 
 import android.content.Context;
 import android.content.res.TypedArray;
-import android.graphics.drawable.Drawable;
-import android.os.Debug;
 import android.os.PowerManager;
 import android.os.SystemClock;
-import android.os.UserHandle;
-import android.provider.Settings;
 import android.util.AttributeSet;
 import android.view.HapticFeedbackConstants;
-import android.view.KeyEvent;
 import android.view.LayoutInflater;
 import android.view.View;
 import android.view.ViewGroup;
-import android.view.accessibility.AccessibilityEvent;
 import android.widget.TextView;
 
 import com.android.internal.widget.LockPatternUtils;
@@ -120,17 +114,7 @@ public class NumPadKey extends ViewGroup {
         }
 
         setBackground(mContext.getDrawable(R.drawable.ripple_drawable));
-        updateContentDescription();
-    }
-
-    public void updateContentDescription() {
-        if (shouldSpeakPasswordsForAccessibility()) {
-            setContentDescription(
-                    mDigitText.getText().toString() + mKlondikeText.getText().toString());
-        } else {
-            setContentDescription(getContext().getString(
-                    com.android.internal.R.string.keyboard_password_character_no_headset));
-        }
+        setContentDescription(mDigitText.getText().toString());
     }
 
     @Override
@@ -162,15 +146,6 @@ public class NumPadKey extends ViewGroup {
 
         left = centerX - mKlondikeText.getMeasuredWidth() / 2;
         mKlondikeText.layout(left, top, left + mKlondikeText.getMeasuredWidth(), bottom);
-    }
-
-    /**
-     * @return true if the user has explicitly allowed accessibility services
-     * to speak passwords.
-     */
-    private boolean shouldSpeakPasswordsForAccessibility() {
-        return (Settings.Secure.getIntForUser(mContext.getContentResolver(),
-                Settings.Secure.ACCESSIBILITY_SPEAK_PASSWORD, 0, UserHandle.USER_CURRENT) == 1);
     }
 
     @Override

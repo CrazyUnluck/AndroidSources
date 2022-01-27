@@ -32,18 +32,27 @@ public class ColorUtils {
      * Composite two potentially translucent colors over each other and returns the result.
      */
     public static int compositeColors(int foreground, int background) {
-        final float alpha1 = Color.alpha(foreground) / 255f;
-        final float alpha2 = Color.alpha(background) / 255f;
+        int bgAlpha = Color.alpha(background);
+        int fgAlpha = Color.alpha(foreground);
+        int a = compositeAlpha(fgAlpha, bgAlpha);
 
-        float a = (alpha1 + alpha2) * (1f - alpha1);
-        float r = (Color.red(foreground) * alpha1)
-                + (Color.red(background) * alpha2 * (1f - alpha1));
-        float g = (Color.green(foreground) * alpha1)
-                + (Color.green(background) * alpha2 * (1f - alpha1));
-        float b = (Color.blue(foreground) * alpha1)
-                + (Color.blue(background) * alpha2 * (1f - alpha1));
+        int r = compositeComponent(Color.red(foreground), fgAlpha,
+                Color.red(background), bgAlpha, a);
+        int g = compositeComponent(Color.green(foreground), fgAlpha,
+                Color.green(background), bgAlpha, a);
+        int b = compositeComponent(Color.blue(foreground), fgAlpha,
+                Color.blue(background), bgAlpha, a);
 
-        return Color.argb((int) a, (int) r, (int) g, (int) b);
+        return Color.argb(a, r, g, b);
+    }
+
+    private static int compositeAlpha(int foregroundAlpha, int backgroundAlpha) {
+        return 0xFF - (((0xFF - backgroundAlpha) * (0xFF - foregroundAlpha)) / 0xFF);
+    }
+
+    private static int compositeComponent(int fgC, int fgA, int bgC, int bgA, int a) {
+        if (a == 0) return 0;
+        return ((0xFF * fgC * fgA) + (bgC * bgA * (0xFF - fgA))) / (a * 0xFF);
     }
 
     /**
@@ -176,9 +185,14 @@ public class ColorUtils {
             s = deltaMaxMin / (1f - Math.abs(2f * l - 1f));
         }
 
-        hsl[0] = (h * 60f) % 360f;
-        hsl[1] = s;
-        hsl[2] = l;
+        h = (h * 60f) % 360f;
+        if (h < 0) {
+            h += 360f;
+        }
+
+        hsl[0] = constrain(h, 0f, 360f);
+        hsl[1] = constrain(s, 0f, 1f);
+        hsl[2] = constrain(l, 0f, 1f);
     }
 
     /**
@@ -255,9 +269,9 @@ public class ColorUtils {
                 break;
         }
 
-        r = Math.max(0, Math.min(255, r));
-        g = Math.max(0, Math.min(255, g));
-        b = Math.max(0, Math.min(255, b));
+        r = constrain(r, 0, 255);
+        g = constrain(g, 0, 255);
+        b = constrain(b, 0, 255);
 
         return Color.rgb(r, g, b);
     }
@@ -270,6 +284,14 @@ public class ColorUtils {
             throw new IllegalArgumentException("alpha must be between 0 and 255.");
         }
         return (color & 0x00ffffff) | (alpha << 24);
+    }
+
+    private static float constrain(float amount, float low, float high) {
+        return amount < low ? low : (amount > high ? high : amount);
+    }
+
+    private static int constrain(int amount, int low, int high) {
+        return amount < low ? low : (amount > high ? high : amount);
     }
 
 }

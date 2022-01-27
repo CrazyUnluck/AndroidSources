@@ -19,10 +19,13 @@ package android.support.v7.graphics;
 import android.graphics.Bitmap;
 import android.graphics.Color;
 import android.os.AsyncTask;
+import android.support.annotation.ColorInt;
+import android.support.annotation.Nullable;
 import android.support.v4.graphics.ColorUtils;
 import android.support.v4.os.AsyncTaskCompat;
 import android.util.TimingLogger;
 
+import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collections;
 import java.util.List;
@@ -152,6 +155,7 @@ public final class Palette {
     /**
      * Returns the most vibrant swatch in the palette. Might be null.
      */
+    @Nullable
     public Swatch getVibrantSwatch() {
         return mGenerator.getVibrantSwatch();
     }
@@ -159,6 +163,7 @@ public final class Palette {
     /**
      * Returns a light and vibrant swatch from the palette. Might be null.
      */
+    @Nullable
     public Swatch getLightVibrantSwatch() {
         return mGenerator.getLightVibrantSwatch();
     }
@@ -166,6 +171,7 @@ public final class Palette {
     /**
      * Returns a dark and vibrant swatch from the palette. Might be null.
      */
+    @Nullable
     public Swatch getDarkVibrantSwatch() {
         return mGenerator.getDarkVibrantSwatch();
     }
@@ -173,6 +179,7 @@ public final class Palette {
     /**
      * Returns a muted swatch from the palette. Might be null.
      */
+    @Nullable
     public Swatch getMutedSwatch() {
         return mGenerator.getMutedSwatch();
     }
@@ -180,6 +187,7 @@ public final class Palette {
     /**
      * Returns a muted and light swatch from the palette. Might be null.
      */
+    @Nullable
     public Swatch getLightMutedSwatch() {
         return mGenerator.getLightMutedSwatch();
     }
@@ -187,6 +195,7 @@ public final class Palette {
     /**
      * Returns a muted and dark swatch from the palette. Might be null.
      */
+    @Nullable
     public Swatch getDarkMutedSwatch() {
         return mGenerator.getDarkMutedSwatch();
     }
@@ -196,7 +205,8 @@ public final class Palette {
      *
      * @param defaultColor value to return if the swatch isn't available
      */
-    public int getVibrantColor(int defaultColor) {
+    @ColorInt
+    public int getVibrantColor(@ColorInt int defaultColor) {
         Swatch swatch = getVibrantSwatch();
         return swatch != null ? swatch.getRgb() : defaultColor;
     }
@@ -206,7 +216,8 @@ public final class Palette {
      *
      * @param defaultColor value to return if the swatch isn't available
      */
-    public int getLightVibrantColor(int defaultColor) {
+    @ColorInt
+    public int getLightVibrantColor(@ColorInt int defaultColor) {
         Swatch swatch = getLightVibrantSwatch();
         return swatch != null ? swatch.getRgb() : defaultColor;
     }
@@ -216,7 +227,8 @@ public final class Palette {
      *
      * @param defaultColor value to return if the swatch isn't available
      */
-    public int getDarkVibrantColor(int defaultColor) {
+    @ColorInt
+    public int getDarkVibrantColor(@ColorInt int defaultColor) {
         Swatch swatch = getDarkVibrantSwatch();
         return swatch != null ? swatch.getRgb() : defaultColor;
     }
@@ -226,7 +238,8 @@ public final class Palette {
      *
      * @param defaultColor value to return if the swatch isn't available
      */
-    public int getMutedColor(int defaultColor) {
+    @ColorInt
+    public int getMutedColor(@ColorInt int defaultColor) {
         Swatch swatch = getMutedSwatch();
         return swatch != null ? swatch.getRgb() : defaultColor;
     }
@@ -236,7 +249,8 @@ public final class Palette {
      *
      * @param defaultColor value to return if the swatch isn't available
      */
-    public int getLightMutedColor(int defaultColor) {
+    @ColorInt
+    public int getLightMutedColor(@ColorInt int defaultColor) {
         Swatch swatch = getLightMutedSwatch();
         return swatch != null ? swatch.getRgb() : defaultColor;
     }
@@ -246,7 +260,8 @@ public final class Palette {
      *
      * @param defaultColor value to return if the swatch isn't available
      */
-    public int getDarkMutedColor(int defaultColor) {
+    @ColorInt
+    public int getDarkMutedColor(@ColorInt int defaultColor) {
         Swatch swatch = getDarkMutedSwatch();
         return swatch != null ? swatch.getRgb() : defaultColor;
     }
@@ -285,7 +300,7 @@ public final class Palette {
 
         private float[] mHsl;
 
-        public Swatch(int color, int population) {
+        public Swatch(@ColorInt int color, int population) {
             mRed = Color.red(color);
             mGreen = Color.green(color);
             mBlue = Color.blue(color);
@@ -304,6 +319,7 @@ public final class Palette {
         /**
          * @return this swatch's RGB color value
          */
+        @ColorInt
         public int getRgb() {
             return mRgb;
         }
@@ -333,6 +349,7 @@ public final class Palette {
          * Returns an appropriate color to use for any 'title' text which is displayed over this
          * {@link Swatch}'s color. This color is guaranteed to have sufficient contrast.
          */
+        @ColorInt
         public int getTitleTextColor() {
             ensureTextColorsGenerated();
             return mTitleTextColor;
@@ -342,6 +359,7 @@ public final class Palette {
          * Returns an appropriate color to use for any 'body' text which is displayed over this
          * {@link Swatch}'s color. This color is guaranteed to have sufficient contrast.
          */
+        @ColorInt
         public int getBodyTextColor() {
             ensureTextColorsGenerated();
             return mBodyTextColor;
@@ -427,6 +445,7 @@ public final class Palette {
         private Bitmap mBitmap;
         private int mMaxColors = DEFAULT_CALCULATE_NUMBER_COLORS;
         private int mResizeMaxDimension = DEFAULT_RESIZE_BITMAP_MAX_DIMENSION;
+        private final List<Filter> mFilters = new ArrayList<>();
 
         private Generator mGenerator;
 
@@ -434,6 +453,7 @@ public final class Palette {
          * Construct a new {@link Builder} using a source {@link Bitmap}
          */
         public Builder(Bitmap bitmap) {
+            this();
             if (bitmap == null || bitmap.isRecycled()) {
                 throw new IllegalArgumentException("Bitmap is not valid");
             }
@@ -445,17 +465,22 @@ public final class Palette {
          * Typically only used for testing.
          */
         public Builder(List<Swatch> swatches) {
+            this();
             if (swatches == null || swatches.isEmpty()) {
                 throw new IllegalArgumentException("List of Swatches is not valid");
             }
             mSwatches = swatches;
         }
 
+        private Builder() {
+            mFilters.add(DEFAULT_FILTER);
+        }
+
         /**
          * Set the {@link Generator} to use when generating the {@link Palette}. If this is called
          * with {@code null} then the default generator will be used.
          */
-        public Builder generator(Generator generator) {
+        Builder generator(Generator generator) {
             mGenerator = generator;
             return this;
         }
@@ -489,6 +514,28 @@ public final class Palette {
         }
 
         /**
+         * Clear all added filters. This includes any default filters added automatically by
+         * {@link Palette}.
+         */
+        public Builder clearFilters() {
+            mFilters.clear();
+            return this;
+        }
+
+        /**
+         * Add a filter to be able to have fine grained controlled over the colors which are
+         * allowed in the resulting palette.
+         *
+         * @param filter filter to add.
+         */
+        public Builder addFilter(Filter filter) {
+            if (filter != null) {
+                mFilters.add(filter);
+            }
+            return this;
+        }
+
+        /**
          * Generate and return the {@link Palette} synchronously.
          */
         public Palette generate() {
@@ -514,8 +561,13 @@ public final class Palette {
                 }
 
                 // Now generate a quantizer from the Bitmap
-                ColorCutQuantizer quantizer = ColorCutQuantizer
-                        .fromBitmap(scaledBitmap, mMaxColors);
+                final int width = scaledBitmap.getWidth();
+                final int height = scaledBitmap.getHeight();
+                final int[] pixels = new int[width * height];
+                scaledBitmap.getPixels(pixels, 0, width, 0, 0, width, height);
+
+                final ColorCutQuantizer quantizer = new ColorCutQuantizer(pixels, mMaxColors,
+                        mFilters.isEmpty() ? null : mFilters.toArray(new Filter[mFilters.size()]));
 
                 // If created a new bitmap, recycle it
                 if (scaledBitmap != mBitmap) {
@@ -579,21 +631,7 @@ public final class Palette {
         }
     }
 
-    /**
-     * Extension point for {@link Palette} which allows custom processing of the list of
-     * {@link Palette.Swatch} instances which represent an image.
-     * <p>
-     * You should do as much processing as possible during the
-     * {@link #generate(java.util.List)} method call. The other methods in this class
-     * may be called multiple times to retrieve an appropriate {@link Palette.Swatch}.
-     * <p>
-     * Usage of a custom {@link Generator} is done with {@link Builder#generator(Generator)} as so:
-     * <pre>
-     * Generator customGenerator = ...;
-     * Palette.from(bitmap).generator(customGenerator).generate();
-     * </pre>
-     */
-    public static abstract class Generator {
+    static abstract class Generator {
 
         /**
          * This method will be called with the {@link Palette.Swatch} that represent an image.
@@ -647,4 +685,55 @@ public final class Palette {
         }
     }
 
+    /**
+     * A Filter provides a mechanism for exercising fine-grained control over which colors
+     * are valid within a resulting {@link Palette}.
+     */
+    public interface Filter {
+        /**
+         * Hook to allow clients to be able filter colors from resulting palette.
+         *
+         * @param rgb the color in RGB888.
+         * @param hsl HSL representation of the color.
+         *
+         * @return true if the color is allowed, false if not.
+         *
+         * @see Builder#addFilter(Filter)
+         */
+        boolean isAllowed(int rgb, float[] hsl);
+    }
+
+    /**
+     * The default filter.
+     */
+    private static final Filter DEFAULT_FILTER = new Filter() {
+        private static final float BLACK_MAX_LIGHTNESS = 0.05f;
+        private static final float WHITE_MIN_LIGHTNESS = 0.95f;
+
+        @Override
+        public boolean isAllowed(int rgb, float[] hsl) {
+            return !isWhite(hsl) && !isBlack(hsl) && !isNearRedILine(hsl);
+        }
+
+        /**
+         * @return true if the color represents a color which is close to black.
+         */
+        private boolean isBlack(float[] hslColor) {
+            return hslColor[2] <= BLACK_MAX_LIGHTNESS;
+        }
+
+        /**
+         * @return true if the color represents a color which is close to white.
+         */
+        private boolean isWhite(float[] hslColor) {
+            return hslColor[2] >= WHITE_MIN_LIGHTNESS;
+        }
+
+        /**
+         * @return true if the color lies close to the red side of the I line.
+         */
+        private boolean isNearRedILine(float[] hslColor) {
+            return hslColor[0] >= 10f && hslColor[0] <= 37f && hslColor[1] <= 0.82f;
+        }
+    };
 }

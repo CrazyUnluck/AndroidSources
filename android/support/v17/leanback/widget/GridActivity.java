@@ -21,7 +21,6 @@ import android.support.v7.widget.RecyclerView;
 import android.support.v17.leanback.widget.BaseGridView;
 import android.support.v17.leanback.widget.OnChildSelectedListener;
 import android.app.Activity;
-import android.content.Context;
 import android.content.Intent;
 import android.graphics.Color;
 import android.os.Bundle;
@@ -34,31 +33,65 @@ import android.view.ViewGroup;
 import android.widget.ImageView;
 import android.widget.TextView;
 
+import java.util.ArrayList;
+
 /**
  * @hide from javadoc
  */
 public class GridActivity extends Activity {
+
     private static final String TAG = "GridActivity";
 
     public static final String EXTRA_LAYOUT_RESOURCE_ID = "layoutResourceId";
     public static final String EXTRA_NUM_ITEMS = "numItems";
     public static final String EXTRA_ITEMS = "items";
+    public static final String EXTRA_ITEMS_FOCUSABLE = "itemsFocusable";
     public static final String EXTRA_STAGGERED = "staggered";
+    public static final String EXTRA_REQUEST_LAYOUT_ONFOCUS = "requestLayoutOnFocus";
+    public static final String EXTRA_REQUEST_FOCUS_ONLAYOUT = "requstFocusOnLayout";
+    public static final String EXTRA_CHILD_LAYOUT_ID = "childLayoutId";
+    public static final String EXTRA_SECONDARY_SIZE_ZERO = "secondarySizeZero";
+    /**
+     * Class that implements GridWidgetTest.ViewTypeProvider for creating different
+     * view types for each position.
+     */
+    public static final String EXTRA_VIEWTYPEPROVIDER_CLASS = "viewtype_class";
+    /**
+     * Class that implements GridWidgetTest.ItemAlignmentFacetProvider for creating different
+     * ItemAlignmentFacet for each ViewHolder.
+     */
+    public static final String EXTRA_ITEMALIGNMENTPROVIDER_CLASS = "itemalignment_class";
+    /**
+     * Class that implements GridWidgetTest.ItemAlignmentFacetProvider for creating different
+     * ItemAlignmentFacet for a given viewType.
+     */
+    public static final String EXTRA_ITEMALIGNMENTPROVIDER_VIEWTYPE_CLASS =
+            "itemalignment_viewtype_class";
     public static final String SELECT_ACTION = "android.test.leanback.widget.SELECT";
 
     static final int DEFAULT_NUM_ITEMS = 100;
     static final boolean DEFAULT_STAGGERED = true;
+    static final boolean DEFAULT_REQUEST_LAYOUT_ONFOCUS = false;
+    static final boolean DEFAULT_REQUEST_FOCUS_ONLAYOUT = false;
 
     private static final boolean DEBUG = false;
 
     int mLayoutId;
     int mOrientation;
     int mNumItems;
+    int mChildLayout;
     boolean mStaggered;
+    boolean mRequestLayoutOnFocus;
+    boolean mRequestFocusOnLayout;
+    boolean mSecondarySizeZero;
+    GridWidgetTest.ViewTypeProvider mViewTypeProvider;
+    GridWidgetTest.ItemAlignmentFacetProvider mAlignmentProvider;
+    GridWidgetTest.ItemAlignmentFacetProvider mAlignmentViewTypeProvider;
 
     int[] mGridViewLayoutSize;
     BaseGridView mGridView;
     int[] mItemLengths;
+    boolean[] mItemFocusables;
 
     private int mBoundCount;
 
@@ -84,8 +117,47 @@ public class GridActivity extends Activity {
         Intent intent = getIntent();
 
         mLayoutId = intent.getIntExtra(EXTRA_LAYOUT_RESOURCE_ID, R.layout.horizontal_grid);
+        mChildLayout = intent.getIntExtra(EXTRA_CHILD_LAYOUT_ID, -1);
         mStaggered = intent.getBooleanExtra(EXTRA_STAGGERED, DEFAULT_STAGGERED);
+        mRequestLayoutOnFocus = intent.getBooleanExtra(EXTRA_REQUEST_LAYOUT_ONFOCUS,
+                DEFAULT_REQUEST_LAYOUT_ONFOCUS);
+        mRequestFocusOnLayout = intent.getBooleanExtra(EXTRA_REQUEST_FOCUS_ONLAYOUT,
+                DEFAULT_REQUEST_FOCUS_ONLAYOUT);
+        mSecondarySizeZero = intent.getBooleanExtra(EXTRA_SECONDARY_SIZE_ZERO, false);
         mItemLengths = intent.getIntArrayExtra(EXTRA_ITEMS);
+        mItemFocusables = intent.getBooleanArrayExtra(EXTRA_ITEMS_FOCUSABLE);
+        String alignmentClass = intent.getStringExtra(EXTRA_ITEMALIGNMENTPROVIDER_CLASS);
+        String alignmentViewTypeClass =
+                intent.getStringExtra(EXTRA_ITEMALIGNMENTPROVIDER_VIEWTYPE_CLASS);
+        String viewTypeClass = intent.getStringExtra(EXTRA_VIEWTYPEPROVIDER_CLASS);
+        try {
+            if (alignmentClass != null) {
+                mAlignmentProvider = (GridWidgetTest.ItemAlignmentFacetProvider)
+                        Class.forName(alignmentClass).newInstance();
+            }
+            if (alignmentViewTypeClass != null) {
+                mAlignmentViewTypeProvider = (GridWidgetTest.ItemAlignmentFacetProvider)
+                        Class.forName(alignmentViewTypeClass).newInstance();
+            }
+            if (viewTypeClass != null) {
+                mViewTypeProvider = (GridWidgetTest.ViewTypeProvider)
+                        Class.forName(viewTypeClass).newInstance();
+            }
+        } catch (ClassNotFoundException ex) {
+            throw new RuntimeException(ex);
+        } catch (InstantiationException ex) {
+            throw new RuntimeException(ex);
+        } catch (IllegalAccessException ex) {
+            throw new RuntimeException(ex);
+        }
+
+        super.onCreate(savedInstanceState);
+
+        if (DEBUG) Log.v(TAG, "onCreate " + this);
+
+        RecyclerView.Adapter adapter = new MyAdapter();
+
+        View view = createView();
         if (mItemLengths == null) {
             mNumItems = intent.getIntExtra(EXTRA_NUM_ITEMS, DEFAULT_NUM_ITEMS);
             mItemLengths = new int[mNumItems];
@@ -100,16 +172,12 @@ public class GridActivity extends Activity {
             mNumItems = mItemLengths.length;
         }
 
-        super.onCreate(savedInstanceState);
-
-        if (DEBUG) Log.v(TAG, "onCreate " + this);
-
-        RecyclerView.Adapter adapter = new MyAdapter();
-
-        View view = createView();
-
         mGridView.setAdapter(new MyAdapter());
         setContentView(view);
+    }
+
+    void rebindToNewAdapter() {
+        mGridView.setAdapter(new MyAdapter());
     }
 
     @Override
@@ -125,6 +193,23 @@ public class GridActivity extends Activity {
     }
 
     private OnFocusChangeListener mItemFocusChangeListener = new OnFocusChangeListener() {
+
+        @Override
+        public void onFocusChange(View v, boolean hasFocus) {
+            if (hasFocus) {
+                v.setBackgroundColor(Color.YELLOW);
+            } else {
+                v.setBackgroundColor(Color.LTGRAY);
+            }
+            if (mRequestLayoutOnFocus) {
+                RecyclerView.ViewHolder vh = mGridView.getChildViewHolder(v);
+                int position = vh.getAdapterPosition();
+                updateSize(v, position);
+            }
+        }
+    };
+
+    private OnFocusChangeListener mSubItemFocusChangeListener = new OnFocusChangeListener() {
 
         @Override
         public void onFocusChange(View v, boolean hasFocus) {
@@ -176,21 +261,90 @@ public class GridActivity extends Activity {
 
     void addItems(int index, int[] items) {
         int length = items.length;
+        if (mItemLengths.length < mNumItems + length) {
+            int[] array = new int[mNumItems + length];
+            System.arraycopy(mItemLengths, 0, array, 0, mNumItems);
+            mItemLengths = array;
+        }
         System.arraycopy(mItemLengths, index, mItemLengths, index + length, mNumItems - index);
         System.arraycopy(items, 0, mItemLengths, index, length);
         mNumItems += length;
         mGridView.getAdapter().notifyItemRangeInserted(index, length);
     }
 
-    class MyAdapter extends RecyclerView.Adapter {
+    class MyAdapter extends RecyclerView.Adapter implements FacetProviderAdapter {
+
+        @Override
+        public int getItemViewType(int position) {
+            if (mViewTypeProvider != null) {
+                return mViewTypeProvider.getViewType(position);
+            }
+            return 0;
+        }
+
+        @Override
+        public FacetProvider getFacetProvider(int viewType) {
+            final Object alignmentFacet = mAlignmentViewTypeProvider != null?
+                mAlignmentViewTypeProvider.getItemAlignmentFacet(viewType) : null;
+            if (alignmentFacet != null) {
+                return new FacetProvider() {
+                    @Override
+                    public Object getFacet(Class facetClass) {
+                        if (facetClass.equals(ItemAlignmentFacet.class)) {
+                            return alignmentFacet;
+                        }
+                        return null;
+                    }
+                };
+            }
+            return null;
+        }
 
         @Override
         public RecyclerView.ViewHolder onCreateViewHolder(ViewGroup parent, int viewType) {
             if (DEBUG) Log.v(TAG, "createViewHolder " + viewType);
-            TextView textView = new TextView(parent.getContext());
+            if (mChildLayout != -1) {
+                final View view = getLayoutInflater().inflate(mChildLayout, null, false);
+                ArrayList<View> focusables = new ArrayList<View>();
+                view.addFocusables(focusables, View.FOCUS_UP);
+                for (int i = 0; i < focusables.size(); i++) {
+                    View f = focusables.get(i);
+                    f.setBackgroundColor(Color.LTGRAY);
+                    f.setOnFocusChangeListener(new OnFocusChangeListener() {
+                        @Override
+                        public void onFocusChange(View v, boolean hasFocus) {
+                            if (hasFocus) {
+                                v.setBackgroundColor(Color.YELLOW);
+                            } else {
+                                v.setBackgroundColor(Color.LTGRAY);
+                            }
+                            if (mRequestLayoutOnFocus) {
+                                if (v == view) {
+                                    RecyclerView.ViewHolder vh = mGridView.getChildViewHolder(v);
+                                    int position = vh.getAdapterPosition();
+                                    updateSize(v, position);
+                                }
+                                view.requestLayout();
+                            }
+                        }
+                    });
+                }
+                ViewHolder holder = new ViewHolder(view);
+                return holder;
+            }
+            TextView textView = new TextView(parent.getContext()) {
+                @Override
+                protected void onLayout(boolean change, int left, int top, int right, int bottom) {
+                    super.onLayout(change, left, top, right, bottom);
+                    if (mRequestFocusOnLayout) {
+                        if (hasFocus()) {
+                            clearFocus();
+                            requestFocus();
+                        }
+                    }
+                }
+            };
             textView.setTextColor(Color.BLACK);
-            textView.setFocusable(true);
-            textView.setFocusableInTouchMode(true);
             textView.setOnFocusChangeListener(mItemFocusChangeListener);
             return new ViewHolder(textView);
         }
@@ -200,15 +354,26 @@ public class GridActivity extends Activity {
             if (DEBUG) Log.v(TAG, "bindViewHolder " + position + " " + baseHolder);
             mBoundCount++;
             ViewHolder holder = (ViewHolder) baseHolder;
-            ((TextView) holder.itemView).setText("Item "+position);
-            holder.itemView.setBackgroundColor(Color.LTGRAY);
-            if (mOrientation == BaseGridView.HORIZONTAL) {
-                holder.itemView.setLayoutParams(new ViewGroup.MarginLayoutParams(
-                        mItemLengths[position], 80));
+            if (mAlignmentProvider != null) {
+                holder.mItemAlignment = mAlignmentProvider.getItemAlignmentFacet(position);
             } else {
-                holder.itemView.setLayoutParams(new ViewGroup.MarginLayoutParams(
-                        240, mItemLengths[position]));
+                holder.mItemAlignment = null;
             }
+            if (mChildLayout == -1) {
+                ((TextView) holder.itemView).setText("Item "+mItemLengths[position]);
+                boolean focusable = true;
+                if (mItemFocusables != null) {
+                    focusable = mItemFocusables[position];
+                }
+                ((TextView) holder.itemView).setFocusable(focusable);
+                ((TextView) holder.itemView).setFocusableInTouchMode(focusable);
+                holder.itemView.setBackgroundColor(Color.LTGRAY);
+            } else {
+                if (holder.itemView instanceof TextView) {
+                    ((TextView) holder.itemView).setText("Item "+mItemLengths[position]);
+                }
+            }
+            updateSize(holder.itemView, position);
         }
 
         @Override
@@ -217,10 +382,34 @@ public class GridActivity extends Activity {
         }
     }
 
-    static class ViewHolder extends RecyclerView.ViewHolder {
+    void updateSize(View view, int position) {
+        ViewGroup.LayoutParams p = view.getLayoutParams();
+        if (p == null) {
+            p = new ViewGroup.LayoutParams(0, 0);
+        }
+        if (mOrientation == BaseGridView.HORIZONTAL) {
+            p.width = mItemLengths[position] + (mRequestLayoutOnFocus && view.hasFocus() ? 1 : 0);
+            p.height = mSecondarySizeZero ? 0 : 80;
+        } else {
+            p.width = mSecondarySizeZero ? 0 : 240;
+            p.height = mItemLengths[position] + (mRequestLayoutOnFocus && view.hasFocus() ? 1 : 0);
+        }
+        view.setLayoutParams(p);
+    }
 
+    static class ViewHolder extends RecyclerView.ViewHolder implements FacetProvider {
+
+        ItemAlignmentFacet mItemAlignment;
         public ViewHolder(View v) {
             super(v);
+        }
+
+        @Override
+        public Object getFacet(Class facetClass) {
+            if (facetClass.equals(ItemAlignmentFacet.class)) {
+                return mItemAlignment;
+            }
+            return null;
         }
     }
 }

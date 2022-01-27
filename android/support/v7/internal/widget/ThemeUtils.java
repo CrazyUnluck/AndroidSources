@@ -23,16 +23,26 @@ import android.graphics.Color;
 import android.support.v4.graphics.ColorUtils;
 import android.util.TypedValue;
 
-class ThemeUtils {
+/**
+ * @hide
+ */
+public class ThemeUtils {
 
     private static final ThreadLocal<TypedValue> TL_TYPED_VALUE = new ThreadLocal<>();
 
-    private static final int[] DISABLED_STATE_SET = new int[]{-android.R.attr.state_enabled};
-    private static final int[] EMPTY_STATE_SET = new int[0];
+    static final int[] DISABLED_STATE_SET = new int[]{-android.R.attr.state_enabled};
+    static final int[] FOCUSED_STATE_SET = new int[]{android.R.attr.state_focused};
+    static final int[] ACTIVATED_STATE_SET = new int[]{android.R.attr.state_activated};
+    static final int[] PRESSED_STATE_SET = new int[]{android.R.attr.state_pressed};
+    static final int[] CHECKED_STATE_SET = new int[]{android.R.attr.state_checked};
+    static final int[] SELECTED_STATE_SET = new int[]{android.R.attr.state_selected};
+    static final int[] NOT_PRESSED_OR_FOCUSED_STATE_SET = new int[]{
+            -android.R.attr.state_pressed, -android.R.attr.state_focused};
+    static final int[] EMPTY_STATE_SET = new int[0];
 
     private static final int[] TEMP_ARRAY = new int[1];
 
-    static ColorStateList createDisabledStateList(int textColor, int disabledTextColor) {
+    public static ColorStateList createDisabledStateList(int textColor, int disabledTextColor) {
         // Now create a new ColorStateList with the default color, and the new disabled
         // color
         final int[][] states = new int[2][];
@@ -52,7 +62,7 @@ class ThemeUtils {
         return new ColorStateList(states, colors);
     }
 
-    static int getThemeAttrColor(Context context, int attr) {
+    public static int getThemeAttrColor(Context context, int attr) {
         TEMP_ARRAY[0] = attr;
         TypedArray a = context.obtainStyledAttributes(null, TEMP_ARRAY);
         try {
@@ -62,7 +72,7 @@ class ThemeUtils {
         }
     }
 
-    static ColorStateList getThemeAttrColorStateList(Context context, int attr) {
+    public static ColorStateList getThemeAttrColorStateList(Context context, int attr) {
         TEMP_ARRAY[0] = attr;
         TypedArray a = context.obtainStyledAttributes(null, TEMP_ARRAY);
         try {
@@ -72,7 +82,7 @@ class ThemeUtils {
         }
     }
 
-    static int getDisabledThemeAttrColor(Context context, int attr) {
+    public static int getDisabledThemeAttrColor(Context context, int attr) {
         final ColorStateList csl = getThemeAttrColorStateList(context, attr);
         if (csl != null && csl.isStateful()) {
             // If the CSL is stateful, we'll assume it has a disabled state and use it

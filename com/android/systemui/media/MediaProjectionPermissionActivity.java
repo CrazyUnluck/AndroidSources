@@ -18,8 +18,6 @@ package com.android.systemui.media;
 
 import android.app.Activity;
 import android.app.AlertDialog;
-import android.app.PendingIntent;
-import android.content.Context;
 import android.content.DialogInterface;
 import android.content.Intent;
 import android.content.pm.ApplicationInfo;
@@ -32,16 +30,10 @@ import android.os.IBinder;
 import android.os.RemoteException;
 import android.os.ServiceManager;
 import android.util.Log;
-import android.view.LayoutInflater;
 import android.view.WindowManager;
 import android.widget.CheckBox;
 import android.widget.CompoundButton;
-import android.widget.TextView;
-
-import com.android.internal.app.AlertActivity;
-import com.android.internal.app.AlertController;
 import com.android.systemui.R;
-import com.android.systemui.statusbar.phone.SystemUIDialog;
 
 public class MediaProjectionPermissionActivity extends Activity
         implements DialogInterface.OnClickListener, CheckBox.OnCheckedChangeListener,
@@ -104,6 +96,7 @@ public class MediaProjectionPermissionActivity extends Activity
                 .create();
 
         mDialog.create();
+        mDialog.getButton(DialogInterface.BUTTON_POSITIVE).setFilterTouchesWhenObscured(true);
 
         ((CheckBox) mDialog.findViewById(R.id.remember)).setOnCheckedChangeListener(this);
         mDialog.getWindow().setType(WindowManager.LayoutParams.TYPE_SYSTEM_ALERT);
@@ -114,7 +107,9 @@ public class MediaProjectionPermissionActivity extends Activity
     @Override
     protected void onDestroy() {
         super.onDestroy();
-        mDialog.dismiss();
+        if (mDialog != null) {
+            mDialog.dismiss();
+        }
     }
 
     @Override
@@ -128,7 +123,9 @@ public class MediaProjectionPermissionActivity extends Activity
             Log.e(TAG, "Error granting projection permission", e);
             setResult(RESULT_CANCELED);
         } finally {
-            mDialog.dismiss();
+            if (mDialog != null) {
+                mDialog.dismiss();
+            }
             finish();
         }
     }

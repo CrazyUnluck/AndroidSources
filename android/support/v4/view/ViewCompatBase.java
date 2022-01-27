@@ -20,7 +20,16 @@ import android.content.res.ColorStateList;
 import android.graphics.PorterDuff;
 import android.view.View;
 
+import java.lang.reflect.Field;
+
 class ViewCompatBase {
+
+    private static final String TAG = "ViewCompatBase";
+
+    private static Field sMinWidthField;
+    private static boolean sMinWidthFieldFetched;
+    private static Field sMinHeightField;
+    private static boolean sMinHeightFieldFetched;
 
     static ColorStateList getBackgroundTintList(View view) {
         return (view instanceof TintableBackgroundView)
@@ -48,5 +57,55 @@ class ViewCompatBase {
 
     static boolean isLaidOut(View view) {
         return view.getWidth() > 0 && view.getHeight() > 0;
+    }
+
+    static int getMinimumWidth(View view) {
+        if (!sMinWidthFieldFetched) {
+            try {
+                sMinWidthField = View.class.getDeclaredField("mMinWidth");
+                sMinWidthField.setAccessible(true);
+            } catch (NoSuchFieldException e) {
+                // Couldn't find the field. Abort!
+            }
+            sMinWidthFieldFetched = true;
+        }
+
+        if (sMinWidthField != null) {
+            try {
+                return (int) sMinWidthField.get(view);
+            } catch (Exception e) {
+                // Field get failed. Oh well...
+            }
+        }
+
+        // We failed, return 0
+        return 0;
+    }
+
+    static int getMinimumHeight(View view) {
+        if (!sMinHeightFieldFetched) {
+            try {
+                sMinHeightField = View.class.getDeclaredField("mMinHeight");
+                sMinHeightField.setAccessible(true);
+            } catch (NoSuchFieldException e) {
+                // Couldn't find the field. Abort!
+            }
+            sMinHeightFieldFetched = true;
+        }
+
+        if (sMinHeightField != null) {
+            try {
+                return (int) sMinHeightField.get(view);
+            } catch (Exception e) {
+                // Field get failed. Oh well...
+            }
+        }
+
+        // We failed, return 0
+        return 0;
+    }
+
+    static boolean isAttachedToWindow(View view) {
+        return view.getWindowToken() != null;
     }
 }

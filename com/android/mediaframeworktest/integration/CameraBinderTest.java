@@ -20,8 +20,6 @@ import android.hardware.CameraInfo;
 import android.hardware.ICamera;
 import android.hardware.ICameraClient;
 import android.hardware.ICameraServiceListener;
-import android.hardware.IProCameraCallbacks;
-import android.hardware.IProCameraUser;
 import android.hardware.camera2.ICameraDeviceCallbacks;
 import android.hardware.camera2.ICameraDeviceUser;
 import android.hardware.camera2.impl.CameraMetadataNative;
@@ -181,30 +179,6 @@ public class CameraBinderTest extends AndroidTestCase {
         }
     }
 
-    static class DummyProCameraCallbacks extends DummyBase implements IProCameraCallbacks {
-    }
-
-    @SmallTest
-    public void testConnectPro() throws Exception {
-        for (int cameraId = 0; cameraId < mUtils.getGuessedNumCameras(); ++cameraId) {
-
-            IProCameraCallbacks dummyCallbacks = new DummyProCameraCallbacks();
-
-            String clientPackageName = getContext().getPackageName();
-
-            BinderHolder holder = new BinderHolder();
-            CameraBinderDecorator.newInstance(mUtils.getCameraService())
-                    .connectPro(dummyCallbacks, cameraId,
-                    clientPackageName, CameraBinderTestUtils.USE_CALLING_UID, holder);
-            IProCameraUser cameraUser = IProCameraUser.Stub.asInterface(holder.getBinder());
-            assertNotNull(String.format("Camera %s was null", cameraId), cameraUser);
-
-            Log.v(TAG, String.format("Camera %s connected", cameraId));
-
-            cameraUser.disconnect();
-        }
-    }
-
     @SmallTest
     public void testConnectLegacy() throws Exception {
         final int CAMERA_HAL_API_VERSION_1_0 = 0x100;
@@ -287,6 +261,16 @@ public class CameraBinderTest extends AndroidTestCase {
             // TODO Auto-generated method stub
 
         }
+
+        /*
+         * (non-Javadoc)
+         * @see android.hardware.camera2.ICameraDeviceCallbacks#onPrepared()
+         */
+        @Override
+        public void onPrepared(int streamId) throws RemoteException {
+            // TODO Auto-generated method stub
+
+        }
     }
 
     @SmallTest
@@ -315,6 +299,11 @@ public class CameraBinderTest extends AndroidTestCase {
         public void onStatusChanged(int status, int cameraId)
                 throws RemoteException {
             Log.v(TAG, String.format("Camera %d has status changed to 0x%x", cameraId, status));
+        }
+        public void onTorchStatusChanged(int status, String cameraId)
+                throws RemoteException {
+            Log.v(TAG, String.format("Camera %s has torch status changed to 0x%x",
+                    cameraId, status));
         }
     }
 

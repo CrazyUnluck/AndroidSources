@@ -22,14 +22,22 @@ import android.content.Context;
 import android.content.res.Configuration;
 import android.os.Build;
 import android.os.Bundle;
+import android.support.annotation.IntDef;
+import android.support.annotation.LayoutRes;
 import android.support.annotation.NonNull;
 import android.support.v4.app.FragmentActivity;
+import android.support.v4.view.WindowCompat;
+import android.support.v7.appcompat.R;
 import android.support.v7.view.ActionMode;
 import android.support.v7.widget.Toolbar;
 import android.util.AttributeSet;
 import android.view.MenuInflater;
 import android.view.View;
 import android.view.ViewGroup;
+import android.view.Window;
+
+import java.lang.annotation.Retention;
+import java.lang.annotation.RetentionPolicy;
 
 /**
  * This class represents a delegate which you can use to extend AppCompat's support to any
@@ -68,16 +76,45 @@ public abstract class AppCompatDelegate {
     static final String TAG = "AppCompatDelegate";
 
     /**
+     * Flag for enabling the support Action Bar.
+     *
+     * <p>This is enabled by default for some devices. The Action Bar replaces the title bar and
+     * provides an alternate location for an on-screen menu button on some devices.
+     */
+    public static final int FEATURE_SUPPORT_ACTION_BAR = 100 + WindowCompat.FEATURE_ACTION_BAR;
+
+    /**
+     * Flag for requesting an support Action Bar that overlays window content.
+     * Normally an Action Bar will sit in the space above window content, but if this
+     * feature is requested along with {@link #FEATURE_SUPPORT_ACTION_BAR} it will be layered over
+     * the window content itself. This is useful if you would like your app to have more control
+     * over how the Action Bar is displayed, such as letting application content scroll beneath
+     * an Action Bar with a transparent background or otherwise displaying a transparent/translucent
+     * Action Bar over application content.
+     *
+     * <p>This mode is especially useful with {@code View.SYSTEM_UI_FLAG_FULLSCREEN}, which allows
+     * you to seamlessly hide the action bar in conjunction with other screen decorations.
+     * When an ActionBar is in this mode it will adjust the insets provided to
+     * {@link View#fitSystemWindows(android.graphics.Rect) View.fitSystemWindows(Rect)}
+     * to include the content covered by the action bar, so you can do layout within
+     * that space.
+     */
+    public static final int FEATURE_SUPPORT_ACTION_BAR_OVERLAY =
+            100 + WindowCompat.FEATURE_ACTION_BAR_OVERLAY;
+
+    /**
+     * Flag for specifying the behavior of action modes when an Action Bar is not present.
+     * If overlay is enabled, the action mode UI will be allowed to cover existing window content.
+     */
+    public static final int FEATURE_ACTION_MODE_OVERLAY = WindowCompat.FEATURE_ACTION_MODE_OVERLAY;
+
+    /**
      * Create a {@link android.support.v7.app.AppCompatDelegate} to use with {@code activity}.
      *
      * @param callback An optional callback for AppCompat specific events
      */
     public static AppCompatDelegate create(Activity activity, AppCompatCallback callback) {
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.HONEYCOMB) {
-            return new AppCompatDelegateImplV11(activity, activity.getWindow(), callback);
-        } else {
-            return new AppCompatDelegateImplV7(activity, activity.getWindow(), callback);
-        }
+        return create(activity, activity.getWindow(), callback);
     }
 
     /**
@@ -86,10 +123,20 @@ public abstract class AppCompatDelegate {
      * @param callback An optional callback for AppCompat specific events
      */
     public static AppCompatDelegate create(Dialog dialog, AppCompatCallback callback) {
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.HONEYCOMB) {
-            return new AppCompatDelegateImplV11(dialog.getContext(), dialog.getWindow(), callback);
+        return create(dialog.getContext(), dialog.getWindow(), callback);
+    }
+
+    private static AppCompatDelegate create(Context context, Window window,
+            AppCompatCallback callback) {
+        final int sdk = Build.VERSION.SDK_INT;
+        if (sdk >= 23) {
+            return new AppCompatDelegateImplV23(context, window, callback);
+        } else if (sdk >= 14) {
+            return new AppCompatDelegateImplV14(context, window, callback);
+        } else if (sdk >= 11) {
+            return new AppCompatDelegateImplV11(context, window, callback);
         } else {
-            return new AppCompatDelegateImplV7(dialog.getContext(), dialog.getWindow(), callback);
+            return new AppCompatDelegateImplV7(context, window, callback);
         }
     }
 
@@ -116,7 +163,7 @@ public abstract class AppCompatDelegate {
      *
      * <p>In order to use a Toolbar within the Activity's window content the application
      * must not request the window feature
-     * {@link android.view.Window#FEATURE_ACTION_BAR FEATURE_ACTION_BAR}.</p>
+     * {@link AppCompatDelegate#FEATURE_SUPPORT_ACTION_BAR FEATURE_SUPPORT_ACTION_BAR}.</p>
      *
      * @param toolbar Toolbar to set as the Activity's action bar
      */
@@ -161,7 +208,7 @@ public abstract class AppCompatDelegate {
     /**
      * Should be called instead of {@link Activity#setContentView(int)}}
      */
-    public abstract void setContentView(int resId);
+    public abstract void setContentView(@LayoutRes int resId);
 
     /**
      * Should be called instead of
@@ -209,6 +256,16 @@ public abstract class AppCompatDelegate {
     public abstract boolean requestWindowFeature(int featureId);
 
     /**
+     * Query for the availability of a certain feature.
+     *
+     * <p>This should be called instead of {@link android.view.Window#hasFeature(int)}.</p>
+     *
+     * @param featureId The feature ID to check
+     * @return true if the feature is enabled, false otherwise.
+     */
+    public abstract boolean hasWindowFeature(int featureId);
+
+    /**
      * Start an action mode.
      *
      * @param callback Callback that will manage lifecycle events for this context mode
@@ -247,5 +304,21 @@ public abstract class AppCompatDelegate {
      */
     public abstract View createView(View parent, String name, @NonNull Context context,
             @NonNull AttributeSet attrs);
+
+    /**
+     * Whether AppCompat handles any native action modes itself.
+     * <p>This methods only takes effect on
+     * {@link android.os.Build.VERSION_CODES#ICE_CREAM_SANDWICH} and above.
+     *
+     * @param enabled whether AppCompat should handle native action modes.
+     */
+    public abstract void setHandleNativeActionModesEnabled(boolean enabled);
+
+    /**
+     * Returns whether AppCompat handles any native action modes itself.
+     *
+     * @return true if AppCompat should handle native action modes.
+     */
+    public abstract boolean isHandleNativeActionModesEnabled();
 
 }

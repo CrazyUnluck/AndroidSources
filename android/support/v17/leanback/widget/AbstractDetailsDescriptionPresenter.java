@@ -25,13 +25,17 @@ import android.widget.TextView;
 
 /**
  * An abstract {@link Presenter} for rendering a detailed description of an
- * item. Typically this Presenter will be used in a DetailsOveriewRowPresenter.
+ * item. Typically this Presenter will be used in a {@link DetailsOverviewRowPresenter}
+ * or {@link PlaybackControlsRowPresenter}.
  *
- * <p>Subclasses will override {@link #onBindDescription} to implement the data
+ * <p>Subclasses must override {@link #onBindDescription} to implement the data
  * binding for this Presenter.
  */
 public abstract class AbstractDetailsDescriptionPresenter extends Presenter {
 
+    /**
+     * The ViewHolder for the {@link AbstractDetailsDescriptionPresenter}.
+     */
     public static class ViewHolder extends Presenter.ViewHolder {
         private final TextView mTitle;
         private final TextView mSubtitle;
@@ -46,6 +50,7 @@ public abstract class AbstractDetailsDescriptionPresenter extends Presenter {
         private final FontMetricsInt mTitleFontMetricsInt;
         private final FontMetricsInt mSubtitleFontMetricsInt;
         private final FontMetricsInt mBodyFontMetricsInt;
+        private final int mTitleMaxLines;
         private ViewTreeObserver.OnPreDrawListener mPreDrawListener;
 
         public ViewHolder(final View view) {
@@ -74,6 +79,7 @@ public abstract class AbstractDetailsDescriptionPresenter extends Presenter {
                     R.integer.lb_details_description_body_max_lines);
             mBodyMinLines = view.getResources().getInteger(
                     R.integer.lb_details_description_body_min_lines);
+            mTitleMaxLines = mTitle.getMaxLines();
 
             mTitleFontMetricsInt = getFontMetricsInt(mTitle);
             mSubtitleFontMetricsInt = getFontMetricsInt(mSubtitle);
@@ -95,6 +101,12 @@ public abstract class AbstractDetailsDescriptionPresenter extends Presenter {
             mPreDrawListener = new ViewTreeObserver.OnPreDrawListener() {
                 @Override
                 public boolean onPreDraw() {
+                    if (mSubtitle.getVisibility() == View.VISIBLE &&
+                            mSubtitle.getTop() > view.getHeight() &&
+                            mTitle.getLineCount() > 1) {
+                        mTitle.setMaxLines(mTitle.getLineCount() - 1);
+                        return false;
+                    }
                     final int titleLines = mTitle.getLineCount();
                     final int maxLines = titleLines > 1 ? mBodyMinLines : mBodyMaxLines;
                     if (mBody.getMaxLines() != maxLines) {
@@ -156,6 +168,7 @@ public abstract class AbstractDetailsDescriptionPresenter extends Presenter {
             vh.mTitle.setVisibility(View.VISIBLE);
             vh.mTitle.setLineSpacing(vh.mTitleLineSpacing - vh.mTitle.getLineHeight() +
                     vh.mTitle.getLineSpacingExtra(), vh.mTitle.getLineSpacingMultiplier());
+            vh.mTitle.setMaxLines(vh.mTitleMaxLines);
         }
         setTopMargin(vh.mTitle, vh.mTitleMargin);
 
@@ -193,11 +206,11 @@ public abstract class AbstractDetailsDescriptionPresenter extends Presenter {
     }
 
     /**
-     * Binds the data from the item referenced in the DetailsOverviewRow to the
-     * ViewHolder.
+     * Binds the data from the item to the ViewHolder.  The item is typically associated with
+     * a {@link DetailsOverviewRow} or {@link PlaybackControlsRow}.
      *
      * @param vh The ViewHolder for this details description view.
-     * @param item The item from the DetailsOverviewRow being presented.
+     * @param item The item being presented.
      */
     protected abstract void onBindDescription(ViewHolder vh, Object item);
 

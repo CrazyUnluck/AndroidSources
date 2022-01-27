@@ -70,7 +70,7 @@ import android.view.ViewGroup;
  * </ul>
  *
  * <h3>User events</h3>
- * RowPresenter provides {@link OnItemSelectedListener} and {@link OnItemClickedListener}.
+ * RowPresenter provides {@link OnItemViewSelectedListener} and {@link OnItemViewClickedListener}.
  * If a subclass wants to add its own {@link View.OnFocusChangeListener} or
  * {@link View.OnClickListener}, it must do that in {@link #createRowViewHolder(ViewGroup)}
  * to be properly chained by the library.  Adding View listeners after
@@ -133,7 +133,7 @@ public abstract class RowPresenter extends Presenter {
     }
 
     /**
-     * A view holder for a {@link Row}.
+     * A ViewHolder for a {@link Row}.
      */
     public static class ViewHolder extends Presenter.ViewHolder {
         private static final int ACTIVATED_NOT_ASSIGNED = 0;
@@ -149,6 +149,9 @@ public abstract class RowPresenter extends Presenter {
         boolean mInitialzed;
         float mSelectLevel = 0f; // initially unselected
         protected final ColorOverlayDimmer mColorDimmer;
+        private View.OnKeyListener mOnKeyListener;
+        private OnItemViewSelectedListener mOnItemViewSelectedListener;
+        private OnItemViewClickedListener mOnItemViewClickedListener;
 
         /**
          * Constructor for ViewHolder.
@@ -226,16 +229,60 @@ public abstract class RowPresenter extends Presenter {
                 view.setActivated(false);
             }
         }
+
+        /**
+         * Sets a key listener.
+         */
+        public void setOnKeyListener(View.OnKeyListener keyListener) {
+            mOnKeyListener = keyListener;
+        }
+
+        /**
+         * Returns the key listener.
+         */
+        public View.OnKeyListener getOnKeyListener() {
+            return mOnKeyListener;
+        }
+
+        /**
+         * Sets the listener for item or row selection.  RowPresenter fires row selection
+         * event with null item.  A subclass of RowPresenter e.g. {@link ListRowPresenter} may
+         * fire a selection event with selected item.
+         */
+        public final void setOnItemViewSelectedListener(OnItemViewSelectedListener listener) {
+            mOnItemViewSelectedListener = listener;
+        }
+
+        /**
+         * Returns the listener for item or row selection.
+         */
+        public final OnItemViewSelectedListener getOnItemViewSelectedListener() {
+            return mOnItemViewSelectedListener;
+        }
+
+        /**
+         * Sets the listener for item click event.  RowPresenter does nothing but subclass of
+         * RowPresenter may fire item click event if it has the concept of item.
+         * OnItemViewClickedListener will override {@link View.OnClickListener} that
+         * item presenter sets during {@link Presenter#onCreateViewHolder(ViewGroup)}.
+         */
+        public final void setOnItemViewClickedListener(OnItemViewClickedListener listener) {
+            mOnItemViewClickedListener = listener;
+        }
+
+        /**
+         * Returns the listener for item click event.
+         */
+        public final OnItemViewClickedListener getOnItemViewClickedListener() {
+            return mOnItemViewClickedListener;
+        }
     }
 
     private RowHeaderPresenter mHeaderPresenter = new RowHeaderPresenter();
-    private OnItemSelectedListener mOnItemSelectedListener;
-    private OnItemClickedListener mOnItemClickedListener;
-    private OnItemViewSelectedListener mOnItemViewSelectedListener;
-    private OnItemViewClickedListener mOnItemViewClickedListener;
 
     boolean mSelectEffectEnabled = true;
     int mSyncActivatePolicy = SYNC_ACTIVATED_TO_EXPANDED;
+
 
     /**
      * Constructs a RowPresenter.
@@ -276,6 +323,16 @@ public abstract class RowPresenter extends Presenter {
     protected abstract ViewHolder createRowViewHolder(ViewGroup parent);
 
     /**
+     * Returns true if the Row view should clip it's children.  The clipChildren
+     * flag is set on view in {@link #initializeRowViewHolder(ViewHolder)}.  Note that
+     * Slide transition or explode transition need turn off clipChildren.
+     * Default value is false.
+     */
+    protected boolean isClippingChildren() {
+        return false;
+    }
+
+    /**
      * Called after a {@link RowPresenter.ViewHolder} is created for a Row.
      * Subclasses may override this method and start by calling
      * super.initializeRowViewHolder(ViewHolder).
@@ -284,17 +341,19 @@ public abstract class RowPresenter extends Presenter {
      */
     protected void initializeRowViewHolder(ViewHolder vh) {
         vh.mInitialzed = true;
-        // set clip children to false for slide transition
-        if (vh.view instanceof ViewGroup) {
-            ((ViewGroup) vh.view).setClipChildren(false);
-        }
-        if (vh.mContainerViewHolder != null) {
-            ((ViewGroup) vh.mContainerViewHolder.view).setClipChildren(false);
+        if (!isClippingChildren()) {
+            // set clip children to false for slide transition
+            if (vh.view instanceof ViewGroup) {
+                ((ViewGroup) vh.view).setClipChildren(false);
+            }
+            if (vh.mContainerViewHolder != null) {
+                ((ViewGroup) vh.mContainerViewHolder.view).setClipChildren(false);
+            }
         }
     }
 
     /**
-     * Set the Presenter used for rendering the header. Can be null to disable
+     * Sets the Presenter used for rendering the header. Can be null to disable
      * header rendering. The method must be called before creating any Row Views.
      */
     public final void setHeaderPresenter(RowHeaderPresenter headerPresenter) {
@@ -302,7 +361,7 @@ public abstract class RowPresenter extends Presenter {
     }
 
     /**
-     * Get the Presenter used for rendering the header, or null if none has been
+     * Returns the Presenter used for rendering the header, or null if none has been
      * set.
      */
     public final RowHeaderPresenter getHeaderPresenter() {
@@ -310,7 +369,7 @@ public abstract class RowPresenter extends Presenter {
     }
 
     /**
-     * Get the {@link RowPresenter.ViewHolder} from the given Presenter
+     * Returns the {@link RowPresenter.ViewHolder} from the given RowPresenter
      * ViewHolder.
      */
     public final ViewHolder getRowViewHolder(Presenter.ViewHolder holder) {
@@ -322,7 +381,7 @@ public abstract class RowPresenter extends Presenter {
     }
 
     /**
-     * Set the expanded state of a Row view.
+     * Sets the expanded state of a Row view.
      *
      * @param holder The Row ViewHolder to set expanded state on.
      * @param expanded True if the Row is expanded, false otherwise.
@@ -334,7 +393,7 @@ public abstract class RowPresenter extends Presenter {
     }
 
     /**
-     * Set the selected state of a Row view.
+     * Sets the selected state of a Row view.
      *
      * @param holder The Row ViewHolder to set expanded state on.
      * @param selected True if the Row is expanded, false otherwise.
@@ -346,7 +405,8 @@ public abstract class RowPresenter extends Presenter {
     }
 
     /**
-     * Subclass may override this to respond to expanded state changes of a Row.
+     * Called when the row view's expanded state changes.  A subclass may override this method to
+     * respond to expanded state changes of a Row.
      * The default implementation will hide/show the header view. Subclasses may
      * make visual changes to the Row View but must not create animation on the
      * Row view.
@@ -357,7 +417,7 @@ public abstract class RowPresenter extends Presenter {
     }
 
     /**
-     * Update view's activate status according to {@link #getSyncActivatePolicy()} and the
+     * Updates the view's activate status according to {@link #getSyncActivatePolicy()} and the
      * selected status and expanded status of the RowPresenter ViewHolder.
      */
     private void updateActivateStatus(ViewHolder vh, View view) {
@@ -376,7 +436,7 @@ public abstract class RowPresenter extends Presenter {
     }
 
     /**
-     * Sets policy of updating row view activated status.  Can be one of:
+     * Sets the policy of updating row view activated status.  Can be one of:
      * <li> Default value {@link #SYNC_ACTIVATED_TO_EXPANDED}
      * <li> {@link #SYNC_ACTIVATED_TO_SELECTED}
      * <li> {@link #SYNC_ACTIVATED_TO_EXPANDED_AND_SELECTED}
@@ -387,7 +447,7 @@ public abstract class RowPresenter extends Presenter {
     }
 
     /**
-     * Returns policy of updating row view activated status.  Can be one of:
+     * Returns the policy of updating row view activated status.  Can be one of:
      * <li> Default value {@link #SYNC_ACTIVATED_TO_EXPANDED}
      * <li> {@link #SYNC_ACTIVATED_TO_SELECTED}
      * <li> {@link #SYNC_ACTIVATED_TO_EXPANDED_AND_SELECTED}
@@ -397,27 +457,25 @@ public abstract class RowPresenter extends Presenter {
         return mSyncActivatePolicy;
     }
 
-
     /**
-     * The method is only called from onRowViewSelecetd().
-     * Default behavior is signaling row selected events with null item. Subclass of RowPresenter
-     * having child items should override this method and dispatch events with item information.
+     * This method is only called from
+     * {@link #onRowViewSelected(ViewHolder, boolean)} onRowViewSelected.
+     * The default behavior is to signal row selected events with a null item parameter.
+     * A Subclass of RowPresenter having child items should override this method and dispatch
+     * events with item information.
      */
     protected void dispatchItemSelectedListener(ViewHolder vh, boolean selected) {
         if (selected) {
-            if (mOnItemViewSelectedListener != null) {
-                mOnItemViewSelectedListener.onItemSelected(null, null, vh, vh.getRow());
-            }
-            if (mOnItemSelectedListener != null) {
-                mOnItemSelectedListener.onItemSelected(null, vh.getRow());
+            if (vh.mOnItemViewSelectedListener != null) {
+                vh.mOnItemViewSelectedListener.onItemSelected(null, null, vh, vh.getRow());
             }
         }
     }
 
     /**
-     * Subclass may override this to respond to selected state changes of a Row.
-     * Subclass may make visual changes to Row view but must not create
-     * animation on the Row view.
+     * Called when the given row view changes selection state.  A subclass may override this to
+     * respond to selected state changes of a Row.  A subclass may make visual changes to Row view
+     * but must not create animation on the Row view.
      */
     protected void onRowViewSelected(ViewHolder vh, boolean selected) {
         dispatchItemSelectedListener(vh, selected);
@@ -433,7 +491,7 @@ public abstract class RowPresenter extends Presenter {
     }
 
     /**
-     * Set the current select level to a value between 0 (unselected) and 1 (selected).
+     * Sets the current select level to a value between 0 (unselected) and 1 (selected).
      * Subclasses may override {@link #onSelectLevelChanged(ViewHolder)} to
      * respond to changes in the selected level.
      */
@@ -444,7 +502,7 @@ public abstract class RowPresenter extends Presenter {
     }
 
     /**
-     * Get the current select level. The value will be between 0 (unselected) 
+     * Returns the current select level. The value will be between 0 (unselected)
      * and 1 (selected).
      */
     public final float getSelectLevel(Presenter.ViewHolder vh) {
@@ -452,12 +510,12 @@ public abstract class RowPresenter extends Presenter {
     }
 
     /**
-     * Callback when select level is changed. The default implementation applies
+     * Callback when the select level changes. The default implementation applies
      * the select level to {@link RowHeaderPresenter#setSelectLevel(RowHeaderPresenter.ViewHolder, float)}
      * when {@link #getSelectEffectEnabled()} is true. Subclasses may override
-     * this function and implement a different select effect. In this case, you
-     * should also override {@link #isUsingDefaultSelectEffect()} to disable
-     * the default dimming effect applied by the library.
+     * this function and implement a different select effect. In this case,
+     * the method {@link #isUsingDefaultSelectEffect()} should also be overridden to disable
+     * the default dimming effect.
      */
     protected void onSelectLevelChanged(ViewHolder vh) {
         if (getSelectEffectEnabled()) {
@@ -491,8 +549,8 @@ public abstract class RowPresenter extends Presenter {
     }
 
     /**
-     * Return whether this RowPresenter is using the default dimming effect
-     * provided by the library.  Subclasses may(most likely) return false and
+     * Returns true if this RowPresenter is using the default dimming effect.
+     * A subclass may (most likely) return false and
      * override {@link #onSelectLevelChanged(ViewHolder)}.
      */
     public boolean isUsingDefaultSelectEffect() {
@@ -508,7 +566,7 @@ public abstract class RowPresenter extends Presenter {
     }
 
     /**
-     * Return true if the Row view can draw outside its bounds.
+     * Returns true if the Row view can draw outside its bounds.
      */
     public boolean canDrawOutOfBounds() {
         return false;
@@ -519,6 +577,9 @@ public abstract class RowPresenter extends Presenter {
         onBindRowViewHolder(getRowViewHolder(viewHolder), item);
     }
 
+    /**
+     * Binds the given row object to the given ViewHolder.
+     */
     protected void onBindRowViewHolder(ViewHolder vh, Object item) {
         vh.mRow = (Row) item;
         if (vh.mHeaderViewHolder != null) {
@@ -531,6 +592,9 @@ public abstract class RowPresenter extends Presenter {
         onUnbindRowViewHolder(getRowViewHolder(viewHolder));
     }
 
+    /**
+     * Unbinds the given ViewHolder.
+     */
     protected void onUnbindRowViewHolder(ViewHolder vh) {
         if (vh.mHeaderViewHolder != null) {
             mHeaderPresenter.onUnbindViewHolder(vh.mHeaderViewHolder);
@@ -543,6 +607,9 @@ public abstract class RowPresenter extends Presenter {
         onRowViewAttachedToWindow(getRowViewHolder(holder));
     }
 
+    /**
+     * Invoked when the row view is attached to the window.
+     */
     protected void onRowViewAttachedToWindow(ViewHolder vh) {
         if (vh.mHeaderViewHolder != null) {
             mHeaderPresenter.onViewAttachedToWindow(vh.mHeaderViewHolder);
@@ -554,6 +621,9 @@ public abstract class RowPresenter extends Presenter {
         onRowViewDetachedFromWindow(getRowViewHolder(holder));
     }
 
+    /**
+     * Invoked when the row view is detached from the window.
+     */
     protected void onRowViewDetachedFromWindow(ViewHolder vh) {
         if (vh.mHeaderViewHolder != null) {
             mHeaderPresenter.onViewDetachedFromWindow(vh.mHeaderViewHolder);
@@ -562,87 +632,17 @@ public abstract class RowPresenter extends Presenter {
     }
 
     /**
-     * Set the listener for item or row selection. A RowPresenter fires a row
-     * selection event with a null item. Subclasses (e.g. {@link ListRowPresenter})
-     * can fire a selection event with the selected item.
-     */
-    public final void setOnItemSelectedListener(OnItemSelectedListener listener) {
-        mOnItemSelectedListener = listener;
-    }
-
-    /**
-     * Get the listener for item or row selection.
-     */
-    public final OnItemSelectedListener getOnItemSelectedListener() {
-        return mOnItemSelectedListener;
-    }
-
-    /**
-     * Set the listener for item click events. A RowPresenter does not use this
-     * listener, but a subclass may fire an item click event if it has the concept
-     * of an item. The {@link OnItemClickedListener} will override any
-     * {@link View.OnClickListener} that an item's Presenter sets during
-     * {@link Presenter#onCreateViewHolder(ViewGroup)}. So in general, you
-     * should choose to use an OnItemClickedListener or a {@link
-     * View.OnClickListener}, but not both.
-     */
-    public final void setOnItemClickedListener(OnItemClickedListener listener) {
-        mOnItemClickedListener = listener;
-    }
-
-    /**
-     * Get the listener for item click events.
-     */
-    public final OnItemClickedListener getOnItemClickedListener() {
-        return mOnItemClickedListener;
-    }
-
-    /**
-     * Set listener for item or row selection.  RowPresenter fires row selection
-     * event with null item, subclass of RowPresenter e.g. {@link ListRowPresenter} can
-     * fire a selection event with selected item.
-     */
-    public final void setOnItemViewSelectedListener(OnItemViewSelectedListener listener) {
-        mOnItemViewSelectedListener = listener;
-    }
-
-    /**
-     * Get listener for item or row selection.
-     */
-    public final OnItemViewSelectedListener getOnItemViewSelectedListener() {
-        return mOnItemViewSelectedListener;
-    }
-
-    /**
-     * Set listener for item click event.  RowPresenter does nothing but subclass of
-     * RowPresenter may fire item click event if it does have a concept of item.
-     * OnItemViewClickedListener will override {@link View.OnClickListener} that
-     * item presenter sets during {@link Presenter#onCreateViewHolder(ViewGroup)}.
-     * So in general,  developer should choose one of the listeners but not both.
-     */
-    public final void setOnItemViewClickedListener(OnItemViewClickedListener listener) {
-        mOnItemViewClickedListener = listener;
-    }
-
-    /**
-     * Set listener for item click event.
-     */
-    public final OnItemViewClickedListener getOnItemViewClickedListener() {
-        return mOnItemViewClickedListener;
-    }
-
-    /**
-     * Freeze/Unfreeze the row, typically used when transition starts/ends.
-     * This method is called by fragment, app should not call it directly.
+     * Freezes/unfreezes the row, typically used when a transition starts/ends.
+     * This method is called by the fragment, it should not call it directly by the application.
      */
     public void freeze(ViewHolder holder, boolean freeze) {
     }
 
     /**
-     * Change visibility of views, entrance transition will be run against the views that
-     * change visibilities.  Subclass may override and begin with calling
-     * super.setEntranceTransitionState().  This method is called by fragment,
-     * app should not call it directly.
+     * Changes the visibility of views.  The entrance transition will be run against the views that
+     * change visibilities.  A subclass may override and begin with calling
+     * super.setEntranceTransitionState().  This method is called by the fragment,
+     * it should not call it directly by the application.
      */
     public void setEntranceTransitionState(ViewHolder holder, boolean afterTransition) {
         if (holder.mHeaderViewHolder != null &&

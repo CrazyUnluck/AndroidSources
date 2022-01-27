@@ -17,11 +17,15 @@
 package android.support.design.widget;
 
 import android.content.res.ColorStateList;
+import android.content.res.Resources;
 import android.graphics.PorterDuff;
 import android.graphics.drawable.Drawable;
+import android.support.design.R;
 import android.view.View;
 
 abstract class FloatingActionButtonImpl {
+
+    static final int SHOW_HIDE_ANIM_DURATION = 200;
 
     static final int[] PRESSED_ENABLED_STATE_SET = {android.R.attr.state_pressed,
             android.R.attr.state_enabled};
@@ -38,7 +42,7 @@ abstract class FloatingActionButtonImpl {
     }
 
     abstract void setBackgroundDrawable(Drawable originalBackground, ColorStateList backgroundTint,
-            PorterDuff.Mode backgroundTintMode, int rippleColor);
+            PorterDuff.Mode backgroundTintMode, int rippleColor, int borderWidth);
 
     abstract void setBackgroundTintList(ColorStateList tint);
 
@@ -54,4 +58,24 @@ abstract class FloatingActionButtonImpl {
 
     abstract void jumpDrawableToCurrentState();
 
+    abstract void hide();
+
+    abstract void show();
+
+    Drawable createBorderDrawable(int borderWidth, ColorStateList backgroundTint) {
+        final Resources resources = mView.getResources();
+        CircularBorderDrawable borderDrawable = newCircularDrawable();
+        borderDrawable.setGradientColors(
+                resources.getColor(R.color.design_fab_stroke_top_outer_color),
+                resources.getColor(R.color.design_fab_stroke_top_inner_color),
+                resources.getColor(R.color.design_fab_stroke_end_inner_color),
+                resources.getColor(R.color.design_fab_stroke_end_outer_color));
+        borderDrawable.setBorderWidth(borderWidth);
+        borderDrawable.setTintColor(backgroundTint.getDefaultColor());
+        return borderDrawable;
+    }
+
+    CircularBorderDrawable newCircularDrawable() {
+        return new CircularBorderDrawable();
+    }
 }

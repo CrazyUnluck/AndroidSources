@@ -13,7 +13,9 @@
  */
 package android.support.v17.leanback.widget;
 
+import android.content.Context;
 import android.support.v17.leanback.R;
+import android.support.v17.leanback.system.Settings;
 import android.view.LayoutInflater;
 import android.view.View;
 import android.view.ViewGroup;
@@ -21,8 +23,7 @@ import android.view.ViewGroup.LayoutParams;
 import android.util.Log;
 
 /**
- * A presenter that renders objects in a vertical grid.
- *
+ * A presenter that renders objects in a {@link VerticalGridView}.
  */
 public class VerticalGridPresenter extends Presenter {
     private static final String TAG = "GridPresenter";
@@ -32,16 +33,11 @@ public class VerticalGridPresenter extends Presenter {
         @Override
         public void onBind(final ItemBridgeAdapter.ViewHolder itemViewHolder) {
             // Only when having an OnItemClickListner, we attach the OnClickListener.
-            if (getOnItemClickedListener() != null || getOnItemViewClickedListener() != null) {
+            if (getOnItemViewClickedListener() != null) {
                 final View itemView = itemViewHolder.mHolder.view;
                 itemView.setOnClickListener(new View.OnClickListener() {
                     @Override
                     public void onClick(View view) {
-                        if (getOnItemClickedListener() != null) {
-                            // Row is always null
-                            getOnItemClickedListener().onItemClicked(itemViewHolder.mItem,
-                                    null);
-                        }
                         if (getOnItemViewClickedListener() != null) {
                             // Row is always null
                             getOnItemViewClickedListener().onItemClicked(
@@ -54,7 +50,7 @@ public class VerticalGridPresenter extends Presenter {
 
         @Override
         public void onUnbind(ItemBridgeAdapter.ViewHolder viewHolder) {
-            if (getOnItemClickedListener() != null || getOnItemViewClickedListener() != null) {
+            if (getOnItemViewClickedListener() != null) {
                 viewHolder.mHolder.view.setOnClickListener(null);
             }
         }
@@ -65,6 +61,9 @@ public class VerticalGridPresenter extends Presenter {
         }
     }
 
+    /**
+     * ViewHolder for the VerticalGridPresenter.
+     */
     public static class ViewHolder extends Presenter.ViewHolder {
         ItemBridgeAdapter mItemBridgeAdapter;
         final VerticalGridView mGridView;
@@ -81,20 +80,51 @@ public class VerticalGridPresenter extends Presenter {
     }
 
     private int mNumColumns = -1;
-    private int mZoomFactor;
+    private int mFocusZoomFactor;
+    private boolean mUseFocusDimmer;
     private boolean mShadowEnabled = true;
-    private OnItemClickedListener mOnItemClickedListener;
-    private OnItemSelectedListener mOnItemSelectedListener;
     private OnItemViewSelectedListener mOnItemViewSelectedListener;
     private OnItemViewClickedListener mOnItemViewClickedListener;
     private boolean mRoundedCornersEnabled = true;
 
+    /**
+     * Constructs a VerticalGridPresenter with defaults.
+     * Uses {@link FocusHighlight#ZOOM_FACTOR_MEDIUM} for focus zooming and
+     * enabled dimming on focus.
+     */
     public VerticalGridPresenter() {
         this(FocusHighlight.ZOOM_FACTOR_LARGE);
     }
 
-    public VerticalGridPresenter(int zoomFactor) {
-        mZoomFactor = zoomFactor;
+    /**
+     * Constructs a VerticalGridPresenter with the given parameters.
+     *
+     * @param focusZoomFactor Controls the zoom factor used when an item view is focused. One of
+     *         {@link FocusHighlight#ZOOM_FACTOR_NONE},
+     *         {@link FocusHighlight#ZOOM_FACTOR_SMALL},
+     *         {@link FocusHighlight#ZOOM_FACTOR_XSMALL},
+     *         {@link FocusHighlight#ZOOM_FACTOR_MEDIUM},
+     *         {@link FocusHighlight#ZOOM_FACTOR_LARGE}
+     * enabled dimming on focus.
+     */
+    public VerticalGridPresenter(int focusZoomFactor) {
+        this(focusZoomFactor, true);
+    }
+
+    /**
+     * Constructs a VerticalGridPresenter with the given parameters.
+     *
+     * @param focusZoomFactor Controls the zoom factor used when an item view is focused. One of
+     *         {@link FocusHighlight#ZOOM_FACTOR_NONE},
+     *         {@link FocusHighlight#ZOOM_FACTOR_SMALL},
+     *         {@link FocusHighlight#ZOOM_FACTOR_XSMALL},
+     *         {@link FocusHighlight#ZOOM_FACTOR_MEDIUM},
+     *         {@link FocusHighlight#ZOOM_FACTOR_LARGE}
+     * @param useFocusDimmer determines if the FocusHighlighter will use the dimmer
+     */
+    public VerticalGridPresenter(int focusZoomFactor, boolean useFocusDimmer) {
+        mFocusZoomFactor = focusZoomFactor;
+        mUseFocusDimmer = useFocusDimmer;
     }
 
     /**
@@ -163,13 +193,29 @@ public class VerticalGridPresenter extends Presenter {
      * on each child of vertical grid.   If subclass returns false in isUsingDefaultShadow()
      * and does not use Z-shadow on SDK >= L, it should override isUsingZOrder() return false.
      */
-    public boolean isUsingZOrder() {
-        return ShadowHelper.getInstance().usesZShadow();
+    public boolean isUsingZOrder(Context context) {
+        return ShadowOverlayContainer.supportsDynamicShadow() &&
+                !Settings.getInstance(context).preferStaticShadows();
     }
 
     final boolean needsDefaultShadow() {
         return isUsingDefaultShadow() && getShadowEnabled();
     }
+
+    /**
+     * Returns the zoom factor used for focus highlighting.
+     */
+    public final int getFocusZoomFactor() {
+        return mFocusZoomFactor;
+    }
+
+    /**
+     * Returns true if the focus dimmer is used for focus highlighting; false otherwise.
+     */
+    public final boolean isFocusDimmerUsed() {
+        return mUseFocusDimmer;
+    }
+
 
     @Override
     public final ViewHolder onCreateViewHolder(ViewGroup parent) {
@@ -227,9 +273,9 @@ public class VerticalGridPresenter extends Presenter {
             ShadowOverlayContainer.prepareParentForShadow(vh.getGridView());
             ((ViewGroup) vh.view).setClipChildren(false);
         }
-        vh.getGridView().setFocusDrawingOrderEnabled(!isUsingZOrder());
+        vh.getGridView().setFocusDrawingOrderEnabled(!isUsingZOrder(vh.getGridView().getContext()));
         FocusHighlightHelper.setupBrowseItemFocusHighlight(vh.mItemBridgeAdapter,
-                mZoomFactor, true);
+                mFocusZoomFactor, mUseFocusDimmer);
 
         final ViewHolder gridViewHolder = vh;
         vh.getGridView().setOnChildSelectedListener(new OnChildSelectedListener() {
@@ -259,23 +305,6 @@ public class VerticalGridPresenter extends Presenter {
     /**
      * Sets the item selected listener.
      * Since this is a grid the row parameter is always null.
-     * @deprecated Use {@link #setOnItemViewSelectedListener(OnItemViewSelectedListener)}
-     */
-    public final void setOnItemSelectedListener(OnItemSelectedListener listener) {
-        mOnItemSelectedListener = listener;
-    }
-
-    /**
-     * Returns the item selected listener.
-     * @deprecated Use {@link #getOnItemViewSelectedListener()}
-     */
-    public final OnItemSelectedListener getOnItemSelectedListener() {
-        return mOnItemSelectedListener;
-    }
-
-    /**
-     * Sets the item selected listener.
-     * Since this is a grid the row parameter is always null.
      */
     public final void setOnItemViewSelectedListener(OnItemViewSelectedListener listener) {
         mOnItemViewSelectedListener = listener;
@@ -290,17 +319,6 @@ public class VerticalGridPresenter extends Presenter {
 
     /**
      * Sets the item clicked listener.
-     * OnItemClickedListener will override {@link View.OnClickListener} that
-     * item presenter sets during {@link Presenter#onCreateViewHolder(ViewGroup)}.
-     * So in general, developer should choose one of the listeners but not both.
-     * @deprecated Use {@link #setOnItemViewClickedListener(OnItemViewClickedListener)}
-     */
-    public final void setOnItemClickedListener(OnItemClickedListener listener) {
-        mOnItemClickedListener = listener;
-    }
-
-    /**
-     * Sets the item clicked listener.
      * OnItemViewClickedListener will override {@link View.OnClickListener} that
      * item presenter sets during {@link Presenter#onCreateViewHolder(ViewGroup)}.
      * So in general, developer should choose one of the listeners but not both.
@@ -311,29 +329,12 @@ public class VerticalGridPresenter extends Presenter {
 
     /**
      * Returns the item clicked listener.
-     * @deprecated Use {@link #getOnItemViewClickedListener()}
-     */
-    public final OnItemClickedListener getOnItemClickedListener() {
-        return mOnItemClickedListener;
-    }
-
-    /**
-     * Returns the item clicked listener.
      */
     public final OnItemViewClickedListener getOnItemViewClickedListener() {
         return mOnItemViewClickedListener;
     }
 
     private void selectChildView(ViewHolder vh, View view) {
-        if (getOnItemSelectedListener() != null) {
-            ItemBridgeAdapter.ViewHolder ibh = (view == null) ? null :
-                    (ItemBridgeAdapter.ViewHolder) vh.getGridView().getChildViewHolder(view);
-            if (ibh == null) {
-                getOnItemSelectedListener().onItemSelected(null, null);
-            } else {
-                getOnItemSelectedListener().onItemSelected(ibh.mItem, null);
-            }
-        }
         if (getOnItemViewSelectedListener() != null) {
             ItemBridgeAdapter.ViewHolder ibh = (view == null) ? null :
                     (ItemBridgeAdapter.ViewHolder) vh.getGridView().getChildViewHolder(view);

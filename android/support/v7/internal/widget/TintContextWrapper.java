@@ -19,6 +19,7 @@ package android.support.v7.internal.widget;
 import android.content.Context;
 import android.content.ContextWrapper;
 import android.content.res.Resources;
+import android.graphics.drawable.Drawable;
 
 /**
  * A {@link android.content.ContextWrapper} which returns a tint-aware
@@ -26,9 +27,7 @@ import android.content.res.Resources;
  *
  * @hide
  */
-class TintContextWrapper extends ContextWrapper {
-
-    private final TintManager mTintManager;
+public class TintContextWrapper extends ContextWrapper {
 
     public static Context wrap(Context context) {
         if (!(context instanceof TintContextWrapper)) {
@@ -37,17 +36,44 @@ class TintContextWrapper extends ContextWrapper {
         return context;
     }
 
-    TintContextWrapper(Context base) {
+    private Resources mResources;
+
+    private TintContextWrapper(Context base) {
         super(base);
-        mTintManager = new TintManager(base);
     }
 
     @Override
     public Resources getResources() {
-        return mTintManager.getResources();
+        if (mResources == null) {
+            mResources = new TintResources(super.getResources(), TintManager.get(this));
+        }
+        return mResources;
     }
 
-    final TintManager getTintManager() {
-        return mTintManager;
+    /**
+     * This class allows us to intercept calls so that we can tint resources (if applicable).
+     */
+    static class TintResources extends ResourcesWrapper {
+
+        private final TintManager mTintManager;
+
+        public TintResources(Resources resources, TintManager tintManager) {
+            super(resources);
+            mTintManager = tintManager;
+        }
+
+        /**
+         * We intercept this call so that we tint the result (if applicable). This is needed for
+         * things like {@link android.graphics.drawable.DrawableContainer}s which can retrieve
+         * their children via this method.
+         */
+        @Override
+        public Drawable getDrawable(int id) throws NotFoundException {
+            Drawable d = super.getDrawable(id);
+            if (d != null) {
+                mTintManager.tintDrawableUsingColorFilter(id, d);
+            }
+            return d;
+        }
     }
 }

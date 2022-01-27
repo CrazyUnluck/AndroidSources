@@ -16,23 +16,26 @@
 
 package com.android.volley.toolbox;
 
-import android.test.AndroidTestCase;
-
 import com.android.volley.Cache;
 import com.android.volley.toolbox.DiskBasedCache.CacheHeader;
+import org.junit.Test;
 
 import java.io.ByteArrayInputStream;
 import java.io.ByteArrayOutputStream;
+import java.io.File;
 import java.util.HashMap;
 import java.util.Map;
 
-public class DiskBasedCacheTest extends AndroidTestCase {
+import static org.junit.Assert.*;
+
+public class DiskBasedCacheTest {
 
     // Simple end-to-end serialize/deserialize test.
-    public void testCacheHeaderSerialization() throws Exception {
+    @Test public void cacheHeaderSerialization() throws Exception {
         Cache.Entry e = new Cache.Entry();
         e.data = new byte[8];
         e.serverDate = 1234567L;
+        e.lastModified = 13572468L;
         e.ttl = 9876543L;
         e.softTtl = 8765432L;
         e.etag = "etag";
@@ -47,13 +50,14 @@ public class DiskBasedCacheTest extends AndroidTestCase {
 
         assertEquals(first.key, second.key);
         assertEquals(first.serverDate, second.serverDate);
+        assertEquals(first.lastModified, second.lastModified);
         assertEquals(first.ttl, second.ttl);
         assertEquals(first.softTtl, second.softTtl);
         assertEquals(first.etag, second.etag);
         assertEquals(first.responseHeaders, second.responseHeaders);
     }
 
-    public void testSerializeInt() throws Exception {
+    @Test public void serializeInt() throws Exception {
         ByteArrayOutputStream baos = new ByteArrayOutputStream();
         DiskBasedCache.writeInt(baos, 0);
         DiskBasedCache.writeInt(baos, 19791214);
@@ -68,7 +72,7 @@ public class DiskBasedCacheTest extends AndroidTestCase {
         assertEquals(DiskBasedCache.readInt(bais), Integer.MAX_VALUE);
     }
 
-    public void testSerializeLong() throws Exception {
+    @Test public void serializeLong() throws Exception {
         ByteArrayOutputStream baos = new ByteArrayOutputStream();
         DiskBasedCache.writeLong(baos, 0);
         DiskBasedCache.writeLong(baos, 31337);
@@ -87,7 +91,7 @@ public class DiskBasedCacheTest extends AndroidTestCase {
         assertEquals(DiskBasedCache.readLong(bais), Long.MAX_VALUE);
     }
 
-    public void testSerializeString() throws Exception {
+    @Test public void serializeString() throws Exception {
         ByteArrayOutputStream baos = new ByteArrayOutputStream();
         DiskBasedCache.writeString(baos, "");
         DiskBasedCache.writeString(baos, "This is a string.");
@@ -98,7 +102,7 @@ public class DiskBasedCacheTest extends AndroidTestCase {
         assertEquals(DiskBasedCache.readString(bais), "ファイカス");
     }
 
-    public void testSerializeMap() throws Exception {
+    @Test public void serializeMap() throws Exception {
         ByteArrayOutputStream baos = new ByteArrayOutputStream();
         Map<String, String> empty = new HashMap<String, String>();
         DiskBasedCache.writeStringStringMap(empty, baos);
@@ -119,5 +123,14 @@ public class DiskBasedCacheTest extends AndroidTestCase {
         assertEquals(DiskBasedCache.readStringStringMap(bais), twoThings);
         assertEquals(DiskBasedCache.readStringStringMap(bais), emptyKey);
         assertEquals(DiskBasedCache.readStringStringMap(bais), emptyValue);
+    }
+
+    @Test
+    public void publicMethods() throws Exception {
+        // Catch-all test to find API-breaking changes.
+        assertNotNull(DiskBasedCache.class.getConstructor(File.class, int.class));
+        assertNotNull(DiskBasedCache.class.getConstructor(File.class));
+
+        assertNotNull(DiskBasedCache.class.getMethod("getFileForKey", String.class));
     }
 }

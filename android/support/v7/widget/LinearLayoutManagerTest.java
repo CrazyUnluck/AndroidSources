@@ -23,7 +23,6 @@ import android.os.Parcelable;
 import android.support.v4.view.AccessibilityDelegateCompat;
 import android.support.v4.view.accessibility.AccessibilityEventCompat;
 import android.support.v4.view.accessibility.AccessibilityRecordCompat;
-import android.util.AttributeSet;
 import android.util.Log;
 import android.view.View;
 import android.view.ViewGroup;
@@ -91,7 +90,7 @@ public class LinearLayoutManagerTest extends BaseRecyclerViewInstrumentationTest
     }
 
     void setupByConfig(Config config, boolean waitForFirstLayout) throws Throwable {
-        mRecyclerView = new WrappedRecyclerView(getActivity());
+        mRecyclerView = inflateWrappedRV();
 
         mRecyclerView.setHasFixedSize(true);
         mTestAdapter = config.mTestAdapter == null ? new TestAdapter(config.mItemCount)
@@ -105,6 +104,145 @@ public class LinearLayoutManagerTest extends BaseRecyclerViewInstrumentationTest
         if (waitForFirstLayout) {
             waitForFirstLayout();
         }
+    }
+
+    public void testRemoveAnchorItem() throws Throwable {
+        removeAnchorItemTest(
+                new Config().orientation(VERTICAL).stackFromBottom(false).reverseLayout(
+                        false), 100, 0);
+    }
+
+    public void testRemoveAnchorItemReverse() throws Throwable {
+        removeAnchorItemTest(
+                new Config().orientation(VERTICAL).stackFromBottom(false).reverseLayout(true), 100,
+                0);
+    }
+
+    public void testRemoveAnchorItemStackFromEnd() throws Throwable {
+        removeAnchorItemTest(
+                new Config().orientation(VERTICAL).stackFromBottom(true).reverseLayout(false), 100,
+                99);
+    }
+
+    public void testRemoveAnchorItemStackFromEndAndReverse() throws Throwable {
+        removeAnchorItemTest(
+                new Config().orientation(VERTICAL).stackFromBottom(true).reverseLayout(true), 100,
+                99);
+    }
+
+    public void testRemoveAnchorItemHorizontal() throws Throwable {
+        removeAnchorItemTest(
+                new Config().orientation(HORIZONTAL).stackFromBottom(false).reverseLayout(
+                        false), 100, 0);
+    }
+
+    public void testRemoveAnchorItemReverseHorizontal() throws Throwable {
+        removeAnchorItemTest(
+                new Config().orientation(HORIZONTAL).stackFromBottom(false).reverseLayout(true),
+                100, 0);
+    }
+
+    public void testRemoveAnchorItemStackFromEndHorizontal() throws Throwable {
+        removeAnchorItemTest(
+                new Config().orientation(HORIZONTAL).stackFromBottom(true).reverseLayout(false),
+                100, 99);
+    }
+
+    public void testRemoveAnchorItemStackFromEndAndReverseHorizontal() throws Throwable {
+        removeAnchorItemTest(
+                new Config().orientation(HORIZONTAL).stackFromBottom(true).reverseLayout(true), 100,
+                99);
+    }
+
+    /**
+     * This tests a regression where predictive animations were not working as expected when the
+     * first item is removed and there aren't any more items to add from that direction.
+     * First item refers to the default anchor item.
+     */
+    public void removeAnchorItemTest(final Config config, int adapterSize,
+            final int removePos) throws Throwable {
+        config.adapter(new TestAdapter(adapterSize) {
+            @Override
+            public void onBindViewHolder(TestViewHolder holder,
+                    int position) {
+                super.onBindViewHolder(holder, position);
+                ViewGroup.LayoutParams lp = holder.itemView.getLayoutParams();
+                if (!(lp instanceof ViewGroup.MarginLayoutParams)) {
+                    lp = new ViewGroup.MarginLayoutParams(0, 0);
+                    holder.itemView.setLayoutParams(lp);
+                }
+                ViewGroup.MarginLayoutParams mlp = (ViewGroup.MarginLayoutParams) lp;
+                final int maxSize;
+                if (config.mOrientation == HORIZONTAL) {
+                    maxSize = mRecyclerView.getWidth();
+                    mlp.height = ViewGroup.MarginLayoutParams.FILL_PARENT;
+                } else {
+                    maxSize = mRecyclerView.getHeight();
+                    mlp.width = ViewGroup.MarginLayoutParams.FILL_PARENT;
+                }
+
+                final int desiredSize;
+                if (position == removePos) {
+                    // make it large
+                    desiredSize = maxSize / 4;
+                } else {
+                    // make it small
+                    desiredSize = maxSize / 8;
+                }
+                if (config.mOrientation == HORIZONTAL) {
+                    mlp.width = desiredSize;
+                } else {
+                    mlp.height = desiredSize;
+                }
+            }
+        });
+        setupByConfig(config, true);
+        final int childCount = mLayoutManager.getChildCount();
+        RecyclerView.ViewHolder toBeRemoved = null;
+        List<RecyclerView.ViewHolder> toBeMoved = new ArrayList<RecyclerView.ViewHolder>();
+        for (int i = 0; i < childCount; i++) {
+            View child = mLayoutManager.getChildAt(i);
+            RecyclerView.ViewHolder holder = mRecyclerView.getChildViewHolder(child);
+            if (holder.getAdapterPosition() == removePos) {
+                toBeRemoved = holder;
+            } else {
+                toBeMoved.add(holder);
+            }
+        }
+        assertNotNull("test sanity", toBeRemoved);
+        assertEquals("test sanity", childCount - 1, toBeMoved.size());
+        LoggingItemAnimator loggingItemAnimator = new LoggingItemAnimator();
+        mRecyclerView.setItemAnimator(loggingItemAnimator);
+        loggingItemAnimator.reset();
+        loggingItemAnimator.expectRunPendingAnimationsCall(1);
+        mLayoutManager.expectLayouts(2);
+        mTestAdapter.deleteAndNotify(removePos, 1);
+        mLayoutManager.waitForLayout(1);
+        loggingItemAnimator.waitForPendingAnimationsCall(2);
+        assertTrue("removed child should receive remove animation",
+                loggingItemAnimator.mRemoveVHs.contains(toBeRemoved));
+        for (RecyclerView.ViewHolder vh : toBeMoved) {
+            assertTrue("view holder should be in moved list",
+                    loggingItemAnimator.mMoveVHs.contains(vh));
+        }
+        List<RecyclerView.ViewHolder> newHolders = new ArrayList<RecyclerView.ViewHolder>();
+        for (int i = 0; i < mLayoutManager.getChildCount(); i++) {
+            View child = mLayoutManager.getChildAt(i);
+            RecyclerView.ViewHolder holder = mRecyclerView.getChildViewHolder(child);
+            if (toBeRemoved != holder && !toBeMoved.contains(holder)) {
+                newHolders.add(holder);
+            }
+        }
+        assertTrue("some new children should show up for the new space", newHolders.size() > 0);
+        assertEquals("no items should receive animate add since they are not new", 0,
+                loggingItemAnimator.mAddVHs.size());
+        for (RecyclerView.ViewHolder holder : newHolders) {
+            assertTrue("new holder should receive a move animation",
+                    loggingItemAnimator.mMoveVHs.contains(holder));
+        }
+        assertTrue("control against adding too many children due to bad layout state preparation."
+                        + " initial:" + childCount + ", current:" + mRecyclerView.getChildCount(),
+                mRecyclerView.getChildCount() <= childCount + 3 /*1 for removed view, 2 for its size*/);
     }
 
     public void testKeepFocusOnRelayout() throws Throwable {
@@ -721,7 +859,7 @@ public class LinearLayoutManagerTest extends BaseRecyclerViewInstrumentationTest
                     public void run() throws Throwable {
                         mLayoutManager.expectLayouts(1);
                         scrollToPositionWithOffset(mTestAdapter.getItemCount() * 2 / 3,
-                                -50);
+                                -10);  // Some tests break if this value is below the item height.
                         mLayoutManager.waitForLayout(2);
                     }
 
@@ -839,15 +977,18 @@ public class LinearLayoutManagerTest extends BaseRecyclerViewInstrumentationTest
                 }
         };
         boolean[] waitForLayoutOptions = new boolean[]{true, false};
+        boolean[] loadDataAfterRestoreOptions = new boolean[]{true, false};
         List<Config> variations = addConfigVariation(mBaseVariations, "mItemCount", 0, 300);
         variations = addConfigVariation(variations, "mRecycleChildrenOnDetach", true);
         for (Config config : variations) {
             for (PostLayoutRunnable postLayoutRunnable : postLayoutOptions) {
                 for (boolean waitForLayout : waitForLayoutOptions) {
                     for (PostRestoreRunnable postRestoreRunnable : postRestoreOptions) {
-                        savedStateTest((Config) config.clone(), waitForLayout, postLayoutRunnable,
-                                postRestoreRunnable);
-                        removeRecyclerView();
+                        for (boolean loadDataAfterRestore : loadDataAfterRestoreOptions) {
+                            savedStateTest((Config) config.clone(), waitForLayout,
+                                    loadDataAfterRestore, postLayoutRunnable, postRestoreRunnable);
+                            removeRecyclerView();
+                        }
                     }
 
                 }
@@ -855,7 +996,7 @@ public class LinearLayoutManagerTest extends BaseRecyclerViewInstrumentationTest
         }
     }
 
-    public void savedStateTest(Config config, boolean waitForLayout,
+    public void savedStateTest(Config config, boolean waitForLayout, boolean loadDataAfterRestore,
             PostLayoutRunnable postLayoutOperation, PostRestoreRunnable postRestoreOperation)
             throws Throwable {
         if (DEBUG) {
@@ -882,6 +1023,11 @@ public class LinearLayoutManagerTest extends BaseRecyclerViewInstrumentationTest
         savedState = RecyclerView.SavedState.CREATOR.createFromParcel(parcel);
         removeRecyclerView();
 
+        final int itemCount = mTestAdapter.getItemCount();
+        if (loadDataAfterRestore) {
+            mTestAdapter.deleteAndNotify(0, itemCount);
+        }
+
         RecyclerView restored = new RecyclerView(getActivity());
         // this config should be no op.
         mLayoutManager = new WrappedLinearLayoutManager(getActivity(),
@@ -891,6 +1037,11 @@ public class LinearLayoutManagerTest extends BaseRecyclerViewInstrumentationTest
         // use the same adapter for Rect matching
         restored.setAdapter(mTestAdapter);
         restored.onRestoreInstanceState(savedState);
+
+        if (loadDataAfterRestore) {
+            mTestAdapter.addAndNotify(itemCount);
+        }
+
         postRestoreOperation.onAfterRestore(config);
         assertEquals("Parcel reading should not go out of bounds", parcelSuffix,
                 parcel.readString());
@@ -907,20 +1058,40 @@ public class LinearLayoutManagerTest extends BaseRecyclerViewInstrumentationTest
         assertEquals(logPrefix + " on saved state, stack from end should be preserved",
                 config.mStackFromEnd, mLayoutManager.getStackFromEnd());
         if (waitForLayout) {
+            final boolean strictItemEquality = !loadDataAfterRestore;
             if (postRestoreOperation.shouldLayoutMatch(config)) {
                 assertRectSetsEqual(
                         logPrefix + ": on restore, previous view positions should be preserved",
-                        before, mLayoutManager.collectChildCoordinates());
+                        before, mLayoutManager.collectChildCoordinates(), strictItemEquality);
             } else {
                 assertRectSetsNotEqual(
                         logPrefix
                                 + ": on restore with changes, previous view positions should NOT "
                                 + "be preserved",
-                        before, mLayoutManager.collectChildCoordinates());
+                        before, mLayoutManager.collectChildCoordinates(), strictItemEquality);
             }
             postRestoreOperation.onAfterReLayout(config);
         }
     }
+
+    public void testScrollAndClear() throws Throwable {
+        setupByConfig(new Config(), true);
+
+        assertTrue("Children not laid out", mLayoutManager.collectChildCoordinates().size() > 0);
+
+        mLayoutManager.expectLayouts(1);
+        runTestOnUiThread(new Runnable() {
+            @Override
+            public void run() {
+                mLayoutManager.scrollToPositionWithOffset(1, 0);
+                mTestAdapter.clearOnUIThread();
+            }
+        });
+        mLayoutManager.waitForLayout(2);
+
+        assertEquals("Remaining children", 0, mLayoutManager.collectChildCoordinates().size());
+    }
+
 
     void scrollToPositionWithOffset(final int position, final int offset) throws Throwable {
         runTestOnUiThread(new Runnable() {
@@ -932,10 +1103,10 @@ public class LinearLayoutManagerTest extends BaseRecyclerViewInstrumentationTest
     }
 
     public void assertRectSetsNotEqual(String message, Map<Item, Rect> before,
-            Map<Item, Rect> after) {
+            Map<Item, Rect> after, boolean strictItemEquality) {
         Throwable throwable = null;
         try {
-            assertRectSetsEqual("NOT " + message, before, after);
+            assertRectSetsEqual("NOT " + message, before, after, strictItemEquality);
         } catch (Throwable t) {
             throwable = t;
         }
@@ -943,9 +1114,14 @@ public class LinearLayoutManagerTest extends BaseRecyclerViewInstrumentationTest
     }
 
     public void assertRectSetsEqual(String message, Map<Item, Rect> before, Map<Item, Rect> after) {
+        assertRectSetsEqual(message, before, after, true);
+    }
+
+    public void assertRectSetsEqual(String message, Map<Item, Rect> before, Map<Item, Rect> after,
+            boolean strictItemEquality) {
         StringBuilder sb = new StringBuilder();
-        sb.append("checking rectangle equality.");
-         sb.append("before:\n");
+        sb.append("checking rectangle equality.\n");
+        sb.append("before:\n");
         for (Map.Entry<Item, Rect> entry : before.entrySet()) {
             sb.append(entry.getKey().mAdapterIndex + ":" + entry.getValue()).append("\n");
         }
@@ -957,9 +1133,24 @@ public class LinearLayoutManagerTest extends BaseRecyclerViewInstrumentationTest
         assertEquals(message + ":\nitem counts should be equal", before.size()
                 , after.size());
         for (Map.Entry<Item, Rect> entry : before.entrySet()) {
-            Rect afterRect = after.get(entry.getKey());
-            assertNotNull(message + ":\nSame item should be visible after simple re-layout",
-                    afterRect);
+            final Item beforeItem = entry.getKey();
+            Rect afterRect = null;
+            if (strictItemEquality) {
+                afterRect = after.get(beforeItem);
+                assertNotNull(message + ":\nSame item should be visible after simple re-layout",
+                        afterRect);
+            } else {
+                for (Map.Entry<Item, Rect> afterEntry : after.entrySet()) {
+                    final Item afterItem = afterEntry.getKey();
+                    if (afterItem.mAdapterIndex == beforeItem.mAdapterIndex) {
+                        afterRect = afterEntry.getValue();
+                        break;
+                    }
+                }
+                assertNotNull(message + ":\nItem with same adapter index should be visible " +
+                                "after simple re-layout",
+                        afterRect);
+            }
             assertEquals(message + ":\nItem should be laid out at the same coordinates",
                     entry.getValue(), afterRect);
         }
@@ -984,6 +1175,121 @@ public class LinearLayoutManagerTest extends BaseRecyclerViewInstrumentationTest
         assertEquals("result should have last position",
                 record.getToIndex(),
                 mLayoutManager.findLastVisibleItemPosition());
+    }
+
+    public void testPrepareForDrop() throws Throwable {
+        SelectTargetChildren[] selectors = new SelectTargetChildren[] {
+                new SelectTargetChildren() {
+                    @Override
+                    public int[] selectTargetChildren(int childCount) {
+                        return new int[]{1, 0};
+                    }
+                },
+                new SelectTargetChildren() {
+                    @Override
+                    public int[] selectTargetChildren(int childCount) {
+                        return new int[]{0, 1};
+                    }
+                },
+                new SelectTargetChildren() {
+                    @Override
+                    public int[] selectTargetChildren(int childCount) {
+                        return new int[]{childCount - 1, childCount - 2};
+                    }
+                },
+                new SelectTargetChildren() {
+                    @Override
+                    public int[] selectTargetChildren(int childCount) {
+                        return new int[]{childCount - 2, childCount - 1};
+                    }
+                },
+                new SelectTargetChildren() {
+                    @Override
+                    public int[] selectTargetChildren(int childCount) {
+                        return new int[]{childCount / 2, childCount / 2 + 1};
+                    }
+                },
+                new SelectTargetChildren() {
+                    @Override
+                    public int[] selectTargetChildren(int childCount) {
+                        return new int[]{childCount / 2 + 1, childCount / 2};
+                    }
+                }
+        };
+        for (SelectTargetChildren selector : selectors) {
+            for (Config config : mBaseVariations) {
+                prepareForDropTest(config, selector);
+                removeRecyclerView();
+            }
+        }
+    }
+
+    public void prepareForDropTest(final Config config, SelectTargetChildren selectTargetChildren)
+            throws Throwable {
+        config.mTestAdapter = new TestAdapter(100) {
+            @Override
+            public void onBindViewHolder(TestViewHolder holder,
+                    int position) {
+                super.onBindViewHolder(holder, position);
+                if (config.mOrientation == HORIZONTAL) {
+                    final int base = mRecyclerView.getWidth() / 5;
+                    final int itemRand = holder.mBoundItem.mText.hashCode() % base;
+                    holder.itemView.setMinimumWidth(base + itemRand);
+                } else {
+                    final int base = mRecyclerView.getHeight() / 5;
+                    final int itemRand = holder.mBoundItem.mText.hashCode() % base;
+                    holder.itemView.setMinimumHeight(base + itemRand);
+                }
+            }
+        };
+        setupByConfig(config, true);
+        mLayoutManager.expectLayouts(1);
+        scrollToPosition(mTestAdapter.getItemCount() / 2);
+        mLayoutManager.waitForLayout(1);
+        int[] positions = selectTargetChildren.selectTargetChildren(mRecyclerView.getChildCount());
+        final View fromChild = mLayoutManager.getChildAt(positions[0]);
+        final int fromPos = mLayoutManager.getPosition(fromChild);
+        final View onChild = mLayoutManager.getChildAt(positions[1]);
+        final int toPos = mLayoutManager.getPosition(onChild);
+        final OrientationHelper helper = mLayoutManager.mOrientationHelper;
+        final int dragCoordinate;
+        final boolean towardsHead = toPos < fromPos;
+        final int referenceLine;
+        if (config.mReverseLayout == towardsHead) {
+            referenceLine = helper.getDecoratedEnd(onChild);
+            dragCoordinate = referenceLine + 3 -
+                    helper.getDecoratedMeasurement(fromChild);
+        } else {
+            referenceLine = helper.getDecoratedStart(onChild);
+            dragCoordinate = referenceLine - 3;
+        }
+        mLayoutManager.expectLayouts(2);
+
+        final int x,y;
+        if (config.mOrientation == HORIZONTAL) {
+            x = dragCoordinate;
+            y = fromChild.getTop();
+        } else {
+            y = dragCoordinate;
+            x = fromChild.getLeft();
+        }
+        runTestOnUiThread(new Runnable() {
+            @Override
+            public void run() {
+                mTestAdapter.moveInUIThread(fromPos, toPos);
+                mTestAdapter.notifyItemMoved(fromPos, toPos);
+                mLayoutManager.prepareForDrop(fromChild, onChild, x, y);
+            }
+        });
+        mLayoutManager.waitForLayout(2);
+
+        assertSame(fromChild, mRecyclerView.findViewHolderForAdapterPosition(toPos).itemView);
+        // make sure it has the position we wanted
+        if (config.mReverseLayout == towardsHead) {
+            assertEquals(referenceLine, helper.getDecoratedEnd(fromChild));
+        } else {
+            assertEquals(referenceLine, helper.getDecoratedStart(fromChild));
+        }
     }
 
     static class VisibleChildren {
@@ -1088,6 +1394,22 @@ public class LinearLayoutManagerTest extends BaseRecyclerViewInstrumentationTest
             getInstrumentation().waitForIdleSync();
         }
 
+        @Override
+        LayoutState createLayoutState() {
+            return new LayoutState() {
+                @Override
+                View next(RecyclerView.Recycler recycler) {
+                    final boolean hadMore = hasMore(mRecyclerView.mState);
+                    final int position = mCurrentPosition;
+                    View next = super.next(recycler);
+                    assertEquals("if has more, should return a view", hadMore, next != null);
+                    assertEquals("position of the returned view must match current position",
+                            position, RecyclerView.getChildViewHolderInt(next).getLayoutPosition());
+                    return next;
+                }
+            };
+        }
+
         public String getBoundsLog() {
             StringBuilder sb = new StringBuilder();
             sb.append("view bounds:[start:").append(mOrientationHelper.getStartAfterPadding())
@@ -1185,12 +1507,17 @@ public class LinearLayoutManagerTest extends BaseRecyclerViewInstrumentationTest
                 @Override
                 public void run() {
                     final int childCount = getChildCount();
+                    Rect layoutBounds = new Rect(0, 0,
+                            mLayoutManager.getWidth(), mLayoutManager.getHeight());
                     for (int i = 0; i < childCount; i++) {
                         View child = getChildAt(i);
                         RecyclerView.LayoutParams lp = (RecyclerView.LayoutParams) child
                                 .getLayoutParams();
                         TestViewHolder vh = (TestViewHolder) lp.mViewHolder;
-                        items.put(vh.mBoundItem, getViewBounds(child));
+                        Rect childBounds = getViewBounds(child);
+                        if (new Rect(childBounds).intersect(layoutBounds)) {
+                            items.put(vh.mBoundItem, childBounds);
+                        }
                     }
                 }
             });
@@ -1295,25 +1622,7 @@ public class LinearLayoutManagerTest extends BaseRecyclerViewInstrumentationTest
         }
     }
 
-    private static class WrappedRecyclerView extends RecyclerView {
-
-        public WrappedRecyclerView(Context context) {
-            super(context);
-            init(context);
-        }
-
-        public WrappedRecyclerView(Context context, AttributeSet attrs) {
-            super(context, attrs);
-            init(context);
-        }
-
-        public WrappedRecyclerView(Context context, AttributeSet attrs, int defStyle) {
-            super(context, attrs, defStyle);
-            init(context);
-        }
-
-        private void init(Context context) {
-            initializeScrollbars(null);
-        }
+    private interface SelectTargetChildren {
+        int[] selectTargetChildren(int childCount);
     }
 }
