@@ -22,7 +22,11 @@ import android.os.Looper;
 import android.os.Message;
 import android.os.SystemClock;
 import android.os.SystemProperties;
+import android.os.Trace;
 import android.util.Log;
+import android.util.TimeUtils;
+
+import java.io.PrintWriter;
 
 /**
  * Coordinates the timing of animations, input and drawing.
@@ -68,7 +72,12 @@ import android.util.Log;
  */
 public final class Choreographer {
     private static final String TAG = "Choreographer";
-    private static final boolean DEBUG = false;
+
+    // Prints debug messages about jank which was detected (low volume).
+    private static final boolean DEBUG_JANK = false;
+
+    // Prints debug messages about every frame and callback registered (high volume).
+    private static final boolean DEBUG_FRAMES = false;
 
     // The default amount of time in ms between animation frames.
     // When vsync is not enabled, we want to have some idea of how long we should
@@ -109,8 +118,6 @@ public final class Choreographer {
     private static final int SKIPPED_FRAME_WARNING_LIMIT = SystemProperties.getInt(
             "debug.choreographer.skipwarning", 30);
 
-    private static final long NANOS_PER_MS = 1000000;
-
     private static final int MSG_DO_FRAME = 0;
     private static final int MSG_DO_SCHEDULE_VSYNC = 1;
     private static final int MSG_DO_SCHEDULE_CALLBACK = 2;
@@ -138,6 +145,28 @@ public final class Choreographer {
     private boolean mCallbacksRunning;
     private long mLastFrameTimeNanos;
     private long mFrameIntervalNanos;
+    private boolean mDebugPrintNextFrameTimeDelta;
+
+    /**
+     * Contains information about the current frame for jank-tracking,
+     * mainly timings of key events along with a bit of metadata about
+     * view tree state
+     *
+     * TODO: Is there a better home for this? Currently Choreographer
+     * is the only one with CALLBACK_ANIMATION start time, hence why this
+     * resides here.
+     *
+     * @hide
+     */
+    FrameInfo mFrameInfo = new FrameInfo();
+
+    /**
+     * Must be kept in sync with CALLBACK_* ints below, used to index into this array.
+     * @hide
+     */
+    private static final String[] CALLBACK_TRACE_TITLES = {
+            "input", "animation", "traversal", "commit"
+    };
 
     /**
      * Callback type: Input callback.  Runs first.
@@ -152,13 +181,25 @@ public final class Choreographer {
     public static final int CALLBACK_ANIMATION = 1;
 
     /**
-     * Callback type: Traversal callback.  Handles layout and draw.  Runs last
+     * Callback type: Traversal callback.  Handles layout and draw.  Runs
      * after all other asynchronous messages have been handled.
      * @hide
      */
     public static final int CALLBACK_TRAVERSAL = 2;
 
-    private static final int CALLBACK_LAST = CALLBACK_TRAVERSAL;
+    /**
+     * Callback type: Commit callback.  Handles post-draw operations for the frame.
+     * Runs after traversal completes.  The {@link #getFrameTime() frame time} reported
+     * during this callback may be updated to reflect delays that occurred while
+     * traversals were in progress in case heavy layout operations caused some frames
+     * to be skipped.  The frame time reported during this callback provides a better
+     * estimate of the start time of the frame in which animations (and other updates
+     * to the view hierarchy state) actually took effect.
+     * @hide
+     */
+    public static final int CALLBACK_COMMIT = 3;
+
+    private static final int CALLBACK_LAST = CALLBACK_COMMIT;
 
     private Choreographer(Looper looper) {
         mLooper = looper;
@@ -177,7 +218,7 @@ public final class Choreographer {
     private static float getRefreshRate() {
         DisplayInfo di = DisplayManagerGlobal.getInstance().getDisplayInfo(
                 Display.DEFAULT_DISPLAY);
-        return di.refreshRate;
+        return di.getMode().getRefreshRate();
     }
 
     /**
@@ -189,6 +230,19 @@ public final class Choreographer {
      */
     public static Choreographer getInstance() {
         return sThreadInstance.get();
+    }
+
+    /** Destroys the calling thread's choreographer
+     * @hide
+     */
+    public static void releaseInstance() {
+        Choreographer old = sThreadInstance.get();
+        sThreadInstance.remove();
+        old.dispose();
+    }
+
+    private void dispose() {
+        mDisplayEventReceiver.dispose();
     }
 
     /**
@@ -257,6 +311,23 @@ public final class Choreographer {
     }
 
     /**
+     * @return The refresh rate as the nanoseconds between frames
+     * @hide
+     */
+    public long getFrameIntervalNanos() {
+        return mFrameIntervalNanos;
+    }
+
+    void dump(String prefix, PrintWriter writer) {
+        String innerPrefix = prefix + "  ";
+        writer.print(prefix); writer.println("Choreographer:");
+        writer.print(innerPrefix); writer.print("mFrameScheduled=");
+                writer.println(mFrameScheduled);
+        writer.print(innerPrefix); writer.print("mLastFrameTime=");
+                writer.println(TimeUtils.formatUptime(mLastFrameTimeNanos / 1000000));
+    }
+
+    /**
      * Posts a callback to run on the next frame.
      * <p>
      * The callback runs once then is automatically removed.
@@ -301,7 +372,7 @@ public final class Choreographer {
 
     private void postCallbackDelayedInternal(int callbackType,
             Object action, Object token, long delayMillis) {
-        if (DEBUG) {
+        if (DEBUG_FRAMES) {
             Log.d(TAG, "PostCallback: type=" + callbackType
                     + ", action=" + action + ", token=" + token
                     + ", delayMillis=" + delayMillis);
@@ -345,7 +416,7 @@ public final class Choreographer {
     }
 
     private void removeCallbacksInternal(int callbackType, Object action, Object token) {
-        if (DEBUG) {
+        if (DEBUG_FRAMES) {
             Log.d(TAG, "RemoveCallbacks: type=" + callbackType
                     + ", action=" + action + ", token=" + token);
         }
@@ -413,7 +484,7 @@ public final class Choreographer {
     /**
      * Gets the time when the current frame started.
      * <p>
-     * This method provides the time in nanoseconds when the frame started being rendered.
+     * This method provides the time in milliseconds when the frame started being rendered.
      * The frame time provides a stable time base for synchronizing animations
      * and drawing.  It should be used instead of {@link SystemClock#uptimeMillis()}
      * or {@link System#nanoTime()} for animations and drawing in the UI.  Using the frame
@@ -436,7 +507,7 @@ public final class Choreographer {
      * @hide
      */
     public long getFrameTime() {
-        return getFrameTimeNanos() / NANOS_PER_MS;
+        return getFrameTimeNanos() / TimeUtils.NANOS_PER_MS;
     }
 
     /**
@@ -461,7 +532,7 @@ public final class Choreographer {
         if (!mFrameScheduled) {
             mFrameScheduled = true;
             if (USE_VSYNC) {
-                if (DEBUG) {
+                if (DEBUG_FRAMES) {
                     Log.d(TAG, "Scheduling next frame on vsync.");
                 }
 
@@ -477,8 +548,8 @@ public final class Choreographer {
                 }
             } else {
                 final long nextFrameTime = Math.max(
-                        mLastFrameTimeNanos / NANOS_PER_MS + sFrameDelay, now);
-                if (DEBUG) {
+                        mLastFrameTimeNanos / TimeUtils.NANOS_PER_MS + sFrameDelay, now);
+                if (DEBUG_FRAMES) {
                     Log.d(TAG, "Scheduling next frame in " + (nextFrameTime - now) + " ms.");
                 }
                 Message msg = mHandler.obtainMessage(MSG_DO_FRAME);
@@ -495,6 +566,13 @@ public final class Choreographer {
                 return; // no work to do
             }
 
+            if (DEBUG_JANK && mDebugPrintNextFrameTimeDelta) {
+                mDebugPrintNextFrameTimeDelta = false;
+                Log.d(TAG, "Frame time delta: "
+                        + ((frameTimeNanos - mLastFrameTimeNanos) * 0.000001f) + " ms");
+            }
+
+            long intendedFrameTimeNanos = frameTimeNanos;
             startNanos = System.nanoTime();
             final long jitterNanos = startNanos - frameTimeNanos;
             if (jitterNanos >= mFrameIntervalNanos) {
@@ -504,7 +582,7 @@ public final class Choreographer {
                             + "The application may be doing too much work on its main thread.");
                 }
                 final long lastFrameOffset = jitterNanos % mFrameIntervalNanos;
-                if (DEBUG) {
+                if (DEBUG_JANK) {
                     Log.d(TAG, "Missed vsync by " + (jitterNanos * 0.000001f) + " ms "
                             + "which is more than the frame interval of "
                             + (mFrameIntervalNanos * 0.000001f) + " ms!  "
@@ -515,7 +593,7 @@ public final class Choreographer {
             }
 
             if (frameTimeNanos < mLastFrameTimeNanos) {
-                if (DEBUG) {
+                if (DEBUG_JANK) {
                     Log.d(TAG, "Frame time appears to be going backwards.  May be due to a "
                             + "previously skipped frame.  Waiting for next vsync.");
                 }
@@ -523,15 +601,29 @@ public final class Choreographer {
                 return;
             }
 
+            mFrameInfo.setVsync(intendedFrameTimeNanos, frameTimeNanos);
             mFrameScheduled = false;
             mLastFrameTimeNanos = frameTimeNanos;
         }
 
-        doCallbacks(Choreographer.CALLBACK_INPUT, frameTimeNanos);
-        doCallbacks(Choreographer.CALLBACK_ANIMATION, frameTimeNanos);
-        doCallbacks(Choreographer.CALLBACK_TRAVERSAL, frameTimeNanos);
+        try {
+            Trace.traceBegin(Trace.TRACE_TAG_VIEW, "Choreographer#doFrame");
 
-        if (DEBUG) {
+            mFrameInfo.markInputHandlingStart();
+            doCallbacks(Choreographer.CALLBACK_INPUT, frameTimeNanos);
+
+            mFrameInfo.markAnimationsStart();
+            doCallbacks(Choreographer.CALLBACK_ANIMATION, frameTimeNanos);
+
+            mFrameInfo.markPerformTraversalsStart();
+            doCallbacks(Choreographer.CALLBACK_TRAVERSAL, frameTimeNanos);
+
+            doCallbacks(Choreographer.CALLBACK_COMMIT, frameTimeNanos);
+        } finally {
+            Trace.traceEnd(Trace.TRACE_TAG_VIEW);
+        }
+
+        if (DEBUG_FRAMES) {
             final long endNanos = System.nanoTime();
             Log.d(TAG, "Frame " + frame + ": Finished, took "
                     + (endNanos - startNanos) * 0.000001f + " ms, latency "
@@ -545,16 +637,45 @@ public final class Choreographer {
             // We use "now" to determine when callbacks become due because it's possible
             // for earlier processing phases in a frame to post callbacks that should run
             // in a following phase, such as an input event that causes an animation to start.
-            final long now = SystemClock.uptimeMillis();
-            callbacks = mCallbackQueues[callbackType].extractDueCallbacksLocked(now);
+            final long now = System.nanoTime();
+            callbacks = mCallbackQueues[callbackType].extractDueCallbacksLocked(
+                    now / TimeUtils.NANOS_PER_MS);
             if (callbacks == null) {
                 return;
             }
             mCallbacksRunning = true;
+
+            // Update the frame time if necessary when committing the frame.
+            // We only update the frame time if we are more than 2 frames late reaching
+            // the commit phase.  This ensures that the frame time which is observed by the
+            // callbacks will always increase from one frame to the next and never repeat.
+            // We never want the next frame's starting frame time to end up being less than
+            // or equal to the previous frame's commit frame time.  Keep in mind that the
+            // next frame has most likely already been scheduled by now so we play it
+            // safe by ensuring the commit time is always at least one frame behind.
+            if (callbackType == Choreographer.CALLBACK_COMMIT) {
+                final long jitterNanos = now - frameTimeNanos;
+                Trace.traceCounter(Trace.TRACE_TAG_VIEW, "jitterNanos", (int) jitterNanos);
+                if (jitterNanos >= 2 * mFrameIntervalNanos) {
+                    final long lastFrameOffset = jitterNanos % mFrameIntervalNanos
+                            + mFrameIntervalNanos;
+                    if (DEBUG_JANK) {
+                        Log.d(TAG, "Commit callback delayed by " + (jitterNanos * 0.000001f)
+                                + " ms which is more than twice the frame interval of "
+                                + (mFrameIntervalNanos * 0.000001f) + " ms!  "
+                                + "Setting frame time to " + (lastFrameOffset * 0.000001f)
+                                + " ms in the past.");
+                        mDebugPrintNextFrameTimeDelta = true;
+                    }
+                    frameTimeNanos = now - lastFrameOffset;
+                    mLastFrameTimeNanos = frameTimeNanos;
+                }
+            }
         }
         try {
+            Trace.traceBegin(Trace.TRACE_TAG_VIEW, CALLBACK_TRACE_TITLES[callbackType]);
             for (CallbackRecord c = callbacks; c != null; c = c.next) {
-                if (DEBUG) {
+                if (DEBUG_FRAMES) {
                     Log.d(TAG, "RunCallback: type=" + callbackType
                             + ", action=" + c.action + ", token=" + c.token
                             + ", latencyMillis=" + (SystemClock.uptimeMillis() - c.dueTime));
@@ -570,6 +691,7 @@ public final class Choreographer {
                     callbacks = next;
                 } while (callbacks != null);
             }
+            Trace.traceEnd(Trace.TRACE_TAG_VIEW);
         }
     }
 
@@ -726,7 +848,7 @@ public final class Choreographer {
             mFrame = frame;
             Message msg = Message.obtain(mHandler, this);
             msg.setAsynchronous(true);
-            mHandler.sendMessageAtTime(msg, timestampNanos / NANOS_PER_MS);
+            mHandler.sendMessageAtTime(msg, timestampNanos / TimeUtils.NANOS_PER_MS);
         }
 
         @Override

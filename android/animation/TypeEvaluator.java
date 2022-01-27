@@ -19,7 +19,7 @@ package android.animation;
 /**
  * Interface for use with the {@link ValueAnimator#setEvaluator(TypeEvaluator)} function. Evaluators
  * allow developers to create animations on arbitrary property types, by allowing them to supply
- * custom evaulators for types that are not automatically understood and used by the animation
+ * custom evaluators for types that are not automatically understood and used by the animation
  * system.
  *
  * @see ValueAnimator#setEvaluator(TypeEvaluator)
@@ -29,7 +29,7 @@ public interface TypeEvaluator<T> {
     /**
      * This function returns the result of linearly interpolating the start and end values, with
      * <code>fraction</code> representing the proportion between the start and end values. The
-     * calculation is a simple parametric calculation: <code>result = x0 + t * (v1 - v0)</code>,
+     * calculation is a simple parametric calculation: <code>result = x0 + t * (x1 - x0)</code>,
      * where <code>x0</code> is <code>startValue</code>, <code>x1</code> is <code>endValue</code>,
      * and <code>t</code> is <code>fraction</code>.
      *

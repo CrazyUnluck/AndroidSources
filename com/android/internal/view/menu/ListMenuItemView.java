@@ -23,6 +23,7 @@ import android.util.AttributeSet;
 import android.view.LayoutInflater;
 import android.view.View;
 import android.view.ViewGroup;
+import android.view.accessibility.AccessibilityNodeInfo;
 import android.widget.CheckBox;
 import android.widget.CompoundButton;
 import android.widget.ImageView;
@@ -42,11 +43,13 @@ public class ListMenuItemView extends LinearLayout implements MenuView.ItemView 
     private TextView mTitleView;
     private CheckBox mCheckBox;
     private TextView mShortcutView;
+    private ImageView mSubMenuArrowView;
     
     private Drawable mBackground;
     private int mTextAppearance;
     private Context mTextAppearanceContext;
     private boolean mPreserveIconSpacing;
+    private Drawable mSubMenuArrow;
     
     private int mMenuType;
     
@@ -54,25 +57,30 @@ public class ListMenuItemView extends LinearLayout implements MenuView.ItemView 
 
     private boolean mForceShowIcon;
 
-    public ListMenuItemView(Context context, AttributeSet attrs, int defStyle) {
-        super(context, attrs);
-    
-        TypedArray a =
-            context.obtainStyledAttributes(
-                attrs, com.android.internal.R.styleable.MenuView, defStyle, 0);
-        
+    public ListMenuItemView(
+            Context context, AttributeSet attrs, int defStyleAttr, int defStyleRes) {
+        super(context, attrs, defStyleAttr, defStyleRes);
+
+        final TypedArray a = context.obtainStyledAttributes(
+                attrs, com.android.internal.R.styleable.MenuView, defStyleAttr, defStyleRes);
+
         mBackground = a.getDrawable(com.android.internal.R.styleable.MenuView_itemBackground);
         mTextAppearance = a.getResourceId(com.android.internal.R.styleable.
                                           MenuView_itemTextAppearance, -1);
         mPreserveIconSpacing = a.getBoolean(
                 com.android.internal.R.styleable.MenuView_preserveIconSpacing, false);
         mTextAppearanceContext = context;
+        mSubMenuArrow = a.getDrawable(com.android.internal.R.styleable.MenuView_subMenuArrow);
         
         a.recycle();
     }
 
+    public ListMenuItemView(Context context, AttributeSet attrs, int defStyleAttr) {
+        this(context, attrs, defStyleAttr, 0);
+    }
+
     public ListMenuItemView(Context context, AttributeSet attrs) {
-        this(context, attrs, 0);
+        this(context, attrs, com.android.internal.R.attr.listMenuViewStyle);
     }
 
     @Override
@@ -88,6 +96,10 @@ public class ListMenuItemView extends LinearLayout implements MenuView.ItemView 
         }
         
         mShortcutView = (TextView) findViewById(com.android.internal.R.id.shortcut);
+        mSubMenuArrowView = (ImageView) findViewById(com.android.internal.R.id.submenuarrow);
+        if (mSubMenuArrowView != null) {
+            mSubMenuArrowView.setImageDrawable(mSubMenuArrow);
+        }
     }
 
     public void initialize(MenuItemImpl itemData, int menuType) {
@@ -101,6 +113,7 @@ public class ListMenuItemView extends LinearLayout implements MenuView.ItemView 
         setShortcut(itemData.shouldShowShortcut(), itemData.getShortcut());
         setIcon(itemData.getIcon());
         setEnabled(itemData.isEnabled());
+        setSubMenuArrowVisible(itemData.hasSubMenu());
     }
 
     public void setForceShowIcon(boolean forceShow) {
@@ -179,6 +192,12 @@ public class ListMenuItemView extends LinearLayout implements MenuView.ItemView 
         }
         
         compoundButton.setChecked(checked);
+    }
+
+    private void setSubMenuArrowVisible(boolean hasSubmenu) {
+        if (mSubMenuArrowView != null) {
+            mSubMenuArrowView.setVisibility(hasSubmenu ? View.VISIBLE : View.GONE);
+        }
     }
 
     public void setShortcut(boolean showShortcut, char shortcutKey) {
@@ -268,5 +287,14 @@ public class ListMenuItemView extends LinearLayout implements MenuView.ItemView 
             mInflater = LayoutInflater.from(mContext);
         }
         return mInflater;
+    }
+
+    @Override
+    public void onInitializeAccessibilityNodeInfoInternal(AccessibilityNodeInfo info) {
+        super.onInitializeAccessibilityNodeInfoInternal(info);
+
+        if (mItemData != null && mItemData.hasSubMenu()) {
+            info.setCanOpenPopup(true);
+        }
     }
 }

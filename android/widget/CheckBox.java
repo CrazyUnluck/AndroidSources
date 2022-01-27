@@ -18,8 +18,6 @@ package android.widget;
 
 import android.content.Context;
 import android.util.AttributeSet;
-import android.view.accessibility.AccessibilityEvent;
-import android.view.accessibility.AccessibilityNodeInfo;
 
 
 /**
@@ -64,19 +62,16 @@ public class CheckBox extends CompoundButton {
         this(context, attrs, com.android.internal.R.attr.checkboxStyle);
     }
 
-    public CheckBox(Context context, AttributeSet attrs, int defStyle) {
-        super(context, attrs, defStyle);
+    public CheckBox(Context context, AttributeSet attrs, int defStyleAttr) {
+        this(context, attrs, defStyleAttr, 0);
+    }
+
+    public CheckBox(Context context, AttributeSet attrs, int defStyleAttr, int defStyleRes) {
+        super(context, attrs, defStyleAttr, defStyleRes);
     }
 
     @Override
-    public void onInitializeAccessibilityEvent(AccessibilityEvent event) {
-        super.onInitializeAccessibilityEvent(event);
-        event.setClassName(CheckBox.class.getName());
-    }
-
-    @Override
-    public void onInitializeAccessibilityNodeInfo(AccessibilityNodeInfo info) {
-        super.onInitializeAccessibilityNodeInfo(info);
-        info.setClassName(CheckBox.class.getName());
+    public CharSequence getAccessibilityClassName() {
+        return CheckBox.class.getName();
     }
 }

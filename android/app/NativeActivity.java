@@ -13,6 +13,7 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
+
 package android.app;
 
 import android.content.Context;
@@ -23,18 +24,18 @@ import android.content.res.Configuration;
 import android.graphics.PixelFormat;
 import android.os.Build;
 import android.os.Bundle;
-import android.os.Environment;
 import android.os.Looper;
 import android.os.MessageQueue;
 import android.util.AttributeSet;
 import android.view.InputQueue;
-import android.view.KeyEvent;
 import android.view.Surface;
 import android.view.SurfaceHolder;
 import android.view.View;
-import android.view.WindowManager;
 import android.view.ViewTreeObserver.OnGlobalLayoutListener;
+import android.view.WindowManager;
 import android.view.inputmethod.InputMethodManager;
+
+import dalvik.system.BaseDexClassLoader;
 
 import java.io.File;
 
@@ -77,7 +78,7 @@ public class NativeActivity extends Activity implements SurfaceHolder.Callback2,
     private NativeContentView mNativeContentView;
     private InputMethodManager mIMM;
 
-    private int mNativeHandle;
+    private long mNativeHandle;
     
     private InputQueue mCurInputQueue;
     private SurfaceHolder mCurSurfaceHolder;
@@ -92,27 +93,27 @@ public class NativeActivity extends Activity implements SurfaceHolder.Callback2,
 
     private boolean mDestroyed;
     
-    private native int loadNativeCode(String path, String funcname, MessageQueue queue,
+    private native long loadNativeCode(String path, String funcname, MessageQueue queue,
             String internalDataPath, String obbPath, String externalDataPath, int sdkVersion,
-            AssetManager assetMgr, byte[] savedState);
-    private native void unloadNativeCode(int handle);
-    
-    private native void onStartNative(int handle);
-    private native void onResumeNative(int handle);
-    private native byte[] onSaveInstanceStateNative(int handle);
-    private native void onPauseNative(int handle);
-    private native void onStopNative(int handle);
-    private native void onConfigurationChangedNative(int handle);
-    private native void onLowMemoryNative(int handle);
-    private native void onWindowFocusChangedNative(int handle, boolean focused);
-    private native void onSurfaceCreatedNative(int handle, Surface surface);
-    private native void onSurfaceChangedNative(int handle, Surface surface,
+            AssetManager assetMgr, byte[] savedState, ClassLoader classLoader, String libraryPath);
+    private native String getDlError();
+    private native void unloadNativeCode(long handle);
+    private native void onStartNative(long handle);
+    private native void onResumeNative(long handle);
+    private native byte[] onSaveInstanceStateNative(long handle);
+    private native void onPauseNative(long handle);
+    private native void onStopNative(long handle);
+    private native void onConfigurationChangedNative(long handle);
+    private native void onLowMemoryNative(long handle);
+    private native void onWindowFocusChangedNative(long handle, boolean focused);
+    private native void onSurfaceCreatedNative(long handle, Surface surface);
+    private native void onSurfaceChangedNative(long handle, Surface surface,
             int format, int width, int height);
-    private native void onSurfaceRedrawNeededNative(int handle, Surface surface);
-    private native void onSurfaceDestroyedNative(int handle);
-    private native void onInputQueueCreatedNative(int handle, int queuePtr);
-    private native void onInputQueueDestroyedNative(int handle, int queuePtr);
-    private native void onContentRectChangedNative(int handle, int x, int y, int w, int h);
+    private native void onSurfaceRedrawNeededNative(long handle, Surface surface);
+    private native void onSurfaceDestroyedNative(long handle);
+    private native void onInputQueueCreatedNative(long handle, long queuePtr);
+    private native void onInputQueueDestroyedNative(long handle, long queuePtr);
+    private native void onContentRectChangedNative(long handle, int x, int y, int w, int h);
 
     static class NativeContentView extends View {
         NativeActivity mActivity;
@@ -131,8 +132,8 @@ public class NativeActivity extends Activity implements SurfaceHolder.Callback2,
         String libname = "main";
         String funcname = "ANativeActivity_onCreate";
         ActivityInfo ai;
-        
-        mIMM = (InputMethodManager)getSystemService(Context.INPUT_METHOD_SERVICE);
+
+        mIMM = getSystemService(InputMethodManager.class);
 
         getWindow().takeSurface(this);
         getWindow().takeInputQueue(this);
@@ -159,31 +160,33 @@ public class NativeActivity extends Activity implements SurfaceHolder.Callback2,
         } catch (PackageManager.NameNotFoundException e) {
             throw new RuntimeException("Error getting activity info", e);
         }
-        
-        String path = null;
-        
-        File libraryFile = new File(ai.applicationInfo.nativeLibraryDir,
-                System.mapLibraryName(libname));
-        if (libraryFile.exists()) {
-            path = libraryFile.getPath();
-        }
-        
+
+        BaseDexClassLoader classLoader = (BaseDexClassLoader) getClassLoader();
+        String path = classLoader.findLibrary(libname);
+
         if (path == null) {
-            throw new IllegalArgumentException("Unable to find native library: " + libname);
+            throw new IllegalArgumentException("Unable to find native library " + libname +
+                                               " using classloader: " + classLoader.toString());
         }
         
         byte[] nativeSavedState = savedInstanceState != null
                 ? savedInstanceState.getByteArray(KEY_NATIVE_SAVED_STATE) : null;
 
         mNativeHandle = loadNativeCode(path, funcname, Looper.myQueue(),
-                 getFilesDir().toString(), getObbDir().toString(),
-                 Environment.getExternalStorageAppFilesDirectory(ai.packageName).toString(),
-                 Build.VERSION.SDK_INT, getAssets(), nativeSavedState);
-        
+                getAbsolutePath(getFilesDir()), getAbsolutePath(getObbDir()),
+                getAbsolutePath(getExternalFilesDir(null)),
+                Build.VERSION.SDK_INT, getAssets(), nativeSavedState,
+                classLoader, classLoader.getLdLibraryPath());
+
         if (mNativeHandle == 0) {
-            throw new IllegalArgumentException("Unable to load native library: " + path);
+            throw new UnsatisfiedLinkError(
+                    "Unable to load native library \"" + path + "\": " + getDlError());
         }
         super.onCreate(savedInstanceState);
+    }
+
+    private static String getAbsolutePath(File file) {
+        return (file != null) ? file.getAbsolutePath() : null;
     }
 
     @Override

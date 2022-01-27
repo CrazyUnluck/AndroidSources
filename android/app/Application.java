@@ -18,6 +18,7 @@ package android.app;
 
 import java.util.ArrayList;
 
+import android.annotation.CallSuper;
 import android.content.ComponentCallbacks;
 import android.content.ComponentCallbacks2;
 import android.content.Context;
@@ -27,19 +28,21 @@ import android.content.res.Configuration;
 import android.os.Bundle;
 
 /**
- * Base class for those who need to maintain global application state. You can
- * provide your own implementation by specifying its name in your
- * AndroidManifest.xml's &lt;application&gt; tag, which will cause that class
- * to be instantiated for you when the process for your application/package is
- * created.
- * 
- * <p class="note">There is normally no need to subclass Application.  In
- * most situation, static singletons can provide the same functionality in a
- * more modular way.  If your singleton needs a global context (for example
- * to register broadcast receivers), the function to retrieve it can be
- * given a {@link android.content.Context} which internally uses
+ * Base class for maintaining global application state. You can provide your own
+ * implementation by creating a subclass and specifying the fully-qualified name
+ * of this subclass as the <code>"android:name"</code> attribute in your
+ * AndroidManifest.xml's <code>&lt;application&gt;</code> tag. The Application
+ * class, or your subclass of the Application class, is instantiated before any
+ * other class when the process for your application/package is created.
+ *
+ * <p class="note"><strong>Note: </strong>There is normally no need to subclass
+ * Application.  In most situations, static singletons can provide the same
+ * functionality in a more modular way.  If your singleton needs a global
+ * context (for example to register broadcast receivers), include
  * {@link android.content.Context#getApplicationContext() Context.getApplicationContext()}
- * when first constructing the singleton.</p>
+ * as a {@link android.content.Context} argument when invoking your singleton's
+ * <code>getInstance()</code> method.
+ * </p>
  */
 public class Application extends ContextWrapper implements ComponentCallbacks2 {
     private ArrayList<ComponentCallbacks> mComponentCallbacks =
@@ -83,12 +86,13 @@ public class Application extends ContextWrapper implements ComponentCallbacks2 {
     /**
      * Called when the application is starting, before any activity, service,
      * or receiver objects (excluding content providers) have been created.
-     * Implementations should be as quick as possible (for example using 
+     * Implementations should be as quick as possible (for example using
      * lazy initialization of state) since the time spent in this function
      * directly impacts the performance of starting the first activity,
      * service, or receiver in a process.
      * If you override this method, be sure to call super.onCreate().
      */
+    @CallSuper
     public void onCreate() {
     }
 
@@ -98,9 +102,11 @@ public class Application extends ContextWrapper implements ComponentCallbacks2 {
      * removed by simply killing them; no user code (including this callback)
      * is executed when doing so.
      */
+    @CallSuper
     public void onTerminate() {
     }
 
+    @CallSuper
     public void onConfigurationChanged(Configuration newConfig) {
         Object[] callbacks = collectComponentCallbacks();
         if (callbacks != null) {
@@ -110,6 +116,7 @@ public class Application extends ContextWrapper implements ComponentCallbacks2 {
         }
     }
 
+    @CallSuper
     public void onLowMemory() {
         Object[] callbacks = collectComponentCallbacks();
         if (callbacks != null) {
@@ -119,6 +126,7 @@ public class Application extends ContextWrapper implements ComponentCallbacks2 {
         }
     }
 
+    @CallSuper
     public void onTrimMemory(int level) {
         Object[] callbacks = collectComponentCallbacks();
         if (callbacks != null) {
@@ -173,7 +181,7 @@ public class Application extends ContextWrapper implements ComponentCallbacks2 {
     }
 
     // ------------------ Internal API ------------------
-    
+
     /**
      * @hide
      */

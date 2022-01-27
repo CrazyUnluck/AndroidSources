@@ -20,12 +20,8 @@ import java.io.IOException;
 import java.io.FileDescriptor;
 
 /**
- * non-standard class for creating inbound UNIX-domain socket
- * on the Android platform, this is created in the Linux non-filesystem
- * namespace.
- *
- * On simulator platforms, this may be created in a temporary directory on
- * the filesystem
+ * Non-standard class for creating an inbound UNIX-domain socket
+ * in the Linux abstract namespace.
  */
 public class LocalServerSocket {
     private final LocalSocketImpl impl;
@@ -35,7 +31,7 @@ public class LocalServerSocket {
     private static final int LISTEN_BACKLOG = 50;
 
     /**
-     * Crewates a new server socket listening at specified name.
+     * Creates a new server socket listening at specified name.
      * On the Android platform, the name is created in the Linux
      * abstract namespace (instead of on the filesystem).
      * 
@@ -46,7 +42,7 @@ public class LocalServerSocket {
     {
         impl = new LocalSocketImpl();
 
-        impl.create(true);
+        impl.create(LocalSocket.SOCKET_STREAM);
 
         localAddress = new LocalSocketAddress(name);
         impl.bind(localAddress);
@@ -93,7 +89,7 @@ public class LocalServerSocket {
 
         impl.accept (acceptedImpl);
 
-        return new LocalSocket(acceptedImpl);
+        return new LocalSocket(acceptedImpl, LocalSocket.SOCKET_UNKNOWN);
     }
 
     /**

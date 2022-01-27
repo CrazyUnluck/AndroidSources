@@ -16,36 +16,56 @@
 
 package android.content;
 
-import org.xmlpull.v1.XmlPullParser;
-import org.xmlpull.v1.XmlPullParserException;
-
+import android.annotation.AnyRes;
+import android.annotation.IntDef;
 import android.annotation.SdkConstant;
 import android.annotation.SdkConstant.SdkConstantType;
+import android.annotation.SystemApi;
 import android.content.pm.ActivityInfo;
+import android.content.pm.ApplicationInfo;
+import android.content.pm.ComponentInfo;
 import android.content.pm.PackageManager;
 import android.content.pm.ResolveInfo;
 import android.content.res.Resources;
 import android.content.res.TypedArray;
 import android.graphics.Rect;
 import android.net.Uri;
+import android.os.Build;
 import android.os.Bundle;
 import android.os.IBinder;
 import android.os.Parcel;
 import android.os.Parcelable;
+import android.os.Process;
+import android.os.ResultReceiver;
+import android.os.ShellCommand;
 import android.os.StrictMode;
+import android.os.UserHandle;
+import android.provider.DocumentsContract;
+import android.provider.DocumentsProvider;
+import android.provider.MediaStore;
+import android.provider.OpenableColumns;
+import android.util.ArraySet;
 import android.util.AttributeSet;
 import android.util.Log;
-
 import com.android.internal.util.XmlUtils;
+import org.xmlpull.v1.XmlPullParser;
+import org.xmlpull.v1.XmlPullParserException;
+import org.xmlpull.v1.XmlSerializer;
 
 import java.io.IOException;
+import java.io.PrintWriter;
 import java.io.Serializable;
+import java.lang.annotation.Retention;
+import java.lang.annotation.RetentionPolicy;
 import java.net.URISyntaxException;
 import java.util.ArrayList;
 import java.util.HashSet;
-import java.util.Iterator;
+import java.util.List;
 import java.util.Locale;
+import java.util.Objects;
 import java.util.Set;
+
+import static android.content.ContentProvider.maybeAddUserId;
 
 /**
  * An intent is an abstract description of an operation to be performed.  It
@@ -95,7 +115,7 @@ import java.util.Set;
  *   </li>
  *   <li> <p><b>{@link #ACTION_VIEW} <i>tel:123</i></b> -- Display
  *     the phone dialer with the given number filled in.  Note how the
- *     VIEW action does what what is considered the most reasonable thing for
+ *     VIEW action does what is considered the most reasonable thing for
  *     a particular URI.</p>
  *   </li>
  *   <li> <p><b>{@link #ACTION_DIAL} <i>tel:123</i></b> -- Display
@@ -166,7 +186,7 @@ import java.util.Set;
  *
  * <p>There are a variety of standard Intent action and category constants
  * defined in the Intent class, but applications can also define their own.
- * These strings use java style scoping, to ensure they are unique -- for
+ * These strings use Java-style scoping, to ensure they are unique -- for
  * example, the standard {@link #ACTION_VIEW} is called
  * "android.intent.action.VIEW".</p>
  *
@@ -319,7 +339,7 @@ import java.util.Set;
  *     &lt;action android:name="{@link #ACTION_EDIT android.intent.action.EDIT}" /&gt;
  *     &lt;action android:name="{@link #ACTION_PICK android.intent.action.PICK}" /&gt;
  *     &lt;category android:name="{@link #CATEGORY_DEFAULT android.intent.category.DEFAULT}" /&gt;
- *     &lt;data mimeType:name="vnd.android.cursor.dir/<i>vnd.google.note</i>" /&gt;
+ *     &lt;data android:mimeType="vnd.android.cursor.dir/<i>vnd.google.note</i>" /&gt;
  * &lt;/intent-filter&gt;</pre>
  * <p>This declares the things that the activity can do on a directory of
  * notes.  The type being supported is given with the &lt;type&gt; tag, where
@@ -338,7 +358,7 @@ import java.util.Set;
  *     &lt;category android:name="{@link #CATEGORY_DEFAULT android.intent.category.DEFAULT}" /&gt;
  *     &lt;data android:mimeType="vnd.android.cursor.item/<i>vnd.google.note</i>" /&gt;
  * &lt;/intent-filter&gt;</pre>
- * <p>This filter describes the ability return to the caller a note selected by
+ * <p>This filter describes the ability to return to the caller a note selected by
  * the user without needing to know where it came from.  The data type
  * <code>vnd.android.cursor.item/vnd.google.note</code> is a URI from which
  * a Cursor of exactly one (<code>vnd.android.cursor.item</code>) item can
@@ -518,6 +538,8 @@ import java.util.Set;
  *     <li> {@link #ACTION_PACKAGE_REMOVED}
  *     <li> {@link #ACTION_PACKAGE_RESTARTED}
  *     <li> {@link #ACTION_PACKAGE_DATA_CLEARED}
+ *     <li> {@link #ACTION_PACKAGES_SUSPENDED}
+ *     <li> {@link #ACTION_PACKAGES_UNSUSPENDED}
  *     <li> {@link #ACTION_UID_REMOVED}
  *     <li> {@link #ACTION_BATTERY_CHANGED}
  *     <li> {@link #ACTION_POWER_CONNECTED}
@@ -595,6 +617,15 @@ import java.util.Set;
  * of all possible flags.
  */
 public class Intent implements Parcelable, Cloneable {
+    private static final String ATTR_ACTION = "action";
+    private static final String TAG_CATEGORIES = "categories";
+    private static final String ATTR_CATEGORY = "category";
+    private static final String TAG_EXTRA = "extra";
+    private static final String ATTR_TYPE = "type";
+    private static final String ATTR_COMPONENT = "component";
+    private static final String ATTR_DATA = "data";
+    private static final String ATTR_FLAGS = "flags";
+
     // ---------------------------------------------------------------------
     // ---------------------------------------------------------------------
     // Standard intent activity actions (see action variable).
@@ -627,6 +658,20 @@ public class Intent implements Parcelable, Cloneable {
      * performed on a piece of data.
      */
     public static final String ACTION_DEFAULT = ACTION_VIEW;
+
+    /**
+     * Activity Action: Quick view the data. Launches a quick viewer for
+     * a URI or a list of URIs.
+     * <p>Activities handling this intent action should handle the vast majority of
+     * MIME types rather than only specific ones.
+     * <p>Input: {@link #getData} is a mandatory content URI of the item to
+     * preview. {@link #getClipData} contains an optional list of content URIs
+     * if there is more than one item to preview. {@link #EXTRA_INDEX} is an
+     * optional index of the URI in the clip data to show first.
+     * <p>Output: nothing.
+     */
+    @SdkConstant(SdkConstantType.ACTIVITY_INTENT_ACTION)
+    public static final String ACTION_QUICK_VIEW = "android.intent.action.QUICK_VIEW";
 
     /**
      * Used to indicate that some piece of data should be attached to some other
@@ -712,6 +757,27 @@ public class Intent implements Parcelable, Cloneable {
             "android.intent.extra.shortcut.ICON_RESOURCE";
 
     /**
+     * An activity that provides a user interface for adjusting application preferences.
+     * Optional but recommended settings for all applications which have settings.
+     */
+    @SdkConstant(SdkConstantType.ACTIVITY_INTENT_ACTION)
+    public static final String ACTION_APPLICATION_PREFERENCES
+            = "android.intent.action.APPLICATION_PREFERENCES";
+
+    /**
+     * Activity Action: Launch an activity showing the app information.
+     * For applications which install other applications (such as app stores), it is recommended
+     * to handle this action for providing the app information to the user.
+     *
+     * <p>Input: {@link #EXTRA_PACKAGE_NAME} specifies the package whose information needs
+     * to be displayed.
+     * <p>Output: Nothing.
+     */
+    @SdkConstant(SdkConstantType.ACTIVITY_INTENT_ACTION)
+    public static final String ACTION_SHOW_APP_INFO
+            = "android.intent.action.SHOW_APP_INFO";
+
+    /**
      * Represents a shortcut/live folder icon resource.
      *
      * @see Intent#ACTION_CREATE_SHORTCUT
@@ -735,11 +801,11 @@ public class Intent implements Parcelable, Cloneable {
          * identifier.
          *
          * @param context The context of the application.
-         * @param resourceId The resource idenfitier for the icon.
+         * @param resourceId The resource identifier for the icon.
          * @return A new ShortcutIconResource with the specified's context package name
-         *         and icon resource idenfitier.
+         *         and icon resource identifier.``
          */
-        public static ShortcutIconResource fromContext(Context context, int resourceId) {
+        public static ShortcutIconResource fromContext(Context context, @AnyRes int resourceId) {
             ShortcutIconResource icon = new ShortcutIconResource();
             icon.packageName = context.getPackageName();
             icon.resourceName = context.getResources().getResourceName(resourceId);
@@ -840,7 +906,7 @@ public class Intent implements Parcelable, Cloneable {
      * {@link #FLAG_GRANT_WRITE_URI_PERMISSION}, then these flags will also be
      * set in the returned chooser intent, with its ClipData set appropriately:
      * either a direct reflection of {@link #getClipData()} if that is non-null,
-     * or a new ClipData build from {@link #getData()}.
+     * or a new ClipData built from {@link #getData()}.
      *
      * @param target The Intent that the user will be selecting an activity
      * to perform.
@@ -850,15 +916,48 @@ public class Intent implements Parcelable, Cloneable {
      * related methods.
      */
     public static Intent createChooser(Intent target, CharSequence title) {
+        return createChooser(target, title, null);
+    }
+
+    /**
+     * Convenience function for creating a {@link #ACTION_CHOOSER} Intent.
+     *
+     * <p>Builds a new {@link #ACTION_CHOOSER} Intent that wraps the given
+     * target intent, also optionally supplying a title.  If the target
+     * intent has specified {@link #FLAG_GRANT_READ_URI_PERMISSION} or
+     * {@link #FLAG_GRANT_WRITE_URI_PERMISSION}, then these flags will also be
+     * set in the returned chooser intent, with its ClipData set appropriately:
+     * either a direct reflection of {@link #getClipData()} if that is non-null,
+     * or a new ClipData built from {@link #getData()}.</p>
+     *
+     * <p>The caller may optionally supply an {@link IntentSender} to receive a callback
+     * when the user makes a choice. This can be useful if the calling application wants
+     * to remember the last chosen target and surface it as a more prominent or one-touch
+     * affordance elsewhere in the UI for next time.</p>
+     *
+     * @param target The Intent that the user will be selecting an activity
+     * to perform.
+     * @param title Optional title that will be displayed in the chooser.
+     * @param sender Optional IntentSender to be called when a choice is made.
+     * @return Return a new Intent object that you can hand to
+     * {@link Context#startActivity(Intent) Context.startActivity()} and
+     * related methods.
+     */
+    public static Intent createChooser(Intent target, CharSequence title, IntentSender sender) {
         Intent intent = new Intent(ACTION_CHOOSER);
         intent.putExtra(EXTRA_INTENT, target);
         if (title != null) {
             intent.putExtra(EXTRA_TITLE, title);
         }
 
+        if (sender != null) {
+            intent.putExtra(EXTRA_CHOSEN_COMPONENT_INTENT_SENDER, sender);
+        }
+
         // Migrate any clip data and flags from target.
-        int permFlags = target.getFlags()
-                & (FLAG_GRANT_READ_URI_PERMISSION | FLAG_GRANT_WRITE_URI_PERMISSION);
+        int permFlags = target.getFlags() & (FLAG_GRANT_READ_URI_PERMISSION
+                | FLAG_GRANT_WRITE_URI_PERMISSION | FLAG_GRANT_PERSISTABLE_URI_PERMISSION
+                | FLAG_GRANT_PREFIX_URI_PERMISSION);
         if (permFlags != 0) {
             ClipData targetClipData = target.getClipData();
             if (targetClipData == null && target.getData() != null) {
@@ -958,6 +1057,11 @@ public class Intent implements Parcelable, Cloneable {
      * <p>Note: this Intent <strong>cannot</strong> be used to call emergency
      * numbers.  Applications can <strong>dial</strong> emergency numbers using
      * {@link #ACTION_DIAL}, however.
+     *
+     * <p>Note: if you app targets {@link android.os.Build.VERSION_CODES#M M}
+     * and above and declares as using the {@link android.Manifest.permission#CALL_PHONE}
+     * permission which is not granted, then attempting to use this action will
+     * result in a {@link java.lang.SecurityException}.
      */
     @SdkConstant(SdkConstantType.ACTIVITY_INTENT_ACTION)
     public static final String ACTION_CALL = "android.intent.action.CALL";
@@ -979,6 +1083,18 @@ public class Intent implements Parcelable, Cloneable {
      * @hide
      */
     public static final String ACTION_CALL_PRIVILEGED = "android.intent.action.CALL_PRIVILEGED";
+    /**
+     * Activity action: Activate the current SIM card.  If SIM cards do not require activation,
+     * sending this intent is a no-op.
+     * <p>Input: No data should be specified.  get*Extra may have an optional
+     * {@link #EXTRA_SIM_ACTIVATION_RESPONSE} field containing a PendingIntent through which to
+     * send the activation result.
+     * <p>Output: nothing.
+     * @hide
+     */
+    @SdkConstant(SdkConstantType.ACTIVITY_INTENT_ACTION)
+    public static final String ACTION_SIM_ACTIVATION_REQUEST =
+            "android.intent.action.SIM_ACTIVATION_REQUEST";
     /**
      * Activity Action: Send a message to someone specified by the data.
      * <p>Input: {@link #getData} is URI describing the target.
@@ -1150,9 +1266,10 @@ public class Intent implements Parcelable, Cloneable {
     /**
      * Activity Action: Perform assist action.
      * <p>
-     * Input: {@link #EXTRA_ASSIST_PACKAGE} and {@link #EXTRA_ASSIST_CONTEXT} can provide
-     * additional optional contextual information about where the user was when they requested
-     * the assist.
+     * Input: {@link #EXTRA_ASSIST_PACKAGE}, {@link #EXTRA_ASSIST_CONTEXT}, can provide
+     * additional optional contextual information about where the user was when they
+     * requested the assist; {@link #EXTRA_REFERRER} may be set with additional referrer
+     * information.
      * Output: nothing.
      */
     @SdkConstant(SdkConstantType.ACTIVITY_INTENT_ACTION)
@@ -1161,9 +1278,9 @@ public class Intent implements Parcelable, Cloneable {
     /**
      * Activity Action: Perform voice assist action.
      * <p>
-     * Input: {@link #EXTRA_ASSIST_PACKAGE} and {@link #EXTRA_ASSIST_CONTEXT} can provide
-     * additional optional contextual information about where the user was when they requested
-     * the voice assist.
+     * Input: {@link #EXTRA_ASSIST_PACKAGE}, {@link #EXTRA_ASSIST_CONTEXT}, can provide
+     * additional optional contextual information about where the user was when they
+     * requested the voice assist.
      * Output: nothing.
      * @hide
      */
@@ -1171,31 +1288,50 @@ public class Intent implements Parcelable, Cloneable {
     public static final String ACTION_VOICE_ASSIST = "android.intent.action.VOICE_ASSIST";
 
     /**
-     * An optional field on {@link #ACTION_ASSIST}
-     * containing the name of the current foreground application package at the time
-     * the assist was invoked.
+     * An optional field on {@link #ACTION_ASSIST} containing the name of the current foreground
+     * application package at the time the assist was invoked.
      */
     public static final String EXTRA_ASSIST_PACKAGE
             = "android.intent.extra.ASSIST_PACKAGE";
 
     /**
-     * An optional field on {@link #ACTION_ASSIST}
-     * containing additional contextual information supplied by the current
-     * foreground app at the time of the assist request.  This is a {@link Bundle} of
-     * additional data.
+     * An optional field on {@link #ACTION_ASSIST} containing the uid of the current foreground
+     * application package at the time the assist was invoked.
+     */
+    public static final String EXTRA_ASSIST_UID
+            = "android.intent.extra.ASSIST_UID";
+
+    /**
+     * An optional field on {@link #ACTION_ASSIST} and containing additional contextual
+     * information supplied by the current foreground app at the time of the assist request.
+     * This is a {@link Bundle} of additional data.
      */
     public static final String EXTRA_ASSIST_CONTEXT
             = "android.intent.extra.ASSIST_CONTEXT";
 
     /**
-     * Activity Action: List all available applications
+     * An optional field on {@link #ACTION_ASSIST} suggesting that the user will likely use a
+     * keyboard as the primary input device for assistance.
+     */
+    public static final String EXTRA_ASSIST_INPUT_HINT_KEYBOARD =
+            "android.intent.extra.ASSIST_INPUT_HINT_KEYBOARD";
+
+    /**
+     * An optional field on {@link #ACTION_ASSIST} containing the InputDevice id
+     * that was used to invoke the assist.
+     */
+    public static final String EXTRA_ASSIST_INPUT_DEVICE_ID =
+            "android.intent.extra.ASSIST_INPUT_DEVICE_ID";
+
+    /**
+     * Activity Action: List all available applications.
      * <p>Input: Nothing.
      * <p>Output: nothing.
      */
     @SdkConstant(SdkConstantType.ACTIVITY_INTENT_ACTION)
     public static final String ACTION_ALL_APPS = "android.intent.action.ALL_APPS";
     /**
-     * Activity Action: Show settings for choosing wallpaper
+     * Activity Action: Show settings for choosing wallpaper.
      * <p>Input: Nothing.
      * <p>Output: Nothing.
      */
@@ -1281,6 +1417,26 @@ public class Intent implements Parcelable, Cloneable {
     public static final String ACTION_UPGRADE_SETUP = "android.intent.action.UPGRADE_SETUP";
 
     /**
+     * Activity Action: Start the Keyboard Shortcuts Helper screen.
+     * <p>Input: Nothing.
+     * <p>Output: Nothing.
+     * @hide
+     */
+    @SdkConstant(SdkConstantType.BROADCAST_INTENT_ACTION)
+    public static final String ACTION_SHOW_KEYBOARD_SHORTCUTS =
+            "android.intent.action.SHOW_KEYBOARD_SHORTCUTS";
+
+    /**
+     * Activity Action: Dismiss the Keyboard Shortcuts Helper screen.
+     * <p>Input: Nothing.
+     * <p>Output: Nothing.
+     * @hide
+     */
+    @SdkConstant(SdkConstantType.BROADCAST_INTENT_ACTION)
+    public static final String ACTION_DISMISS_KEYBOARD_SHORTCUTS =
+            "android.intent.action.DISMISS_KEYBOARD_SHORTCUTS";
+
+    /**
      * Activity Action: Show settings for managing network data usage of a
      * specific application. Applications should define an activity that offers
      * options to control data usage.
@@ -1301,6 +1457,11 @@ public class Intent implements Parcelable, Cloneable {
      * <p>
      * Output: If {@link #EXTRA_RETURN_RESULT}, returns whether the install
      * succeeded.
+     * <p>
+     * <strong>Note:</strong>If your app is targeting API level higher than 22 you
+     * need to hold {@link android.Manifest.permission#REQUEST_INSTALL_PACKAGES}
+     * in order to launch the application installer.
+     * </p>
      *
      * @see #EXTRA_INSTALLER_PACKAGE_NAME
      * @see #EXTRA_NOT_UNKNOWN_SOURCE
@@ -1308,6 +1469,34 @@ public class Intent implements Parcelable, Cloneable {
      */
     @SdkConstant(SdkConstantType.ACTIVITY_INTENT_ACTION)
     public static final String ACTION_INSTALL_PACKAGE = "android.intent.action.INSTALL_PACKAGE";
+
+    /**
+     * Activity Action: Launch ephemeral installer.
+     * <p>
+     * Input: The data must be a http: URI that the ephemeral application is registered
+     * to handle.
+     * <p class="note">
+     * This is a protected intent that can only be sent by the system.
+     * </p>
+     *
+     * @hide
+     */
+    @SdkConstant(SdkConstantType.ACTIVITY_INTENT_ACTION)
+    public static final String ACTION_INSTALL_EPHEMERAL_PACKAGE
+            = "android.intent.action.INSTALL_EPHEMERAL_PACKAGE";
+
+    /**
+     * Service Action: Resolve ephemeral application.
+     * <p>
+     * The system will have a persistent connection to this service.
+     * This is a protected intent that can only be sent by the system.
+     * </p>
+     *
+     * @hide
+     */
+    @SdkConstant(SdkConstantType.SERVICE_ACTION)
+    public static final String ACTION_RESOLVE_EPHEMERAL_PACKAGE
+            = "android.intent.action.RESOLVE_EPHEMERAL_PACKAGE";
 
     /**
      * Used as a string extra field with {@link #ACTION_INSTALL_PACKAGE} to install a
@@ -1336,18 +1525,41 @@ public class Intent implements Parcelable, Cloneable {
             = "android.intent.extra.ORIGINATING_URI";
 
     /**
-     * Used as a URI extra field with {@link #ACTION_INSTALL_PACKAGE} and
-     * {@link #ACTION_VIEW} to indicate the HTTP referrer URI associated with the Intent
-     * data field or {@link #EXTRA_ORIGINATING_URI}.
+     * This extra can be used with any Intent used to launch an activity, supplying information
+     * about who is launching that activity.  This field contains a {@link android.net.Uri}
+     * object, typically an http: or https: URI of the web site that the referral came from;
+     * it can also use the {@link #URI_ANDROID_APP_SCHEME android-app:} scheme to identify
+     * a native application that it came from.
+     *
+     * <p>To retrieve this value in a client, use {@link android.app.Activity#getReferrer}
+     * instead of directly retrieving the extra.  It is also valid for applications to
+     * instead supply {@link #EXTRA_REFERRER_NAME} for cases where they can only create
+     * a string, not a Uri; the field here, if supplied, will always take precedence,
+     * however.</p>
+     *
+     * @see #EXTRA_REFERRER_NAME
      */
     public static final String EXTRA_REFERRER
             = "android.intent.extra.REFERRER";
 
     /**
+     * Alternate version of {@link #EXTRA_REFERRER} that supplies the URI as a String rather
+     * than a {@link android.net.Uri} object.  Only for use in cases where Uri objects can
+     * not be created, in particular when Intent extras are supplied through the
+     * {@link #URI_INTENT_SCHEME intent:} or {@link #URI_ANDROID_APP_SCHEME android-app:}
+     * schemes.
+     *
+     * @see #EXTRA_REFERRER
+     */
+    public static final String EXTRA_REFERRER_NAME
+            = "android.intent.extra.REFERRER_NAME";
+
+    /**
      * Used as an int extra field with {@link #ACTION_INSTALL_PACKAGE} and
-     * {@link} #ACTION_VIEW} to indicate the uid of the package that initiated the install
+     * {@link #ACTION_VIEW} to indicate the uid of the package that initiated the install
      * @hide
      */
+    @SystemApi
     public static final String EXTRA_ORIGINATING_UID
             = "android.intent.extra.ORIGINATING_UID";
 
@@ -1407,20 +1619,185 @@ public class Intent implements Parcelable, Cloneable {
      */
     public static final String METADATA_SETUP_VERSION = "android.SETUP_VERSION";
 
+    /**
+     * Activity action: Launch UI to manage the permissions of an app.
+     * <p>
+     * Input: {@link #EXTRA_PACKAGE_NAME} specifies the package whose permissions
+     * will be managed by the launched UI.
+     * </p>
+     * <p>
+     * Output: Nothing.
+     * </p>
+     *
+     * @see #EXTRA_PACKAGE_NAME
+     *
+     * @hide
+     */
+    @SystemApi
+    @SdkConstant(SdkConstantType.ACTIVITY_INTENT_ACTION)
+    public static final String ACTION_MANAGE_APP_PERMISSIONS =
+            "android.intent.action.MANAGE_APP_PERMISSIONS";
+
+    /**
+     * Activity action: Launch UI to manage permissions.
+     * <p>
+     * Input: Nothing.
+     * </p>
+     * <p>
+     * Output: Nothing.
+     * </p>
+     *
+     * @hide
+     */
+    @SystemApi
+    @SdkConstant(SdkConstantType.ACTIVITY_INTENT_ACTION)
+    public static final String ACTION_MANAGE_PERMISSIONS =
+            "android.intent.action.MANAGE_PERMISSIONS";
+
+    /**
+     * Activity action: Launch UI to review permissions for an app.
+     * The system uses this intent if permission review for apps not
+     * supporting the new runtime permissions model is enabled. In
+     * this mode a permission review is required before any of the
+     * app components can run.
+     * <p>
+     * Input: {@link #EXTRA_PACKAGE_NAME} specifies the package whose
+     * permissions will be reviewed (mandatory).
+     * </p>
+     * <p>
+     * Input: {@link #EXTRA_INTENT} specifies a pending intent to
+     * be fired after the permission review (optional).
+     * </p>
+     * <p>
+     * Input: {@link #EXTRA_REMOTE_CALLBACK} specifies a callback to
+     * be invoked after the permission review (optional).
+     * </p>
+     * <p>
+     * Input: {@link #EXTRA_RESULT_NEEDED} specifies whether the intent
+     * passed via {@link #EXTRA_INTENT} needs a result (optional).
+     * </p>
+     * <p>
+     * Output: Nothing.
+     * </p>
+     *
+     * @see #EXTRA_PACKAGE_NAME
+     * @see #EXTRA_INTENT
+     * @see #EXTRA_REMOTE_CALLBACK
+     * @see #EXTRA_RESULT_NEEDED
+     *
+     * @hide
+     */
+    @SystemApi
+    @SdkConstant(SdkConstantType.ACTIVITY_INTENT_ACTION)
+    public static final String ACTION_REVIEW_PERMISSIONS =
+            "android.intent.action.REVIEW_PERMISSIONS";
+
+    /**
+     * Intent extra: A callback for reporting remote result as a bundle.
+     * <p>
+     * Type: IRemoteCallback
+     * </p>
+     *
+     * @hide
+     */
+    @SystemApi
+    public static final String EXTRA_REMOTE_CALLBACK = "android.intent.extra.REMOTE_CALLBACK";
+
+    /**
+     * Intent extra: An app package name.
+     * <p>
+     * Type: String
+     * </p>
+     *
+     */
+    public static final String EXTRA_PACKAGE_NAME = "android.intent.extra.PACKAGE_NAME";
+
+    /**
+     * Intent extra: An extra for specifying whether a result is needed.
+     * <p>
+     * Type: boolean
+     * </p>
+     *
+     * @hide
+     */
+    @SystemApi
+    public static final String EXTRA_RESULT_NEEDED = "android.intent.extra.RESULT_NEEDED";
+
+    /**
+     * Activity action: Launch UI to manage which apps have a given permission.
+     * <p>
+     * Input: {@link #EXTRA_PERMISSION_NAME} specifies the permission access
+     * to which will be managed by the launched UI.
+     * </p>
+     * <p>
+     * Output: Nothing.
+     * </p>
+     *
+     * @see #EXTRA_PERMISSION_NAME
+     *
+     * @hide
+     */
+    @SystemApi
+    @SdkConstant(SdkConstantType.ACTIVITY_INTENT_ACTION)
+    public static final String ACTION_MANAGE_PERMISSION_APPS =
+            "android.intent.action.MANAGE_PERMISSION_APPS";
+
+    /**
+     * Intent extra: The name of a permission.
+     * <p>
+     * Type: String
+     * </p>
+     *
+     * @hide
+     */
+    @SystemApi
+    public static final String EXTRA_PERMISSION_NAME = "android.intent.extra.PERMISSION_NAME";
+
     // ---------------------------------------------------------------------
     // ---------------------------------------------------------------------
     // Standard intent broadcast actions (see action variable).
 
     /**
-     * Broadcast Action: Sent after the screen turns off.
+     * Broadcast Action: Sent when the device goes to sleep and becomes non-interactive.
+     * <p>
+     * For historical reasons, the name of this broadcast action refers to the power
+     * state of the screen but it is actually sent in response to changes in the
+     * overall interactive state of the device.
+     * </p><p>
+     * This broadcast is sent when the device becomes non-interactive which may have
+     * nothing to do with the screen turning off.  To determine the
+     * actual state of the screen, use {@link android.view.Display#getState}.
+     * </p><p>
+     * See {@link android.os.PowerManager#isInteractive} for details.
+     * </p>
+     * You <em>cannot</em> receive this through components declared in
+     * manifests, only by explicitly registering for it with
+     * {@link Context#registerReceiver(BroadcastReceiver, IntentFilter)
+     * Context.registerReceiver()}.
      *
      * <p class="note">This is a protected intent that can only be sent
      * by the system.
      */
     @SdkConstant(SdkConstantType.BROADCAST_INTENT_ACTION)
     public static final String ACTION_SCREEN_OFF = "android.intent.action.SCREEN_OFF";
+
     /**
-     * Broadcast Action: Sent after the screen turns on.
+     * Broadcast Action: Sent when the device wakes up and becomes interactive.
+     * <p>
+     * For historical reasons, the name of this broadcast action refers to the power
+     * state of the screen but it is actually sent in response to changes in the
+     * overall interactive state of the device.
+     * </p><p>
+     * This broadcast is sent when the device becomes interactive which may have
+     * nothing to do with the screen turning on.  To determine the
+     * actual state of the screen, use {@link android.view.Display#getState}.
+     * </p><p>
+     * See {@link android.os.PowerManager#isInteractive} for details.
+     * </p>
+     * You <em>cannot</em> receive this through components declared in
+     * manifests, only by explicitly registering for it with
+     * {@link Context#registerReceiver(BroadcastReceiver, IntentFilter)
+     * Context.registerReceiver()}.
      *
      * <p class="note">This is a protected intent that can only be sent
      * by the system.
@@ -1458,8 +1835,8 @@ public class Intent implements Parcelable, Cloneable {
 
     /**
      * Broadcast Action: The current time has changed.  Sent every
-     * minute.  You can <em>not</em> receive this through components declared
-     * in manifests, only by exlicitly registering for it with
+     * minute.  You <em>cannot</em> receive this through components declared
+     * in manifests, only by explicitly registering for it with
      * {@link Context#registerReceiver(BroadcastReceiver, IntentFilter)
      * Context.registerReceiver()}.
      *
@@ -1504,26 +1881,54 @@ public class Intent implements Parcelable, Cloneable {
      */
     @SdkConstant(SdkConstantType.BROADCAST_INTENT_ACTION)
     public static final String ACTION_ALARM_CHANGED = "android.intent.action.ALARM_CHANGED";
+
     /**
-     * Sync State Changed Action: This is broadcast when the sync starts or stops or when one has
-     * been failing for a long time.  It is used by the SyncManager and the StatusBar service.
-     * @hide
+     * Broadcast Action: This is broadcast once, after the user has finished
+     * booting, but while still in the "locked" state. It can be used to perform
+     * application-specific initialization, such as installing alarms. You must
+     * hold the {@link android.Manifest.permission#RECEIVE_BOOT_COMPLETED}
+     * permission in order to receive this broadcast.
+     * <p>
+     * This broadcast is sent immediately at boot by all devices (regardless of
+     * direct boot support) running {@link android.os.Build.VERSION_CODES#N} or
+     * higher. Upon receipt of this broadcast, the user is still locked and only
+     * device-protected storage can be accessed safely. If you want to access
+     * credential-protected storage, you need to wait for the user to be
+     * unlocked (typically by entering their lock pattern or PIN for the first
+     * time), after which the {@link #ACTION_USER_UNLOCKED} and
+     * {@link #ACTION_BOOT_COMPLETED} broadcasts are sent.
+     * <p>
+     * To receive this broadcast, your receiver component must be marked as
+     * being {@link ComponentInfo#directBootAware}.
+     * <p class="note">
+     * This is a protected intent that can only be sent by the system.
+     *
+     * @see Context#createDeviceProtectedStorageContext()
      */
     @SdkConstant(SdkConstantType.BROADCAST_INTENT_ACTION)
-    public static final String ACTION_SYNC_STATE_CHANGED
-            = "android.intent.action.SYNC_STATE_CHANGED";
+    public static final String ACTION_LOCKED_BOOT_COMPLETED = "android.intent.action.LOCKED_BOOT_COMPLETED";
+
     /**
-     * Broadcast Action: This is broadcast once, after the system has finished
-     * booting.  It can be used to perform application-specific initialization,
-     * such as installing alarms.  You must hold the
-     * {@link android.Manifest.permission#RECEIVE_BOOT_COMPLETED} permission
-     * in order to receive this broadcast.
-     *
-     * <p class="note">This is a protected intent that can only be sent
-     * by the system.
+     * Broadcast Action: This is broadcast once, after the user has finished
+     * booting. It can be used to perform application-specific initialization,
+     * such as installing alarms. You must hold the
+     * {@link android.Manifest.permission#RECEIVE_BOOT_COMPLETED} permission in
+     * order to receive this broadcast.
+     * <p>
+     * This broadcast is sent at boot by all devices (both with and without
+     * direct boot support). Upon receipt of this broadcast, the user is
+     * unlocked and both device-protected and credential-protected storage can
+     * accessed safely.
+     * <p>
+     * If you need to run while the user is still locked (before they've entered
+     * their lock pattern or PIN for the first time), you can listen for the
+     * {@link #ACTION_LOCKED_BOOT_COMPLETED} broadcast.
+     * <p class="note">
+     * This is a protected intent that can only be sent by the system.
      */
     @SdkConstant(SdkConstantType.BROADCAST_INTENT_ACTION)
     public static final String ACTION_BOOT_COMPLETED = "android.intent.action.BOOT_COMPLETED";
+
     /**
      * Broadcast Action: This is broadcast when a user action should request a
      * temporary system dialog to dismiss.  Some examples of temporary system
@@ -1587,7 +1992,7 @@ public class Intent implements Parcelable, Cloneable {
     /**
      * Broadcast Action: An existing application package has been removed from
      * the device.  The data contains the name of the package.  The package
-     * that is being installed does <em>not</em> receive this Intent.
+     * that is being removed does <em>not</em> receive this Intent.
      * <ul>
      * <li> {@link #EXTRA_UID} containing the integer uid previously assigned
      * to the package.
@@ -1621,9 +2026,9 @@ public class Intent implements Parcelable, Cloneable {
     public static final String ACTION_PACKAGE_FULLY_REMOVED
             = "android.intent.action.PACKAGE_FULLY_REMOVED";
     /**
-     * Broadcast Action: An existing application package has been changed (e.g.
-     * a component has been enabled or disabled).  The data contains the name of
-     * the package.
+     * Broadcast Action: An existing application package has been changed (for
+     * example, a component has been enabled or disabled).  The data contains
+     * the name of the package.
      * <ul>
      * <li> {@link #EXTRA_UID} containing the integer uid assigned to the package.
      * <li> {@link #EXTRA_CHANGED_COMPONENT_NAME_LIST} containing the class name
@@ -1650,6 +2055,7 @@ public class Intent implements Parcelable, Cloneable {
      * <p class="note">This is a protected intent that can only be sent
      * by the system.
      */
+    @SystemApi
     @SdkConstant(SdkConstantType.BROADCAST_INTENT_ACTION)
     public static final String ACTION_QUERY_PACKAGE_RESTART = "android.intent.action.QUERY_PACKAGE_RESTART";
     /**
@@ -1684,6 +2090,30 @@ public class Intent implements Parcelable, Cloneable {
     @SdkConstant(SdkConstantType.BROADCAST_INTENT_ACTION)
     public static final String ACTION_PACKAGE_DATA_CLEARED = "android.intent.action.PACKAGE_DATA_CLEARED";
     /**
+     * Broadcast Action: Packages have been suspended.
+     * <p>Includes the following extras:
+     * <ul>
+     * <li> {@link #EXTRA_CHANGED_PACKAGE_LIST} is the set of packages which have been suspended
+     * </ul>
+     *
+     * <p class="note">This is a protected intent that can only be sent
+     * by the system. It is only sent to registered receivers.
+     */
+    @SdkConstant(SdkConstantType.BROADCAST_INTENT_ACTION)
+    public static final String ACTION_PACKAGES_SUSPENDED = "android.intent.action.PACKAGES_SUSPENDED";
+    /**
+     * Broadcast Action: Packages have been unsuspended.
+     * <p>Includes the following extras:
+     * <ul>
+     * <li> {@link #EXTRA_CHANGED_PACKAGE_LIST} is the set of packages which have been unsuspended
+     * </ul>
+     *
+     * <p class="note">This is a protected intent that can only be sent
+     * by the system. It is only sent to registered receivers.
+     */
+    @SdkConstant(SdkConstantType.BROADCAST_INTENT_ACTION)
+    public static final String ACTION_PACKAGES_UNSUSPENDED = "android.intent.action.PACKAGES_UNSUSPENDED";
+    /**
      * Broadcast Action: A user ID has been removed from the system.  The user
      * ID number is stored in the extra data under {@link #EXTRA_UID}.
      *
@@ -1694,9 +2124,9 @@ public class Intent implements Parcelable, Cloneable {
     public static final String ACTION_UID_REMOVED = "android.intent.action.UID_REMOVED";
 
     /**
-     * Broadcast Action: Sent to the installer package of an application
-     * when that application is first launched (that is the first time it
-     * is moved out of the stopped state).  The data contains the name of the package.
+     * Broadcast Action: Sent to the installer package of an application when
+     * that application is first launched (that is the first time it is moved
+     * out of the stopped state).  The data contains the name of the package.
      *
      * <p class="note">This is a protected intent that can only be sent
      * by the system.
@@ -1722,6 +2152,20 @@ public class Intent implements Parcelable, Cloneable {
      */
     @SdkConstant(SdkConstantType.BROADCAST_INTENT_ACTION)
     public static final String ACTION_PACKAGE_VERIFIED = "android.intent.action.PACKAGE_VERIFIED";
+
+    /**
+     * Broadcast Action: Sent to the system intent filter verifier when an
+     * intent filter needs to be verified. The data contains the filter data
+     * hosts to be verified against.
+     * <p class="note">
+     * This is a protected intent that can only be sent by the system.
+     * </p>
+     *
+     * @hide
+     */
+    @SystemApi
+    @SdkConstant(SdkConstantType.BROADCAST_INTENT_ACTION)
+    public static final String ACTION_INTENT_FILTER_NEEDS_VERIFICATION = "android.intent.action.INTENT_FILTER_NEEDS_VERIFICATION";
 
     /**
      * Broadcast Action: Resources for a set of packages (which were
@@ -1803,7 +2247,7 @@ public class Intent implements Parcelable, Cloneable {
      * appropriately.
      *
      * <p class="note">
-     * You can <em>not</em> receive this through components declared
+     * You <em>cannot</em> receive this through components declared
      * in manifests, only by explicitly registering for it with
      * {@link Context#registerReceiver(BroadcastReceiver, IntentFilter)
      * Context.registerReceiver()}.
@@ -1830,7 +2274,7 @@ public class Intent implements Parcelable, Cloneable {
      * contents of the Intent.
      *
      * <p class="note">
-     * You can <em>not</em> receive this through components declared
+     * You <em>cannot</em> receive this through components declared
      * in manifests, only by explicitly registering for it with
      * {@link Context#registerReceiver(BroadcastReceiver, IntentFilter)
      * Context.registerReceiver()}.  See {@link #ACTION_BATTERY_LOW},
@@ -1897,13 +2341,20 @@ public class Intent implements Parcelable, Cloneable {
      *
      * <p class="note">This is a protected intent that can only be sent
      * by the system.
+     * <p>May include the following extras:
+     * <ul>
+     * <li> {@link #EXTRA_SHUTDOWN_USERSPACE_ONLY} a boolean that is set to true if this
+     * shutdown is only for userspace processes.  If not set, assumed to be false.
+     * </ul>
      */
     @SdkConstant(SdkConstantType.BROADCAST_INTENT_ACTION)
     public static final String ACTION_SHUTDOWN = "android.intent.action.ACTION_SHUTDOWN";
     /**
      * Activity Action:  Start this activity to request system shutdown.
      * The optional boolean extra field {@link #EXTRA_KEY_CONFIRM} can be set to true
-     * to request confirmation from the user before shutting down.
+     * to request confirmation from the user before shutting down. The optional boolean
+     * extra field {@link #EXTRA_USER_REQUESTED_SHUTDOWN} can be set to true to
+     * indicate that the shutdown is requested by the user.
      *
      * <p class="note">This is a protected intent that can only be sent
      * by the system.
@@ -2124,8 +2575,7 @@ public class Intent implements Parcelable, Cloneable {
      *   turned off</li>
      * </ul>
      *
-     * <p class="note">This is a protected intent that can only be sent
-     * by the system.
+     * <p class="note">This is a protected intent that can only be sent by the system.</p>
      */
     @SdkConstant(SdkConstantType.BROADCAST_INTENT_ACTION)
     public static final String ACTION_AIRPLANE_MODE_CHANGED = "android.intent.action.AIRPLANE_MODE";
@@ -2163,94 +2613,14 @@ public class Intent implements Parcelable, Cloneable {
     /**
      * Broadcast Action: Wired Headset plugged in or unplugged.
      *
-     * <p>The intent will have the following extra values:
-     * <ul>
-     *   <li><em>state</em> - 0 for unplugged, 1 for plugged. </li>
-     *   <li><em>name</em> - Headset type, human readable string </li>
-     *   <li><em>microphone</em> - 1 if headset has a microphone, 0 otherwise </li>
-     * </ul>
-     * </ul>
+     * Same as {@link android.media.AudioManager#ACTION_HEADSET_PLUG}, to be consulted for value
+     *   and documentation.
+     * <p>If the minimum SDK version of your application is
+     * {@link android.os.Build.VERSION_CODES#LOLLIPOP}, it is recommended to refer
+     * to the <code>AudioManager</code> constant in your receiver registration code instead.
      */
     @SdkConstant(SdkConstantType.BROADCAST_INTENT_ACTION)
-    public static final String ACTION_HEADSET_PLUG =
-            "android.intent.action.HEADSET_PLUG";
-
-    /**
-     * Broadcast Action: An analog audio speaker/headset plugged in or unplugged.
-     *
-     * <p>The intent will have the following extra values:
-     * <ul>
-     *   <li><em>state</em> - 0 for unplugged, 1 for plugged. </li>
-     *   <li><em>name</em> - Headset type, human readable string </li>
-     * </ul>
-     * </ul>
-     * @hide
-     */
-    @SdkConstant(SdkConstantType.BROADCAST_INTENT_ACTION)
-    public static final String ACTION_ANALOG_AUDIO_DOCK_PLUG =
-            "android.intent.action.ANALOG_AUDIO_DOCK_PLUG";
-
-    /**
-     * Broadcast Action: A digital audio speaker/headset plugged in or unplugged.
-     *
-     * <p>The intent will have the following extra values:
-     * <ul>
-     *   <li><em>state</em> - 0 for unplugged, 1 for plugged. </li>
-     *   <li><em>name</em> - Headset type, human readable string </li>
-     * </ul>
-     * </ul>
-     * @hide
-     */
-    @SdkConstant(SdkConstantType.BROADCAST_INTENT_ACTION)
-    public static final String ACTION_DIGITAL_AUDIO_DOCK_PLUG =
-            "android.intent.action.DIGITAL_AUDIO_DOCK_PLUG";
-
-    /**
-     * Broadcast Action: A HMDI cable was plugged or unplugged
-     *
-     * <p>The intent will have the following extra values:
-     * <ul>
-     *   <li><em>state</em> - 0 for unplugged, 1 for plugged. </li>
-     *   <li><em>name</em> - HDMI cable, human readable string </li>
-     * </ul>
-     * </ul>
-     * @hide
-     */
-    @SdkConstant(SdkConstantType.BROADCAST_INTENT_ACTION)
-    public static final String ACTION_HDMI_AUDIO_PLUG =
-            "android.intent.action.HDMI_AUDIO_PLUG";
-
-    /**
-     * Broadcast Action: A USB audio accessory was plugged in or unplugged.
-     *
-     * <p>The intent will have the following extra values:
-     * <ul>
-     *   <li><em>state</em> - 0 for unplugged, 1 for plugged. </li>
-     *   <li><em>card</em> - ALSA card number (integer) </li>
-     *   <li><em>device</em> - ALSA device number (integer) </li>
-     * </ul>
-     * </ul>
-     * @hide
-     */
-    @SdkConstant(SdkConstantType.BROADCAST_INTENT_ACTION)
-    public static final String ACTION_USB_AUDIO_ACCESSORY_PLUG =
-            "android.intent.action.USB_AUDIO_ACCESSORY_PLUG";
-
-    /**
-     * Broadcast Action: A USB audio device was plugged in or unplugged.
-     *
-     * <p>The intent will have the following extra values:
-     * <ul>
-     *   <li><em>state</em> - 0 for unplugged, 1 for plugged. </li>
-     *   <li><em>card</em> - ALSA card number (integer) </li>
-     *   <li><em>device</em> - ALSA device number (integer) </li>
-     * </ul>
-     * </ul>
-     * @hide
-     */
-    @SdkConstant(SdkConstantType.BROADCAST_INTENT_ACTION)
-    public static final String ACTION_USB_AUDIO_DEVICE_PLUG =
-            "android.intent.action.USB_AUDIO_DEVICE_PLUG";
+    public static final String ACTION_HEADSET_PLUG = android.media.AudioManager.ACTION_HEADSET_PLUG;
 
     /**
      * <p>Broadcast Action: The user has switched on advanced settings in the settings app:</p>
@@ -2266,6 +2636,16 @@ public class Intent implements Parcelable, Cloneable {
     //@SdkConstant(SdkConstantType.BROADCAST_INTENT_ACTION)
     public static final String ACTION_ADVANCED_SETTINGS_CHANGED
             = "android.intent.action.ADVANCED_SETTINGS";
+
+    /**
+     *  Broadcast Action: Sent after application restrictions are changed.
+     *
+     * <p class="note">This is a protected intent that can only be sent
+     * by the system.</p>
+     */
+    @SdkConstant(SdkConstantType.BROADCAST_INTENT_ACTION)
+    public static final String ACTION_APPLICATION_RESTRICTIONS_CHANGED =
+            "android.intent.action.APPLICATION_RESTRICTIONS_CHANGED";
 
     /**
      * Broadcast Action: An outgoing call is about to be placed.
@@ -2412,12 +2792,15 @@ public class Intent implements Parcelable, Cloneable {
             "com.google.android.c2dm.intent.RECEIVE";
 
     /**
-     * Broadcast Action: hook for permforming cleanup after a system update.
+     * Broadcast Action: This is broadcast once when the user is booting after a
+     * system update. It can be used to perform cleanup or upgrades after a
+     * system update.
+     * <p>
+     * This broadcast is sent after the {@link #ACTION_LOCKED_BOOT_COMPLETED}
+     * broadcast but before the {@link #ACTION_BOOT_COMPLETED} broadcast. It's
+     * only sent when the {@link Build#FINGERPRINT} has changed, and it's only
+     * sent to receivers in the system image.
      *
-     * The broadcast is sent when the system is booting, before the
-     * BOOT_COMPLETED broadcast.  It is only sent to receivers in the system
-     * image.  A receiver for this should do its work and then disable itself
-     * so that it does not get run again at the next boot.
      * @hide
      */
     public static final String ACTION_PRE_BOOT_COMPLETED =
@@ -2569,6 +2952,14 @@ public class Intent implements Parcelable, Cloneable {
             "android.intent.action.USER_SWITCHED";
 
     /**
+     * Broadcast Action: Sent when the credential-encrypted private storage has
+     * become unlocked for the target user. This is only sent to registered
+     * receivers, not manifest receivers.
+     */
+    @SdkConstant(SdkConstantType.BROADCAST_INTENT_ACTION)
+    public static final String ACTION_USER_UNLOCKED = "android.intent.action.USER_UNLOCKED";
+
+    /**
      * Broadcast sent to the system when a user's information changes. Carries an extra
      * {@link #EXTRA_USER_HANDLE} to indicate which user's information changed.
      * This is only sent to registered receivers, not manifest receivers. It is sent to all users.
@@ -2578,14 +2969,65 @@ public class Intent implements Parcelable, Cloneable {
             "android.intent.action.USER_INFO_CHANGED";
 
     /**
+     * Broadcast sent to the primary user when an associated managed profile is added (the profile
+     * was created and is ready to be used). Carries an extra {@link #EXTRA_USER} that specifies
+     * the UserHandle of the profile that was added. Only applications (for example Launchers)
+     * that need to display merged content across both primary and managed profiles need to
+     * worry about this broadcast. This is only sent to registered receivers,
+     * not manifest receivers.
+     */
+    public static final String ACTION_MANAGED_PROFILE_ADDED =
+            "android.intent.action.MANAGED_PROFILE_ADDED";
+
+    /**
+     * Broadcast sent to the primary user when an associated managed profile is removed. Carries an
+     * extra {@link #EXTRA_USER} that specifies the UserHandle of the profile that was removed.
+     * Only applications (for example Launchers) that need to display merged content across both
+     * primary and managed profiles need to worry about this broadcast. This is only sent to
+     * registered receivers, not manifest receivers.
+     */
+    public static final String ACTION_MANAGED_PROFILE_REMOVED =
+            "android.intent.action.MANAGED_PROFILE_REMOVED";
+
+    /**
+     * Broadcast sent to the primary user when the credential-encrypted private storage for
+     * an associated managed profile is unlocked. Carries an extra {@link #EXTRA_USER} that
+     * specifies the UserHandle of the profile that was unlocked. Only applications (for example
+     * Launchers) that need to display merged content across both primary and managed profiles
+     * need to worry about this broadcast. This is only sent to registered receivers,
+     * not manifest receivers.
+     */
+    public static final String ACTION_MANAGED_PROFILE_UNLOCKED =
+            "android.intent.action.MANAGED_PROFILE_UNLOCKED";
+
+    /**
+     * Broadcast sent to the primary user when an associated managed profile has become available.
+     * Currently this includes when the user disables quiet mode for the profile. Carries an extra
+     * {@link #EXTRA_USER} that specifies the UserHandle of the profile. When quiet mode is changed,
+     * this broadcast will carry a boolean extra {@link #EXTRA_QUIET_MODE} indicating the new state
+     * of quiet mode. This is only sent to registered receivers, not manifest receivers.
+     */
+    public static final String ACTION_MANAGED_PROFILE_AVAILABLE =
+            "android.intent.action.MANAGED_PROFILE_AVAILABLE";
+
+    /**
+     * Broadcast sent to the primary user when an associated managed profile has become unavailable.
+     * Currently this includes when the user enables quiet mode for the profile. Carries an extra
+     * {@link #EXTRA_USER} that specifies the UserHandle of the profile. When quiet mode is changed,
+     * this broadcast will carry a boolean extra {@link #EXTRA_QUIET_MODE} indicating the new state
+     * of quiet mode. This is only sent to registered receivers, not manifest receivers.
+     */
+    public static final String ACTION_MANAGED_PROFILE_UNAVAILABLE =
+            "android.intent.action.MANAGED_PROFILE_UNAVAILABLE";
+
+    /**
      * Sent when the user taps on the clock widget in the system's "quick settings" area.
      */
     public static final String ACTION_QUICK_CLOCK =
             "android.intent.action.QUICK_CLOCK";
 
     /**
-     * Broadcast Action: This is broadcast when a user action should request the
-     * brightness setting dialog.
+     * Activity Action: Shows the brightness setting dialog.
      * @hide
      */
     public static final String ACTION_SHOW_BRIGHTNESS_DIALOG =
@@ -2599,6 +3041,216 @@ public class Intent implements Parcelable, Cloneable {
      */
     public static final String ACTION_GLOBAL_BUTTON = "android.intent.action.GLOBAL_BUTTON";
 
+    /**
+     * Broadcast Action: Sent when media resource is granted.
+     * <p>
+     * {@link #EXTRA_PACKAGES} specifies the packages on the process holding the media resource
+     * granted.
+     * </p>
+     * <p class="note">
+     * This is a protected intent that can only be sent by the system.
+     * </p>
+     * <p class="note">
+     * This requires {@link android.Manifest.permission#RECEIVE_MEDIA_RESOURCE_USAGE} permission.
+     * </p>
+     *
+     * @hide
+     */
+    public static final String ACTION_MEDIA_RESOURCE_GRANTED =
+            "android.intent.action.MEDIA_RESOURCE_GRANTED";
+
+    /**
+     * Activity Action: Allow the user to select and return one or more existing
+     * documents. When invoked, the system will display the various
+     * {@link DocumentsProvider} instances installed on the device, letting the
+     * user interactively navigate through them. These documents include local
+     * media, such as photos and video, and documents provided by installed
+     * cloud storage providers.
+     * <p>
+     * Each document is represented as a {@code content://} URI backed by a
+     * {@link DocumentsProvider}, which can be opened as a stream with
+     * {@link ContentResolver#openFileDescriptor(Uri, String)}, or queried for
+     * {@link android.provider.DocumentsContract.Document} metadata.
+     * <p>
+     * All selected documents are returned to the calling application with
+     * persistable read and write permission grants. If you want to maintain
+     * access to the documents across device reboots, you need to explicitly
+     * take the persistable permissions using
+     * {@link ContentResolver#takePersistableUriPermission(Uri, int)}.
+     * <p>
+     * Callers must indicate the acceptable document MIME types through
+     * {@link #setType(String)}. For example, to select photos, use
+     * {@code image/*}. If multiple disjoint MIME types are acceptable, define
+     * them in {@link #EXTRA_MIME_TYPES} and {@link #setType(String)} to
+     * {@literal *}/*.
+     * <p>
+     * If the caller can handle multiple returned items (the user performing
+     * multiple selection), then you can specify {@link #EXTRA_ALLOW_MULTIPLE}
+     * to indicate this.
+     * <p>
+     * Callers must include {@link #CATEGORY_OPENABLE} in the Intent to obtain
+     * URIs that can be opened with
+     * {@link ContentResolver#openFileDescriptor(Uri, String)}.
+     * <p>
+     * Output: The URI of the item that was picked, returned in
+     * {@link #getData()}. This must be a {@code content://} URI so that any
+     * receiver can access it. If multiple documents were selected, they are
+     * returned in {@link #getClipData()}.
+     *
+     * @see DocumentsContract
+     * @see #ACTION_OPEN_DOCUMENT_TREE
+     * @see #ACTION_CREATE_DOCUMENT
+     * @see #FLAG_GRANT_PERSISTABLE_URI_PERMISSION
+     */
+    @SdkConstant(SdkConstantType.ACTIVITY_INTENT_ACTION)
+    public static final String ACTION_OPEN_DOCUMENT = "android.intent.action.OPEN_DOCUMENT";
+
+    /**
+     * Activity Action: Allow the user to create a new document. When invoked,
+     * the system will display the various {@link DocumentsProvider} instances
+     * installed on the device, letting the user navigate through them. The
+     * returned document may be a newly created document with no content, or it
+     * may be an existing document with the requested MIME type.
+     * <p>
+     * Each document is represented as a {@code content://} URI backed by a
+     * {@link DocumentsProvider}, which can be opened as a stream with
+     * {@link ContentResolver#openFileDescriptor(Uri, String)}, or queried for
+     * {@link android.provider.DocumentsContract.Document} metadata.
+     * <p>
+     * Callers must indicate the concrete MIME type of the document being
+     * created by setting {@link #setType(String)}. This MIME type cannot be
+     * changed after the document is created.
+     * <p>
+     * Callers can provide an initial display name through {@link #EXTRA_TITLE},
+     * but the user may change this value before creating the file.
+     * <p>
+     * Callers must include {@link #CATEGORY_OPENABLE} in the Intent to obtain
+     * URIs that can be opened with
+     * {@link ContentResolver#openFileDescriptor(Uri, String)}.
+     * <p>
+     * Output: The URI of the item that was created. This must be a
+     * {@code content://} URI so that any receiver can access it.
+     *
+     * @see DocumentsContract
+     * @see #ACTION_OPEN_DOCUMENT
+     * @see #ACTION_OPEN_DOCUMENT_TREE
+     * @see #FLAG_GRANT_PERSISTABLE_URI_PERMISSION
+     */
+    @SdkConstant(SdkConstantType.ACTIVITY_INTENT_ACTION)
+    public static final String ACTION_CREATE_DOCUMENT = "android.intent.action.CREATE_DOCUMENT";
+
+    /**
+     * Activity Action: Allow the user to pick a directory subtree. When
+     * invoked, the system will display the various {@link DocumentsProvider}
+     * instances installed on the device, letting the user navigate through
+     * them. Apps can fully manage documents within the returned directory.
+     * <p>
+     * To gain access to descendant (child, grandchild, etc) documents, use
+     * {@link DocumentsContract#buildDocumentUriUsingTree(Uri, String)} and
+     * {@link DocumentsContract#buildChildDocumentsUriUsingTree(Uri, String)}
+     * with the returned URI.
+     * <p>
+     * Output: The URI representing the selected directory tree.
+     *
+     * @see DocumentsContract
+     */
+    @SdkConstant(SdkConstantType.ACTIVITY_INTENT_ACTION)
+    public static final String
+            ACTION_OPEN_DOCUMENT_TREE = "android.intent.action.OPEN_DOCUMENT_TREE";
+
+    /**
+     * Broadcast Action: List of dynamic sensor is changed due to new sensor being connected or
+     * exisiting sensor being disconnected.
+     *
+     * <p class="note">This is a protected intent that can only be sent by the system.</p>
+     *
+     * {@hide}
+     */
+    @SdkConstant(SdkConstantType.BROADCAST_INTENT_ACTION)
+    public static final String
+            ACTION_DYNAMIC_SENSOR_CHANGED = "android.intent.action.DYNAMIC_SENSOR_CHANGED";
+
+    /** {@hide} */
+    public static final String ACTION_MASTER_CLEAR = "android.intent.action.MASTER_CLEAR";
+
+    /**
+     * Broadcast action: report that a settings element is being restored from backup.  The intent
+     * contains three extras: EXTRA_SETTING_NAME is a string naming the restored setting,
+     * EXTRA_SETTING_NEW_VALUE is the value being restored, and EXTRA_SETTING_PREVIOUS_VALUE
+     * is the value of that settings entry prior to the restore operation.  All of these values are
+     * represented as strings.
+     *
+     * <p>This broadcast is sent only for settings provider entries known to require special handling
+     * around restore time.  These entries are found in the BROADCAST_ON_RESTORE table within
+     * the provider's backup agent implementation.
+     *
+     * @see #EXTRA_SETTING_NAME
+     * @see #EXTRA_SETTING_PREVIOUS_VALUE
+     * @see #EXTRA_SETTING_NEW_VALUE
+     * {@hide}
+     */
+    public static final String ACTION_SETTING_RESTORED = "android.os.action.SETTING_RESTORED";
+
+    /** {@hide} */
+    public static final String EXTRA_SETTING_NAME = "setting_name";
+    /** {@hide} */
+    public static final String EXTRA_SETTING_PREVIOUS_VALUE = "previous_value";
+    /** {@hide} */
+    public static final String EXTRA_SETTING_NEW_VALUE = "new_value";
+
+    /**
+     * Activity Action: Process a piece of text.
+     * <p>Input: {@link #EXTRA_PROCESS_TEXT} contains the text to be processed.
+     * {@link #EXTRA_PROCESS_TEXT_READONLY} states if the resulting text will be read-only.</p>
+     * <p>Output: {@link #EXTRA_PROCESS_TEXT} contains the processed text.</p>
+     */
+    @SdkConstant(SdkConstantType.ACTIVITY_INTENT_ACTION)
+    public static final String ACTION_PROCESS_TEXT = "android.intent.action.PROCESS_TEXT";
+    /**
+     * The name of the extra used to define the text to be processed, as a
+     * CharSequence. Note that this may be a styled CharSequence, so you must use
+     * {@link Bundle#getCharSequence(String) Bundle.getCharSequence()} to retrieve it.
+     */
+    public static final String EXTRA_PROCESS_TEXT = "android.intent.extra.PROCESS_TEXT";
+    /**
+     * The name of the boolean extra used to define if the processed text will be used as read-only.
+     */
+    public static final String EXTRA_PROCESS_TEXT_READONLY =
+            "android.intent.extra.PROCESS_TEXT_READONLY";
+
+    /**
+     * Broadcast action: reports when a new thermal event has been reached. When the device
+     * is reaching its maximum temperatue, the thermal level reported
+     * {@hide}
+     */
+    @SdkConstant(SdkConstantType.ACTIVITY_INTENT_ACTION)
+    public static final String ACTION_THERMAL_EVENT = "android.intent.action.THERMAL_EVENT";
+
+    /** {@hide} */
+    public static final String EXTRA_THERMAL_STATE = "android.intent.extra.THERMAL_STATE";
+
+    /**
+     * Thermal state when the device is normal. This state is sent in the
+     * {@link #ACTION_THERMAL_EVENT} broadcast as {@link #EXTRA_THERMAL_STATE}.
+     * {@hide}
+     */
+    public static final int EXTRA_THERMAL_STATE_NORMAL = 0;
+
+    /**
+     * Thermal state where the device is approaching its maximum threshold. This state is sent in
+     * the {@link #ACTION_THERMAL_EVENT} broadcast as {@link #EXTRA_THERMAL_STATE}.
+     * {@hide}
+     */
+    public static final int EXTRA_THERMAL_STATE_WARNING = 1;
+
+    /**
+     * Thermal state where the device has reached its maximum threshold. This state is sent in the
+     * {@link #ACTION_THERMAL_EVENT} broadcast as {@link #EXTRA_THERMAL_STATE}.
+     * {@hide}
+     */
+    public static final int EXTRA_THERMAL_STATE_EXCEEDED = 2;
+
+
     // ---------------------------------------------------------------------
     // ---------------------------------------------------------------------
     // Standard intent categories (see addCategory()).
@@ -2607,7 +3259,7 @@ public class Intent implements Parcelable, Cloneable {
      * Set if the activity should be an option for the default action
      * (center press) to perform on a piece of data.  Setting this will
      * hide from the user any activities without it set when performing an
-     * action on some data.  Note that this is normal -not- set in the
+     * action on some data.  Note that this is normally -not- set in the
      * Intent when initiating an action -- it is for use in intent filters
      * specified in packages.
      */
@@ -2625,6 +3277,14 @@ public class Intent implements Parcelable, Cloneable {
      */
     @SdkConstant(SdkConstantType.INTENT_CATEGORY)
     public static final String CATEGORY_BROWSABLE = "android.intent.category.BROWSABLE";
+    /**
+     * Categories for activities that can participate in voice interaction.
+     * An activity that supports this category must be prepared to run with
+     * no UI shown at all (though in some case it may have a UI shown), and
+     * rely on {@link android.app.VoiceInteractor} to interact with the user.
+     */
+    @SdkConstant(SdkConstantType.INTENT_CATEGORY)
+    public static final String CATEGORY_VOICE = "android.intent.category.VOICE";
     /**
      * Set if the activity should be considered as an alternative action to
      * the data the user is currently viewing.  See also
@@ -2668,6 +3328,18 @@ public class Intent implements Parcelable, Cloneable {
     @SdkConstant(SdkConstantType.INTENT_CATEGORY)
     public static final String CATEGORY_LAUNCHER = "android.intent.category.LAUNCHER";
     /**
+     * Indicates an activity optimized for Leanback mode, and that should
+     * be displayed in the Leanback launcher.
+     */
+    @SdkConstant(SdkConstantType.INTENT_CATEGORY)
+    public static final String CATEGORY_LEANBACK_LAUNCHER = "android.intent.category.LEANBACK_LAUNCHER";
+    /**
+     * Indicates a Leanback settings activity to be displayed in the Leanback launcher.
+     * @hide
+     */
+    @SystemApi
+    public static final String CATEGORY_LEANBACK_SETTINGS = "android.intent.category.LEANBACK_SETTINGS";
+    /**
      * Provides information about the package it is in; typically used if
      * a package does not contain a {@link #CATEGORY_LAUNCHER} to provide
      * a front-door to the user without having to be shown in the all apps list.
@@ -2680,6 +3352,20 @@ public class Intent implements Parcelable, Cloneable {
      */
     @SdkConstant(SdkConstantType.INTENT_CATEGORY)
     public static final String CATEGORY_HOME = "android.intent.category.HOME";
+    /**
+     * This is the home activity that is displayed when the device is finished setting up and ready
+     * for use.
+     * @hide
+     */
+    @SdkConstant(SdkConstantType.INTENT_CATEGORY)
+    public static final String CATEGORY_HOME_MAIN = "android.intent.category.HOME_MAIN";
+    /**
+     * This is the setup wizard activity, that is the first activity that is displayed
+     * when the user sets up the device for the first time.
+     * @hide
+     */
+    @SdkConstant(SdkConstantType.INTENT_CATEGORY)
+    public static final String CATEGORY_SETUP_WIZARD = "android.intent.category.SETUP_WIZARD";
     /**
      * This activity is a preference panel.
      */
@@ -2718,11 +3404,16 @@ public class Intent implements Parcelable, Cloneable {
      * experience).
      */
     public static final String CATEGORY_SAMPLE_CODE = "android.intent.category.SAMPLE_CODE";
+
     /**
-     * Used to indicate that a GET_CONTENT intent only wants URIs that can be opened with
-     * ContentResolver.openInputStream. Openable URIs must support the columns in
-     * {@link android.provider.OpenableColumns}
-     * when queried, though it is allowable for those columns to be blank.
+     * Used to indicate that an intent only wants URIs that can be opened with
+     * {@link ContentResolver#openFileDescriptor(Uri, String)}. Openable URIs
+     * must support at least the columns defined in {@link OpenableColumns} when
+     * queried.
+     *
+     * @see #ACTION_GET_CONTENT
+     * @see #ACTION_OPEN_DOCUMENT
+     * @see #ACTION_CREATE_DOCUMENT
      */
     @SdkConstant(SdkConstantType.INTENT_CATEGORY)
     public static final String CATEGORY_OPENABLE = "android.intent.category.OPENABLE";
@@ -2939,9 +3630,118 @@ public class Intent implements Parcelable, Cloneable {
 
     /**
      * An Intent describing the choices you would like shown with
-     * {@link #ACTION_PICK_ACTIVITY}.
+     * {@link #ACTION_PICK_ACTIVITY} or {@link #ACTION_CHOOSER}.
      */
     public static final String EXTRA_INTENT = "android.intent.extra.INTENT";
+
+    /**
+     * An int representing the user id to be used.
+     *
+     * @hide
+     */
+    public static final String EXTRA_USER_ID = "android.intent.extra.USER_ID";
+
+    /**
+     * An int representing the task id to be retrieved. This is used when a launch from recents is
+     * intercepted by another action such as credentials confirmation to remember which task should
+     * be resumed when complete.
+     *
+     * @hide
+     */
+    public static final String EXTRA_TASK_ID = "android.intent.extra.TASK_ID";
+
+    /**
+     * An Intent[] describing additional, alternate choices you would like shown with
+     * {@link #ACTION_CHOOSER}.
+     *
+     * <p>An app may be capable of providing several different payload types to complete a
+     * user's intended action. For example, an app invoking {@link #ACTION_SEND} to share photos
+     * with another app may use EXTRA_ALTERNATE_INTENTS to have the chooser transparently offer
+     * several different supported sending mechanisms for sharing, such as the actual "image/*"
+     * photo data or a hosted link where the photos can be viewed.</p>
+     *
+     * <p>The intent present in {@link #EXTRA_INTENT} will be treated as the
+     * first/primary/preferred intent in the set. Additional intents specified in
+     * this extra are ordered; by default intents that appear earlier in the array will be
+     * preferred over intents that appear later in the array as matches for the same
+     * target component. To alter this preference, a calling app may also supply
+     * {@link #EXTRA_CHOOSER_REFINEMENT_INTENT_SENDER}.</p>
+     */
+    public static final String EXTRA_ALTERNATE_INTENTS = "android.intent.extra.ALTERNATE_INTENTS";
+
+    /**
+     * A {@link ComponentName ComponentName[]} describing components that should be filtered out
+     * and omitted from a list of components presented to the user.
+     *
+     * <p>When used with {@link #ACTION_CHOOSER}, the chooser will omit any of the components
+     * in this array if it otherwise would have shown them. Useful for omitting specific targets
+     * from your own package or other apps from your organization if the idea of sending to those
+     * targets would be redundant with other app functionality. Filtered components will not
+     * be able to present targets from an associated <code>ChooserTargetService</code>.</p>
+     */
+    public static final String EXTRA_EXCLUDE_COMPONENTS
+            = "android.intent.extra.EXCLUDE_COMPONENTS";
+
+    /**
+     * A {@link android.service.chooser.ChooserTarget ChooserTarget[]} for {@link #ACTION_CHOOSER}
+     * describing additional high-priority deep-link targets for the chooser to present to the user.
+     *
+     * <p>Targets provided in this way will be presented inline with all other targets provided
+     * by services from other apps. They will be prioritized before other service targets, but
+     * after those targets provided by sources that the user has manually pinned to the front.</p>
+     *
+     * @see #ACTION_CHOOSER
+     */
+    public static final String EXTRA_CHOOSER_TARGETS = "android.intent.extra.CHOOSER_TARGETS";
+
+    /**
+     * An {@link IntentSender} for an Activity that will be invoked when the user makes a selection
+     * from the chooser activity presented by {@link #ACTION_CHOOSER}.
+     *
+     * <p>An app preparing an action for another app to complete may wish to allow the user to
+     * disambiguate between several options for completing the action based on the chosen target
+     * or otherwise refine the action before it is invoked.
+     * </p>
+     *
+     * <p>When sent, this IntentSender may be filled in with the following extras:</p>
+     * <ul>
+     *     <li>{@link #EXTRA_INTENT} The first intent that matched the user's chosen target</li>
+     *     <li>{@link #EXTRA_ALTERNATE_INTENTS} Any additional intents that also matched the user's
+     *     chosen target beyond the first</li>
+     *     <li>{@link #EXTRA_RESULT_RECEIVER} A {@link ResultReceiver} that the refinement activity
+     *     should fill in and send once the disambiguation is complete</li>
+     * </ul>
+     */
+    public static final String EXTRA_CHOOSER_REFINEMENT_INTENT_SENDER
+            = "android.intent.extra.CHOOSER_REFINEMENT_INTENT_SENDER";
+
+    /**
+     * A {@link ResultReceiver} used to return data back to the sender.
+     *
+     * <p>Used to complete an app-specific
+     * {@link #EXTRA_CHOOSER_REFINEMENT_INTENT_SENDER refinement} for {@link #ACTION_CHOOSER}.</p>
+     *
+     * <p>If {@link #EXTRA_CHOOSER_REFINEMENT_INTENT_SENDER} is present in the intent
+     * used to start a {@link #ACTION_CHOOSER} activity this extra will be
+     * {@link #fillIn(Intent, int) filled in} to that {@link IntentSender} and sent
+     * when the user selects a target component from the chooser. It is up to the recipient
+     * to send a result to this ResultReceiver to signal that disambiguation is complete
+     * and that the chooser should invoke the user's choice.</p>
+     *
+     * <p>The disambiguator should provide a Bundle to the ResultReceiver with an intent
+     * assigned to the key {@link #EXTRA_INTENT}. This supplied intent will be used by the chooser
+     * to match and fill in the final Intent or ChooserTarget before starting it.
+     * The supplied intent must {@link #filterEquals(Intent) match} one of the intents from
+     * {@link #EXTRA_INTENT} or {@link #EXTRA_ALTERNATE_INTENTS} passed to
+     * {@link #EXTRA_CHOOSER_REFINEMENT_INTENT_SENDER} to be accepted.</p>
+     *
+     * <p>The result code passed to the ResultReceiver should be
+     * {@link android.app.Activity#RESULT_OK} if the refinement succeeded and the supplied intent's
+     * target in the chooser should be started, or {@link android.app.Activity#RESULT_CANCELED} if
+     * the chooser should finish without starting a target.</p>
+     */
+    public static final String EXTRA_RESULT_RECEIVER
+            = "android.intent.extra.RESULT_RECEIVER";
 
     /**
      * A CharSequence dialog title to provide to the user when used with a
@@ -2959,6 +3759,65 @@ public class Intent implements Parcelable, Cloneable {
     public static final String EXTRA_INITIAL_INTENTS = "android.intent.extra.INITIAL_INTENTS";
 
     /**
+     * A {@link IntentSender} to start after ephemeral installation success.
+     * @hide
+     */
+    public static final String EXTRA_EPHEMERAL_SUCCESS = "android.intent.extra.EPHEMERAL_SUCCESS";
+
+    /**
+     * A {@link IntentSender} to start after ephemeral installation failure.
+     * @hide
+     */
+    public static final String EXTRA_EPHEMERAL_FAILURE = "android.intent.extra.EPHEMERAL_FAILURE";
+
+    /**
+     * A Bundle forming a mapping of potential target package names to different extras Bundles
+     * to add to the default intent extras in {@link #EXTRA_INTENT} when used with
+     * {@link #ACTION_CHOOSER}. Each key should be a package name. The package need not
+     * be currently installed on the device.
+     *
+     * <p>An application may choose to provide alternate extras for the case where a user
+     * selects an activity from a predetermined set of target packages. If the activity
+     * the user selects from the chooser belongs to a package with its package name as
+     * a key in this bundle, the corresponding extras for that package will be merged with
+     * the extras already present in the intent at {@link #EXTRA_INTENT}. If a replacement
+     * extra has the same key as an extra already present in the intent it will overwrite
+     * the extra from the intent.</p>
+     *
+     * <p><em>Examples:</em>
+     * <ul>
+     *     <li>An application may offer different {@link #EXTRA_TEXT} to an application
+     *     when sharing with it via {@link #ACTION_SEND}, augmenting a link with additional query
+     *     parameters for that target.</li>
+     *     <li>An application may offer additional metadata for known targets of a given intent
+     *     to pass along information only relevant to that target such as account or content
+     *     identifiers already known to that application.</li>
+     * </ul></p>
+     */
+    public static final String EXTRA_REPLACEMENT_EXTRAS =
+            "android.intent.extra.REPLACEMENT_EXTRAS";
+
+    /**
+     * An {@link IntentSender} that will be notified if a user successfully chooses a target
+     * component to handle an action in an {@link #ACTION_CHOOSER} activity. The IntentSender
+     * will have the extra {@link #EXTRA_CHOSEN_COMPONENT} appended to it containing the
+     * {@link ComponentName} of the chosen component.
+     *
+     * <p>In some situations this callback may never come, for example if the user abandons
+     * the chooser, switches to another task or any number of other reasons. Apps should not
+     * be written assuming that this callback will always occur.</p>
+     */
+    public static final String EXTRA_CHOSEN_COMPONENT_INTENT_SENDER =
+            "android.intent.extra.CHOSEN_COMPONENT_INTENT_SENDER";
+
+    /**
+     * The {@link ComponentName} chosen by the user to complete an action.
+     *
+     * @see #EXTRA_CHOSEN_COMPONENT_INTENT_SENDER
+     */
+    public static final String EXTRA_CHOSEN_COMPONENT = "android.intent.extra.CHOSEN_COMPONENT";
+
+    /**
      * A {@link android.view.KeyEvent} object containing the event that
      * triggered the creation of the Intent it is in.
      */
@@ -2971,6 +3830,15 @@ public class Intent implements Parcelable, Cloneable {
      * {@hide}
      */
     public static final String EXTRA_KEY_CONFIRM = "android.intent.extra.KEY_CONFIRM";
+
+    /**
+     * Set to true in {@link #ACTION_REQUEST_SHUTDOWN} to indicate that the shutdown is
+     * requested by the user.
+     *
+     * {@hide}
+     */
+    public static final String EXTRA_USER_REQUESTED_SHUTDOWN =
+            "android.intent.extra.USER_REQUESTED_SHUTDOWN";
 
     /**
      * Used as a boolean extra field in {@link android.content.Intent#ACTION_PACKAGE_REMOVED} or
@@ -2998,6 +3866,7 @@ public class Intent implements Parcelable, Cloneable {
     /**
      * @hide String array of package names.
      */
+    @SystemApi
     public static final String EXTRA_PACKAGES = "android.intent.extra.PACKAGES";
 
     /**
@@ -3114,7 +3983,9 @@ public class Intent implements Parcelable, Cloneable {
     /**
      * This field is part of
      * {@link android.content.Intent#ACTION_EXTERNAL_APPLICATIONS_AVAILABLE},
-     * {@link android.content.Intent#ACTION_EXTERNAL_APPLICATIONS_UNAVAILABLE}
+     * {@link android.content.Intent#ACTION_EXTERNAL_APPLICATIONS_UNAVAILABLE},
+     * {@link android.content.Intent#ACTION_PACKAGES_SUSPENDED},
+     * {@link android.content.Intent#ACTION_PACKAGES_UNSUSPENDED}
      * and contains a string array of all of the components that have changed.
      */
     public static final String EXTRA_CHANGED_PACKAGE_LIST =
@@ -3149,36 +4020,50 @@ public class Intent implements Parcelable, Cloneable {
             "android.intent.extra.client_intent";
 
     /**
-     * Used to indicate that a {@link #ACTION_GET_CONTENT} intent should only return
-     * data that is on the local device.  This is a boolean extra; the default
-     * is false.  If true, an implementation of ACTION_GET_CONTENT should only allow
-     * the user to select media that is already on the device, not requiring it
-     * be downloaded from a remote service when opened.  Another way to look
-     * at it is that such content should generally have a "_data" column to the
-     * path of the content on local external storage.
+     * Extra used to indicate that an intent should only return data that is on
+     * the local device. This is a boolean extra; the default is false. If true,
+     * an implementation should only allow the user to select data that is
+     * already on the device, not requiring it be downloaded from a remote
+     * service when opened.
+     *
+     * @see #ACTION_GET_CONTENT
+     * @see #ACTION_OPEN_DOCUMENT
+     * @see #ACTION_OPEN_DOCUMENT_TREE
+     * @see #ACTION_CREATE_DOCUMENT
      */
     public static final String EXTRA_LOCAL_ONLY =
-        "android.intent.extra.LOCAL_ONLY";
+            "android.intent.extra.LOCAL_ONLY";
 
     /**
-     * Used to indicate that a {@link #ACTION_GET_CONTENT} intent can allow the
-     * user to select and return multiple items.  This is a boolean extra; the default
-     * is false.  If true, an implementation of ACTION_GET_CONTENT is allowed to
-     * present the user with a UI where they can pick multiple items that are all
-     * returned to the caller.  When this happens, they should be returned as
-     * the {@link #getClipData()} part of the result Intent.
+     * Extra used to indicate that an intent can allow the user to select and
+     * return multiple items. This is a boolean extra; the default is false. If
+     * true, an implementation is allowed to present the user with a UI where
+     * they can pick multiple items that are all returned to the caller. When
+     * this happens, they should be returned as the {@link #getClipData()} part
+     * of the result Intent.
+     *
+     * @see #ACTION_GET_CONTENT
+     * @see #ACTION_OPEN_DOCUMENT
      */
     public static final String EXTRA_ALLOW_MULTIPLE =
-        "android.intent.extra.ALLOW_MULTIPLE";
+            "android.intent.extra.ALLOW_MULTIPLE";
 
     /**
-     * The userHandle carried with broadcast intents related to addition, removal and switching of
-     * users
-     * - {@link #ACTION_USER_ADDED}, {@link #ACTION_USER_REMOVED} and {@link #ACTION_USER_SWITCHED}.
+     * The integer userHandle carried with broadcast intents related to addition, removal and
+     * switching of users and managed profiles - {@link #ACTION_USER_ADDED},
+     * {@link #ACTION_USER_REMOVED} and {@link #ACTION_USER_SWITCHED}.
+     *
      * @hide
      */
     public static final String EXTRA_USER_HANDLE =
             "android.intent.extra.user_handle";
+
+    /**
+     * The UserHandle carried with broadcasts intents related to addition and removal of managed
+     * profiles - {@link #ACTION_MANAGED_PROFILE_ADDED} and {@link #ACTION_MANAGED_PROFILE_REMOVED}.
+     */
+    public static final String EXTRA_USER =
+            "android.intent.extra.USER";
 
     /**
      * Extra used in the response from a BroadcastReceiver that handles
@@ -3202,13 +4087,125 @@ public class Intent implements Parcelable, Cloneable {
     public static final String EXTRA_RESTRICTIONS_INTENT =
             "android.intent.extra.restrictions_intent";
 
+    /**
+     * Extra used to communicate a set of acceptable MIME types. The type of the
+     * extra is {@code String[]}. Values may be a combination of concrete MIME
+     * types (such as "image/png") and/or partial MIME types (such as
+     * "audio/*").
+     *
+     * @see #ACTION_GET_CONTENT
+     * @see #ACTION_OPEN_DOCUMENT
+     */
+    public static final String EXTRA_MIME_TYPES = "android.intent.extra.MIME_TYPES";
+
+    /**
+     * Optional extra for {@link #ACTION_SHUTDOWN} that allows the sender to qualify that
+     * this shutdown is only for the user space of the system, not a complete shutdown.
+     * When this is true, hardware devices can use this information to determine that
+     * they shouldn't do a complete shutdown of their device since this is not a
+     * complete shutdown down to the kernel, but only user space restarting.
+     * The default if not supplied is false.
+     */
+    public static final String EXTRA_SHUTDOWN_USERSPACE_ONLY
+            = "android.intent.extra.SHUTDOWN_USERSPACE_ONLY";
+
+    /**
+     * Optional boolean extra for {@link #ACTION_TIME_CHANGED} that indicates the
+     * user has set their time format preferences to the 24 hour format.
+     *
+     * @hide for internal use only.
+     */
+    public static final String EXTRA_TIME_PREF_24_HOUR_FORMAT =
+            "android.intent.extra.TIME_PREF_24_HOUR_FORMAT";
+
+    /** {@hide} */
+    public static final String EXTRA_REASON = "android.intent.extra.REASON";
+
+    /** {@hide} */
+    public static final String EXTRA_WIPE_EXTERNAL_STORAGE = "android.intent.extra.WIPE_EXTERNAL_STORAGE";
+
+    /**
+     * Optional {@link android.app.PendingIntent} extra used to deliver the result of the SIM
+     * activation request.
+     * TODO: Add information about the structure and response data used with the pending intent.
+     * @hide
+     */
+    public static final String EXTRA_SIM_ACTIVATION_RESPONSE =
+            "android.intent.extra.SIM_ACTIVATION_RESPONSE";
+
+    /**
+     * Optional index with semantics depending on the intent action.
+     *
+     * <p>The value must be an integer greater or equal to 0.
+     */
+    public static final String EXTRA_INDEX = "android.intent.extra.INDEX";
+
+    /**
+     * Optional boolean extra indicating whether quiet mode has been switched on or off.
+     * When a profile goes into quiet mode, all apps in the profile are killed and the
+     * profile user is stopped. Widgets originating from the profile are masked, and app
+     * launcher icons are grayed out.
+     */
+    public static final String EXTRA_QUIET_MODE = "android.intent.extra.QUIET_MODE";
+
+    /**
+     * Used as an int extra field in {@link #ACTION_MEDIA_RESOURCE_GRANTED}
+     * intents to specify the resource type granted. Possible values are
+     * {@link #EXTRA_MEDIA_RESOURCE_TYPE_VIDEO_CODEC} or
+     * {@link #EXTRA_MEDIA_RESOURCE_TYPE_AUDIO_CODEC}.
+     *
+     * @hide
+     */
+    public static final String EXTRA_MEDIA_RESOURCE_TYPE =
+            "android.intent.extra.MEDIA_RESOURCE_TYPE";
+
+    /**
+     * Used as an int value for {@link #EXTRA_MEDIA_RESOURCE_TYPE}
+     * to represent that a video codec is allowed to use.
+     *
+     * @hide
+     */
+    public static final int EXTRA_MEDIA_RESOURCE_TYPE_VIDEO_CODEC = 0;
+
+    /**
+     * Used as an int value for {@link #EXTRA_MEDIA_RESOURCE_TYPE}
+     * to represent that a audio codec is allowed to use.
+     *
+     * @hide
+     */
+    public static final int EXTRA_MEDIA_RESOURCE_TYPE_AUDIO_CODEC = 1;
+
     // ---------------------------------------------------------------------
     // ---------------------------------------------------------------------
     // Intent flags (see mFlags variable).
 
+    /** @hide */
+    @IntDef(flag = true, value = {
+            FLAG_GRANT_READ_URI_PERMISSION, FLAG_GRANT_WRITE_URI_PERMISSION,
+            FLAG_GRANT_PERSISTABLE_URI_PERMISSION, FLAG_GRANT_PREFIX_URI_PERMISSION })
+    @Retention(RetentionPolicy.SOURCE)
+    public @interface GrantUriMode {}
+
+    /** @hide */
+    @IntDef(flag = true, value = {
+            FLAG_GRANT_READ_URI_PERMISSION, FLAG_GRANT_WRITE_URI_PERMISSION })
+    @Retention(RetentionPolicy.SOURCE)
+    public @interface AccessUriMode {}
+
+    /**
+     * Test if given mode flags specify an access mode, which must be at least
+     * read and/or write.
+     *
+     * @hide
+     */
+    public static boolean isAccessUriMode(int modeFlags) {
+        return (modeFlags & (Intent.FLAG_GRANT_READ_URI_PERMISSION
+                | Intent.FLAG_GRANT_WRITE_URI_PERMISSION)) != 0;
+    }
+
     /**
      * If set, the recipient of this Intent will be granted permission to
-     * perform read operations on the Uri in the Intent's data and any URIs
+     * perform read operations on the URI in the Intent's data and any URIs
      * specified in its ClipData.  When applying to an Intent's ClipData,
      * all URIs as well as recursive traversals through data or other ClipData
      * in Intent items will be granted; only the grant flags of the top-level
@@ -3217,7 +4214,7 @@ public class Intent implements Parcelable, Cloneable {
     public static final int FLAG_GRANT_READ_URI_PERMISSION = 0x00000001;
     /**
      * If set, the recipient of this Intent will be granted permission to
-     * perform write operations on the Uri in the Intent's data and any URIs
+     * perform write operations on the URI in the Intent's data and any URIs
      * specified in its ClipData.  When applying to an Intent's ClipData,
      * all URIs as well as recursive traversals through data or other ClipData
      * in Intent items will be granted; only the grant flags of the top-level
@@ -3251,10 +4248,56 @@ public class Intent implements Parcelable, Cloneable {
     public static final int FLAG_INCLUDE_STOPPED_PACKAGES = 0x00000020;
 
     /**
+     * When combined with {@link #FLAG_GRANT_READ_URI_PERMISSION} and/or
+     * {@link #FLAG_GRANT_WRITE_URI_PERMISSION}, the URI permission grant can be
+     * persisted across device reboots until explicitly revoked with
+     * {@link Context#revokeUriPermission(Uri, int)}. This flag only offers the
+     * grant for possible persisting; the receiving application must call
+     * {@link ContentResolver#takePersistableUriPermission(Uri, int)} to
+     * actually persist.
+     *
+     * @see ContentResolver#takePersistableUriPermission(Uri, int)
+     * @see ContentResolver#releasePersistableUriPermission(Uri, int)
+     * @see ContentResolver#getPersistedUriPermissions()
+     * @see ContentResolver#getOutgoingPersistedUriPermissions()
+     */
+    public static final int FLAG_GRANT_PERSISTABLE_URI_PERMISSION = 0x00000040;
+
+    /**
+     * When combined with {@link #FLAG_GRANT_READ_URI_PERMISSION} and/or
+     * {@link #FLAG_GRANT_WRITE_URI_PERMISSION}, the URI permission grant
+     * applies to any URI that is a prefix match against the original granted
+     * URI. (Without this flag, the URI must match exactly for access to be
+     * granted.) Another URI is considered a prefix match only when scheme,
+     * authority, and all path segments defined by the prefix are an exact
+     * match.
+     */
+    public static final int FLAG_GRANT_PREFIX_URI_PERMISSION = 0x00000080;
+
+    /**
+     * Internal flag used to indicate that a system component has done their
+     * homework and verified that they correctly handle packages and components
+     * that come and go over time. In particular:
+     * <ul>
+     * <li>Apps installed on external storage, which will appear to be
+     * uninstalled while the the device is ejected.
+     * <li>Apps with encryption unaware components, which will appear to not
+     * exist while the device is locked.
+     * </ul>
+     *
+     * @hide
+     */
+    public static final int FLAG_DEBUG_TRIAGED_MISSING = 0x00000100;
+
+    /**
      * If set, the new activity is not kept in the history stack.  As soon as
      * the user navigates away from it, the activity is finished.  This may also
      * be set with the {@link android.R.styleable#AndroidManifestActivity_noHistory
      * noHistory} attribute.
+     *
+     * <p>If set, {@link android.app.Activity#onActivityResult onActivityResult()}
+     * is never invoked when the current activity starts a new activity which
+     * sets a result and finishes.
      */
     public static final int FLAG_ACTIVITY_NO_HISTORY = 0x40000000;
     /**
@@ -3288,7 +4331,16 @@ public class Intent implements Parcelable, Cloneable {
      */
     public static final int FLAG_ACTIVITY_NEW_TASK = 0x10000000;
     /**
-     * <strong>Do not use this flag unless you are implementing your own
+     * This flag is used to create a new task and launch an activity into it.
+     * This flag is always paired with either {@link #FLAG_ACTIVITY_NEW_DOCUMENT}
+     * or {@link #FLAG_ACTIVITY_NEW_TASK}. In both cases these flags alone would
+     * search through existing tasks for ones matching this Intent. Only if no such
+     * task is found would a new task be created. When paired with
+     * FLAG_ACTIVITY_MULTIPLE_TASK both of these behaviors are modified to skip
+     * the search for a matching task and unconditionally start a new task.
+     *
+     * <strong>When used with {@link #FLAG_ACTIVITY_NEW_TASK} do not use this
+     * flag unless you are implementing your own
      * top-level application launcher.</strong>  Used in conjunction with
      * {@link #FLAG_ACTIVITY_NEW_TASK} to disable the
      * behavior of bringing an existing task to the foreground.  When set,
@@ -3300,12 +4352,18 @@ public class Intent implements Parcelable, Cloneable {
      * you should not use this flag unless you provide some way for a user to
      * return back to the tasks you have launched.</strong>
      *
-     * <p>This flag is ignored if
-     * {@link #FLAG_ACTIVITY_NEW_TASK} is not set.
+     * See {@link #FLAG_ACTIVITY_NEW_DOCUMENT} for details of this flag's use for
+     * creating new document tasks.
+     *
+     * <p>This flag is ignored if one of {@link #FLAG_ACTIVITY_NEW_TASK} or
+     * {@link #FLAG_ACTIVITY_NEW_DOCUMENT} is not also set.
      *
      * <p>See
      * <a href="{@docRoot}guide/topics/fundamentals/tasks-and-back-stack.html">Tasks and Back
      * Stack</a> for more information about tasks.
+     *
+     * @see #FLAG_ACTIVITY_NEW_DOCUMENT
+     * @see #FLAG_ACTIVITY_NEW_TASK
      */
     public static final int FLAG_ACTIVITY_MULTIPLE_TASK = 0x08000000;
     /**
@@ -3385,27 +4443,42 @@ public class Intent implements Parcelable, Cloneable {
      */
     public static final int FLAG_ACTIVITY_LAUNCHED_FROM_HISTORY = 0x00100000;
     /**
-     * If set, this marks a point in the task's activity stack that should
-     * be cleared when the task is reset.  That is, the next time the task
-     * is brought to the foreground with
-     * {@link #FLAG_ACTIVITY_RESET_TASK_IF_NEEDED} (typically as a result of
-     * the user re-launching it from home), this activity and all on top of
-     * it will be finished so that the user does not return to them, but
-     * instead returns to whatever activity preceeded it.
-     *
-     * <p>This is useful for cases where you have a logical break in your
-     * application.  For example, an e-mail application may have a command
-     * to view an attachment, which launches an image view activity to
-     * display it.  This activity should be part of the e-mail application's
-     * task, since it is a part of the task the user is involved in.  However,
-     * if the user leaves that task, and later selects the e-mail app from
-     * home, we may like them to return to the conversation they were
-     * viewing, not the picture attachment, since that is confusing.  By
-     * setting this flag when launching the image viewer, that viewer and
-     * any activities it starts will be removed the next time the user returns
-     * to mail.
+     * @deprecated As of API 21 this performs identically to
+     * {@link #FLAG_ACTIVITY_NEW_DOCUMENT} which should be used instead of this.
      */
     public static final int FLAG_ACTIVITY_CLEAR_WHEN_TASK_RESET = 0x00080000;
+    /**
+     * This flag is used to open a document into a new task rooted at the activity launched
+     * by this Intent. Through the use of this flag, or its equivalent attribute,
+     * {@link android.R.attr#documentLaunchMode} multiple instances of the same activity
+     * containing different documents will appear in the recent tasks list.
+     *
+     * <p>The use of the activity attribute form of this,
+     * {@link android.R.attr#documentLaunchMode}, is
+     * preferred over the Intent flag described here. The attribute form allows the
+     * Activity to specify multiple document behavior for all launchers of the Activity
+     * whereas using this flag requires each Intent that launches the Activity to specify it.
+     *
+     * <p>Note that the default semantics of this flag w.r.t. whether the recents entry for
+     * it is kept after the activity is finished is different than the use of
+     * {@link #FLAG_ACTIVITY_NEW_TASK} and {@link android.R.attr#documentLaunchMode} -- if
+     * this flag is being used to create a new recents entry, then by default that entry
+     * will be removed once the activity is finished.  You can modify this behavior with
+     * {@link #FLAG_ACTIVITY_RETAIN_IN_RECENTS}.
+     *
+     * <p>FLAG_ACTIVITY_NEW_DOCUMENT may be used in conjunction with {@link
+     * #FLAG_ACTIVITY_MULTIPLE_TASK}. When used alone it is the
+     * equivalent of the Activity manifest specifying {@link
+     * android.R.attr#documentLaunchMode}="intoExisting". When used with
+     * FLAG_ACTIVITY_MULTIPLE_TASK it is the equivalent of the Activity manifest specifying
+     * {@link android.R.attr#documentLaunchMode}="always".
+     *
+     * Refer to {@link android.R.attr#documentLaunchMode} for more information.
+     *
+     * @see android.R.attr#documentLaunchMode
+     * @see #FLAG_ACTIVITY_MULTIPLE_TASK
+     */
+    public static final int FLAG_ACTIVITY_NEW_DOCUMENT = FLAG_ACTIVITY_CLEAR_WHEN_TASK_RESET;
     /**
      * If set, this flag will prevent the normal {@link android.app.Activity#onUserLeaveHint}
      * callback from occurring on the current frontmost activity before it is
@@ -3466,6 +4539,30 @@ public class Intent implements Parcelable, Cloneable {
      */
     public static final int FLAG_ACTIVITY_TASK_ON_HOME = 0X00004000;
     /**
+     * By default a document created by {@link #FLAG_ACTIVITY_NEW_DOCUMENT} will
+     * have its entry in recent tasks removed when the user closes it (with back
+     * or however else it may finish()). If you would like to instead allow the
+     * document to be kept in recents so that it can be re-launched, you can use
+     * this flag. When set and the task's activity is finished, the recents
+     * entry will remain in the interface for the user to re-launch it, like a
+     * recents entry for a top-level application.
+     * <p>
+     * The receiving activity can override this request with
+     * {@link android.R.attr#autoRemoveFromRecents} or by explcitly calling
+     * {@link android.app.Activity#finishAndRemoveTask()
+     * Activity.finishAndRemoveTask()}.
+     */
+    public static final int FLAG_ACTIVITY_RETAIN_IN_RECENTS = 0x00002000;
+
+    /**
+     * This flag is only used in split-screen multi-window mode. The new activity will be displayed
+     * adjacent to the one launching it. This can only be used in conjunction with
+     * {@link #FLAG_ACTIVITY_NEW_TASK}. Also, setting {@link #FLAG_ACTIVITY_MULTIPLE_TASK} is
+     * required if you want a new instance of an existing activity to be created.
+     */
+    public static final int FLAG_ACTIVITY_LAUNCH_ADJACENT = 0x00001000;
+
+    /**
      * If set, when sending a broadcast only registered receivers will be
      * called -- no BroadcastReceiver components will be launched.
      */
@@ -3492,6 +4589,12 @@ public class Intent implements Parcelable, Cloneable {
      */
     public static final int FLAG_RECEIVER_FOREGROUND = 0x10000000;
     /**
+     * If this is an ordered broadcast, don't allow receivers to abort the broadcast.
+     * They can still propagate results through to later receivers, but they can not prevent
+     * later receivers from seeing the broadcast.
+     */
+    public static final int FLAG_RECEIVER_NO_ABORT = 0x08000000;
+    /**
      * If set, when sending a broadcast <i>before boot has completed</i> only
      * registered receivers will be called -- no BroadcastReceiver components
      * will be launched.  Sticky intent state will be recorded properly even
@@ -3504,21 +4607,37 @@ public class Intent implements Parcelable, Cloneable {
      *
      * @hide
      */
-    public static final int FLAG_RECEIVER_REGISTERED_ONLY_BEFORE_BOOT = 0x08000000;
+    public static final int FLAG_RECEIVER_REGISTERED_ONLY_BEFORE_BOOT = 0x04000000;
     /**
      * Set when this broadcast is for a boot upgrade, a special mode that
      * allows the broadcast to be sent before the system is ready and launches
      * the app process with no providers running in it.
      * @hide
      */
-    public static final int FLAG_RECEIVER_BOOT_UPGRADE = 0x04000000;
+    public static final int FLAG_RECEIVER_BOOT_UPGRADE = 0x02000000;
+    /**
+     * If set, the broadcast will always go to manifest receivers in background (cached
+     * or not running) apps, regardless of whether that would be done by default.  By
+     * default they will only receive broadcasts if the broadcast has specified an
+     * explicit component or package name.
+     * @hide
+     */
+    public static final int FLAG_RECEIVER_INCLUDE_BACKGROUND = 0x01000000;
+    /**
+     * If set, the broadcast will never go to manifest receivers in background (cached
+     * or not running) apps, regardless of whether that would be done by default.  By
+     * default they will receive broadcasts if the broadcast has specified an
+     * explicit component or package name.
+     * @hide
+     */
+    public static final int FLAG_RECEIVER_EXCLUDE_BACKGROUND = 0x00800000;
 
     /**
      * @hide Flags that can't be changed with PendingIntent.
      */
-    public static final int IMMUTABLE_FLAGS =
-            FLAG_GRANT_READ_URI_PERMISSION
-            | FLAG_GRANT_WRITE_URI_PERMISSION;
+    public static final int IMMUTABLE_FLAGS = FLAG_GRANT_READ_URI_PERMISSION
+            | FLAG_GRANT_WRITE_URI_PERMISSION | FLAG_GRANT_PERSISTABLE_URI_PERMISSION
+            | FLAG_GRANT_PREFIX_URI_PERMISSION;
 
     // ---------------------------------------------------------------------
     // ---------------------------------------------------------------------
@@ -3534,6 +4653,91 @@ public class Intent implements Parcelable, Cloneable {
      */
     public static final int URI_INTENT_SCHEME = 1<<0;
 
+    /**
+     * Flag for use with {@link #toUri} and {@link #parseUri}: the URI string
+     * always has the "android-app:" scheme.  This is a variation of
+     * {@link #URI_INTENT_SCHEME} whose format is simpler for the case of an
+     * http/https URI being delivered to a specific package name.  The format
+     * is:
+     *
+     * <pre class="prettyprint">
+     * android-app://{package_id}[/{scheme}[/{host}[/{path}]]][#Intent;{...}]</pre>
+     *
+     * <p>In this scheme, only the <code>package_id</code> is required.  If you include a host,
+     * you must also include a scheme; including a path also requires both a host and a scheme.
+     * The final #Intent; fragment can be used without a scheme, host, or path.
+     * Note that this can not be
+     * used with intents that have a {@link #setSelector}, since the base intent
+     * will always have an explicit package name.</p>
+     *
+     * <p>Some examples of how this scheme maps to Intent objects:</p>
+     * <table border="2" width="85%" align="center" frame="hsides" rules="rows">
+     *     <colgroup align="left" />
+     *     <colgroup align="left" />
+     *     <thead>
+     *     <tr><th>URI</th> <th>Intent</th></tr>
+     *     </thead>
+     *
+     *     <tbody>
+     *     <tr><td><code>android-app://com.example.app</code></td>
+     *         <td><table style="margin:0;border:0;cellpadding:0;cellspacing:0">
+     *             <tr><td>Action: </td><td>{@link #ACTION_MAIN}</td></tr>
+     *             <tr><td>Package: </td><td><code>com.example.app</code></td></tr>
+     *         </table></td>
+     *     </tr>
+     *     <tr><td><code>android-app://com.example.app/http/example.com</code></td>
+     *         <td><table style="margin:0;border:0;cellpadding:0;cellspacing:0">
+     *             <tr><td>Action: </td><td>{@link #ACTION_VIEW}</td></tr>
+     *             <tr><td>Data: </td><td><code>http://example.com/</code></td></tr>
+     *             <tr><td>Package: </td><td><code>com.example.app</code></td></tr>
+     *         </table></td>
+     *     </tr>
+     *     <tr><td><code>android-app://com.example.app/http/example.com/foo?1234</code></td>
+     *         <td><table style="margin:0;border:0;cellpadding:0;cellspacing:0">
+     *             <tr><td>Action: </td><td>{@link #ACTION_VIEW}</td></tr>
+     *             <tr><td>Data: </td><td><code>http://example.com/foo?1234</code></td></tr>
+     *             <tr><td>Package: </td><td><code>com.example.app</code></td></tr>
+     *         </table></td>
+     *     </tr>
+     *     <tr><td><code>android-app://com.example.app/<br />#Intent;action=com.example.MY_ACTION;end</code></td>
+     *         <td><table style="margin:0;border:0;cellpadding:0;cellspacing:0">
+     *             <tr><td>Action: </td><td><code>com.example.MY_ACTION</code></td></tr>
+     *             <tr><td>Package: </td><td><code>com.example.app</code></td></tr>
+     *         </table></td>
+     *     </tr>
+     *     <tr><td><code>android-app://com.example.app/http/example.com/foo?1234<br />#Intent;action=com.example.MY_ACTION;end</code></td>
+     *         <td><table style="margin:0;border:0;cellpadding:0;cellspacing:0">
+     *             <tr><td>Action: </td><td><code>com.example.MY_ACTION</code></td></tr>
+     *             <tr><td>Data: </td><td><code>http://example.com/foo?1234</code></td></tr>
+     *             <tr><td>Package: </td><td><code>com.example.app</code></td></tr>
+     *         </table></td>
+     *     </tr>
+     *     <tr><td><code>android-app://com.example.app/<br />#Intent;action=com.example.MY_ACTION;<br />i.some_int=100;S.some_str=hello;end</code></td>
+     *         <td><table border="" style="margin:0" >
+     *             <tr><td>Action: </td><td><code>com.example.MY_ACTION</code></td></tr>
+     *             <tr><td>Package: </td><td><code>com.example.app</code></td></tr>
+     *             <tr><td>Extras: </td><td><code>some_int=(int)100<br />some_str=(String)hello</code></td></tr>
+     *         </table></td>
+     *     </tr>
+     *     </tbody>
+     * </table>
+     */
+    public static final int URI_ANDROID_APP_SCHEME = 1<<1;
+
+    /**
+     * Flag for use with {@link #toUri} and {@link #parseUri}: allow parsing
+     * of unsafe information.  In particular, the flags {@link #FLAG_GRANT_READ_URI_PERMISSION},
+     * {@link #FLAG_GRANT_WRITE_URI_PERMISSION}, {@link #FLAG_GRANT_PERSISTABLE_URI_PERMISSION},
+     * and {@link #FLAG_GRANT_PREFIX_URI_PERMISSION} flags can not be set, so that the
+     * generated Intent can not cause unexpected data access to happen.
+     *
+     * <p>If you do not trust the source of the URI being parsed, you should still do further
+     * processing to protect yourself from it.  In particular, when using it to start an
+     * activity you should usually add in {@link #CATEGORY_BROWSABLE} to limit the activities
+     * that can handle it.</p>
+     */
+    public static final int URI_ALLOW_UNSAFE = 1<<2;
+
     // ---------------------------------------------------------------------
 
     private String mAction;
@@ -3542,11 +4746,12 @@ public class Intent implements Parcelable, Cloneable {
     private String mPackage;
     private ComponentName mComponent;
     private int mFlags;
-    private HashSet<String> mCategories;
+    private ArraySet<String> mCategories;
     private Bundle mExtras;
     private Rect mSourceBounds;
     private Intent mSelector;
     private ClipData mClipData;
+    private int mContentUserHint = UserHandle.USER_CURRENT;
 
     // ---------------------------------------------------------------------
 
@@ -3566,8 +4771,9 @@ public class Intent implements Parcelable, Cloneable {
         this.mPackage = o.mPackage;
         this.mComponent = o.mComponent;
         this.mFlags = o.mFlags;
+        this.mContentUserHint = o.mContentUserHint;
         if (o.mCategories != null) {
-            this.mCategories = new HashSet<String>(o.mCategories);
+            this.mCategories = new ArraySet<String>(o.mCategories);
         }
         if (o.mExtras != null) {
             this.mExtras = new Bundle(o.mExtras);
@@ -3595,7 +4801,7 @@ public class Intent implements Parcelable, Cloneable {
         this.mPackage = o.mPackage;
         this.mComponent = o.mComponent;
         if (o.mCategories != null) {
-            this.mCategories = new HashSet<String>(o.mCategories);
+            this.mCategories = new ArraySet<String>(o.mCategories);
         }
     }
 
@@ -3664,7 +4870,7 @@ public class Intent implements Parcelable, Cloneable {
 
     /**
      * Create an intent for a specific component with a specified action and data.
-     * This is equivalent using {@link #Intent(String, android.net.Uri)} to
+     * This is equivalent to using {@link #Intent(String, android.net.Uri)} to
      * construct the Intent and then calling {@link #setClass} to set its
      * class.
      *
@@ -3792,8 +4998,8 @@ public class Intent implements Parcelable, Cloneable {
      * the scheme and full path.
      *
      * @param uri The URI to turn into an Intent.
-     * @param flags Additional processing flags.  Either 0 or
-     * {@link #URI_INTENT_SCHEME}.
+     * @param flags Additional processing flags.  Either 0,
+     * {@link #URI_INTENT_SCHEME}, or {@link #URI_ANDROID_APP_SCHEME}.
      *
      * @return Intent The newly created Intent object.
      *
@@ -3806,9 +5012,11 @@ public class Intent implements Parcelable, Cloneable {
     public static Intent parseUri(String uri, int flags) throws URISyntaxException {
         int i = 0;
         try {
-            // Validate intent scheme for if requested.
-            if ((flags&URI_INTENT_SCHEME) != 0) {
-                if (!uri.startsWith("intent:")) {
+            final boolean androidApp = uri.startsWith("android-app:");
+
+            // Validate intent scheme if requested.
+            if ((flags&(URI_INTENT_SCHEME|URI_ANDROID_APP_SCHEME)) != 0) {
+                if (!uri.startsWith("intent:") && !androidApp) {
                     Intent intent = new Intent(ACTION_VIEW);
                     try {
                         intent.setData(Uri.parse(uri));
@@ -3819,24 +5027,40 @@ public class Intent implements Parcelable, Cloneable {
                 }
             }
 
-            // simple case
             i = uri.lastIndexOf("#");
-            if (i == -1) return new Intent(ACTION_VIEW, Uri.parse(uri));
+            // simple case
+            if (i == -1) {
+                if (!androidApp) {
+                    return new Intent(ACTION_VIEW, Uri.parse(uri));
+                }
 
             // old format Intent URI
-            if (!uri.startsWith("#Intent;", i)) return getIntentOld(uri);
+            } else if (!uri.startsWith("#Intent;", i)) {
+                if (!androidApp) {
+                    return getIntentOld(uri, flags);
+                } else {
+                    i = -1;
+                }
+            }
 
             // new format
             Intent intent = new Intent(ACTION_VIEW);
             Intent baseIntent = intent;
+            boolean explicitAction = false;
+            boolean inSelector = false;
 
             // fetch data part, if present
-            String data = i >= 0 ? uri.substring(0, i) : null;
             String scheme = null;
-            i += "#Intent;".length();
+            String data;
+            if (i >= 0) {
+                data = uri.substring(0, i);
+                i += 8; // length of "#Intent;"
+            } else {
+                data = uri;
+            }
 
             // loop over contents of Intent, all name=value;
-            while (!uri.startsWith("end", i)) {
+            while (i >= 0 && !uri.startsWith("end", i)) {
                 int eq = uri.indexOf('=', i);
                 if (eq < 0) eq = i-1;
                 int semi = uri.indexOf(';', i);
@@ -3845,6 +5069,9 @@ public class Intent implements Parcelable, Cloneable {
                 // action
                 if (uri.startsWith("action=", i)) {
                     intent.setAction(value);
+                    if (!inSelector) {
+                        explicitAction = true;
+                    }
                 }
 
                 // categories
@@ -3860,6 +5087,9 @@ public class Intent implements Parcelable, Cloneable {
                 // launch flags
                 else if (uri.startsWith("launchFlags=", i)) {
                     intent.mFlags = Integer.decode(value).intValue();
+                    if ((flags& URI_ALLOW_UNSAFE) == 0) {
+                        intent.mFlags &= ~IMMUTABLE_FLAGS;
+                    }
                 }
 
                 // package
@@ -3874,7 +5104,11 @@ public class Intent implements Parcelable, Cloneable {
 
                 // scheme
                 else if (uri.startsWith("scheme=", i)) {
-                    scheme = value;
+                    if (inSelector) {
+                        intent.mData = Uri.parse(value + ":");
+                    } else {
+                        scheme = value;
+                    }
                 }
 
                 // source bounds
@@ -3885,6 +5119,7 @@ public class Intent implements Parcelable, Cloneable {
                 // selector
                 else if (semi == (i+3) && uri.startsWith("SEL", i)) {
                     intent = new Intent();
+                    inSelector = true;
                 }
 
                 // extra
@@ -3910,9 +5145,11 @@ public class Intent implements Parcelable, Cloneable {
                 i = semi + 1;
             }
 
-            if (intent != baseIntent) {
+            if (inSelector) {
                 // The Intent had a selector; fix it up.
-                baseIntent.setSelector(intent);
+                if (baseIntent.mPackage == null) {
+                    baseIntent.setSelector(intent);
+                }
                 intent = baseIntent;
             }
 
@@ -3921,6 +5158,52 @@ public class Intent implements Parcelable, Cloneable {
                     data = data.substring(7);
                     if (scheme != null) {
                         data = scheme + ':' + data;
+                    }
+                } else if (data.startsWith("android-app:")) {
+                    if (data.charAt(12) == '/' && data.charAt(13) == '/') {
+                        // Correctly formed android-app, first part is package name.
+                        int end = data.indexOf('/', 14);
+                        if (end < 0) {
+                            // All we have is a package name.
+                            intent.mPackage = data.substring(14);
+                            if (!explicitAction) {
+                                intent.setAction(ACTION_MAIN);
+                            }
+                            data = "";
+                        } else {
+                            // Target the Intent at the given package name always.
+                            String authority = null;
+                            intent.mPackage = data.substring(14, end);
+                            int newEnd;
+                            if ((end+1) < data.length()) {
+                                if ((newEnd=data.indexOf('/', end+1)) >= 0) {
+                                    // Found a scheme, remember it.
+                                    scheme = data.substring(end+1, newEnd);
+                                    end = newEnd;
+                                    if (end < data.length() && (newEnd=data.indexOf('/', end+1)) >= 0) {
+                                        // Found a authority, remember it.
+                                        authority = data.substring(end+1, newEnd);
+                                        end = newEnd;
+                                    }
+                                } else {
+                                    // All we have is a scheme.
+                                    scheme = data.substring(end+1);
+                                }
+                            }
+                            if (scheme == null) {
+                                // If there was no scheme, then this just targets the package.
+                                if (!explicitAction) {
+                                    intent.setAction(ACTION_MAIN);
+                                }
+                                data = "";
+                            } else if (authority == null) {
+                                data = scheme + ":";
+                            } else {
+                                data = scheme + "://" + authority + data.substring(end);
+                            }
+                        }
+                    } else {
+                        data = "";
                     }
                 }
 
@@ -3941,6 +5224,10 @@ public class Intent implements Parcelable, Cloneable {
     }
 
     public static Intent getIntentOld(String uri) throws URISyntaxException {
+        return getIntentOld(uri, 0);
+    }
+
+    private static Intent getIntentOld(String uri, int flags) throws URISyntaxException {
         Intent intent;
 
         int i = uri.lastIndexOf('#');
@@ -3967,7 +5254,7 @@ public class Intent implements Parcelable, Cloneable {
                 int j = uri.indexOf(')', i);
                 while (i < j) {
                     int sep = uri.indexOf('!', i);
-                    if (sep < 0) sep = j;
+                    if (sep < 0 || sep > j) sep = j;
                     if (i < sep) {
                         intent.addCategory(uri.substring(i, sep));
                     }
@@ -3989,6 +5276,9 @@ public class Intent implements Parcelable, Cloneable {
                 i += 12;
                 int j = uri.indexOf(')', i);
                 intent.mFlags = Integer.decode(uri.substring(i, j)).intValue();
+                if ((flags& URI_ALLOW_UNSAFE) == 0) {
+                    intent.mFlags &= ~IMMUTABLE_FLAGS;
+                }
                 i = j + 1;
             }
 
@@ -4094,6 +5384,442 @@ public class Intent implements Parcelable, Cloneable {
         }
 
         return intent;
+    }
+
+    /** @hide */
+    public interface CommandOptionHandler {
+        boolean handleOption(String opt, ShellCommand cmd);
+    }
+
+    /** @hide */
+    public static Intent parseCommandArgs(ShellCommand cmd, CommandOptionHandler optionHandler)
+            throws URISyntaxException {
+        Intent intent = new Intent();
+        Intent baseIntent = intent;
+        boolean hasIntentInfo = false;
+
+        Uri data = null;
+        String type = null;
+
+        String opt;
+        while ((opt=cmd.getNextOption()) != null) {
+            switch (opt) {
+                case "-a":
+                    intent.setAction(cmd.getNextArgRequired());
+                    if (intent == baseIntent) {
+                        hasIntentInfo = true;
+                    }
+                    break;
+                case "-d":
+                    data = Uri.parse(cmd.getNextArgRequired());
+                    if (intent == baseIntent) {
+                        hasIntentInfo = true;
+                    }
+                    break;
+                case "-t":
+                    type = cmd.getNextArgRequired();
+                    if (intent == baseIntent) {
+                        hasIntentInfo = true;
+                    }
+                    break;
+                case "-c":
+                    intent.addCategory(cmd.getNextArgRequired());
+                    if (intent == baseIntent) {
+                        hasIntentInfo = true;
+                    }
+                    break;
+                case "-e":
+                case "--es": {
+                    String key = cmd.getNextArgRequired();
+                    String value = cmd.getNextArgRequired();
+                    intent.putExtra(key, value);
+                }
+                break;
+                case "--esn": {
+                    String key = cmd.getNextArgRequired();
+                    intent.putExtra(key, (String) null);
+                }
+                break;
+                case "--ei": {
+                    String key = cmd.getNextArgRequired();
+                    String value = cmd.getNextArgRequired();
+                    intent.putExtra(key, Integer.decode(value));
+                }
+                break;
+                case "--eu": {
+                    String key = cmd.getNextArgRequired();
+                    String value = cmd.getNextArgRequired();
+                    intent.putExtra(key, Uri.parse(value));
+                }
+                break;
+                case "--ecn": {
+                    String key = cmd.getNextArgRequired();
+                    String value = cmd.getNextArgRequired();
+                    ComponentName cn = ComponentName.unflattenFromString(value);
+                    if (cn == null)
+                        throw new IllegalArgumentException("Bad component name: " + value);
+                    intent.putExtra(key, cn);
+                }
+                break;
+                case "--eia": {
+                    String key = cmd.getNextArgRequired();
+                    String value = cmd.getNextArgRequired();
+                    String[] strings = value.split(",");
+                    int[] list = new int[strings.length];
+                    for (int i = 0; i < strings.length; i++) {
+                        list[i] = Integer.decode(strings[i]);
+                    }
+                    intent.putExtra(key, list);
+                }
+                break;
+                case "--eial": {
+                    String key = cmd.getNextArgRequired();
+                    String value = cmd.getNextArgRequired();
+                    String[] strings = value.split(",");
+                    ArrayList<Integer> list = new ArrayList<>(strings.length);
+                    for (int i = 0; i < strings.length; i++) {
+                        list.add(Integer.decode(strings[i]));
+                    }
+                    intent.putExtra(key, list);
+                }
+                break;
+                case "--el": {
+                    String key = cmd.getNextArgRequired();
+                    String value = cmd.getNextArgRequired();
+                    intent.putExtra(key, Long.valueOf(value));
+                }
+                break;
+                case "--ela": {
+                    String key = cmd.getNextArgRequired();
+                    String value = cmd.getNextArgRequired();
+                    String[] strings = value.split(",");
+                    long[] list = new long[strings.length];
+                    for (int i = 0; i < strings.length; i++) {
+                        list[i] = Long.valueOf(strings[i]);
+                    }
+                    intent.putExtra(key, list);
+                    hasIntentInfo = true;
+                }
+                break;
+                case "--elal": {
+                    String key = cmd.getNextArgRequired();
+                    String value = cmd.getNextArgRequired();
+                    String[] strings = value.split(",");
+                    ArrayList<Long> list = new ArrayList<>(strings.length);
+                    for (int i = 0; i < strings.length; i++) {
+                        list.add(Long.valueOf(strings[i]));
+                    }
+                    intent.putExtra(key, list);
+                    hasIntentInfo = true;
+                }
+                break;
+                case "--ef": {
+                    String key = cmd.getNextArgRequired();
+                    String value = cmd.getNextArgRequired();
+                    intent.putExtra(key, Float.valueOf(value));
+                    hasIntentInfo = true;
+                }
+                break;
+                case "--efa": {
+                    String key = cmd.getNextArgRequired();
+                    String value = cmd.getNextArgRequired();
+                    String[] strings = value.split(",");
+                    float[] list = new float[strings.length];
+                    for (int i = 0; i < strings.length; i++) {
+                        list[i] = Float.valueOf(strings[i]);
+                    }
+                    intent.putExtra(key, list);
+                    hasIntentInfo = true;
+                }
+                break;
+                case "--efal": {
+                    String key = cmd.getNextArgRequired();
+                    String value = cmd.getNextArgRequired();
+                    String[] strings = value.split(",");
+                    ArrayList<Float> list = new ArrayList<>(strings.length);
+                    for (int i = 0; i < strings.length; i++) {
+                        list.add(Float.valueOf(strings[i]));
+                    }
+                    intent.putExtra(key, list);
+                    hasIntentInfo = true;
+                }
+                break;
+                case "--esa": {
+                    String key = cmd.getNextArgRequired();
+                    String value = cmd.getNextArgRequired();
+                    // Split on commas unless they are preceeded by an escape.
+                    // The escape character must be escaped for the string and
+                    // again for the regex, thus four escape characters become one.
+                    String[] strings = value.split("(?<!\\\\),");
+                    intent.putExtra(key, strings);
+                    hasIntentInfo = true;
+                }
+                break;
+                case "--esal": {
+                    String key = cmd.getNextArgRequired();
+                    String value = cmd.getNextArgRequired();
+                    // Split on commas unless they are preceeded by an escape.
+                    // The escape character must be escaped for the string and
+                    // again for the regex, thus four escape characters become one.
+                    String[] strings = value.split("(?<!\\\\),");
+                    ArrayList<String> list = new ArrayList<>(strings.length);
+                    for (int i = 0; i < strings.length; i++) {
+                        list.add(strings[i]);
+                    }
+                    intent.putExtra(key, list);
+                    hasIntentInfo = true;
+                }
+                break;
+                case "--ez": {
+                    String key = cmd.getNextArgRequired();
+                    String value = cmd.getNextArgRequired().toLowerCase();
+                    // Boolean.valueOf() results in false for anything that is not "true", which is
+                    // error-prone in shell commands
+                    boolean arg;
+                    if ("true".equals(value) || "t".equals(value)) {
+                        arg = true;
+                    } else if ("false".equals(value) || "f".equals(value)) {
+                        arg = false;
+                    } else {
+                        try {
+                            arg = Integer.decode(value) != 0;
+                        } catch (NumberFormatException ex) {
+                            throw new IllegalArgumentException("Invalid boolean value: " + value);
+                        }
+                    }
+
+                    intent.putExtra(key, arg);
+                }
+                break;
+                case "-n": {
+                    String str = cmd.getNextArgRequired();
+                    ComponentName cn = ComponentName.unflattenFromString(str);
+                    if (cn == null)
+                        throw new IllegalArgumentException("Bad component name: " + str);
+                    intent.setComponent(cn);
+                    if (intent == baseIntent) {
+                        hasIntentInfo = true;
+                    }
+                }
+                break;
+                case "-p": {
+                    String str = cmd.getNextArgRequired();
+                    intent.setPackage(str);
+                    if (intent == baseIntent) {
+                        hasIntentInfo = true;
+                    }
+                }
+                break;
+                case "-f":
+                    String str = cmd.getNextArgRequired();
+                    intent.setFlags(Integer.decode(str).intValue());
+                    break;
+                case "--grant-read-uri-permission":
+                    intent.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION);
+                    break;
+                case "--grant-write-uri-permission":
+                    intent.addFlags(Intent.FLAG_GRANT_WRITE_URI_PERMISSION);
+                    break;
+                case "--grant-persistable-uri-permission":
+                    intent.addFlags(Intent.FLAG_GRANT_PERSISTABLE_URI_PERMISSION);
+                    break;
+                case "--grant-prefix-uri-permission":
+                    intent.addFlags(Intent.FLAG_GRANT_PREFIX_URI_PERMISSION);
+                    break;
+                case "--exclude-stopped-packages":
+                    intent.addFlags(Intent.FLAG_EXCLUDE_STOPPED_PACKAGES);
+                    break;
+                case "--include-stopped-packages":
+                    intent.addFlags(Intent.FLAG_INCLUDE_STOPPED_PACKAGES);
+                    break;
+                case "--debug-log-resolution":
+                    intent.addFlags(Intent.FLAG_DEBUG_LOG_RESOLUTION);
+                    break;
+                case "--activity-brought-to-front":
+                    intent.addFlags(Intent.FLAG_ACTIVITY_BROUGHT_TO_FRONT);
+                    break;
+                case "--activity-clear-top":
+                    intent.addFlags(Intent.FLAG_ACTIVITY_CLEAR_TOP);
+                    break;
+                case "--activity-clear-when-task-reset":
+                    intent.addFlags(Intent.FLAG_ACTIVITY_CLEAR_WHEN_TASK_RESET);
+                    break;
+                case "--activity-exclude-from-recents":
+                    intent.addFlags(Intent.FLAG_ACTIVITY_EXCLUDE_FROM_RECENTS);
+                    break;
+                case "--activity-launched-from-history":
+                    intent.addFlags(Intent.FLAG_ACTIVITY_LAUNCHED_FROM_HISTORY);
+                    break;
+                case "--activity-multiple-task":
+                    intent.addFlags(Intent.FLAG_ACTIVITY_MULTIPLE_TASK);
+                    break;
+                case "--activity-no-animation":
+                    intent.addFlags(Intent.FLAG_ACTIVITY_NO_ANIMATION);
+                    break;
+                case "--activity-no-history":
+                    intent.addFlags(Intent.FLAG_ACTIVITY_NO_HISTORY);
+                    break;
+                case "--activity-no-user-action":
+                    intent.addFlags(Intent.FLAG_ACTIVITY_NO_USER_ACTION);
+                    break;
+                case "--activity-previous-is-top":
+                    intent.addFlags(Intent.FLAG_ACTIVITY_PREVIOUS_IS_TOP);
+                    break;
+                case "--activity-reorder-to-front":
+                    intent.addFlags(Intent.FLAG_ACTIVITY_REORDER_TO_FRONT);
+                    break;
+                case "--activity-reset-task-if-needed":
+                    intent.addFlags(Intent.FLAG_ACTIVITY_RESET_TASK_IF_NEEDED);
+                    break;
+                case "--activity-single-top":
+                    intent.addFlags(Intent.FLAG_ACTIVITY_SINGLE_TOP);
+                    break;
+                case "--activity-clear-task":
+                    intent.addFlags(Intent.FLAG_ACTIVITY_CLEAR_TASK);
+                    break;
+                case "--activity-task-on-home":
+                    intent.addFlags(Intent.FLAG_ACTIVITY_TASK_ON_HOME);
+                    break;
+                case "--receiver-registered-only":
+                    intent.addFlags(Intent.FLAG_RECEIVER_REGISTERED_ONLY);
+                    break;
+                case "--receiver-replace-pending":
+                    intent.addFlags(Intent.FLAG_RECEIVER_REPLACE_PENDING);
+                    break;
+                case "--receiver-foreground":
+                    intent.addFlags(Intent.FLAG_RECEIVER_FOREGROUND);
+                    break;
+                case "--selector":
+                    intent.setDataAndType(data, type);
+                    intent = new Intent();
+                    break;
+                default:
+                    if (optionHandler != null && optionHandler.handleOption(opt, cmd)) {
+                        // Okay, caller handled this option.
+                    } else {
+                        throw new IllegalArgumentException("Unknown option: " + opt);
+                    }
+                    break;
+            }
+        }
+        intent.setDataAndType(data, type);
+
+        final boolean hasSelector = intent != baseIntent;
+        if (hasSelector) {
+            // A selector was specified; fix up.
+            baseIntent.setSelector(intent);
+            intent = baseIntent;
+        }
+
+        String arg = cmd.getNextArg();
+        baseIntent = null;
+        if (arg == null) {
+            if (hasSelector) {
+                // If a selector has been specified, and no arguments
+                // have been supplied for the main Intent, then we can
+                // assume it is ACTION_MAIN CATEGORY_LAUNCHER; we don't
+                // need to have a component name specified yet, the
+                // selector will take care of that.
+                baseIntent = new Intent(Intent.ACTION_MAIN);
+                baseIntent.addCategory(Intent.CATEGORY_LAUNCHER);
+            }
+        } else if (arg.indexOf(':') >= 0) {
+            // The argument is a URI.  Fully parse it, and use that result
+            // to fill in any data not specified so far.
+            baseIntent = Intent.parseUri(arg, Intent.URI_INTENT_SCHEME
+                    | Intent.URI_ANDROID_APP_SCHEME | Intent.URI_ALLOW_UNSAFE);
+        } else if (arg.indexOf('/') >= 0) {
+            // The argument is a component name.  Build an Intent to launch
+            // it.
+            baseIntent = new Intent(Intent.ACTION_MAIN);
+            baseIntent.addCategory(Intent.CATEGORY_LAUNCHER);
+            baseIntent.setComponent(ComponentName.unflattenFromString(arg));
+        } else {
+            // Assume the argument is a package name.
+            baseIntent = new Intent(Intent.ACTION_MAIN);
+            baseIntent.addCategory(Intent.CATEGORY_LAUNCHER);
+            baseIntent.setPackage(arg);
+        }
+        if (baseIntent != null) {
+            Bundle extras = intent.getExtras();
+            intent.replaceExtras((Bundle)null);
+            Bundle uriExtras = baseIntent.getExtras();
+            baseIntent.replaceExtras((Bundle)null);
+            if (intent.getAction() != null && baseIntent.getCategories() != null) {
+                HashSet<String> cats = new HashSet<String>(baseIntent.getCategories());
+                for (String c : cats) {
+                    baseIntent.removeCategory(c);
+                }
+            }
+            intent.fillIn(baseIntent, Intent.FILL_IN_COMPONENT | Intent.FILL_IN_SELECTOR);
+            if (extras == null) {
+                extras = uriExtras;
+            } else if (uriExtras != null) {
+                uriExtras.putAll(extras);
+                extras = uriExtras;
+            }
+            intent.replaceExtras(extras);
+            hasIntentInfo = true;
+        }
+
+        if (!hasIntentInfo) throw new IllegalArgumentException("No intent supplied");
+        return intent;
+    }
+
+    /** @hide */
+    public static void printIntentArgsHelp(PrintWriter pw, String prefix) {
+        final String[] lines = new String[] {
+                "<INTENT> specifications include these flags and arguments:",
+                "    [-a <ACTION>] [-d <DATA_URI>] [-t <MIME_TYPE>]",
+                "    [-c <CATEGORY> [-c <CATEGORY>] ...]",
+                "    [-e|--es <EXTRA_KEY> <EXTRA_STRING_VALUE> ...]",
+                "    [--esn <EXTRA_KEY> ...]",
+                "    [--ez <EXTRA_KEY> <EXTRA_BOOLEAN_VALUE> ...]",
+                "    [--ei <EXTRA_KEY> <EXTRA_INT_VALUE> ...]",
+                "    [--el <EXTRA_KEY> <EXTRA_LONG_VALUE> ...]",
+                "    [--ef <EXTRA_KEY> <EXTRA_FLOAT_VALUE> ...]",
+                "    [--eu <EXTRA_KEY> <EXTRA_URI_VALUE> ...]",
+                "    [--ecn <EXTRA_KEY> <EXTRA_COMPONENT_NAME_VALUE>]",
+                "    [--eia <EXTRA_KEY> <EXTRA_INT_VALUE>[,<EXTRA_INT_VALUE...]]",
+                "        (mutiple extras passed as Integer[])",
+                "    [--eial <EXTRA_KEY> <EXTRA_INT_VALUE>[,<EXTRA_INT_VALUE...]]",
+                "        (mutiple extras passed as List<Integer>)",
+                "    [--ela <EXTRA_KEY> <EXTRA_LONG_VALUE>[,<EXTRA_LONG_VALUE...]]",
+                "        (mutiple extras passed as Long[])",
+                "    [--elal <EXTRA_KEY> <EXTRA_LONG_VALUE>[,<EXTRA_LONG_VALUE...]]",
+                "        (mutiple extras passed as List<Long>)",
+                "    [--efa <EXTRA_KEY> <EXTRA_FLOAT_VALUE>[,<EXTRA_FLOAT_VALUE...]]",
+                "        (mutiple extras passed as Float[])",
+                "    [--efal <EXTRA_KEY> <EXTRA_FLOAT_VALUE>[,<EXTRA_FLOAT_VALUE...]]",
+                "        (mutiple extras passed as List<Float>)",
+                "    [--esa <EXTRA_KEY> <EXTRA_STRING_VALUE>[,<EXTRA_STRING_VALUE...]]",
+                "        (mutiple extras passed as String[]; to embed a comma into a string,",
+                "         escape it using \"\\,\")",
+                "    [--esal <EXTRA_KEY> <EXTRA_STRING_VALUE>[,<EXTRA_STRING_VALUE...]]",
+                "        (mutiple extras passed as List<String>; to embed a comma into a string,",
+                "         escape it using \"\\,\")",
+                "    [--f <FLAG>]",
+                "    [--grant-read-uri-permission] [--grant-write-uri-permission]",
+                "    [--grant-persistable-uri-permission] [--grant-prefix-uri-permission]",
+                "    [--debug-log-resolution] [--exclude-stopped-packages]",
+                "    [--include-stopped-packages]",
+                "    [--activity-brought-to-front] [--activity-clear-top]",
+                "    [--activity-clear-when-task-reset] [--activity-exclude-from-recents]",
+                "    [--activity-launched-from-history] [--activity-multiple-task]",
+                "    [--activity-no-animation] [--activity-no-history]",
+                "    [--activity-no-user-action] [--activity-previous-is-top]",
+                "    [--activity-reorder-to-front] [--activity-reset-task-if-needed]",
+                "    [--activity-single-top] [--activity-clear-task]",
+                "    [--activity-task-on-home]",
+                "    [--receiver-registered-only] [--receiver-replace-pending]",
+                "    [--receiver-foreground]",
+                "    [--selector]",
+                "    [<URI> | <PACKAGE> | <COMPONENT>]"
+        };
+        for (String line : lines) {
+            pw.print(prefix);
+            pw.println(line);
+        }
     }
 
     /**
@@ -4264,10 +5990,15 @@ public class Intent implements Parcelable, Cloneable {
      * Return the {@link ClipData} associated with this Intent.  If there is
      * none, returns null.  See {@link #setClipData} for more information.
      *
-     * @see #setClipData;
+     * @see #setClipData
      */
     public ClipData getClipData() {
         return mClipData;
+    }
+
+    /** @hide */
+    public int getContentUserHint() {
+        return mContentUserHint;
     }
 
     /**
@@ -4300,10 +6031,17 @@ public class Intent implements Parcelable, Cloneable {
         return mExtras != null && mExtras.hasFileDescriptors();
     }
 
-    /** @hide */
+    /** {@hide} */
     public void setAllowFds(boolean allowFds) {
         if (mExtras != null) {
             mExtras.setAllowFds(allowFds);
+        }
+    }
+
+    /** {@hide} */
+    public void setDefusable(boolean defusable) {
+        if (mExtras != null) {
+            mExtras.setDefusable(defusable);
         }
     }
 
@@ -4798,6 +6536,16 @@ public class Intent implements Parcelable, Cloneable {
     }
 
     /**
+     * Filter extras to only basic types.
+     * @hide
+     */
+    public void removeUnsafeExtras() {
+        if (mExtras != null) {
+            mExtras.filterValues();
+        }
+    }
+
+    /**
      * Retrieve any special flags associated with this intent.  You will
      * normally just set them with {@link #setFlags} and let the system
      * take the appropriate action with them.
@@ -4953,6 +6701,39 @@ public class Intent implements Parcelable, Cloneable {
     }
 
     /**
+     * Special function for use by the system to resolve service
+     * intents to system apps.  Throws an exception if there are
+     * multiple potential matches to the Intent.  Returns null if
+     * there are no matches.
+     * @hide
+     */
+    public ComponentName resolveSystemService(PackageManager pm, int flags) {
+        if (mComponent != null) {
+            return mComponent;
+        }
+
+        List<ResolveInfo> results = pm.queryIntentServices(this, flags);
+        if (results == null) {
+            return null;
+        }
+        ComponentName comp = null;
+        for (int i=0; i<results.size(); i++) {
+            ResolveInfo ri = results.get(i);
+            if ((ri.serviceInfo.applicationInfo.flags&ApplicationInfo.FLAG_SYSTEM) == 0) {
+                continue;
+            }
+            ComponentName foundComp = new ComponentName(ri.serviceInfo.applicationInfo.packageName,
+                    ri.serviceInfo.name);
+            if (comp != null) {
+                throw new IllegalStateException("Multiple system services handle " + this
+                        + ": " + comp + ", " + foundComp);
+            }
+            comp = foundComp;
+        }
+        return comp;
+    }
+
+    /**
      * Set the general action to be performed.
      *
      * @param action An action name, such as ACTION_VIEW.  Application-specific
@@ -4987,7 +6768,7 @@ public class Intent implements Parcelable, Cloneable {
      *
      * @see #getData
      * @see #setDataAndNormalize
-     * @see android.net.Intent#normalize
+     * @see android.net.Uri#normalizeScheme()
      */
     public Intent setData(Uri data) {
         mData = data;
@@ -5159,7 +6940,7 @@ public class Intent implements Parcelable, Cloneable {
      */
     public Intent addCategory(String category) {
         if (mCategories == null) {
-            mCategories = new HashSet<String>();
+            mCategories = new ArraySet<String>();
         }
         mCategories.add(category.intern());
         return this;
@@ -5247,12 +7028,26 @@ public class Intent implements Parcelable, Cloneable {
      * directly used by Intent.  Applications should generally rely on the
      * MIME type of the Intent itself, not what it may find in the ClipData.
      * A common practice is to construct a ClipData for use with an Intent
-     * with a MIME type of "*\/*".
+     * with a MIME type of "*&#47;*".
      *
      * @param clip The new clip to set.  May be null to clear the current clip.
      */
     public void setClipData(ClipData clip) {
         mClipData = clip;
+    }
+
+    /**
+     * This is NOT a secure mechanism to identify the user who sent the intent.
+     * When the intent is sent to a different user, it is used to fix uris by adding the userId
+     * who sent the intent.
+     * @hide
+     */
+    public void prepareToLeaveUser(int userId) {
+        // If mContentUserHint is not UserHandle.USER_CURRENT, the intent has already left a user.
+        // We want mContentUserHint to refer to the original user, so don't do anything.
+        if (mContentUserHint == UserHandle.USER_CURRENT) {
+            mContentUserHint = userId;
+        }
     }
 
     /**
@@ -6023,6 +7818,8 @@ public class Intent implements Parcelable, Cloneable {
      *
      * @see #FLAG_GRANT_READ_URI_PERMISSION
      * @see #FLAG_GRANT_WRITE_URI_PERMISSION
+     * @see #FLAG_GRANT_PERSISTABLE_URI_PERMISSION
+     * @see #FLAG_GRANT_PREFIX_URI_PERMISSION
      * @see #FLAG_DEBUG_LOG_RESOLUTION
      * @see #FLAG_FROM_BACKGROUND
      * @see #FLAG_ACTIVITY_BROUGHT_TO_FRONT
@@ -6033,6 +7830,7 @@ public class Intent implements Parcelable, Cloneable {
      * @see #FLAG_ACTIVITY_FORWARD_RESULT
      * @see #FLAG_ACTIVITY_LAUNCHED_FROM_HISTORY
      * @see #FLAG_ACTIVITY_MULTIPLE_TASK
+     * @see #FLAG_ACTIVITY_NEW_DOCUMENT
      * @see #FLAG_ACTIVITY_NEW_TASK
      * @see #FLAG_ACTIVITY_NO_ANIMATION
      * @see #FLAG_ACTIVITY_NO_HISTORY
@@ -6190,6 +7988,21 @@ public class Intent implements Parcelable, Cloneable {
         }
     }
 
+    /** @hide */
+    @IntDef(flag = true,
+            value = {
+                    FILL_IN_ACTION,
+                    FILL_IN_DATA,
+                    FILL_IN_CATEGORIES,
+                    FILL_IN_COMPONENT,
+                    FILL_IN_PACKAGE,
+                    FILL_IN_SOURCE_BOUNDS,
+                    FILL_IN_SELECTOR,
+                    FILL_IN_CLIP_DATA
+            })
+    @Retention(RetentionPolicy.SOURCE)
+    public @interface FillInFlags {}
+
     /**
      * Use with {@link #fillIn} to allow the current action value to be
      * overwritten, even if it is already set.
@@ -6283,11 +8096,14 @@ public class Intent implements Parcelable, Cloneable {
      *
      * @return Returns a bit mask of {@link #FILL_IN_ACTION},
      * {@link #FILL_IN_DATA}, {@link #FILL_IN_CATEGORIES}, {@link #FILL_IN_PACKAGE},
-     * {@link #FILL_IN_COMPONENT}, {@link #FILL_IN_SOURCE_BOUNDS}, and
-     * {@link #FILL_IN_SELECTOR} indicating which fields were changed.
+     * {@link #FILL_IN_COMPONENT}, {@link #FILL_IN_SOURCE_BOUNDS},
+     * {@link #FILL_IN_SELECTOR} and {@link #FILL_IN_CLIP_DATA indicating which fields were
+     * changed.
      */
-    public int fillIn(Intent other, int flags) {
+    @FillInFlags
+    public int fillIn(Intent other, @FillInFlags int flags) {
         int changes = 0;
+        boolean mayHaveCopiedUris = false;
         if (other.mAction != null
                 && (mAction == null || (flags&FILL_IN_ACTION) != 0)) {
             mAction = other.mAction;
@@ -6299,11 +8115,12 @@ public class Intent implements Parcelable, Cloneable {
             mData = other.mData;
             mType = other.mType;
             changes |= FILL_IN_DATA;
+            mayHaveCopiedUris = true;
         }
         if (other.mCategories != null
                 && (mCategories == null || (flags&FILL_IN_CATEGORIES) != 0)) {
             if (other.mCategories != null) {
-                mCategories = new HashSet<String>(other.mCategories);
+                mCategories = new ArraySet<String>(other.mCategories);
             }
             changes |= FILL_IN_CATEGORIES;
         }
@@ -6328,6 +8145,7 @@ public class Intent implements Parcelable, Cloneable {
                 && (mClipData == null || (flags&FILL_IN_CLIP_DATA) != 0)) {
             mClipData = other.mClipData;
             changes |= FILL_IN_CLIP_DATA;
+            mayHaveCopiedUris = true;
         }
         // Component is special: it can -only- be set if explicitly allowed,
         // since otherwise the sender could force the intent somewhere the
@@ -6345,12 +8163,14 @@ public class Intent implements Parcelable, Cloneable {
         if (mExtras == null) {
             if (other.mExtras != null) {
                 mExtras = new Bundle(other.mExtras);
+                mayHaveCopiedUris = true;
             }
         } else if (other.mExtras != null) {
             try {
                 Bundle newb = new Bundle(other.mExtras);
                 newb.putAll(mExtras);
                 mExtras = newb;
+                mayHaveCopiedUris = true;
             } catch (RuntimeException e) {
                 // Modifying the extras can cause us to unparcel the contents
                 // of the bundle, and if we do this in the system process that
@@ -6359,6 +8179,10 @@ public class Intent implements Parcelable, Cloneable {
                 // ignore it and keep the original contents. :(
                 Log.w("Intent", "Failure filling in extras", e);
             }
+        }
+        if (mayHaveCopiedUris && mContentUserHint == UserHandle.USER_CURRENT
+                && other.mContentUserHint != UserHandle.USER_CURRENT) {
+            mContentUserHint = other.mContentUserHint;
         }
         return changes;
     }
@@ -6419,72 +8243,12 @@ public class Intent implements Parcelable, Cloneable {
         if (other == null) {
             return false;
         }
-        if (mAction != other.mAction) {
-            if (mAction != null) {
-                if (!mAction.equals(other.mAction)) {
-                    return false;
-                }
-            } else {
-                if (!other.mAction.equals(mAction)) {
-                    return false;
-                }
-            }
-        }
-        if (mData != other.mData) {
-            if (mData != null) {
-                if (!mData.equals(other.mData)) {
-                    return false;
-                }
-            } else {
-                if (!other.mData.equals(mData)) {
-                    return false;
-                }
-            }
-        }
-        if (mType != other.mType) {
-            if (mType != null) {
-                if (!mType.equals(other.mType)) {
-                    return false;
-                }
-            } else {
-                if (!other.mType.equals(mType)) {
-                    return false;
-                }
-            }
-        }
-        if (mPackage != other.mPackage) {
-            if (mPackage != null) {
-                if (!mPackage.equals(other.mPackage)) {
-                    return false;
-                }
-            } else {
-                if (!other.mPackage.equals(mPackage)) {
-                    return false;
-                }
-            }
-        }
-        if (mComponent != other.mComponent) {
-            if (mComponent != null) {
-                if (!mComponent.equals(other.mComponent)) {
-                    return false;
-                }
-            } else {
-                if (!other.mComponent.equals(mComponent)) {
-                    return false;
-                }
-            }
-        }
-        if (mCategories != other.mCategories) {
-            if (mCategories != null) {
-                if (!mCategories.equals(other.mCategories)) {
-                    return false;
-                }
-            } else {
-                if (!other.mCategories.equals(mCategories)) {
-                    return false;
-                }
-            }
-        }
+        if (!Objects.equals(this.mAction, other.mAction)) return false;
+        if (!Objects.equals(this.mData, other.mData)) return false;
+        if (!Objects.equals(this.mType, other.mType)) return false;
+        if (!Objects.equals(this.mPackage, other.mPackage)) return false;
+        if (!Objects.equals(this.mComponent, other.mComponent)) return false;
+        if (!Objects.equals(this.mCategories, other.mCategories)) return false;
 
         return true;
     }
@@ -6574,12 +8338,9 @@ public class Intent implements Parcelable, Cloneable {
             }
             first = false;
             b.append("cat=[");
-            Iterator<String> i = mCategories.iterator();
-            boolean didone = false;
-            while (i.hasNext()) {
-                if (didone) b.append(",");
-                didone = true;
-                b.append(i.next());
+            for (int i=0; i<mCategories.size(); i++) {
+                if (i > 0) b.append(',');
+                b.append(mCategories.valueAt(i));
             }
             b.append("]");
         }
@@ -6634,14 +8395,19 @@ public class Intent implements Parcelable, Cloneable {
             if (!first) {
                 b.append(' ');
             }
-            first = false;
+            b.append("clip={");
             if (clip) {
-                b.append("clip={");
                 mClipData.toShortString(b);
-                b.append('}');
             } else {
-                b.append("(has clip)");
+                if (mClipData.getDescription() != null) {
+                    first = !mClipData.getDescription().toShortStringTypesOnly(b);
+                } else {
+                    first = true;
+                }
+                mClipData.toShortStringShortItems(b, first);
             }
+            first = false;
+            b.append('}');
         }
         if (extras && mExtras != null) {
             if (!first) {
@@ -6650,8 +8416,15 @@ public class Intent implements Parcelable, Cloneable {
             first = false;
             b.append("(has extras)");
         }
+        if (mContentUserHint != UserHandle.USER_CURRENT) {
+            if (!first) {
+                b.append(' ');
+            }
+            first = false;
+            b.append("u=").append(mContentUserHint);
+        }
         if (mSelector != null) {
-            b.append(" sel={");
+            b.append(" sel=");
             mSelector.toShortString(b, secure, comp, extras, clip);
             b.append("}");
         }
@@ -6676,14 +8449,53 @@ public class Intent implements Parcelable, Cloneable {
      * <p>You can convert the returned string back to an Intent with
      * {@link #getIntent}.
      *
-     * @param flags Additional operating flags.  Either 0 or
-     * {@link #URI_INTENT_SCHEME}.
+     * @param flags Additional operating flags.  Either 0,
+     * {@link #URI_INTENT_SCHEME}, or {@link #URI_ANDROID_APP_SCHEME}.
      *
      * @return Returns a URI encoding URI string describing the entire contents
      * of the Intent.
      */
     public String toUri(int flags) {
         StringBuilder uri = new StringBuilder(128);
+        if ((flags&URI_ANDROID_APP_SCHEME) != 0) {
+            if (mPackage == null) {
+                throw new IllegalArgumentException(
+                        "Intent must include an explicit package name to build an android-app: "
+                        + this);
+            }
+            uri.append("android-app://");
+            uri.append(mPackage);
+            String scheme = null;
+            if (mData != null) {
+                scheme = mData.getScheme();
+                if (scheme != null) {
+                    uri.append('/');
+                    uri.append(scheme);
+                    String authority = mData.getEncodedAuthority();
+                    if (authority != null) {
+                        uri.append('/');
+                        uri.append(authority);
+                        String path = mData.getEncodedPath();
+                        if (path != null) {
+                            uri.append(path);
+                        }
+                        String queryParams = mData.getEncodedQuery();
+                        if (queryParams != null) {
+                            uri.append('?');
+                            uri.append(queryParams);
+                        }
+                        String fragment = mData.getEncodedFragment();
+                        if (fragment != null) {
+                            uri.append('#');
+                            uri.append(fragment);
+                        }
+                    }
+                }
+            }
+            toUriFragment(uri, null, scheme == null ? Intent.ACTION_MAIN : Intent.ACTION_VIEW,
+                    mPackage, flags);
+            return uri.toString();
+        }
         String scheme = null;
         if (mData != null) {
             String data = mData.toString();
@@ -6713,32 +8525,43 @@ public class Intent implements Parcelable, Cloneable {
             uri.append("intent:");
         }
 
-        uri.append("#Intent;");
-
-        toUriInner(uri, scheme, flags);
-        if (mSelector != null) {
-            uri.append("SEL;");
-            // Note that for now we are not going to try to handle the
-            // data part; not clear how to represent this as a URI, and
-            // not much utility in it.
-            mSelector.toUriInner(uri, null, flags);
-        }
-
-        uri.append("end");
+        toUriFragment(uri, scheme, Intent.ACTION_VIEW, null, flags);
 
         return uri.toString();
     }
 
-    private void toUriInner(StringBuilder uri, String scheme, int flags) {
+    private void toUriFragment(StringBuilder uri, String scheme, String defAction,
+            String defPackage, int flags) {
+        StringBuilder frag = new StringBuilder(128);
+
+        toUriInner(frag, scheme, defAction, defPackage, flags);
+        if (mSelector != null) {
+            frag.append("SEL;");
+            // Note that for now we are not going to try to handle the
+            // data part; not clear how to represent this as a URI, and
+            // not much utility in it.
+            mSelector.toUriInner(frag, mSelector.mData != null ? mSelector.mData.getScheme() : null,
+                    null, null, flags);
+        }
+
+        if (frag.length() > 0) {
+            uri.append("#Intent;");
+            uri.append(frag);
+            uri.append("end");
+        }
+    }
+
+    private void toUriInner(StringBuilder uri, String scheme, String defAction,
+            String defPackage, int flags) {
         if (scheme != null) {
             uri.append("scheme=").append(scheme).append(';');
         }
-        if (mAction != null) {
+        if (mAction != null && !mAction.equals(defAction)) {
             uri.append("action=").append(Uri.encode(mAction)).append(';');
         }
         if (mCategories != null) {
-            for (String category : mCategories) {
-                uri.append("category=").append(Uri.encode(category)).append(';');
+            for (int i=0; i<mCategories.size(); i++) {
+                uri.append("category=").append(Uri.encode(mCategories.valueAt(i))).append(';');
             }
         }
         if (mType != null) {
@@ -6747,7 +8570,7 @@ public class Intent implements Parcelable, Cloneable {
         if (mFlags != 0) {
             uri.append("launchFlags=0x").append(Integer.toHexString(mFlags)).append(';');
         }
-        if (mPackage != null) {
+        if (mPackage != null && !mPackage.equals(defPackage)) {
             uri.append("package=").append(Uri.encode(mPackage)).append(';');
         }
         if (mComponent != null) {
@@ -6806,9 +8629,10 @@ public class Intent implements Parcelable, Cloneable {
         }
 
         if (mCategories != null) {
-            out.writeInt(mCategories.size());
-            for (String category : mCategories) {
-                out.writeString(category);
+            final int N = mCategories.size();
+            out.writeInt(N);
+            for (int i=0; i<N; i++) {
+                out.writeString(mCategories.valueAt(i));
             }
         } else {
             out.writeInt(0);
@@ -6827,7 +8651,7 @@ public class Intent implements Parcelable, Cloneable {
         } else {
             out.writeInt(0);
         }
-
+        out.writeInt(mContentUserHint);
         out.writeBundle(mExtras);
     }
 
@@ -6860,7 +8684,7 @@ public class Intent implements Parcelable, Cloneable {
 
         int N = in.readInt();
         if (N > 0) {
-            mCategories = new HashSet<String>();
+            mCategories = new ArraySet<String>();
             int i;
             for (i=0; i<N; i++) {
                 mCategories.add(in.readString().intern());
@@ -6876,7 +8700,7 @@ public class Intent implements Parcelable, Cloneable {
         if (in.readInt() != 0) {
             mClipData = new ClipData(in);
         }
-
+        mContentUserHint = in.readInt();
         mExtras = in.readBundle();
     }
 
@@ -6928,7 +8752,7 @@ public class Intent implements Parcelable, Cloneable {
             }
 
             String nodeName = parser.getName();
-            if (nodeName.equals("category")) {
+            if (nodeName.equals(TAG_CATEGORIES)) {
                 sa = resources.obtainAttributes(attrs,
                         com.android.internal.R.styleable.IntentCategory);
                 String cat = sa.getString(com.android.internal.R.styleable.IntentCategory_name);
@@ -6939,15 +8763,86 @@ public class Intent implements Parcelable, Cloneable {
                 }
                 XmlUtils.skipCurrentTag(parser);
 
-            } else if (nodeName.equals("extra")) {
+            } else if (nodeName.equals(TAG_EXTRA)) {
                 if (intent.mExtras == null) {
                     intent.mExtras = new Bundle();
                 }
-                resources.parseBundleExtra("extra", attrs, intent.mExtras);
+                resources.parseBundleExtra(TAG_EXTRA, attrs, intent.mExtras);
                 XmlUtils.skipCurrentTag(parser);
 
             } else {
                 XmlUtils.skipCurrentTag(parser);
+            }
+        }
+
+        return intent;
+    }
+
+    /** @hide */
+    public void saveToXml(XmlSerializer out) throws IOException {
+        if (mAction != null) {
+            out.attribute(null, ATTR_ACTION, mAction);
+        }
+        if (mData != null) {
+            out.attribute(null, ATTR_DATA, mData.toString());
+        }
+        if (mType != null) {
+            out.attribute(null, ATTR_TYPE, mType);
+        }
+        if (mComponent != null) {
+            out.attribute(null, ATTR_COMPONENT, mComponent.flattenToShortString());
+        }
+        out.attribute(null, ATTR_FLAGS, Integer.toHexString(getFlags()));
+
+        if (mCategories != null) {
+            out.startTag(null, TAG_CATEGORIES);
+            for (int categoryNdx = mCategories.size() - 1; categoryNdx >= 0; --categoryNdx) {
+                out.attribute(null, ATTR_CATEGORY, mCategories.valueAt(categoryNdx));
+            }
+            out.endTag(null, TAG_CATEGORIES);
+        }
+    }
+
+    /** @hide */
+    public static Intent restoreFromXml(XmlPullParser in) throws IOException,
+            XmlPullParserException {
+        Intent intent = new Intent();
+        final int outerDepth = in.getDepth();
+
+        int attrCount = in.getAttributeCount();
+        for (int attrNdx = attrCount - 1; attrNdx >= 0; --attrNdx) {
+            final String attrName = in.getAttributeName(attrNdx);
+            final String attrValue = in.getAttributeValue(attrNdx);
+            if (ATTR_ACTION.equals(attrName)) {
+                intent.setAction(attrValue);
+            } else if (ATTR_DATA.equals(attrName)) {
+                intent.setData(Uri.parse(attrValue));
+            } else if (ATTR_TYPE.equals(attrName)) {
+                intent.setType(attrValue);
+            } else if (ATTR_COMPONENT.equals(attrName)) {
+                intent.setComponent(ComponentName.unflattenFromString(attrValue));
+            } else if (ATTR_FLAGS.equals(attrName)) {
+                intent.setFlags(Integer.parseInt(attrValue, 16));
+            } else {
+                Log.e("Intent", "restoreFromXml: unknown attribute=" + attrName);
+            }
+        }
+
+        int event;
+        String name;
+        while (((event = in.next()) != XmlPullParser.END_DOCUMENT) &&
+                (event != XmlPullParser.END_TAG || in.getDepth() < outerDepth)) {
+            if (event == XmlPullParser.START_TAG) {
+                name = in.getName();
+                if (TAG_CATEGORIES.equals(name)) {
+                    attrCount = in.getAttributeCount();
+                    for (int attrNdx = attrCount - 1; attrNdx >= 0; --attrNdx) {
+                        intent.addCategory(in.getAttributeValue(attrNdx));
+                    }
+                } else {
+                    Log.w("Intent", "restoreFromXml: unknown name=" + name);
+                    XmlUtils.skipCurrentTag(in);
+                }
             }
         }
 
@@ -6971,15 +8866,15 @@ public class Intent implements Parcelable, Cloneable {
      *
      * @param type MIME data type to normalize
      * @return normalized MIME data type, or null if the input was null
-     * @see {@link #setType}
-     * @see {@link #setTypeAndNormalize}
+     * @see #setType
+     * @see #setTypeAndNormalize
      */
     public static String normalizeMimeType(String type) {
         if (type == null) {
             return null;
         }
 
-        type = type.trim().toLowerCase(Locale.US);
+        type = type.trim().toLowerCase(Locale.ROOT);
 
         final int semicolonIndex = type.indexOf(';');
         if (semicolonIndex != -1) {
@@ -6993,26 +8888,111 @@ public class Intent implements Parcelable, Cloneable {
      *
      * @hide
      */
-    public void prepareToLeaveProcess() {
+    public void prepareToLeaveProcess(Context context) {
+        final boolean leavingPackage = (mComponent == null)
+                || !Objects.equals(mComponent.getPackageName(), context.getPackageName());
+        prepareToLeaveProcess(leavingPackage);
+    }
+
+    /**
+     * Prepare this {@link Intent} to leave an app process.
+     *
+     * @hide
+     */
+    public void prepareToLeaveProcess(boolean leavingPackage) {
         setAllowFds(false);
 
         if (mSelector != null) {
-            mSelector.prepareToLeaveProcess();
+            mSelector.prepareToLeaveProcess(leavingPackage);
         }
         if (mClipData != null) {
-            mClipData.prepareToLeaveProcess();
+            mClipData.prepareToLeaveProcess(leavingPackage);
         }
 
-        if (mData != null && StrictMode.vmFileUriExposureEnabled()) {
-            // There are several ACTION_MEDIA_* broadcasts that send file://
-            // Uris, so only check common actions.
-            if (ACTION_VIEW.equals(mAction) ||
-                    ACTION_EDIT.equals(mAction) ||
-                    ACTION_ATTACH_DATA.equals(mAction)) {
-                mData.checkFileUriExposed("Intent.getData()");
+        if (mAction != null && mData != null && StrictMode.vmFileUriExposureEnabled()
+                && leavingPackage) {
+            switch (mAction) {
+                case ACTION_MEDIA_REMOVED:
+                case ACTION_MEDIA_UNMOUNTED:
+                case ACTION_MEDIA_CHECKING:
+                case ACTION_MEDIA_NOFS:
+                case ACTION_MEDIA_MOUNTED:
+                case ACTION_MEDIA_SHARED:
+                case ACTION_MEDIA_UNSHARED:
+                case ACTION_MEDIA_BAD_REMOVAL:
+                case ACTION_MEDIA_UNMOUNTABLE:
+                case ACTION_MEDIA_EJECT:
+                case ACTION_MEDIA_SCANNER_STARTED:
+                case ACTION_MEDIA_SCANNER_FINISHED:
+                case ACTION_MEDIA_SCANNER_SCAN_FILE:
+                case ACTION_PACKAGE_NEEDS_VERIFICATION:
+                case ACTION_PACKAGE_VERIFIED:
+                    // Ignore legacy actions
+                    break;
+                default:
+                    mData.checkFileUriExposed("Intent.getData()");
             }
         }
     }
+
+    /**
+     * @hide
+     */
+    public void prepareToEnterProcess() {
+        // We just entered destination process, so we should be able to read all
+        // parcelables inside.
+        setDefusable(true);
+
+        if (mSelector != null) {
+            mSelector.prepareToEnterProcess();
+        }
+        if (mClipData != null) {
+            mClipData.prepareToEnterProcess();
+        }
+
+        if (mContentUserHint != UserHandle.USER_CURRENT) {
+            if (UserHandle.getAppId(Process.myUid()) != Process.SYSTEM_UID) {
+                fixUris(mContentUserHint);
+                mContentUserHint = UserHandle.USER_CURRENT;
+            }
+        }
+    }
+
+    /**
+     * @hide
+     */
+     public void fixUris(int contentUserHint) {
+        Uri data = getData();
+        if (data != null) {
+            mData = maybeAddUserId(data, contentUserHint);
+        }
+        if (mClipData != null) {
+            mClipData.fixUris(contentUserHint);
+        }
+        String action = getAction();
+        if (ACTION_SEND.equals(action)) {
+            final Uri stream = getParcelableExtra(EXTRA_STREAM);
+            if (stream != null) {
+                putExtra(EXTRA_STREAM, maybeAddUserId(stream, contentUserHint));
+            }
+        } else if (ACTION_SEND_MULTIPLE.equals(action)) {
+            final ArrayList<Uri> streams = getParcelableArrayListExtra(EXTRA_STREAM);
+            if (streams != null) {
+                ArrayList<Uri> newStreams = new ArrayList<Uri>();
+                for (int i = 0; i < streams.size(); i++) {
+                    newStreams.add(maybeAddUserId(streams.get(i), contentUserHint));
+                }
+                putParcelableArrayListExtra(EXTRA_STREAM, newStreams);
+            }
+        } else if (MediaStore.ACTION_IMAGE_CAPTURE.equals(action)
+                || MediaStore.ACTION_IMAGE_CAPTURE_SECURE.equals(action)
+                || MediaStore.ACTION_VIDEO_CAPTURE.equals(action)) {
+            final Uri output = getParcelableExtra(MediaStore.EXTRA_OUTPUT);
+            if (output != null) {
+                putExtra(MediaStore.EXTRA_OUTPUT, maybeAddUserId(output, contentUserHint));
+            }
+        }
+     }
 
     /**
      * Migrate any {@link #EXTRA_STREAM} in {@link #ACTION_SEND} and
@@ -7031,21 +9011,32 @@ public class Intent implements Parcelable, Cloneable {
 
         final String action = getAction();
         if (ACTION_CHOOSER.equals(action)) {
+            // Inspect contained intents to see if we need to migrate extras. We
+            // don't promote ClipData to the parent, since ChooserActivity will
+            // already start the picked item as the caller, and we can't combine
+            // the flags in a safe way.
+
+            boolean migrated = false;
             try {
-                // Inspect target intent to see if we need to migrate
-                final Intent target = getParcelableExtra(EXTRA_INTENT);
-                if (target != null && target.migrateExtraStreamToClipData()) {
-                    // Since we migrated in child, we need to promote ClipData
-                    // and flags to ourselves to grant.
-                    setClipData(target.getClipData());
-                    addFlags(target.getFlags()
-                            & (FLAG_GRANT_READ_URI_PERMISSION | FLAG_GRANT_WRITE_URI_PERMISSION));
-                    return true;
-                } else {
-                    return false;
+                final Intent intent = getParcelableExtra(EXTRA_INTENT);
+                if (intent != null) {
+                    migrated |= intent.migrateExtraStreamToClipData();
                 }
             } catch (ClassCastException e) {
             }
+            try {
+                final Parcelable[] intents = getParcelableArrayExtra(EXTRA_INITIAL_INTENTS);
+                if (intents != null) {
+                    for (int i = 0; i < intents.length; i++) {
+                        final Intent intent = (Intent) intents[i];
+                        if (intent != null) {
+                            migrated |= intent.migrateExtraStreamToClipData();
+                        }
+                    }
+                }
+            } catch (ClassCastException e) {
+            }
+            return migrated;
 
         } else if (ACTION_SEND.equals(action)) {
             try {
@@ -7101,6 +9092,20 @@ public class Intent implements Parcelable, Cloneable {
                 }
             } catch (ClassCastException e) {
             }
+        } else if (MediaStore.ACTION_IMAGE_CAPTURE.equals(action)
+                || MediaStore.ACTION_IMAGE_CAPTURE_SECURE.equals(action)
+                || MediaStore.ACTION_VIDEO_CAPTURE.equals(action)) {
+            final Uri output;
+            try {
+                output = getParcelableExtra(MediaStore.EXTRA_OUTPUT);
+            } catch (ClassCastException e) {
+                return false;
+            }
+            if (output != null) {
+                setClipData(ClipData.newRawUri("", output));
+                addFlags(FLAG_GRANT_WRITE_URI_PERMISSION|FLAG_GRANT_READ_URI_PERMISSION);
+                return true;
+            }
         }
 
         return false;
@@ -7112,5 +9117,10 @@ public class Intent implements Parcelable, Cloneable {
         CharSequence text = texts != null ? texts.get(which) : null;
         String htmlText = htmlTexts != null ? htmlTexts.get(which) : null;
         return new ClipData.Item(text, htmlText, null, uri);
+    }
+
+    /** @hide */
+    public boolean isDocument() {
+        return (mFlags & FLAG_ACTIVITY_NEW_DOCUMENT) == FLAG_ACTIVITY_NEW_DOCUMENT;
     }
 }

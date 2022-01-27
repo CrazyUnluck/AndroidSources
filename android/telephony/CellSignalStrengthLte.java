@@ -94,7 +94,7 @@ public final class CellSignalStrengthLte extends CellSignalStrength implements P
      * @hide
      */
     public void initialize(SignalStrength ss, int timingAdvance) {
-        mSignalStrength = ss.getLteSignalStrenght();
+        mSignalStrength = ss.getLteSignalStrength();
         mRsrp = ss.getLteRsrp();
         mRsrq = ss.getLteRsrq();
         mRssnr = ss.getLteRssnr();
@@ -168,6 +168,20 @@ public final class CellSignalStrengthLte extends CellSignalStrength implements P
     }
 
     /**
+     * @hide
+     */
+    public int getRsrq() {
+        return mRsrq;
+    }
+
+    /**
+     * @hide
+     */
+    public int getRssnr() {
+        return mRssnr;
+    }
+
+    /**
      * Get signal strength as dBm
      */
     @Override
@@ -183,7 +197,8 @@ public final class CellSignalStrengthLte extends CellSignalStrength implements P
     public int getAsuLevel() {
         int lteAsuLevel = 99;
         int lteDbm = getDbm();
-        if (lteDbm <= -140) lteAsuLevel = 0;
+        if (lteDbm == Integer.MAX_VALUE) lteAsuLevel = 99;
+        else if (lteDbm <= -140) lteAsuLevel = 0;
         else if (lteDbm >= -43) lteAsuLevel = 97;
         else lteAsuLevel = lteDbm + 140;
         if (DBG) log("Lte Asu level: "+lteAsuLevel);
@@ -247,8 +262,11 @@ public final class CellSignalStrengthLte extends CellSignalStrength implements P
     public void writeToParcel(Parcel dest, int flags) {
         if (DBG) log("writeToParcel(Parcel, int): " + toString());
         dest.writeInt(mSignalStrength);
-        dest.writeInt(mRsrp);
-        dest.writeInt(mRsrq);
+        // Need to multiply rsrp and rsrq by -1
+        // to ensure consistency when reading values written here
+        // unless the values are invalid
+        dest.writeInt(mRsrp * (mRsrp != Integer.MAX_VALUE ? -1 : 1));
+        dest.writeInt(mRsrq * (mRsrq != Integer.MAX_VALUE ? -1 : 1));
         dest.writeInt(mRssnr);
         dest.writeInt(mCqi);
         dest.writeInt(mTimingAdvance);
@@ -260,8 +278,12 @@ public final class CellSignalStrengthLte extends CellSignalStrength implements P
      */
     private CellSignalStrengthLte(Parcel in) {
         mSignalStrength = in.readInt();
+        // rsrp and rsrq are written into the parcel as positive values.
+        // Need to convert into negative values unless the values are invalid
         mRsrp = in.readInt();
+        if (mRsrp != Integer.MAX_VALUE) mRsrp *= -1;
         mRsrq = in.readInt();
+        if (mRsrq != Integer.MAX_VALUE) mRsrq *= -1;
         mRssnr = in.readInt();
         mCqi = in.readInt();
         mTimingAdvance = in.readInt();

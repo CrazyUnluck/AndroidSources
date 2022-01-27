@@ -16,8 +16,6 @@
 
 package android.renderscript;
 
-import android.util.Log;
-
 /**
  * Intrinsic for applying a 5x5 convolve to an allocation.
  *
@@ -26,14 +24,17 @@ public final class ScriptIntrinsicConvolve5x5 extends ScriptIntrinsic {
     private final float[] mValues = new float[25];
     private Allocation mInput;
 
-    private ScriptIntrinsicConvolve5x5(int id, RenderScript rs) {
+    private ScriptIntrinsicConvolve5x5(long id, RenderScript rs) {
         super(id, rs);
     }
 
     /**
-     * Supported elements types are {@link Element#U8_4}
+     * Supported elements types are {@link Element#U8}, {@link
+     * Element#U8_2}, {@link Element#U8_3}, {@link Element#U8_4},
+     * {@link Element#F32}, {@link Element#F32_2}, {@link
+     * Element#F32_3}, and {@link Element#F32_4}.
      *
-     * The default coefficients are.
+     * <p> The default coefficients are:
      * <code>
      * <p> [ 0,  0,  0,  0,  0  ]
      * <p> [ 0,  0,  0,  0,  0  ]
@@ -42,19 +43,30 @@ public final class ScriptIntrinsicConvolve5x5 extends ScriptIntrinsic {
      * <p> [ 0,  0,  0,  0,  0  ]
      * </code>
      *
-     * @param rs The Renderscript context
+     * @param rs The RenderScript context
      * @param e Element type for intputs and outputs
      *
      * @return ScriptIntrinsicConvolve5x5
      */
     public static ScriptIntrinsicConvolve5x5 create(RenderScript rs, Element e) {
-        int id = rs.nScriptIntrinsicCreate(4, e.getID(rs));
+        if (!e.isCompatible(Element.U8(rs)) &&
+            !e.isCompatible(Element.U8_2(rs)) &&
+            !e.isCompatible(Element.U8_3(rs)) &&
+            !e.isCompatible(Element.U8_4(rs)) &&
+            !e.isCompatible(Element.F32(rs)) &&
+            !e.isCompatible(Element.F32_2(rs)) &&
+            !e.isCompatible(Element.F32_3(rs)) &&
+            !e.isCompatible(Element.F32_4(rs))) {
+            throw new RSIllegalArgumentException("Unsuported element type.");
+        }
+
+        long id = rs.nScriptIntrinsicCreate(4, e.getID(rs));
         return new ScriptIntrinsicConvolve5x5(id, rs);
 
     }
 
     /**
-     * Set the input of the blur.
+     * Set the input of the 5x5 convolve.
      * Must match the element type supplied during create.
      *
      * @param ain The input allocation.
@@ -67,7 +79,7 @@ public final class ScriptIntrinsicConvolve5x5 extends ScriptIntrinsic {
     /**
     * Set the coefficients for the convolve.
     *
-    * The convolve layout is
+    * <p> The convolve layout is:
     * <code>
     * <p> [ 0,  1,  2,  3,  4  ]
     * <p> [ 5,  6,  7,  8,  9  ]
@@ -95,8 +107,21 @@ public final class ScriptIntrinsicConvolve5x5 extends ScriptIntrinsic {
      *             type.
      */
     public void forEach(Allocation aout) {
-        forEach(0, null, aout, null);
+        forEach(0, (Allocation) null, aout, null);
     }
+
+    /**
+     * Apply the filter to the input and save to the specified
+     * allocation.
+     *
+     * @param aout Output allocation. Must match creation element
+     *             type.
+     * @param opt LaunchOptions for clipping
+     */
+    public void forEach(Allocation aout, Script.LaunchOptions opt) {
+        forEach(0, (Allocation) null, aout, null, opt);
+    }
+
 
     /**
      * Get a KernelID for this intrinsic kernel.
@@ -116,4 +141,3 @@ public final class ScriptIntrinsicConvolve5x5 extends ScriptIntrinsic {
         return createFieldID(1, null);
     }
 }
-

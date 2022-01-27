@@ -16,11 +16,9 @@
 
 package android.util;
 
-import android.text.format.Time;
-
 import java.io.FileDescriptor;
 import java.io.PrintWriter;
-import java.io.StringWriter;
+import java.util.Calendar;
 import java.util.Iterator;
 import java.util.LinkedList;
 
@@ -31,18 +29,21 @@ public final class LocalLog {
 
     private LinkedList<String> mLog;
     private int mMaxLines;
-    private Time mNow;
+    private long mNow;
 
     public LocalLog(int maxLines) {
         mLog = new LinkedList<String>();
         mMaxLines = maxLines;
-        mNow = new Time();
     }
 
     public synchronized void log(String msg) {
         if (mMaxLines > 0) {
-            mNow.setToNow();
-            mLog.add(mNow.format("%H:%M:%S") + " - " + msg);
+            mNow = System.currentTimeMillis();
+            StringBuilder sb = new StringBuilder();
+            Calendar c = Calendar.getInstance();
+            c.setTimeInMillis(mNow);
+            sb.append(String.format("%tm-%td %tH:%tM:%tS.%tL", c, c, c, c, c, c));
+            mLog.add(sb.toString() + " - " + msg);
             while (mLog.size() > mMaxLines) mLog.remove();
         }
     }
@@ -52,5 +53,25 @@ public final class LocalLog {
         while (itr.hasNext()) {
             pw.println(itr.next());
         }
+    }
+
+    public synchronized void reverseDump(FileDescriptor fd, PrintWriter pw, String[] args) {
+        for (int i = mLog.size() - 1; i >= 0; i--) {
+            pw.println(mLog.get(i));
+        }
+    }
+
+    public static class ReadOnlyLocalLog {
+        private final LocalLog mLog;
+        ReadOnlyLocalLog(LocalLog log) {
+            mLog = log;
+        }
+        public void dump(FileDescriptor fd, PrintWriter pw, String[] args) {
+            mLog.dump(fd, pw, args);
+        }
+    }
+
+    public ReadOnlyLocalLog readOnlyLocalLog() {
+        return new ReadOnlyLocalLog(this);
     }
 }

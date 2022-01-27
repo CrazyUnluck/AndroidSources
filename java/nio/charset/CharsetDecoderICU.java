@@ -25,13 +25,13 @@ final class CharsetDecoderICU extends CharsetDecoder {
 
     private static final int INPUT_OFFSET = 0;
     private static final int OUTPUT_OFFSET = 1;
-    private static final int INVALID_BYTES = 2;
+    private static final int INVALID_BYTE_COUNT = 2;
     /*
      * data[INPUT_OFFSET]   = on input contains the start of input and on output the number of input bytes consumed
      * data[OUTPUT_OFFSET]  = on input contains the start of output and on output the number of output chars written
-     * data[INVALID_BYTES]  = number of invalid bytes
+     * data[INVALID_BYTE_COUNT]  = number of invalid bytes
      */
-    private int[] data = new int[3];
+    private final int[] data = new int[3];
 
     /* handle to the ICU converter that is opened */
     private long converterHandle = 0;
@@ -68,6 +68,7 @@ final class CharsetDecoderICU extends CharsetDecoder {
     private CharsetDecoderICU(Charset cs, float averageCharsPerByte, long address) {
         super(cs, averageCharsPerByte, MAX_CHARS_PER_BYTE);
         this.converterHandle = address;
+        NativeConverter.registerConverter(this, converterHandle);
     }
 
     @Override protected void implReplaceWith(String newReplacement) {
@@ -90,7 +91,7 @@ final class CharsetDecoderICU extends CharsetDecoder {
         NativeConverter.resetByteToChar(converterHandle);
         data[INPUT_OFFSET] = 0;
         data[OUTPUT_OFFSET] = 0;
-        data[INVALID_BYTES] = 0;
+        data[INVALID_BYTE_COUNT] = 0;
         output = null;
         input = null;
         allocatedInput = null;
@@ -107,15 +108,15 @@ final class CharsetDecoderICU extends CharsetDecoder {
             data[INPUT_OFFSET] = 0;
 
             data[OUTPUT_OFFSET] = getArray(out);
-            data[INVALID_BYTES] = 0; // Make sure we don't see earlier errors.
+            data[INVALID_BYTE_COUNT] = 0; // Make sure we don't see earlier errors.
 
             int error = NativeConverter.decode(converterHandle, input, inEnd, output, outEnd, data, true);
             if (ICU.U_FAILURE(error)) {
                 if (error == ICU.U_BUFFER_OVERFLOW_ERROR) {
                     return CoderResult.OVERFLOW;
                 } else if (error == ICU.U_TRUNCATED_CHAR_FOUND) {
-                    if (data[INPUT_OFFSET] > 0) {
-                        return CoderResult.malformedForLength(data[INPUT_OFFSET]);
+                    if (data[INVALID_BYTE_COUNT] > 0) {
+                        return CoderResult.malformedForLength(data[INVALID_BYTE_COUNT]);
                     }
                 }
             }
@@ -140,9 +141,9 @@ final class CharsetDecoderICU extends CharsetDecoder {
                 if (error == ICU.U_BUFFER_OVERFLOW_ERROR) {
                     return CoderResult.OVERFLOW;
                 } else if (error == ICU.U_INVALID_CHAR_FOUND) {
-                    return CoderResult.unmappableForLength(data[INVALID_BYTES]);
+                    return CoderResult.unmappableForLength(data[INVALID_BYTE_COUNT]);
                 } else if (error == ICU.U_ILLEGAL_CHAR_FOUND) {
-                    return CoderResult.malformedForLength(data[INVALID_BYTES]);
+                    return CoderResult.malformedForLength(data[INVALID_BYTE_COUNT]);
                 } else {
                     throw new AssertionError(error);
                 }
@@ -155,14 +156,6 @@ final class CharsetDecoderICU extends CharsetDecoder {
         }
     }
 
-    @Override protected void finalize() throws Throwable {
-        try {
-            NativeConverter.closeConverter(converterHandle);
-            converterHandle = 0;
-        } finally {
-            super.finalize();
-        }
-    }
 
     private int getArray(CharBuffer out) {
         if (out.hasArray()) {
@@ -202,7 +195,7 @@ final class CharsetDecoderICU extends CharsetDecoder {
 
     private void setPosition(CharBuffer out) {
         if (out.hasArray()) {
-            out.position(out.position() + data[OUTPUT_OFFSET] - out.arrayOffset());
+            out.position(out.position() + data[OUTPUT_OFFSET]);
         } else {
             out.put(output, 0, data[OUTPUT_OFFSET]);
         }

@@ -36,10 +36,10 @@ import android.view.View;
 import android.view.accessibility.AccessibilityEvent;
 import android.view.accessibility.AccessibilityNodeInfo;
 
+import com.android.internal.R;
+
 import org.xmlpull.v1.XmlPullParser;
 import org.xmlpull.v1.XmlPullParserException;
-
-import com.android.internal.R;
 
 import java.io.IOException;
 import java.util.ArrayList;
@@ -58,6 +58,18 @@ import java.util.List;
  * developer guide.</p>
  * </div>
  *
+ * @attr ref android.R.styleable#AccessibilityService_accessibilityEventTypes
+ * @attr ref android.R.styleable#AccessibilityService_accessibilityFeedbackType
+ * @attr ref android.R.styleable#AccessibilityService_accessibilityFlags
+ * @attr ref android.R.styleable#AccessibilityService_canRequestEnhancedWebAccessibility
+ * @attr ref android.R.styleable#AccessibilityService_canRequestFilterKeyEvents
+ * @attr ref android.R.styleable#AccessibilityService_canRequestTouchExplorationMode
+ * @attr ref android.R.styleable#AccessibilityService_canRetrieveWindowContent
+ * @attr ref android.R.styleable#AccessibilityService_description
+ * @attr ref android.R.styleable#AccessibilityService_notificationTimeout
+ * @attr ref android.R.styleable#AccessibilityService_packageNames
+ * @attr ref android.R.styleable#AccessibilityService_settingsActivity
+ *
  * @see AccessibilityService
  * @see android.view.accessibility.AccessibilityEvent
  * @see android.view.accessibility.AccessibilityManager
@@ -68,25 +80,41 @@ public class AccessibilityServiceInfo implements Parcelable {
 
     /**
      * Capability: This accessibility service can retrieve the active window content.
+     * @see android.R.styleable#AccessibilityService_canRetrieveWindowContent
      */
     public static final int CAPABILITY_CAN_RETRIEVE_WINDOW_CONTENT = 0x00000001;
 
     /**
      * Capability: This accessibility service can request touch exploration mode in which
      * touched items are spoken aloud and the UI can be explored via gestures.
+     * @see android.R.styleable#AccessibilityService_canRequestTouchExplorationMode
      */
     public static final int CAPABILITY_CAN_REQUEST_TOUCH_EXPLORATION = 0x00000002;
 
     /**
      * Capability: This accessibility service can request enhanced web accessibility
      * enhancements. For example, installing scripts to make app content more accessible.
+     * @see android.R.styleable#AccessibilityService_canRequestEnhancedWebAccessibility
      */
     public static final int CAPABILITY_CAN_REQUEST_ENHANCED_WEB_ACCESSIBILITY = 0x00000004;
 
     /**
-      * Capability: This accessibility service can request to filter the key event stream.
+     * Capability: This accessibility service can request to filter the key event stream.
+     * @see android.R.styleable#AccessibilityService_canRequestFilterKeyEvents
      */
     public static final int CAPABILITY_CAN_REQUEST_FILTER_KEY_EVENTS = 0x00000008;
+
+    /**
+     * Capability: This accessibility service can control display magnification.
+     * @see android.R.styleable#AccessibilityService_canControlMagnification
+     */
+    public static final int CAPABILITY_CAN_CONTROL_MAGNIFICATION = 0x00000010;
+
+    /**
+     * Capability: This accessibility service can perform gestures.
+     * @see android.R.styleable#AccessibilityService_canPerformGestures
+     */
+    public static final int CAPABILITY_CAN_PERFORM_GESTURES = 0x00000020;
 
     private static final SparseArray<CapabilityInfo> sAvailableCapabilityInfos =
             new SparseArray<CapabilityInfo>();
@@ -107,6 +135,14 @@ public class AccessibilityServiceInfo implements Parcelable {
                 new CapabilityInfo(CAPABILITY_CAN_REQUEST_FILTER_KEY_EVENTS,
                         R.string.capability_title_canRequestFilterKeyEvents,
                         R.string.capability_desc_canRequestFilterKeyEvents));
+        sAvailableCapabilityInfos.put(CAPABILITY_CAN_CONTROL_MAGNIFICATION,
+                new CapabilityInfo(CAPABILITY_CAN_CONTROL_MAGNIFICATION,
+                        R.string.capability_title_canControlMagnification,
+                        R.string.capability_desc_canControlMagnification));
+        sAvailableCapabilityInfos.put(CAPABILITY_CAN_PERFORM_GESTURES,
+                new CapabilityInfo(CAPABILITY_CAN_PERFORM_GESTURES,
+                        R.string.capability_title_canPerformGestures,
+                        R.string.capability_desc_canPerformGestures));
     }
 
     /**
@@ -162,12 +198,13 @@ public class AccessibilityServiceInfo implements Parcelable {
      * If this flag is set the system will regard views that are not important
      * for accessibility in addition to the ones that are important for accessibility.
      * That is, views that are marked as not important for accessibility via
-     * {@link View#IMPORTANT_FOR_ACCESSIBILITY_NO} and views that are marked as
-     * potentially important for accessibility via
+     * {@link View#IMPORTANT_FOR_ACCESSIBILITY_NO} or
+     * {@link View#IMPORTANT_FOR_ACCESSIBILITY_NO_HIDE_DESCENDANTS} and views that are
+     * marked as potentially important for accessibility via
      * {@link View#IMPORTANT_FOR_ACCESSIBILITY_AUTO} for which the system has determined
-     * that are not important for accessibility, are both reported while querying the
-     * window content and also the accessibility service will receive accessibility events
-     * from them.
+     * that are not important for accessibility, are reported while querying the window
+     * content and also the accessibility service will receive accessibility events from
+     * them.
      * <p>
      * <strong>Note:</strong> For accessibility services targeting API version
      * {@link Build.VERSION_CODES#JELLY_BEAN} or higher this flag has to be explicitly
@@ -213,6 +250,7 @@ public class AccessibilityServiceInfo implements Parcelable {
      * the first time they are run, if this flag is specified, a dialog is
      * shown to the user to confirm enabling explore by touch.
      * </p>
+     * @see android.R.styleable#AccessibilityService_canRequestTouchExplorationMode
      */
     public static final int FLAG_REQUEST_TOUCH_EXPLORATION_MODE = 0x0000004;
 
@@ -232,6 +270,7 @@ public class AccessibilityServiceInfo implements Parcelable {
      * true, otherwise this flag will be ignored. For how to declare the meta-data
      * of a service refer to {@value AccessibilityService#SERVICE_META_DATA}.
      * </p>
+     * @see android.R.styleable#AccessibilityService_canRequestEnhancedWebAccessibility
      */
     public static final int FLAG_REQUEST_ENHANCED_WEB_ACCESSIBILITY = 0x00000008;
 
@@ -247,12 +286,7 @@ public class AccessibilityServiceInfo implements Parcelable {
     /**
      * This flag requests from the system to filter key events. If this flag
      * is set the accessibility service will receive the key events before
-     * applications allowing it implement global shortcuts. Setting this flag
-     * does not guarantee that this service will filter key events since only
-     * one service can do so at any given time. This avoids user confusion due
-     * to behavior change in case different key filtering services are enabled.
-     * If there is already another key filtering service enabled, this one will
-     * not receive key events.
+     * applications allowing it implement global shortcuts.
      * <p>
      * Services that want to set this flag have to declare this capability
      * in their meta-data by setting the attribute {@link android.R.attr
@@ -260,8 +294,33 @@ public class AccessibilityServiceInfo implements Parcelable {
      * otherwise this flag will be ignored. For how to declare the meta-data
      * of a service refer to {@value AccessibilityService#SERVICE_META_DATA}.
      * </p>
+     * @see android.R.styleable#AccessibilityService_canRequestFilterKeyEvents
      */
     public static final int FLAG_REQUEST_FILTER_KEY_EVENTS = 0x00000020;
+
+    /**
+     * This flag indicates to the system that the accessibility service wants
+     * to access content of all interactive windows. An interactive window is a
+     * window that has input focus or can be touched by a sighted user when explore
+     * by touch is not enabled. If this flag is not set your service will not receive
+     * {@link android.view.accessibility.AccessibilityEvent#TYPE_WINDOWS_CHANGED}
+     * events, calling AccessibilityService{@link AccessibilityService#getWindows()
+     * AccessibilityService.getWindows()} will return an empty list, and {@link
+     * AccessibilityNodeInfo#getWindow() AccessibilityNodeInfo.getWindow()} will
+     * return null.
+     * <p>
+     * Services that want to set this flag have to declare the capability
+     * to retrieve window content in their meta-data by setting the attribute
+     * {@link android.R.attr#canRetrieveWindowContent canRetrieveWindowContent} to
+     * true, otherwise this flag will be ignored. For how to declare the meta-data
+     * of a service refer to {@value AccessibilityService#SERVICE_META_DATA}.
+     * </p>
+     * @see android.R.styleable#AccessibilityService_canRetrieveWindowContent
+     */
+    public static final int FLAG_RETRIEVE_INTERACTIVE_WINDOWS = 0x00000040;
+
+    /** {@hide} */
+    public static final int FLAG_FORCE_DIRECT_BOOT_AWARE = 0x00010000;
 
     /**
      * The event types an {@link AccessibilityService} is interested in.
@@ -282,6 +341,15 @@ public class AccessibilityServiceInfo implements Parcelable {
      * @see android.view.accessibility.AccessibilityEvent#TYPE_VIEW_SCROLLED
      * @see android.view.accessibility.AccessibilityEvent#TYPE_VIEW_TEXT_SELECTION_CHANGED
      * @see android.view.accessibility.AccessibilityEvent#TYPE_WINDOW_CONTENT_CHANGED
+     * @see android.view.accessibility.AccessibilityEvent#TYPE_TOUCH_INTERACTION_START
+     * @see android.view.accessibility.AccessibilityEvent#TYPE_TOUCH_INTERACTION_END
+     * @see android.view.accessibility.AccessibilityEvent#TYPE_ANNOUNCEMENT
+     * @see android.view.accessibility.AccessibilityEvent#TYPE_GESTURE_DETECTION_START
+     * @see android.view.accessibility.AccessibilityEvent#TYPE_GESTURE_DETECTION_END
+     * @see android.view.accessibility.AccessibilityEvent#TYPE_VIEW_ACCESSIBILITY_FOCUSED
+     * @see android.view.accessibility.AccessibilityEvent#TYPE_VIEW_ACCESSIBILITY_FOCUS_CLEARED
+     * @see android.view.accessibility.AccessibilityEvent#TYPE_VIEW_TEXT_TRAVERSED_AT_MOVEMENT_GRANULARITY
+     * @see android.view.accessibility.AccessibilityEvent#TYPE_WINDOWS_CHANGED
      */
     public int eventTypes;
 
@@ -334,6 +402,7 @@ public class AccessibilityServiceInfo implements Parcelable {
      * @see #FLAG_REQUEST_ENHANCED_WEB_ACCESSIBILITY
      * @see #FLAG_REQUEST_FILTER_KEY_EVENTS
      * @see #FLAG_REPORT_VIEW_IDS
+     * @see #FLAG_RETRIEVE_INTERACTIVE_WINDOWS
      */
     public int flags;
 
@@ -429,7 +498,7 @@ public class AccessibilityServiceInfo implements Parcelable {
                     com.android.internal.R.styleable.AccessibilityService_accessibilityFeedbackType,
                     0);
             notificationTimeout = asAttributes.getInt(
-                    com.android.internal.R.styleable.AccessibilityService_notificationTimeout, 
+                    com.android.internal.R.styleable.AccessibilityService_notificationTimeout,
                     0);
             flags = asAttributes.getInt(
                     com.android.internal.R.styleable.AccessibilityService_accessibilityFlags, 0);
@@ -450,6 +519,14 @@ public class AccessibilityServiceInfo implements Parcelable {
             if (asAttributes.getBoolean(com.android.internal.R.styleable
                     .AccessibilityService_canRequestFilterKeyEvents, false)) {
                 mCapabilities |= CAPABILITY_CAN_REQUEST_FILTER_KEY_EVENTS;
+            }
+            if (asAttributes.getBoolean(com.android.internal.R.styleable
+                    .AccessibilityService_canControlMagnification, false)) {
+                mCapabilities |= CAPABILITY_CAN_CONTROL_MAGNIFICATION;
+            }
+            if (asAttributes.getBoolean(com.android.internal.R.styleable
+                    .AccessibilityService_canPerformGestures, false)) {
+                mCapabilities |= CAPABILITY_CAN_PERFORM_GESTURES;
             }
             TypedValue peekedValue = asAttributes.peekValue(
                     com.android.internal.R.styleable.AccessibilityService_description);
@@ -551,6 +628,8 @@ public class AccessibilityServiceInfo implements Parcelable {
      * @see #CAPABILITY_CAN_REQUEST_TOUCH_EXPLORATION
      * @see #CAPABILITY_CAN_REQUEST_ENHANCED_WEB_ACCESSIBILITY
      * @see #CAPABILITY_FILTER_KEY_EVENTS
+     * @see #CAPABILITY_CAN_CONTROL_MAGNIFICATION
+     * @see #CAPABILITY_CAN_PERFORM_GESTURES
      */
     public int getCapabilities() {
         return mCapabilities;
@@ -566,6 +645,8 @@ public class AccessibilityServiceInfo implements Parcelable {
      * @see #CAPABILITY_CAN_REQUEST_TOUCH_EXPLORATION
      * @see #CAPABILITY_CAN_REQUEST_ENHANCED_WEB_ACCESSIBILITY
      * @see #CAPABILITY_FILTER_KEY_EVENTS
+     * @see #CAPABILITY_CAN_CONTROL_MAGNIFICATION
+     * @see #CAPABILITY_CAN_PERFORM_GESTURES
      *
      * @hide
      */
@@ -606,6 +687,12 @@ public class AccessibilityServiceInfo implements Parcelable {
             return description.toString().trim();
         }
         return null;
+    }
+
+    /** {@hide} */
+    public boolean isDirectBootAware() {
+        return ((flags & FLAG_FORCE_DIRECT_BOOT_AWARE) != 0)
+                || mResolveInfo.serviceInfo.directBootAware;
     }
 
     /**
@@ -841,6 +928,8 @@ public class AccessibilityServiceInfo implements Parcelable {
                 return "FLAG_REPORT_VIEW_IDS";
             case FLAG_REQUEST_FILTER_KEY_EVENTS:
                 return "FLAG_REQUEST_FILTER_KEY_EVENTS";
+            case FLAG_RETRIEVE_INTERACTIVE_WINDOWS:
+                return "FLAG_RETRIEVE_INTERACTIVE_WINDOWS";
             default:
                 return null;
         }
@@ -864,6 +953,10 @@ public class AccessibilityServiceInfo implements Parcelable {
                 return "CAPABILITY_CAN_REQUEST_ENHANCED_WEB_ACCESSIBILITY";
             case CAPABILITY_CAN_REQUEST_FILTER_KEY_EVENTS:
                 return "CAPABILITY_CAN_FILTER_KEY_EVENTS";
+            case CAPABILITY_CAN_CONTROL_MAGNIFICATION:
+                return "CAPABILITY_CAN_CONTROL_MAGNIFICATION";
+            case CAPABILITY_CAN_PERFORM_GESTURES:
+                return "CAPABILITY_CAN_PERFORM_GESTURES";
             default:
                 return "UNKNOWN";
         }

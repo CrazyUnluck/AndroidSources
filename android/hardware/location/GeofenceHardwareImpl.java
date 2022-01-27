@@ -18,23 +18,20 @@ package android.hardware.location;
 
 import android.content.Context;
 import android.content.pm.PackageManager;
+import android.location.IFusedGeofenceHardware;
 import android.location.IGpsGeofenceHardware;
 import android.location.Location;
-import android.location.LocationManager;
-import android.os.Binder;
-import android.os.Bundle;
 import android.os.Handler;
 import android.os.IBinder;
+import android.os.IInterface;
 import android.os.Message;
 import android.os.PowerManager;
 import android.os.RemoteException;
-import android.os.ServiceManager;
-import android.os.SystemClock;
 import android.util.Log;
 import android.util.SparseArray;
 
 import java.util.ArrayList;
-import java.util.HashMap;
+import java.util.Iterator;
 
 /**
  * This class manages the geofences which are handled by hardware.
@@ -44,6 +41,7 @@ import java.util.HashMap;
 public final class GeofenceHardwareImpl {
     private static final String TAG = "GeofenceHardwareImpl";
     private static final boolean DEBUG = Log.isLoggable(TAG, Log.DEBUG);
+    private static final int FIRST_VERSION_WITH_CAPABILITIES = 2;
 
     private final Context mContext;
     private static GeofenceHardwareImpl sInstance;
@@ -54,7 +52,10 @@ public final class GeofenceHardwareImpl {
             new ArrayList[GeofenceHardware.NUM_MONITORS];
     private final ArrayList<Reaper> mReapers = new ArrayList<Reaper>();
 
+    private IFusedGeofenceHardware mFusedService;
     private IGpsGeofenceHardware mGpsService;
+    private int mCapabilities;
+    private int mVersion = 1;
 
     private int[] mSupportedMonitorTypes = new int[GeofenceHardware.NUM_MONITORS];
 
@@ -67,7 +68,7 @@ public final class GeofenceHardwareImpl {
     private static final int GEOFENCE_CALLBACK_BINDER_DIED = 6;
 
     // mCallbacksHandler message types
-    private static final int GPS_GEOFENCE_STATUS = 1;
+    private static final int GEOFENCE_STATUS = 1;
     private static final int CALLBACK_ADD = 2;
     private static final int CALLBACK_REMOVE = 3;
     private static final int MONITOR_CALLBACK_BINDER_DIED = 4;
@@ -91,15 +92,8 @@ public final class GeofenceHardwareImpl {
     private static final int RESOLUTION_LEVEL_COARSE = 2;
     private static final int RESOLUTION_LEVEL_FINE = 3;
 
-    // GPS Geofence errors. Should match gps.h constants.
-    private static final int GPS_GEOFENCE_OPERATION_SUCCESS = 0;
-    private static final int GPS_GEOFENCE_ERROR_TOO_MANY_GEOFENCES = 100;
-    private static final int GPS_GEOFENCE_ERROR_ID_EXISTS  = -101;
-    private static final int GPS_GEOFENCE_ERROR_ID_UNKNOWN = -102;
-    private static final int GPS_GEOFENCE_ERROR_INVALID_TRANSITION = -103;
-    private static final int GPS_GEOFENCE_ERROR_GENERIC = -149;
-
-
+    // Capability constant corresponding to fused_location.h entry when geofencing supports GNNS.
+    private static final int CAPABILITY_GNSS = 1;
 
     public synchronized static GeofenceHardwareImpl getInstance(Context context) {
         if (sInstance == null) {
@@ -112,6 +106,9 @@ public final class GeofenceHardwareImpl {
         mContext = context;
         // Init everything to unsupported.
         setMonitorAvailability(GeofenceHardware.MONITORING_TYPE_GPS_HARDWARE,
+                GeofenceHardware.MONITOR_UNSUPPORTED);
+        setMonitorAvailability(
+                GeofenceHardware.MONITORING_TYPE_FUSED_HARDWARE,
                 GeofenceHardware.MONITOR_UNSUPPORTED);
 
     }
@@ -147,6 +144,26 @@ public final class GeofenceHardwareImpl {
         }
     }
 
+    private void updateFusedHardwareAvailability() {
+        boolean fusedSupported;
+        try {
+            final boolean hasGnnsCapabilities = (mVersion < FIRST_VERSION_WITH_CAPABILITIES)
+                    || (mCapabilities & CAPABILITY_GNSS) != 0;
+            fusedSupported = (mFusedService != null
+                    ? mFusedService.isSupported() && hasGnnsCapabilities
+                    : false);
+        } catch (RemoteException e) {
+            Log.e(TAG, "RemoteException calling LocationManagerService");
+            fusedSupported = false;
+        }
+
+        if(fusedSupported) {
+            setMonitorAvailability(
+                    GeofenceHardware.MONITORING_TYPE_FUSED_HARDWARE,
+                    GeofenceHardware.MONITOR_CURRENTLY_AVAILABLE);
+        }
+    }
+
     public void setGpsHardwareGeofence(IGpsGeofenceHardware service) {
         if (mGpsService == null) {
             mGpsService = service;
@@ -159,12 +176,49 @@ public final class GeofenceHardwareImpl {
         }
     }
 
+    public void onCapabilities(int capabilities) {
+        mCapabilities = capabilities;
+        updateFusedHardwareAvailability();
+    }
+
+    public void setVersion(int version) {
+        mVersion = version;
+        updateFusedHardwareAvailability();
+    }
+
+    public void setFusedGeofenceHardware(IFusedGeofenceHardware service) {
+        if(mFusedService == null) {
+            mFusedService = service;
+            updateFusedHardwareAvailability();
+        } else if(service == null) {
+            mFusedService = null;
+            Log.w(TAG, "Fused Geofence Hardware service seems to have crashed");
+        } else {
+            Log.e(TAG, "Error: FusedService being set again");
+        }
+    }
+
     public int[] getMonitoringTypes() {
+        boolean gpsSupported;
+        boolean fusedSupported;
         synchronized (mSupportedMonitorTypes) {
-            if (mSupportedMonitorTypes[GeofenceHardware.MONITORING_TYPE_GPS_HARDWARE] !=
-                        GeofenceHardware.MONITOR_UNSUPPORTED) {
-                return new int[] {GeofenceHardware.MONITORING_TYPE_GPS_HARDWARE};
+            gpsSupported = mSupportedMonitorTypes[GeofenceHardware.MONITORING_TYPE_GPS_HARDWARE]
+                    != GeofenceHardware.MONITOR_UNSUPPORTED;
+            fusedSupported = mSupportedMonitorTypes[GeofenceHardware.MONITORING_TYPE_FUSED_HARDWARE]
+                    != GeofenceHardware.MONITOR_UNSUPPORTED;
+        }
+
+        if(gpsSupported) {
+            if(fusedSupported) {
+                return new int[] {
+                        GeofenceHardware.MONITORING_TYPE_GPS_HARDWARE,
+                        GeofenceHardware.MONITORING_TYPE_FUSED_HARDWARE };
+            } else {
+                return new int[] { GeofenceHardware.MONITORING_TYPE_GPS_HARDWARE };
             }
+        } else if (fusedSupported) {
+            return new int[] { GeofenceHardware.MONITORING_TYPE_FUSED_HARDWARE };
+        } else {
             return new int[0];
         }
     }
@@ -178,18 +232,39 @@ public final class GeofenceHardwareImpl {
         }
     }
 
-    public boolean addCircularFence(int geofenceId,  int monitoringType, double latitude,
-            double longitude, double radius, int lastTransition,int monitorTransitions,
-            int notificationResponsivenes, int unknownTimer, IGeofenceHardwareCallback callback) {
+    public int getCapabilitiesForMonitoringType(int monitoringType) {
+        switch (mSupportedMonitorTypes[monitoringType]) {
+            case GeofenceHardware.MONITOR_CURRENTLY_AVAILABLE:
+                switch (monitoringType) {
+                    case GeofenceHardware.MONITORING_TYPE_GPS_HARDWARE:
+                        return CAPABILITY_GNSS;
+                    case GeofenceHardware.MONITORING_TYPE_FUSED_HARDWARE:
+                        if (mVersion >= FIRST_VERSION_WITH_CAPABILITIES) {
+                            return mCapabilities;
+                        }
+                        // This was the implied capability on old FLP HAL versions that didn't
+                        // have the capability callback.
+                        return CAPABILITY_GNSS;
+                }
+                break;
+        }
+        return 0;
+    }
+
+    public boolean addCircularFence(
+            int monitoringType,
+            GeofenceHardwareRequestParcelable request,
+            IGeofenceHardwareCallback callback) {
+        int geofenceId = request.getId();
+
         // This API is not thread safe. Operations on the same geofence need to be serialized
         // by upper layers
         if (DEBUG) {
-            Log.d(TAG, "addCircularFence: GeofenceId: " + geofenceId + " Latitude: " + latitude +
-                    " Longitude: " + longitude + " Radius: " + radius + " LastTransition: "
-                    + lastTransition + " MonitorTransition: " + monitorTransitions +
-                    " NotificationResponsiveness: " + notificationResponsivenes +
-                    " UnKnown Timer: " + unknownTimer + " MonitoringType: " + monitoringType);
-
+            String message = String.format(
+                    "addCircularFence: monitoringType=%d, %s",
+                    monitoringType,
+                    request);
+            Log.d(TAG, message);
         }
         boolean result;
 
@@ -205,11 +280,30 @@ public final class GeofenceHardwareImpl {
             case GeofenceHardware.MONITORING_TYPE_GPS_HARDWARE:
                 if (mGpsService == null) return false;
                 try {
-                    result = mGpsService.addCircularHardwareGeofence(geofenceId, latitude,
-                            longitude, radius, lastTransition, monitorTransitions,
-                            notificationResponsivenes, unknownTimer);
+                    result = mGpsService.addCircularHardwareGeofence(
+                            request.getId(),
+                            request.getLatitude(),
+                            request.getLongitude(),
+                            request.getRadius(),
+                            request.getLastTransition(),
+                            request.getMonitorTransitions(),
+                            request.getNotificationResponsiveness(),
+                            request.getUnknownTimer());
                 } catch (RemoteException e) {
                     Log.e(TAG, "AddGeofence: Remote Exception calling LocationManagerService");
+                    result = false;
+                }
+                break;
+            case GeofenceHardware.MONITORING_TYPE_FUSED_HARDWARE:
+                if(mFusedService == null) {
+                    return false;
+                }
+                try {
+                    mFusedService.addGeofences(
+                            new GeofenceHardwareRequestParcelable[] { request });
+                    result = true;
+                } catch(RemoteException e) {
+                    Log.e(TAG, "AddGeofence: RemoteException calling LocationManagerService");
                     result = false;
                 }
                 break;
@@ -251,6 +345,18 @@ public final class GeofenceHardwareImpl {
                     result = false;
                 }
                 break;
+            case GeofenceHardware.MONITORING_TYPE_FUSED_HARDWARE:
+                if(mFusedService == null) {
+                    return false;
+                }
+                try {
+                    mFusedService.removeGeofences(new int[] { geofenceId });
+                    result = true;
+                } catch(RemoteException e) {
+                    Log.e(TAG, "RemoveGeofence: RemoteException calling LocationManagerService");
+                    result = false;
+                }
+                break;
             default:
                 result = false;
         }
@@ -275,6 +381,18 @@ public final class GeofenceHardwareImpl {
                     result = mGpsService.pauseHardwareGeofence(geofenceId);
                 } catch (RemoteException e) {
                     Log.e(TAG, "PauseGeofence: Remote Exception calling LocationManagerService");
+                    result = false;
+                }
+                break;
+            case GeofenceHardware.MONITORING_TYPE_FUSED_HARDWARE:
+                if(mFusedService == null) {
+                    return false;
+                }
+                try {
+                    mFusedService.pauseMonitoringGeofence(geofenceId);
+                    result = true;
+                } catch(RemoteException e) {
+                    Log.e(TAG, "PauseGeofence: RemoteException calling LocationManagerService");
                     result = false;
                 }
                 break;
@@ -306,6 +424,18 @@ public final class GeofenceHardwareImpl {
                     result = false;
                 }
                 break;
+            case GeofenceHardware.MONITORING_TYPE_FUSED_HARDWARE:
+                if(mFusedService == null) {
+                    return false;
+                }
+                try {
+                    mFusedService.resumeMonitoringGeofence(geofenceId, monitorTransition);
+                    result = true;
+                } catch(RemoteException e) {
+                    Log.e(TAG, "ResumeGeofence: RemoteException calling LocationManagerService");
+                    result = false;
+                }
+                break;
             default:
                 result = false;
         }
@@ -334,127 +464,108 @@ public final class GeofenceHardwareImpl {
         return true;
     }
 
-    private Location getLocation(int flags, double latitude,
-            double longitude, double altitude, float speed, float bearing, float accuracy,
-            long timestamp) {
-        if (DEBUG) Log.d(TAG, "GetLocation: " + flags + ":" + latitude);
-        Location location = new Location(LocationManager.GPS_PROVIDER);
-        if ((flags & LOCATION_HAS_LAT_LONG) == LOCATION_HAS_LAT_LONG) {
-            location.setLatitude(latitude);
-            location.setLongitude(longitude);
-            location.setTime(timestamp);
-            // It would be nice to push the elapsed real-time timestamp
-            // further down the stack, but this is still useful
-            location.setElapsedRealtimeNanos(SystemClock.elapsedRealtimeNanos());
+    /**
+     * Used to report geofence transitions
+     */
+    public void reportGeofenceTransition(
+            int geofenceId,
+            Location location,
+            int transition,
+            long transitionTimestamp,
+            int monitoringType,
+            int sourcesUsed) {
+        if(location == null) {
+            Log.e(TAG, String.format("Invalid Geofence Transition: location=null"));
+            return;
         }
-        if ((flags & LOCATION_HAS_ALTITUDE) == LOCATION_HAS_ALTITUDE) {
-            location.setAltitude(altitude);
-        } else {
-            location.removeAltitude();
+        if(DEBUG) {
+            Log.d(
+                    TAG,
+                    "GeofenceTransition| " + location + ", transition:" + transition +
+                    ", transitionTimestamp:" + transitionTimestamp + ", monitoringType:" +
+                    monitoringType + ", sourcesUsed:" + sourcesUsed);
         }
-        if ((flags & LOCATION_HAS_SPEED) == LOCATION_HAS_SPEED) {
-            location.setSpeed(speed);
-        } else {
-            location.removeSpeed();
-        }
-        if ((flags & LOCATION_HAS_BEARING) == LOCATION_HAS_BEARING) {
-            location.setBearing(bearing);
-        } else {
-            location.removeBearing();
-        }
-        if ((flags & LOCATION_HAS_ACCURACY) == LOCATION_HAS_ACCURACY) {
-            location.setAccuracy(accuracy);
-        } else {
-            location.removeAccuracy();
-        }
-        return location;
+
+        GeofenceTransition geofenceTransition = new GeofenceTransition(
+                geofenceId,
+                transition,
+                transitionTimestamp,
+                location,
+                monitoringType,
+                sourcesUsed);
+        acquireWakeLock();
+
+        Message message = mGeofenceHandler.obtainMessage(
+                GEOFENCE_TRANSITION_CALLBACK,
+                geofenceTransition);
+        message.sendToTarget();
     }
 
     /**
-     * called from GpsLocationProvider to report geofence transition
+     * Used to report Monitor status changes.
      */
-    public void reportGpsGeofenceTransition(int geofenceId, int flags, double latitude,
-            double longitude, double altitude, float speed, float bearing, float accuracy,
-            long timestamp, int transition, long transitionTimestamp) {
-        if (DEBUG) Log.d(TAG, "GeofenceTransition: Flags: " + flags + " Lat: " + latitude +
-            " Long: " + longitude + " Altitude: " + altitude + " Speed: " + speed + " Bearing: " +
-            bearing + " Accuracy: " + accuracy + " Timestamp: " + timestamp + " Transition: " +
-            transition + " TransitionTimestamp: " + transitionTimestamp);
-        Location location = getLocation(flags, latitude, longitude, altitude, speed, bearing,
-                accuracy, timestamp);
-        GeofenceTransition t = new GeofenceTransition(geofenceId, transition, timestamp, location);
+    public void reportGeofenceMonitorStatus(
+            int monitoringType,
+            int monitoringStatus,
+            Location location,
+            int source) {
+        setMonitorAvailability(monitoringType, monitoringStatus);
         acquireWakeLock();
-        Message m = mGeofenceHandler.obtainMessage(GEOFENCE_TRANSITION_CALLBACK, t);
-        mGeofenceHandler.sendMessage(m);
+        GeofenceHardwareMonitorEvent event = new GeofenceHardwareMonitorEvent(
+                monitoringType,
+                monitoringStatus,
+                source,
+                location);
+        Message message = mCallbacksHandler.obtainMessage(GEOFENCE_STATUS, event);
+        message.sendToTarget();
     }
 
     /**
-     * called from GpsLocationProvider to report GPS status change.
+     * Internal generic status report function for Geofence operations.
+     *
+     * @param operation The operation to be reported as defined internally.
+     * @param geofenceId The id of the geofence the operation is related to.
+     * @param operationStatus The status of the operation as defined in GeofenceHardware class. This
+     *                        status is independent of the statuses reported by different HALs.
      */
-    public void reportGpsGeofenceStatus(int status, int flags, double latitude,
-            double longitude, double altitude, float speed, float bearing, float accuracy,
-            long timestamp) {
-        Location location = getLocation(flags, latitude, longitude, altitude, speed, bearing,
-                accuracy, timestamp);
-        boolean available = false;
-        if (status == GeofenceHardware.GPS_GEOFENCE_AVAILABLE) available = true;
-
-        int val = (available ? GeofenceHardware.MONITOR_CURRENTLY_AVAILABLE :
-                GeofenceHardware.MONITOR_CURRENTLY_UNAVAILABLE);
-        setMonitorAvailability(GeofenceHardware.MONITORING_TYPE_GPS_HARDWARE, val);
-
+    private void reportGeofenceOperationStatus(int operation, int geofenceId, int operationStatus) {
         acquireWakeLock();
-        Message m = mCallbacksHandler.obtainMessage(GPS_GEOFENCE_STATUS, location);
-        m.arg1 = val;
-        mCallbacksHandler.sendMessage(m);
+        Message message = mGeofenceHandler.obtainMessage(operation);
+        message.arg1 = geofenceId;
+        message.arg2 = operationStatus;
+        message.sendToTarget();
     }
 
     /**
-     * called from GpsLocationProvider add geofence callback.
+     * Used to report the status of a Geofence Add operation.
      */
-    public void reportGpsGeofenceAddStatus(int geofenceId, int status) {
-        if (DEBUG) Log.d(TAG, "Add Callback: GPS : Id: " + geofenceId + " Status: " + status);
-        acquireWakeLock();
-        Message m = mGeofenceHandler.obtainMessage(ADD_GEOFENCE_CALLBACK);
-        m.arg1 = geofenceId;
-        m.arg2 = getGeofenceStatus(status);
-        mGeofenceHandler.sendMessage(m);
+    public void reportGeofenceAddStatus(int geofenceId, int status) {
+        if(DEBUG) Log.d(TAG, "AddCallback| id:" + geofenceId + ", status:" + status);
+        reportGeofenceOperationStatus(ADD_GEOFENCE_CALLBACK, geofenceId, status);
     }
 
     /**
-     * called from GpsLocationProvider remove geofence callback.
+     * Used to report the status of a Geofence Remove operation.
      */
-    public void reportGpsGeofenceRemoveStatus(int geofenceId, int status) {
-        if (DEBUG) Log.d(TAG, "Remove Callback: GPS : Id: " + geofenceId + " Status: " + status);
-        acquireWakeLock();
-        Message m = mGeofenceHandler.obtainMessage(REMOVE_GEOFENCE_CALLBACK);
-        m.arg1 = geofenceId;
-        m.arg2 = getGeofenceStatus(status);
-        mGeofenceHandler.sendMessage(m);
+    public void reportGeofenceRemoveStatus(int geofenceId, int status) {
+        if(DEBUG) Log.d(TAG, "RemoveCallback| id:" + geofenceId + ", status:" + status);
+        reportGeofenceOperationStatus(REMOVE_GEOFENCE_CALLBACK, geofenceId, status);
     }
 
     /**
-     * called from GpsLocationProvider pause geofence callback.
+     * Used to report the status of a Geofence Pause operation.
      */
-    public void reportGpsGeofencePauseStatus(int geofenceId, int status) {
-        if (DEBUG) Log.d(TAG, "Pause Callback: GPS : Id: " + geofenceId + " Status: " + status);
-        acquireWakeLock();
-        Message m = mGeofenceHandler.obtainMessage(PAUSE_GEOFENCE_CALLBACK);
-        m.arg1 = geofenceId;
-        m.arg2 = getGeofenceStatus(status);
-        mGeofenceHandler.sendMessage(m);
+    public void reportGeofencePauseStatus(int geofenceId, int status) {
+        if(DEBUG) Log.d(TAG, "PauseCallbac| id:" + geofenceId + ", status" + status);
+        reportGeofenceOperationStatus(PAUSE_GEOFENCE_CALLBACK, geofenceId, status);
     }
 
     /**
-     * called from GpsLocationProvider resume geofence callback.
+     * Used to report the status of a Geofence Resume operation.
      */
-    public void reportGpsGeofenceResumeStatus(int geofenceId, int status) {
-        if (DEBUG) Log.d(TAG, "Resume Callback: GPS : Id: " + geofenceId + " Status: " + status);
-        acquireWakeLock();
-        Message m = mGeofenceHandler.obtainMessage(RESUME_GEOFENCE_CALLBACK);
-        m.arg1 = geofenceId;
-        m.arg2 = getGeofenceStatus(status);
-        mGeofenceHandler.sendMessage(m);
+    public void reportGeofenceResumeStatus(int geofenceId, int status) {
+        if(DEBUG) Log.d(TAG, "ResumeCallback| id:" + geofenceId + ", status:" + status);
+        reportGeofenceOperationStatus(RESUME_GEOFENCE_CALLBACK, geofenceId, status);
     }
 
     // All operations on mGeofences
@@ -488,8 +599,34 @@ public final class GeofenceHardwareImpl {
                         try {
                             callback.onGeofenceRemove(geofenceId, msg.arg2);
                         } catch (RemoteException e) {}
+                        IBinder callbackBinder = callback.asBinder();
+                        boolean callbackInUse = false;
                         synchronized (mGeofences) {
                             mGeofences.remove(geofenceId);
+                            // Check if the underlying binder is still useful for other geofences,
+                            // if no, unlink the DeathRecipient to avoid memory leak.
+                            for (int i = 0; i < mGeofences.size(); i++) {
+                                 if (mGeofences.valueAt(i).asBinder() == callbackBinder) {
+                                     callbackInUse = true;
+                                     break;
+                                 }
+                            }
+                        }
+
+                        // Remove the reaper associated with this binder.
+                        if (!callbackInUse) {
+                            for (Iterator<Reaper> iterator = mReapers.iterator();
+                                    iterator.hasNext();) {
+                                Reaper reaper = iterator.next();
+                                if (reaper.mCallback != null &&
+                                        reaper.mCallback.asBinder() == callbackBinder) {
+                                    iterator.remove();
+                                    reaper.unlinkToDeath();
+                                    if (DEBUG) Log.d(TAG, String.format("Removed reaper %s " +
+                                          "because binder %s is no longer needed.",
+                                          reaper, callbackBinder));
+                                }
+                            }
                         }
                     }
                     releaseWakeLock();
@@ -527,19 +664,20 @@ public final class GeofenceHardwareImpl {
                     GeofenceTransition geofenceTransition = (GeofenceTransition)(msg.obj);
                     synchronized (mGeofences) {
                         callback = mGeofences.get(geofenceTransition.mGeofenceId);
-                    }
 
-                    if (DEBUG) Log.d(TAG, "GeofenceTransistionCallback: GPS : GeofenceId: " +
-                            geofenceTransition.mGeofenceId +
-                            " Transition: " + geofenceTransition.mTransition +
-                            " Location: " + geofenceTransition.mLocation + ":" + mGeofences);
+                        // need to keep access to mGeofences synchronized at all times
+                        if (DEBUG) Log.d(TAG, "GeofenceTransistionCallback: GPS : GeofenceId: " +
+                                geofenceTransition.mGeofenceId +
+                                " Transition: " + geofenceTransition.mTransition +
+                                " Location: " + geofenceTransition.mLocation + ":" + mGeofences);
+                    }
 
                     if (callback != null) {
                         try {
                             callback.onGeofenceTransition(
                                     geofenceTransition.mGeofenceId, geofenceTransition.mTransition,
                                     geofenceTransition.mLocation, geofenceTransition.mTimestamp,
-                                    GeofenceHardware.MONITORING_TYPE_GPS_HARDWARE);
+                                    geofenceTransition.mMonitoringType);
                         } catch (RemoteException e) {}
                     }
                     releaseWakeLock();
@@ -571,22 +709,18 @@ public final class GeofenceHardwareImpl {
             IGeofenceHardwareMonitorCallback callback;
 
             switch (msg.what) {
-                case GPS_GEOFENCE_STATUS:
-                    Location location = (Location) msg.obj;
-                    int val = msg.arg1;
-                    boolean available;
-                    available = (val == GeofenceHardware.MONITOR_CURRENTLY_AVAILABLE ?
-                            true : false);
-                    callbackList = mCallbacks[GeofenceHardware.MONITORING_TYPE_GPS_HARDWARE];
+                case GEOFENCE_STATUS:
+                    GeofenceHardwareMonitorEvent event = (GeofenceHardwareMonitorEvent) msg.obj;
+                    callbackList = mCallbacks[event.getMonitoringType()];
                     if (callbackList != null) {
-                        if (DEBUG) Log.d(TAG, "MonitoringSystemChangeCallback: GPS : " + available);
+                        if (DEBUG) Log.d(TAG, "MonitoringSystemChangeCallback: " + event);
 
-                        for (IGeofenceHardwareMonitorCallback c: callbackList) {
+                        for (IGeofenceHardwareMonitorCallback c : callbackList) {
                             try {
-                                c.onMonitoringSystemChange(
-                                        GeofenceHardware.MONITORING_TYPE_GPS_HARDWARE, available,
-                                        location);
-                            } catch (RemoteException e) {}
+                                c.onMonitoringSystemChange(event);
+                            } catch (RemoteException e) {
+                                Log.d(TAG, "Error reporting onMonitoringSystemChange.", e);
+                            }
                         }
                     }
                     releaseWakeLock();
@@ -666,12 +800,22 @@ public final class GeofenceHardwareImpl {
         private int mGeofenceId, mTransition;
         private long mTimestamp;
         private Location mLocation;
+        private int mMonitoringType;
+        private int mSourcesUsed;
 
-        GeofenceTransition(int geofenceId, int transition, long timestamp, Location location) {
+        GeofenceTransition(
+                int geofenceId,
+                int transition,
+                long timestamp,
+                Location location,
+                int monitoringType,
+                int sourcesUsed) {
             mGeofenceId = geofenceId;
             mTransition = transition;
             mTimestamp = timestamp;
             mLocation = location;
+            mMonitoringType = monitoringType;
+            mSourcesUsed = sourcesUsed;
         }
     }
 
@@ -685,6 +829,8 @@ public final class GeofenceHardwareImpl {
     int getMonitoringResolutionLevel(int monitoringType) {
         switch (monitoringType) {
             case GeofenceHardware.MONITORING_TYPE_GPS_HARDWARE:
+                return RESOLUTION_LEVEL_FINE;
+            case GeofenceHardware.MONITORING_TYPE_FUSED_HARDWARE:
                 return RESOLUTION_LEVEL_FINE;
         }
         return RESOLUTION_LEVEL_NONE;
@@ -724,8 +870,9 @@ public final class GeofenceHardwareImpl {
         @Override
         public int hashCode() {
             int result = 17;
-            result = 31 * result + (mCallback != null ? mCallback.hashCode() : 0);
-            result = 31 * result + (mMonitorCallback != null ? mMonitorCallback.hashCode() : 0);
+            result = 31 * result + (mCallback != null ? mCallback.asBinder().hashCode() : 0);
+            result = 31 * result + (mMonitorCallback != null
+                    ? mMonitorCallback.asBinder().hashCode() : 0);
             result = 31 * result + mMonitoringType;
             return result;
         }
@@ -736,8 +883,37 @@ public final class GeofenceHardwareImpl {
             if (obj == this) return true;
 
             Reaper rhs = (Reaper) obj;
-            return rhs.mCallback == mCallback && rhs.mMonitorCallback == mMonitorCallback &&
+            return binderEquals(rhs.mCallback, mCallback) &&
+                    binderEquals(rhs.mMonitorCallback, mMonitorCallback) &&
                     rhs.mMonitoringType == mMonitoringType;
+        }
+
+        /**
+         * Compares the underlying Binder of the given two IInterface objects and returns true if
+         * they equals. null values are accepted.
+         */
+        private boolean binderEquals(IInterface left, IInterface right) {
+          if (left == null) {
+            return right == null;
+          } else {
+            return right == null ? false : left.asBinder() == right.asBinder();
+          }
+        }
+
+        /**
+         * Unlinks this DeathRecipient.
+         */
+        private boolean unlinkToDeath() {
+          if (mMonitorCallback != null) {
+            return mMonitorCallback.asBinder().unlinkToDeath(this, 0);
+          } else if (mCallback != null) {
+            return mCallback.asBinder().unlinkToDeath(this, 0);
+          }
+          return true;
+        }
+
+        private boolean callbackEquals(IGeofenceHardwareCallback cb) {
+          return mCallback != null && mCallback.asBinder() == cb.asBinder();
         }
     }
 
@@ -751,23 +927,5 @@ public final class GeofenceHardwareImpl {
         } else {
             return RESOLUTION_LEVEL_NONE;
         }
-    }
-
-    private int getGeofenceStatus(int status) {
-        switch (status) {
-            case GPS_GEOFENCE_OPERATION_SUCCESS:
-                return GeofenceHardware.GEOFENCE_SUCCESS;
-            case GPS_GEOFENCE_ERROR_GENERIC:
-                return GeofenceHardware.GEOFENCE_FAILURE;
-            case GPS_GEOFENCE_ERROR_ID_EXISTS:
-                return GeofenceHardware.GEOFENCE_ERROR_ID_EXISTS;
-            case GPS_GEOFENCE_ERROR_INVALID_TRANSITION:
-                return GeofenceHardware.GEOFENCE_ERROR_INVALID_TRANSITION;
-            case GPS_GEOFENCE_ERROR_TOO_MANY_GEOFENCES:
-                return GeofenceHardware.GEOFENCE_ERROR_TOO_MANY_GEOFENCES;
-            case GPS_GEOFENCE_ERROR_ID_UNKNOWN:
-                return GeofenceHardware.GEOFENCE_ERROR_ID_UNKNOWN;
-        }
-        return -1;
     }
 }

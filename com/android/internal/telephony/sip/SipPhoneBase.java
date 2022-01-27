@@ -19,12 +19,11 @@ package com.android.internal.telephony.sip;
 import android.content.Context;
 import android.net.LinkProperties;
 import android.os.AsyncResult;
+import android.os.Bundle;
 import android.os.Handler;
 import android.os.Message;
-import android.os.Registrant;
 import android.os.RegistrantList;
 import android.os.SystemProperties;
-import android.telephony.CellInfo;
 import android.telephony.CellLocation;
 import android.telephony.ServiceState;
 import android.telephony.SignalStrength;
@@ -33,16 +32,14 @@ import android.telephony.Rlog;
 import com.android.internal.telephony.Call;
 import com.android.internal.telephony.CallStateException;
 import com.android.internal.telephony.Connection;
+import com.android.internal.telephony.Phone;
 import com.android.internal.telephony.dataconnection.DataConnection;
 import com.android.internal.telephony.IccCard;
 import com.android.internal.telephony.IccPhoneBookInterfaceManager;
-import com.android.internal.telephony.IccSmsInterfaceManager;
 import com.android.internal.telephony.MmiCode;
 import com.android.internal.telephony.OperatorInfo;
-import com.android.internal.telephony.PhoneBase;
 import com.android.internal.telephony.PhoneConstants;
 import com.android.internal.telephony.PhoneNotifier;
-import com.android.internal.telephony.PhoneSubInfo;
 import com.android.internal.telephony.TelephonyProperties;
 import com.android.internal.telephony.UUSInfo;
 import com.android.internal.telephony.uicc.IccFileHandler;
@@ -50,7 +47,7 @@ import com.android.internal.telephony.uicc.IccFileHandler;
 import java.util.ArrayList;
 import java.util.List;
 
-abstract class SipPhoneBase extends PhoneBase {
+abstract class SipPhoneBase extends Phone {
     private static final String LOG_TAG = "SipPhoneBase";
 
     private RegistrantList mRingbackRegistrants = new RegistrantList();
@@ -70,30 +67,15 @@ abstract class SipPhoneBase extends PhoneBase {
     public abstract Call getRingingCall();
 
     @Override
-    public Connection dial(String dialString, UUSInfo uusInfo)
+    public Connection dial(String dialString, UUSInfo uusInfo, int videoState, Bundle intentExtras)
             throws CallStateException {
         // ignore UUSInfo
-        return dial(dialString);
+        return dial(dialString, videoState);
     }
 
     void migrateFrom(SipPhoneBase from) {
+        super.migrateFrom(from);
         migrate(mRingbackRegistrants, from.mRingbackRegistrants);
-        migrate(mPreciseCallStateRegistrants, from.mPreciseCallStateRegistrants);
-        migrate(mNewRingingConnectionRegistrants, from.mNewRingingConnectionRegistrants);
-        migrate(mIncomingRingRegistrants, from.mIncomingRingRegistrants);
-        migrate(mDisconnectRegistrants, from.mDisconnectRegistrants);
-        migrate(mServiceStateRegistrants, from.mServiceStateRegistrants);
-        migrate(mMmiCompleteRegistrants, from.mMmiCompleteRegistrants);
-        migrate(mMmiRegistrants, from.mMmiRegistrants);
-        migrate(mUnknownConnectionRegistrants, from.mUnknownConnectionRegistrants);
-        migrate(mSuppServiceFailedRegistrants, from.mSuppServiceFailedRegistrants);
-    }
-
-    static void migrate(RegistrantList to, RegistrantList from) {
-        from.removeCleared();
-        for (int i = 0, n = from.size(); i < n; i++) {
-            to.add((Registrant) from.get(i));
-        }
     }
 
     @Override
@@ -106,12 +88,14 @@ abstract class SipPhoneBase extends PhoneBase {
         mRingbackRegistrants.remove(h);
     }
 
-    protected void startRingbackTone() {
+    @Override
+    public void startRingbackTone() {
         AsyncResult result = new AsyncResult(null, Boolean.TRUE, null);
         mRingbackRegistrants.notifyRegistrants(result);
     }
 
-    protected void stopRingbackTone() {
+    @Override
+    public void stopRingbackTone() {
         AsyncResult result = new AsyncResult(null, Boolean.FALSE, null);
         mRingbackRegistrants.notifyRegistrants(result);
     }
@@ -121,16 +105,8 @@ abstract class SipPhoneBase extends PhoneBase {
         // FIXME: we may need to provide this when data connectivity is lost
         // or when server is down
         ServiceState s = new ServiceState();
-        s.setState(ServiceState.STATE_IN_SERVICE);
+        s.setVoiceRegState(ServiceState.STATE_IN_SERVICE);
         return s;
-    }
-
-    /**
-     * @return all available cell information or null if none.
-     */
-    @Override
-    public List<CellInfo> getAllCellInfo() {
-        return getServiceStateTracker().getAllCellInfo();
     }
 
     @Override
@@ -184,11 +160,10 @@ abstract class SipPhoneBase extends PhoneBase {
     }
 
     /**
-     * Notify any interested party of a Phone state change
-     * {@link com.android.internal.telephony.PhoneConstants.State}
+     * SIP phones do not have a subscription id, so do not notify of specific phone state changes.
      */
     /* package */ void notifyPhoneStateChanged() {
-        mNotifier.notifyPhoneState(this);
+        // Do nothing.
     }
 
     /**
@@ -328,6 +303,11 @@ abstract class SipPhoneBase extends PhoneBase {
     }
 
     @Override
+    public String getGroupIdLevel2() {
+        return null;
+    }
+
+    @Override
     public String getIccSerialNumber() {
         return null;
     }
@@ -343,10 +323,9 @@ abstract class SipPhoneBase extends PhoneBase {
     }
 
     @Override
-    public void setLine1Number(String alphaTag, String number, Message onComplete) {
+    public boolean setLine1Number(String alphaTag, String number, Message onComplete) {
         // FIXME: what to reply for SIP?
-        AsyncResult.forMessage(onComplete, null, null);
-        onComplete.sendToTarget();
+        return false;
     }
 
     @Override
@@ -412,8 +391,7 @@ abstract class SipPhoneBase extends PhoneBase {
     }
 
     @Override
-    public void selectNetworkManually(
-            OperatorInfo network,
+    public void selectNetworkManually(OperatorInfo network, boolean persistSelection,
             Message response) {
     }
 
@@ -454,6 +432,15 @@ abstract class SipPhoneBase extends PhoneBase {
     public void setDataRoamingEnabled(boolean enable) {
     }
 
+    @Override
+    public boolean getDataEnabled() {
+        return false;
+    }
+
+    @Override
+    public void setDataEnabled(boolean enable) {
+    }
+
     public boolean enableDataConnectivity() {
         return false;
     }
@@ -467,21 +454,7 @@ abstract class SipPhoneBase extends PhoneBase {
         return false;
     }
 
-    boolean updateCurrentCarrierInProvider() {
-        return false;
-    }
-
     public void saveClirSetting(int commandInterfaceCLIRMode) {
-    }
-
-    @Override
-    public PhoneSubInfo getPhoneSubInfo(){
-        return null;
-    }
-
-    @Override
-    public IccSmsInterfaceManager getIccSmsInterfaceManager(){
-        return null;
     }
 
     @Override
@@ -523,6 +496,16 @@ abstract class SipPhoneBase extends PhoneBase {
         return null;
     }
 
+    /**
+     * Determines if video calling is enabled.  Always {@code false} for SIP.
+     *
+     * @return {@code false} since SIP does not support video calling.
+     */
+    @Override
+    public boolean isVideoEnabled() {
+        return false;
+    }
+
     void updatePhoneState() {
         PhoneConstants.State oldState = mState;
 
@@ -543,5 +526,13 @@ abstract class SipPhoneBase extends PhoneBase {
 
     @Override
     protected void onUpdateIccAvailability() {
+    }
+
+    @Override
+    public void sendEmergencyCallStateChange(boolean callActive) {
+    }
+
+    @Override
+    public void setBroadcastEmergencyCallStateChanges(boolean broadcast) {
     }
 }

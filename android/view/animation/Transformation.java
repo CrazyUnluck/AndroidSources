@@ -16,7 +16,9 @@
 
 package android.view.animation;
 
+import android.annotation.FloatRange;
 import android.graphics.Matrix;
+import android.graphics.Rect;
 
 import java.io.PrintWriter;
 
@@ -29,23 +31,26 @@ public class Transformation {
     /**
      * Indicates a transformation that has no effect (alpha = 1 and identity matrix.)
      */
-    public static int TYPE_IDENTITY = 0x0;
+    public static final int TYPE_IDENTITY = 0x0;
     /**
      * Indicates a transformation that applies an alpha only (uses an identity matrix.)
      */
-    public static int TYPE_ALPHA = 0x1;
+    public static final int TYPE_ALPHA = 0x1;
     /**
      * Indicates a transformation that applies a matrix only (alpha = 1.)
      */
-    public static int TYPE_MATRIX = 0x2;
+    public static final int TYPE_MATRIX = 0x2;
     /**
      * Indicates a transformation that applies an alpha and a matrix.
      */
-    public static int TYPE_BOTH = TYPE_ALPHA | TYPE_MATRIX;
+    public static final int TYPE_BOTH = TYPE_ALPHA | TYPE_MATRIX;
 
     protected Matrix mMatrix;
     protected float mAlpha;
     protected int mTransformationType;
+
+    private boolean mHasClipRect;
+    private Rect mClipRect = new Rect();
 
     /**
      * Creates a new transformation with alpha = 1 and the identity matrix.
@@ -65,6 +70,8 @@ public class Transformation {
         } else {
             mMatrix.reset();
         }
+        mClipRect.setEmpty();
+        mHasClipRect = false;
         mAlpha = 1.0f;
         mTransformationType = TYPE_BOTH;
     }
@@ -98,9 +105,15 @@ public class Transformation {
     public void set(Transformation t) {
         mAlpha = t.getAlpha();
         mMatrix.set(t.getMatrix());
+        if (t.mHasClipRect) {
+            setClipRect(t.getClipRect());
+        } else {
+            mHasClipRect = false;
+            mClipRect.setEmpty();
+        }
         mTransformationType = t.getTransformationType();
     }
-    
+
     /**
      * Apply this Transformation to an existing Transformation, e.g. apply
      * a scale effect to something that has already been rotated.
@@ -109,6 +122,15 @@ public class Transformation {
     public void compose(Transformation t) {
         mAlpha *= t.getAlpha();
         mMatrix.preConcat(t.getMatrix());
+        if (t.mHasClipRect) {
+            Rect bounds = t.getClipRect();
+            if (mHasClipRect) {
+                setClipRect(mClipRect.left + bounds.left, mClipRect.top + bounds.top,
+                        mClipRect.right + bounds.right, mClipRect.bottom + bounds.bottom);
+            } else {
+                setClipRect(bounds);
+            }
+        }
     }
     
     /**
@@ -119,6 +141,15 @@ public class Transformation {
     public void postCompose(Transformation t) {
         mAlpha *= t.getAlpha();
         mMatrix.postConcat(t.getMatrix());
+        if (t.mHasClipRect) {
+            Rect bounds = t.getClipRect();
+            if (mHasClipRect) {
+                setClipRect(mClipRect.left + bounds.left, mClipRect.top + bounds.top,
+                        mClipRect.right + bounds.right, mClipRect.bottom + bounds.bottom);
+            } else {
+                setClipRect(bounds);
+            }
+        }
     }
 
     /**
@@ -133,8 +164,41 @@ public class Transformation {
      * Sets the degree of transparency
      * @param alpha 1.0 means fully opaqe and 0.0 means fully transparent
      */
-    public void setAlpha(float alpha) {
+    public void setAlpha(@FloatRange(from=0.0, to=1.0) float alpha) {
         mAlpha = alpha;
+    }
+
+    /**
+     * Sets the current Transform's clip rect
+     * @hide
+     */
+    public void setClipRect(Rect r) {
+        setClipRect(r.left, r.top, r.right, r.bottom);
+    }
+
+    /**
+     * Sets the current Transform's clip rect
+     * @hide
+     */
+    public void setClipRect(int l, int t, int r, int b) {
+        mClipRect.set(l, t, r, b);
+        mHasClipRect = true;
+    }
+
+    /**
+     * Returns the current Transform's clip rect
+     * @hide
+     */
+    public Rect getClipRect() {
+        return mClipRect;
+    }
+
+    /**
+     * Returns whether the current Transform's clip rect is set
+     * @hide
+     */
+    public boolean hasClipRect() {
+        return mHasClipRect;
     }
 
     /**

@@ -108,14 +108,14 @@ public class QwertyKeyListener extends BaseKeyListener {
 
         // QWERTY keyboard normal case
 
-        int i = event.getUnicodeChar(event.getMetaState() | getMetaState(content));
+        int i = event.getUnicodeChar(getMetaState(content, event));
 
         if (!mFullKeyboard) {
             int count = event.getRepeatCount();
             if (count > 0 && selStart == selEnd && selStart > 0) {
                 char c = content.charAt(selStart - 1);
 
-                if (c == i || c == Character.toUpperCase(i) && view != null) {
+                if ((c == i || c == Character.toUpperCase(i)) && view != null) {
                     if (showCharacterPicker(view, content, c, false, count)) {
                         resetMetaState(content);
                         return true;

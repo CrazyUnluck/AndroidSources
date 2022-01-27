@@ -18,6 +18,7 @@ package com.android.internal.os;
 
 
 import android.content.Context;
+import android.content.res.Resources;
 import android.content.res.XmlResourceParser;
 
 import com.android.internal.util.XmlUtils;
@@ -50,7 +51,7 @@ public class PowerProfile {
      * Power consumption when CPU is awake (when a wake lock is held).  This
      * should be 0 on devices that can go into full CPU power collapse even
      * when a wake lock is held.  Otherwise, this is the power consumption in
-     * addition to POWERR_CPU_IDLE due to a wake lock being held but with no
+     * addition to POWER_CPU_IDLE due to a wake lock being held but with no
      * CPU activity.
      */
     public static final String POWER_CPU_AWAKE = "cpu.awake";
@@ -58,6 +59,7 @@ public class PowerProfile {
     /**
      * Power consumption when CPU is in power collapse mode.
      */
+    @Deprecated
     public static final String POWER_CPU_ACTIVE = "cpu.active";
 
     /**
@@ -75,6 +77,29 @@ public class PowerProfile {
      */
     public static final String POWER_WIFI_ACTIVE = "wifi.active";
 
+    //
+    // Updated power constants. These are not estimated, they are real world
+    // currents and voltages for the underlying bluetooth and wifi controllers.
+    //
+
+    public static final String POWER_WIFI_CONTROLLER_IDLE = "wifi.controller.idle";
+    public static final String POWER_WIFI_CONTROLLER_RX = "wifi.controller.rx";
+    public static final String POWER_WIFI_CONTROLLER_TX = "wifi.controller.tx";
+    public static final String POWER_WIFI_CONTROLLER_TX_LEVELS = "wifi.controller.tx_levels";
+    public static final String POWER_WIFI_CONTROLLER_OPERATING_VOLTAGE = "wifi.controller.voltage";
+
+    public static final String POWER_BLUETOOTH_CONTROLLER_IDLE = "bluetooth.controller.idle";
+    public static final String POWER_BLUETOOTH_CONTROLLER_RX = "bluetooth.controller.rx";
+    public static final String POWER_BLUETOOTH_CONTROLLER_TX = "bluetooth.controller.tx";
+    public static final String POWER_BLUETOOTH_CONTROLLER_OPERATING_VOLTAGE =
+            "bluetooth.controller.voltage";
+
+    public static final String POWER_MODEM_CONTROLLER_IDLE = "modem.controller.idle";
+    public static final String POWER_MODEM_CONTROLLER_RX = "modem.controller.rx";
+    public static final String POWER_MODEM_CONTROLLER_TX = "modem.controller.tx";
+    public static final String POWER_MODEM_CONTROLLER_OPERATING_VOLTAGE =
+            "modem.controller.voltage";
+
     /**
      * Power consumption when GPS is on.
      */
@@ -82,18 +107,25 @@ public class PowerProfile {
 
     /**
      * Power consumption when Bluetooth driver is on.
+     * @deprecated
      */
+    @Deprecated
     public static final String POWER_BLUETOOTH_ON = "bluetooth.on";
 
     /**
      * Power consumption when Bluetooth driver is transmitting/receiving.
+     * @deprecated
      */
+    @Deprecated
     public static final String POWER_BLUETOOTH_ACTIVE = "bluetooth.active";
 
     /**
      * Power consumption when Bluetooth driver gets an AT command.
+     * @deprecated
      */
+    @Deprecated
     public static final String POWER_BLUETOOTH_AT_CMD = "bluetooth.at";
+
 
     /**
      * Power consumption when screen is on, not including the backlight power.
@@ -133,14 +165,34 @@ public class PowerProfile {
      */
     public static final String POWER_VIDEO = "dsp.video";
 
+    /**
+     * Average power consumption when camera flashlight is on.
+     */
+    public static final String POWER_FLASHLIGHT = "camera.flashlight";
+
+    /**
+     * Average power consumption when the camera is on over all standard use cases.
+     *
+     * TODO: Add more fine-grained camera power metrics.
+     */
+    public static final String POWER_CAMERA = "camera.avg";
+
+    @Deprecated
     public static final String POWER_CPU_SPEEDS = "cpu.speeds";
+
+    /**
+     * Power consumed by wif batched scaning.  Broken down into bins by
+     * Channels Scanned per Hour.  May do 1-720 scans per hour of 1-100 channels
+     * for a range of 1-72,000.  Going logrithmic (1-8, 9-64, 65-512, 513-4096, 4097-)!
+     */
+    public static final String POWER_WIFI_BATCHED_SCAN = "wifi.batchedscan";
 
     /**
      * Battery capacity in milliAmpHour (mAh).
      */
     public static final String POWER_BATTERY_CAPACITY = "battery.capacity";
 
-    static final HashMap<String, Object> sPowerMap = new HashMap<String, Object>();
+    static final HashMap<String, Object> sPowerMap = new HashMap<>();
 
     private static final String TAG_DEVICE = "device";
     private static final String TAG_ITEM = "item";
@@ -154,11 +206,13 @@ public class PowerProfile {
         if (sPowerMap.size() == 0) {
             readPowerValuesFromXml(context);
         }
+        initCpuClusters();
     }
 
     private void readPowerValuesFromXml(Context context) {
         int id = com.android.internal.R.xml.power_profile;
-        XmlResourceParser parser = context.getResources().getXml(id);
+        final Resources resources = context.getResources();
+        XmlResourceParser parser = resources.getXml(id);
         boolean parsingArray = false;
         ArrayList<Double> array = new ArrayList<Double>();
         String arrayName = null;
@@ -171,7 +225,7 @@ public class PowerProfile {
 
                 String element = parser.getName();
                 if (element == null) break;
-                
+
                 if (parsingArray && !element.equals(TAG_ARRAYITEM)) {
                     // Finish array
                     sPowerMap.put(arrayName, array.toArray(new Double[array.size()]));
@@ -209,14 +263,115 @@ public class PowerProfile {
         } finally {
             parser.close();
         }
+
+        // Now collect other config variables.
+        int[] configResIds = new int[]{
+                com.android.internal.R.integer.config_bluetooth_idle_cur_ma,
+                com.android.internal.R.integer.config_bluetooth_rx_cur_ma,
+                com.android.internal.R.integer.config_bluetooth_tx_cur_ma,
+                com.android.internal.R.integer.config_bluetooth_operating_voltage_mv,
+                com.android.internal.R.integer.config_wifi_idle_receive_cur_ma,
+                com.android.internal.R.integer.config_wifi_active_rx_cur_ma,
+                com.android.internal.R.integer.config_wifi_tx_cur_ma,
+                com.android.internal.R.integer.config_wifi_operating_voltage_mv,
+        };
+
+        String[] configResIdKeys = new String[]{
+                POWER_BLUETOOTH_CONTROLLER_IDLE,
+                POWER_BLUETOOTH_CONTROLLER_RX,
+                POWER_BLUETOOTH_CONTROLLER_TX,
+                POWER_BLUETOOTH_CONTROLLER_OPERATING_VOLTAGE,
+                POWER_WIFI_CONTROLLER_IDLE,
+                POWER_WIFI_CONTROLLER_RX,
+                POWER_WIFI_CONTROLLER_TX,
+                POWER_WIFI_CONTROLLER_OPERATING_VOLTAGE,
+        };
+
+        for (int i = 0; i < configResIds.length; i++) {
+            String key = configResIdKeys[i];
+            // if we already have some of these parameters in power_profile.xml, ignore the
+            // value in config.xml
+            if ((sPowerMap.containsKey(key) && (Double) sPowerMap.get(key) > 0)) {
+                continue;
+            }
+            int value = resources.getInteger(configResIds[i]);
+            if (value > 0) {
+                sPowerMap.put(key, (double) value);
+            }
+        }
+    }
+
+    private CpuClusterKey[] mCpuClusters;
+
+    private static final String POWER_CPU_CLUSTER_CORE_COUNT = "cpu.clusters.cores";
+    private static final String POWER_CPU_CLUSTER_SPEED_PREFIX = "cpu.speeds.cluster";
+    private static final String POWER_CPU_CLUSTER_ACTIVE_PREFIX = "cpu.active.cluster";
+
+    @SuppressWarnings("deprecated")
+    private void initCpuClusters() {
+        // Figure out how many CPU clusters we're dealing with
+        final Object obj = sPowerMap.get(POWER_CPU_CLUSTER_CORE_COUNT);
+        if (obj == null || !(obj instanceof Double[])) {
+            // Default to single.
+            mCpuClusters = new CpuClusterKey[1];
+            mCpuClusters[0] = new CpuClusterKey(POWER_CPU_SPEEDS, POWER_CPU_ACTIVE, 1);
+
+        } else {
+            final Double[] array = (Double[]) obj;
+            mCpuClusters = new CpuClusterKey[array.length];
+            for (int cluster = 0; cluster < array.length; cluster++) {
+                int numCpusInCluster = (int) Math.round(array[cluster]);
+                mCpuClusters[cluster] = new CpuClusterKey(
+                        POWER_CPU_CLUSTER_SPEED_PREFIX + cluster,
+                        POWER_CPU_CLUSTER_ACTIVE_PREFIX + cluster,
+                        numCpusInCluster);
+            }
+        }
+    }
+
+    public static class CpuClusterKey {
+        private final String timeKey;
+        private final String powerKey;
+        private final int numCpus;
+
+        private CpuClusterKey(String timeKey, String powerKey, int numCpus) {
+            this.timeKey = timeKey;
+            this.powerKey = powerKey;
+            this.numCpus = numCpus;
+        }
+    }
+
+    public int getNumCpuClusters() {
+        return mCpuClusters.length;
+    }
+
+    public int getNumCoresInCpuCluster(int index) {
+        return mCpuClusters[index].numCpus;
+    }
+
+    public int getNumSpeedStepsInCpuCluster(int index) {
+        Object value = sPowerMap.get(mCpuClusters[index].timeKey);
+        if (value != null && value instanceof Double[]) {
+            return ((Double[])value).length;
+        }
+        return 1; // Only one speed
+    }
+
+    public double getAveragePowerForCpu(int cluster, int step) {
+        if (cluster >= 0 && cluster < mCpuClusters.length) {
+            return getAveragePower(mCpuClusters[cluster].powerKey, step);
+        }
+        return 0;
     }
 
     /**
-     * Returns the average current in mA consumed by the subsystem 
+     * Returns the average current in mA consumed by the subsystem, or the given
+     * default value if the subsystem has no recorded value.
      * @param type the subsystem type
+     * @param defaultValue the value to return if the subsystem has no recorded value.
      * @return the average current in milliAmps.
      */
-    public double getAveragePower(String type) {
+    public double getAveragePowerOrDefault(String type, double defaultValue) {
         if (sPowerMap.containsKey(type)) {
             Object data = sPowerMap.get(type);
             if (data instanceof Double[]) {
@@ -225,8 +380,17 @@ public class PowerProfile {
                 return (Double) sPowerMap.get(type);
             }
         } else {
-            return 0;
+            return defaultValue;
         }
+    }
+
+    /**
+     * Returns the average current in mA consumed by the subsystem
+     * @param type the subsystem type
+     * @return the average current in milliAmps.
+     */
+    public double getAveragePower(String type) {
+        return getAveragePowerOrDefault(type, 0);
     }
     
     /**
@@ -244,7 +408,7 @@ public class PowerProfile {
                 final Double[] values = (Double[]) data;
                 if (values.length > level && level >= 0) {
                     return values[level];
-                } else if (level < 0) {
+                } else if (level < 0 || values.length == 0) {
                     return 0;
                 } else {
                     return values[values.length - 1];
@@ -264,17 +428,5 @@ public class PowerProfile {
      */
     public double getBatteryCapacity() {
         return getAveragePower(POWER_BATTERY_CAPACITY);
-    }
-
-    /**
-     * Returns the number of speeds that the CPU can be run at.
-     * @return
-     */
-    public int getNumSpeedSteps() {
-        Object value = sPowerMap.get(POWER_CPU_SPEEDS);
-        if (value != null && value instanceof Double[]) {
-            return ((Double[])value).length;
-        }
-        return 1; // Only one speed
     }
 }

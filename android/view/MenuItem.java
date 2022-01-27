@@ -16,6 +16,9 @@
 
 package android.view;
 
+import android.annotation.DrawableRes;
+import android.annotation.LayoutRes;
+import android.annotation.StringRes;
 import android.app.Activity;
 import android.content.Intent;
 import android.graphics.drawable.Drawable;
@@ -165,7 +168,7 @@ public interface MenuItem {
      * @see #setTitleCondensed(CharSequence)
      */
     
-    public MenuItem setTitle(int title);
+    public MenuItem setTitle(@StringRes int title);
 
     /**
      * Retrieve the current title of the item.
@@ -214,7 +217,7 @@ public interface MenuItem {
      * @param iconRes The new icon (as a resource ID) to be displayed.
      * @return This Item so additional setters can be called.
      */
-    public MenuItem setIcon(int iconRes);
+    public MenuItem setIcon(@DrawableRes int iconRes);
     
     /**
      * Returns the icon for this item as a Drawable (getting it from resources if it hasn't been
@@ -258,8 +261,8 @@ public interface MenuItem {
     /**
      * Change both the numeric and alphabetic shortcut associated with this
      * item. Note that the shortcut will be triggered when the key that
-     * generates the given character is pressed alone or along with with the alt
-     * key. Also note that case is not significant and that alphabetic shortcut
+     * generates the given character is pressed along with the ctrl key.
+     * Also note that case is not significant and that alphabetic shortcut
      * characters will be displayed in lower case.
      * <p>
      * See {@link Menu} for the menu types that support shortcuts.
@@ -293,9 +296,9 @@ public interface MenuItem {
     /**
      * Change the alphabetic shortcut associated with this item. The shortcut
      * will be triggered when the key that generates the given character is
-     * pressed alone or along with with the alt key. Case is not significant and
-     * shortcut characters will be displayed in lower case. Note that menu items
-     * with the characters '\b' or '\n' as shortcuts will get triggered by the
+     * pressed along with the ctrl key. Case is not significant and shortcut
+     * characters will be displayed in lower case. Note that menu items with
+     * the characters '\b' or '\n' as shortcuts will get triggered by the
      * Delete key or Carriage Return key, respectively.
      * <p>
      * See {@link Menu} for the menu types that support shortcuts.
@@ -511,7 +514,7 @@ public interface MenuItem {
      *
      * @see #setShowAsAction(int)
      */
-    public MenuItem setActionView(int resId);
+    public MenuItem setActionView(@LayoutRes int resId);
 
     /**
      * Returns the currently set action view for this menu item.

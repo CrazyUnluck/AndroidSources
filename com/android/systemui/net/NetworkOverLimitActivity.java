@@ -16,11 +16,6 @@
 
 package com.android.systemui.net;
 
-import static android.net.NetworkPolicyManager.EXTRA_NETWORK_TEMPLATE;
-import static android.net.NetworkTemplate.MATCH_MOBILE_3G_LOWER;
-import static android.net.NetworkTemplate.MATCH_MOBILE_4G;
-import static android.net.NetworkTemplate.MATCH_MOBILE_ALL;
-
 import android.app.Activity;
 import android.app.AlertDialog;
 import android.app.Dialog;
@@ -32,10 +27,15 @@ import android.net.NetworkTemplate;
 import android.os.Bundle;
 import android.os.RemoteException;
 import android.os.ServiceManager;
-import android.util.Slog;
+import android.util.Log;
 import android.view.WindowManager;
 
 import com.android.systemui.R;
+
+import static android.net.NetworkPolicyManager.EXTRA_NETWORK_TEMPLATE;
+import static android.net.NetworkTemplate.MATCH_MOBILE_3G_LOWER;
+import static android.net.NetworkTemplate.MATCH_MOBILE_4G;
+import static android.net.NetworkTemplate.MATCH_MOBILE_ALL;
 
 /**
  * Notify user that a {@link NetworkTemplate} is over its
@@ -63,13 +63,13 @@ public class NetworkOverLimitActivity extends Activity {
                 });
 
         final Dialog dialog = builder.create();
+        dialog.getWindow().setType(WindowManager.LayoutParams.TYPE_SYSTEM_ALERT);
         dialog.setOnDismissListener(new DialogInterface.OnDismissListener() {
             public void onDismiss(DialogInterface dialog) {
                 finish();
             }
         });
 
-        dialog.getWindow().setType(WindowManager.LayoutParams.TYPE_SYSTEM_ALERT);
         dialog.show();
     }
 
@@ -79,7 +79,7 @@ public class NetworkOverLimitActivity extends Activity {
         try {
             policyService.snoozeLimit(template);
         } catch (RemoteException e) {
-            Slog.w(TAG, "problem snoozing network policy", e);
+            Log.w(TAG, "problem snoozing network policy", e);
         }
     }
 

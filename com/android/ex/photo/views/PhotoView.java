@@ -27,13 +27,16 @@ import android.graphics.Paint.Style;
 import android.graphics.Rect;
 import android.graphics.RectF;
 import android.graphics.drawable.BitmapDrawable;
+import android.graphics.drawable.Drawable;
 import android.support.v4.view.GestureDetectorCompat;
+import android.support.v4.view.ScaleGestureDetectorCompat;
 import android.util.AttributeSet;
-import android.view.GestureDetector.OnGestureListener;
 import android.view.GestureDetector.OnDoubleTapListener;
+import android.view.GestureDetector.OnGestureListener;
 import android.view.MotionEvent;
 import android.view.ScaleGestureDetector;
 import android.view.View;
+import android.view.ViewConfiguration;
 
 import com.android.ex.photo.R;
 import com.android.ex.photo.fragments.PhotoViewFragment.HorizontallyScrollable;
@@ -44,8 +47,16 @@ import com.android.ex.photo.fragments.PhotoViewFragment.HorizontallyScrollable;
 public class PhotoView extends View implements OnGestureListener,
         OnDoubleTapListener, ScaleGestureDetector.OnScaleGestureListener,
         HorizontallyScrollable {
+
+    public static final int TRANSLATE_NONE = 0;
+    public static final int TRANSLATE_X_ONLY = 1;
+    public static final int TRANSLATE_Y_ONLY = 2;
+    public static final int TRANSLATE_BOTH = 3;
+
     /** Zoom animation duration; in milliseconds */
-    private final static long ZOOM_ANIMATION_DURATION = 300L;
+    private final static long ZOOM_ANIMATION_DURATION = 200L;
+    /** Amount of time to wait after over-zooming before the zoom out animation; in milliseconds */
+    private static final long ZOOM_CORRECTION_DELAY = 600L;
     /** Rotate animation duration; in milliseconds */
     private final static long ROTATE_ANIMATION_DURATION = 500L;
     /** Snap animation duration; in milliseconds */
@@ -53,11 +64,19 @@ public class PhotoView extends View implements OnGestureListener,
     /** Amount of time to wait before starting snap animation; in milliseconds */
     private static final long SNAP_DELAY = 250L;
     /** By how much to scale the image when double click occurs */
-    private final static float DOUBLE_TAP_SCALE_FACTOR = 1.5f;
+    private final static float DOUBLE_TAP_SCALE_FACTOR = 2.0f;
+    /** Amount which can be zoomed in past the maximum scale, and then scaled back */
+    private final static float SCALE_OVERZOOM_FACTOR = 1.5f;
     /** Amount of translation needed before starting a snap animation */
     private final static float SNAP_THRESHOLD = 20.0f;
     /** The width & height of the bitmap returned by {@link #getCroppedPhoto()} */
     private final static float CROPPED_SIZE = 256.0f;
+
+    /**
+     * Touch slop used to determine if this double tap is valid for starting a scale or should be
+     * ignored.
+     */
+    private static int sTouchSlopSquare;
 
     /** If {@code true}, the static values have been initialized */
     private static boolean sInitialized;
@@ -79,7 +98,7 @@ public class PhotoView extends View implements OnGestureListener,
     private static Paint sCropPaint;
 
     /** The photo to display */
-    private BitmapDrawable mDrawable;
+    private Drawable mDrawable;
     /** The matrix used for drawing; this may be {@code null} */
     private Matrix mDrawMatrix;
     /** A matrix to apply the scaling of the photo */
@@ -154,6 +173,24 @@ public class PhotoView extends View implements OnGestureListener,
     /** Array to store a copy of the matrix values */
     private float[] mValues = new float[9];
 
+    /**
+     * Track whether a double tap event occurred.
+     */
+    private boolean mDoubleTapOccurred;
+
+    /**
+     * X and Y coordinates for the current down event. Since mDoubleTapOccurred only contains the
+     * information that there was a double tap event, use these to get the secondary tap
+     * information to determine if a user has moved beyond touch slop.
+     */
+    private float mDownFocusX;
+    private float mDownFocusY;
+
+    /**
+     * Whether the QuickSale gesture is enabled.
+     */
+    private boolean mQuickScaleEnabled;
+
     public PhotoView(Context context) {
         super(context);
         initialize();
@@ -194,25 +231,92 @@ public class PhotoView extends View implements OnGestureListener,
 
     @Override
     public boolean onDoubleTap(MotionEvent e) {
-        if (mDoubleTapToZoomEnabled && mTransformsEnabled) {
-            if (!mDoubleTapDebounce) {
-                float currentScale = getScale();
-                float targetScale = currentScale * DOUBLE_TAP_SCALE_FACTOR;
-
-                // Ensure the target scale is within our bounds
-                targetScale = Math.max(mMinScale, targetScale);
-                targetScale = Math.min(mMaxScale, targetScale);
-
-                mScaleRunnable.start(currentScale, targetScale, e.getX(), e.getY());
-            }
-            mDoubleTapDebounce = false;
+        mDoubleTapOccurred = true;
+        if (!mQuickScaleEnabled) {
+            return scale(e);
         }
-        return true;
+        return false;
     }
 
     @Override
     public boolean onDoubleTapEvent(MotionEvent e) {
-        return true;
+        final int action = e.getAction();
+        boolean handled = false;
+
+        switch (action) {
+            case MotionEvent.ACTION_DOWN:
+                if (mQuickScaleEnabled) {
+                    mDownFocusX = e.getX();
+                    mDownFocusY = e.getY();
+                }
+                break;
+            case MotionEvent.ACTION_UP:
+                if (mQuickScaleEnabled) {
+                    handled = scale(e);
+                }
+                break;
+            case MotionEvent.ACTION_MOVE:
+                if (mQuickScaleEnabled && mDoubleTapOccurred) {
+                    final int deltaX = (int) (e.getX() - mDownFocusX);
+                    final int deltaY = (int) (e.getY() - mDownFocusY);
+                    int distance = (deltaX * deltaX) + (deltaY * deltaY);
+                    if (distance > sTouchSlopSquare) {
+                        mDoubleTapOccurred = false;
+                    }
+                }
+                break;
+
+        }
+        return handled;
+    }
+
+    private boolean scale(MotionEvent e) {
+        boolean handled = false;
+        if (mDoubleTapToZoomEnabled && mTransformsEnabled && mDoubleTapOccurred) {
+            if (!mDoubleTapDebounce) {
+                float currentScale = getScale();
+                float targetScale;
+                float centerX, centerY;
+
+                // Zoom out if not default scale, otherwise zoom in
+                if (currentScale > mMinScale) {
+                    targetScale = mMinScale;
+                    float relativeScale = targetScale / currentScale;
+                    // Find the apparent origin for scaling that equals this scale and translate
+                    centerX = (getWidth() / 2 - relativeScale * mTranslateRect.centerX()) /
+                            (1 - relativeScale);
+                    centerY = (getHeight() / 2 - relativeScale * mTranslateRect.centerY()) /
+                            (1 - relativeScale);
+                } else {
+                     targetScale = currentScale * DOUBLE_TAP_SCALE_FACTOR;
+                     // Ensure the target scale is within our bounds
+                     targetScale = Math.max(mMinScale, targetScale);
+                     targetScale = Math.min(mMaxScale, targetScale);
+                     float relativeScale = targetScale / currentScale;
+                     float widthBuffer = (getWidth() - mTranslateRect.width()) / relativeScale;
+                     float heightBuffer = (getHeight() - mTranslateRect.height()) / relativeScale;
+                     // Clamp the center if it would result in uneven borders
+                     if (mTranslateRect.width() <= widthBuffer * 2) {
+                         centerX = mTranslateRect.centerX();
+                     } else {
+                         centerX = Math.min(Math.max(mTranslateRect.left + widthBuffer,
+                                 e.getX()), mTranslateRect.right - widthBuffer);
+                     }
+                     if (mTranslateRect.height() <= heightBuffer * 2) {
+                         centerY = mTranslateRect.centerY();
+                     } else {
+                         centerY = Math.min(Math.max(mTranslateRect.top + heightBuffer,
+                                 e.getY()), mTranslateRect.bottom - heightBuffer);
+                     }
+                }
+
+                mScaleRunnable.start(currentScale, targetScale, centerX, centerY);
+                handled = true;
+            }
+            mDoubleTapDebounce = false;
+        }
+        mDoubleTapOccurred = false;
+        return handled;
     }
 
     @Override
@@ -239,7 +343,7 @@ public class PhotoView extends View implements OnGestureListener,
 
     @Override
     public boolean onScroll(MotionEvent e1, MotionEvent e2, float distanceX, float distanceY) {
-        if (mTransformsEnabled) {
+        if (mTransformsEnabled && !mScaleRunnable.mRunning) {
             translate(-distanceX, -distanceY);
         }
         return true;
@@ -256,7 +360,7 @@ public class PhotoView extends View implements OnGestureListener,
 
     @Override
     public boolean onFling(MotionEvent e1, MotionEvent e2, float velocityX, float velocityY) {
-        if (mTransformsEnabled) {
+        if (mTransformsEnabled && !mScaleRunnable.mRunning) {
             mTranslateRunnable.start(velocityX, velocityY);
         }
         return true;
@@ -264,7 +368,7 @@ public class PhotoView extends View implements OnGestureListener,
 
     @Override
     public boolean onScale(ScaleGestureDetector detector) {
-        if (mTransformsEnabled) {
+        if (mTransformsEnabled && !mScaleRunnable.mRunning) {
             mIsDoubleTouch = false;
             float currentScale = getScale();
             float newScale = currentScale * detector.getScaleFactor();
@@ -275,7 +379,7 @@ public class PhotoView extends View implements OnGestureListener,
 
     @Override
     public boolean onScaleBegin(ScaleGestureDetector detector) {
-        if (mTransformsEnabled) {
+        if (mTransformsEnabled && !mScaleRunnable.mRunning) {
             mScaleRunnable.stop();
             mIsDoubleTouch = true;
         }
@@ -379,6 +483,30 @@ public class PhotoView extends View implements OnGestureListener,
         mRotateRunnable = null;
         setOnClickListener(null);
         mExternalClickListener = null;
+        mDoubleTapOccurred = false;
+    }
+
+    public void bindDrawable(Drawable drawable) {
+        boolean changed = false;
+        if (drawable != null && drawable != mDrawable) {
+            // Clear previous state.
+            if (mDrawable != null) {
+                mDrawable.setCallback(null);
+            }
+
+            mDrawable = drawable;
+
+            // Reset mMinScale to ensure the bounds / matrix are recalculated
+            mMinScale = 0f;
+
+            // Set a callback?
+            mDrawable.setCallback(this);
+
+            changed = true;
+        }
+
+        configureBounds(changed);
+        invalidate();
     }
 
     /**
@@ -387,9 +515,10 @@ public class PhotoView extends View implements OnGestureListener,
      * @param photoBitmap the bitmap to bind.
      */
     public void bindPhoto(Bitmap photoBitmap) {
-        boolean changed = false;
-        if (mDrawable != null) {
-            final Bitmap drawableBitmap = mDrawable.getBitmap();
+        boolean currentDrawableIsBitmapDrawable = mDrawable instanceof BitmapDrawable;
+        boolean changed = !(currentDrawableIsBitmapDrawable);
+        if (mDrawable != null && currentDrawableIsBitmapDrawable) {
+            final Bitmap drawableBitmap = ((BitmapDrawable) mDrawable).getBitmap();
             if (photoBitmap == drawableBitmap) {
                 // setting the same bitmap; do nothing
                 return;
@@ -416,10 +545,17 @@ public class PhotoView extends View implements OnGestureListener,
      * Returns the bound photo data if set. Otherwise, {@code null}.
      */
     public Bitmap getPhoto() {
-        if (mDrawable != null) {
-            return mDrawable.getBitmap();
+        if (mDrawable != null && mDrawable instanceof BitmapDrawable) {
+            return ((BitmapDrawable) mDrawable).getBitmap();
         }
         return null;
+    }
+
+    /**
+     * Returns the bound drawable. May be {@code null} if no drawable is bound.
+     */
+    public Drawable getDrawable() {
+        return mDrawable;
     }
 
     /**
@@ -614,6 +750,25 @@ public class PhotoView extends View implements OnGestureListener,
         }
     }
 
+    @Override
+    public boolean verifyDrawable(Drawable drawable) {
+        return mDrawable == drawable || super.verifyDrawable(drawable);
+    }
+
+    @Override
+    /**
+     * {@inheritDoc}
+     */
+    public void invalidateDrawable(Drawable drawable) {
+        // Only invalidate this view if the passed in drawable is displayed within this view. If
+        // another drawable is passed in, have the parent view handle invalidation.
+        if (mDrawable == drawable) {
+            invalidate();
+        } else {
+            super.invalidateDrawable(drawable);
+        }
+    }
+
     /**
      * Forces a fixed height for this view.
      *
@@ -723,7 +878,7 @@ public class PhotoView extends View implements OnGestureListener,
         } else {
             mMinScale = getScale();
         }
-        mMaxScale = Math.max(mMinScale * 8, 8);
+        mMaxScale = Math.max(mMinScale * 4, 4);
     }
 
     /**
@@ -749,31 +904,74 @@ public class PhotoView extends View implements OnGestureListener,
      * The given scale is capped so that the resulting scale of the image always remains
      * between {@link #mMinScale} and {@link #mMaxScale}.
      *
-     * The scaled image is never allowed to be outside of the viewable area. If the image
-     * is smaller than the viewable area, it will be centered.
+     * If the image is smaller than the viewable area, it will be centered.
      *
      * @param newScale the new scale
      * @param centerX the center horizontal point around which to scale
      * @param centerY the center vertical point around which to scale
      */
     private void scale(float newScale, float centerX, float centerY) {
-        // rotate back to the original orientation
+        // Rotate back to the original orientation
         mMatrix.postRotate(-mRotation, getWidth() / 2, getHeight() / 2);
 
-        // ensure that mMixScale <= newScale <= mMaxScale
+        // Ensure that mMinScale <= newScale <= mMaxScale
         newScale = Math.max(newScale, mMinScale);
-        newScale = Math.min(newScale, mMaxScale);
+        newScale = Math.min(newScale, mMaxScale * SCALE_OVERZOOM_FACTOR);
 
         float currentScale = getScale();
+
+        // Prepare to animate zoom out if over-zooming
+        if (newScale > mMaxScale && currentScale <= mMaxScale) {
+            Runnable zoomBackRunnable = new Runnable() {
+                @Override
+                public void run() {
+                    // Scale back to the maximum if over-zoomed
+                    float currentScale = getScale();
+                    if (currentScale > mMaxScale) {
+                        // The number of times the crop amount pulled in can fit on the screen
+                        float marginFit = 1 / (1 - mMaxScale / currentScale);
+                        // The (negative) relative maximum distance from an image edge such that
+                        // when scaled this far from the edge, all of the image off-screen in that
+                        // direction is pulled in
+                        float relativeDistance = 1 - marginFit;
+                        float finalCenterX = getWidth() / 2;
+                        float finalCenterY = getHeight() / 2;
+                        // This center will pull all of the margin from the lesser side, over will
+                        // expose trim
+                        float maxX = mTranslateRect.left * relativeDistance;
+                        float maxY = mTranslateRect.top * relativeDistance;
+                        // This center will pull all of the margin from the greater side, over will
+                        // expose trim
+                        float minX = getWidth() * marginFit + mTranslateRect.right *
+                                relativeDistance;
+                        float minY = getHeight() * marginFit + mTranslateRect.bottom *
+                                relativeDistance;
+                        // Adjust center according to bounds to avoid bad crop
+                        if (minX > maxX) {
+                            // Border is inevitable due to small image size, so we split the crop
+                            finalCenterX = (minX + maxX) / 2;
+                        } else {
+                            finalCenterX = Math.min(Math.max(minX, finalCenterX), maxX);
+                        }
+                        if (minY > maxY) {
+                            // Border is inevitable due to small image size, so we split the crop
+                            finalCenterY = (minY + maxY) / 2;
+                        } else {
+                            finalCenterY = Math.min(Math.max(minY, finalCenterY), maxY);
+                        }
+                        mScaleRunnable.start(currentScale, mMaxScale, finalCenterX, finalCenterY);
+                    }
+                }
+            };
+            postDelayed(zoomBackRunnable, ZOOM_CORRECTION_DELAY);
+        }
+
         float factor = newScale / currentScale;
 
-        // apply the scale factor
+        // Apply the scale factor
         mMatrix.postScale(factor, factor, centerX, centerY);
 
-        // ensure the image is within the view bounds
-        snap();
-
-        // re-apply any rotation
+        // Re-apply any rotation
         mMatrix.postRotate(mRotation, getWidth() / 2, getHeight() / 2);
 
         invalidate();
@@ -786,10 +984,10 @@ public class PhotoView extends View implements OnGestureListener,
      *
      * @param tx how many pixels to translate horizontally
      * @param ty how many pixels to translate vertically
-     * @return {@code true} if the translation was applied as specified. Otherwise, {@code false}
-     *      if the translation was modified.
+     * @return result of the translation, represented as either {@link TRANSLATE_NONE},
+     * {@link TRANSLATE_X_ONLY}, {@link TRANSLATE_Y_ONLY}, or {@link TRANSLATE_BOTH}
      */
-    private boolean translate(float tx, float ty) {
+    private int translate(float tx, float ty) {
         mTranslateRect.set(mTempSrc);
         mMatrix.mapRect(mTranslateRect);
 
@@ -818,7 +1016,6 @@ public class PhotoView extends View implements OnGestureListener,
         float b = mTranslateRect.bottom;
 
         final float translateY;
-
         if (mAllowCrop) {
             // If we're cropping, allow the image to scroll off the edge of the screen
             translateY = Math.max(maxTop - mTranslateRect.bottom,
@@ -836,7 +1033,16 @@ public class PhotoView extends View implements OnGestureListener,
         mMatrix.postTranslate(translateX, translateY);
         invalidate();
 
-        return (translateX == tx) && (translateY == ty);
+        boolean didTranslateX = translateX == tx;
+        boolean didTranslateY = translateY == ty;
+        if (didTranslateX && didTranslateY) {
+            return TRANSLATE_BOTH;
+        } else if (didTranslateX) {
+            return TRANSLATE_X_ONLY;
+        } else if (didTranslateY) {
+            return TRANSLATE_Y_ONLY;
+        }
+        return TRANSLATE_NONE;
     }
 
     /**
@@ -933,10 +1139,15 @@ public class PhotoView extends View implements OnGestureListener,
             sCropPaint.setColor(resources.getColor(R.color.photo_crop_highlight_color));
             sCropPaint.setStyle(Style.STROKE);
             sCropPaint.setStrokeWidth(resources.getDimension(R.dimen.photo_crop_stroke_width));
+
+            final ViewConfiguration configuration = ViewConfiguration.get(context);
+            final int touchSlop = configuration.getScaledTouchSlop();
+            sTouchSlopSquare = touchSlop * touchSlop;
         }
 
         mGestureDetector = new GestureDetectorCompat(context, this, null);
         mScaleGetureDetector = new ScaleGestureDetector(context, this);
+        mQuickScaleEnabled = ScaleGestureDetectorCompat.isQuickScaleEnabled(mScaleGetureDetector);
         mScaleRunnable = new ScaleRunnable(this);
         mTranslateRunnable = new TranslateRunnable(this);
         mSnapRunnable = new SnapRunnable(this);
@@ -1027,13 +1238,16 @@ public class PhotoView extends View implements OnGestureListener,
      */
     private static class TranslateRunnable implements Runnable {
 
-        private static final float DECELERATION_RATE = 1000f;
+        private static final float DECELERATION_RATE = 20000f;
         private static final long NEVER = -1L;
 
         private final PhotoView mHeader;
 
         private float mVelocityX;
         private float mVelocityY;
+
+        private float mDecelerationX;
+        private float mDecelerationY;
 
         private long mLastRunTime;
         private boolean mRunning;
@@ -1054,6 +1268,11 @@ public class PhotoView extends View implements OnGestureListener,
             mLastRunTime = NEVER;
             mVelocityX = velocityX;
             mVelocityY = velocityY;
+
+            float angle = (float) Math.atan2(mVelocityY, mVelocityX);
+            mDecelerationX = (float) (DECELERATION_RATE * Math.cos(angle));
+            mDecelerationY = (float) (DECELERATION_RATE * Math.sin(angle));
+
             mStop = false;
             mRunning = true;
             mHeader.post(this);
@@ -1078,37 +1297,35 @@ public class PhotoView extends View implements OnGestureListener,
             // Translate according to current velocities and time delta:
             long now = System.currentTimeMillis();
             float delta = (mLastRunTime != NEVER) ? (now - mLastRunTime) / 1000f : 0f;
-            final boolean didTranslate = mHeader.translate(mVelocityX * delta, mVelocityY * delta);
+            final int translateResult = mHeader.translate(mVelocityX * delta, mVelocityY * delta);
             mLastRunTime = now;
             // Slow down:
-            float slowDown = DECELERATION_RATE * delta;
-            if (mVelocityX > 0f) {
-                mVelocityX -= slowDown;
-                if (mVelocityX < 0f) {
-                    mVelocityX = 0f;
-                }
+            float slowDownX = mDecelerationX * delta;
+            if (Math.abs(mVelocityX) > Math.abs(slowDownX)) {
+                mVelocityX -= slowDownX;
             } else {
-                mVelocityX += slowDown;
-                if (mVelocityX > 0f) {
-                    mVelocityX = 0f;
-                }
+                mVelocityX = 0f;
             }
-            if (mVelocityY > 0f) {
-                mVelocityY -= slowDown;
-                if (mVelocityY < 0f) {
-                    mVelocityY = 0f;
-                }
+            float slowDownY = mDecelerationY * delta;
+            if (Math.abs(mVelocityY) > Math.abs(slowDownY)) {
+                mVelocityY -= slowDownY;
             } else {
-                mVelocityY += slowDown;
-                if (mVelocityY > 0f) {
-                    mVelocityY = 0f;
-                }
+                mVelocityY = 0f;
             }
 
             // Stop when done
-            if ((mVelocityX == 0f && mVelocityY == 0f) || !didTranslate) {
+            if ((mVelocityX == 0f && mVelocityY == 0f)
+                    || translateResult == TRANSLATE_NONE) {
                 stop();
                 mHeader.snap();
+            } else if (translateResult == TRANSLATE_X_ONLY) {
+                mDecelerationX = (mVelocityX > 0) ? DECELERATION_RATE : -DECELERATION_RATE;
+                mDecelerationY = 0;
+                mVelocityY = 0f;
+            } else if (translateResult == TRANSLATE_Y_ONLY) {
+                mDecelerationX = 0;
+                mDecelerationY = (mVelocityY > 0) ? DECELERATION_RATE : -DECELERATION_RATE;
+                mVelocityX = 0f;
             }
 
             // See if we need to continue flinging:
@@ -1187,10 +1404,10 @@ public class PhotoView extends View implements OnGestureListener,
             } else {
                 transX = (mTranslateX / (SNAP_DURATION - delta)) * 10f;
                 transY = (mTranslateY / (SNAP_DURATION - delta)) * 10f;
-                if (Math.abs(transX) > Math.abs(mTranslateX) || transX == Float.NaN) {
+                if (Math.abs(transX) > Math.abs(mTranslateX) || Float.isNaN(transX)) {
                     transX = mTranslateX;
                 }
-                if (Math.abs(transY) > Math.abs(mTranslateY) || transY == Float.NaN) {
+                if (Math.abs(transY) > Math.abs(mTranslateY) || Float.isNaN(transY)) {
                     transY = mTranslateY;
                 }
             }

@@ -44,7 +44,9 @@ public class DctConstants {
         CONNECTED,
         DISCONNECTING,
         FAILED,
-        RETRYING
+        RETRYING        // After moving retry manager to ApnContext, we'll never enter this state!
+                        // Todo: Remove this state and other places that use this state and then
+                        // rename SCANNING to RETRYING.
     }
 
     public enum Activity {
@@ -93,6 +95,15 @@ public class DctConstants {
     public static final int EVENT_ICC_CHANGED = BASE + 33;
     public static final int EVENT_DISCONNECT_DC_RETRYING = BASE + 34;
     public static final int EVENT_DATA_SETUP_COMPLETE_ERROR = BASE + 35;
+    public static final int CMD_SET_ENABLE_FAIL_FAST_MOBILE_DATA = BASE + 36;
+    public static final int CMD_ENABLE_MOBILE_PROVISIONING = BASE + 37;
+    public static final int CMD_IS_PROVISIONING_APN = BASE + 38;
+    public static final int EVENT_PROVISIONING_APN_ALARM = BASE + 39;
+    public static final int CMD_NET_STAT_POLL = BASE + 40;
+    public static final int EVENT_DATA_RAT_CHANGED = BASE + 41;
+    public static final int CMD_CLEAR_PROVISIONING_SPINNER = BASE + 42;
+    public static final int EVENT_DEVICE_PROVISIONED_CHANGE = BASE + 43;
+    public static final int EVENT_REDIRECTION_DETECTED = BASE + 44;
 
     /***** Constants *****/
 
@@ -105,10 +116,14 @@ public class DctConstants {
     public static final int APN_IMS_ID = 5;
     public static final int APN_FOTA_ID = 6;
     public static final int APN_CBS_ID = 7;
-    public static final int APN_NUM_TYPES = 8;
+    public static final int APN_IA_ID = 8;
+    public static final int APN_EMERGENCY_ID = 9;
+    public static final int APN_NUM_TYPES = 10;
 
+    public static final int INVALID = -1;
     public static final int DISABLED = 0;
     public static final int ENABLED = 1;
 
     public static final String APN_TYPE_KEY = "apnType";
+    public static final String PROVISIONING_URL_KEY = "provisioningUrl";
 }

@@ -24,6 +24,7 @@ import android.content.IntentFilter;
 import android.content.pm.PackageManager;
 import android.database.ContentObserver;
 import android.net.Uri;
+import android.os.Binder;
 import android.os.Debug;
 import android.os.DropBoxManager;
 import android.os.FileUtils;
@@ -35,6 +36,8 @@ import android.os.UserHandle;
 import android.provider.Settings;
 import android.text.format.Time;
 import android.util.Slog;
+
+import libcore.io.IoUtils;
 
 import com.android.internal.os.IDropBoxManagerService;
 
@@ -57,7 +60,7 @@ import java.util.zip.GZIPOutputStream;
  * Implementation of {@link IDropBoxManagerService} using the filesystem.
  * Clients use {@link DropBoxManager} to access this service.
  */
-public final class DropBoxManagerService extends IDropBoxManagerService.Stub {
+public final class DropBoxManagerService extends SystemService {
     private static final String TAG = "DropBoxManagerService";
     private static final int DEFAULT_AGE_SECONDS = 3 * 86400;
     private static final int DEFAULT_MAX_FILES = 1000;
@@ -77,7 +80,6 @@ public final class DropBoxManagerService extends IDropBoxManagerService.Stub {
 
     // The cached context and derived objects
 
-    private final Context mContext;
     private final ContentResolver mContentResolver;
     private final File mDropBoxDir;
 
@@ -102,12 +104,7 @@ public final class DropBoxManagerService extends IDropBoxManagerService.Stub {
     private final BroadcastReceiver mReceiver = new BroadcastReceiver() {
         @Override
         public void onReceive(Context context, Intent intent) {
-            if (intent != null && Intent.ACTION_BOOT_COMPLETED.equals(intent.getAction())) {
-                mBooted = true;
-                return;
-            }
-
-            // Else, for ACTION_DEVICE_STORAGE_LOW:
+            // For ACTION_DEVICE_STORAGE_LOW:
             mCachedQuotaUptimeMillis = 0;  // Force a re-check of quota size
 
             // Run the initialization in the background (not this main thread).
@@ -126,6 +123,38 @@ public final class DropBoxManagerService extends IDropBoxManagerService.Stub {
         }
     };
 
+    private final IDropBoxManagerService.Stub mStub = new IDropBoxManagerService.Stub() {
+        @Override
+        public void add(DropBoxManager.Entry entry) {
+            DropBoxManagerService.this.add(entry);
+        }
+
+        @Override
+        public boolean isTagEnabled(String tag) {
+            return DropBoxManagerService.this.isTagEnabled(tag);
+        }
+
+        @Override
+        public DropBoxManager.Entry getNextEntry(String tag, long millis) {
+            return DropBoxManagerService.this.getNextEntry(tag, millis);
+        }
+
+        @Override
+        public void dump(FileDescriptor fd, PrintWriter pw, String[] args) {
+            DropBoxManagerService.this.dump(fd, pw, args);
+        }
+    };
+
+    /**
+     * Creates an instance of managed drop box storage using the default dropbox
+     * directory.
+     *
+     * @param context to use for receiving free space & gservices intents
+     */
+    public DropBoxManagerService(final Context context) {
+        this(context, new File("/data/system/dropbox"));
+    }
+
     /**
      * Creates an instance of managed drop box storage.  Normally there is one of these
      * run by the system, but others can be created for testing and other purposes.
@@ -134,48 +163,59 @@ public final class DropBoxManagerService extends IDropBoxManagerService.Stub {
      * @param path to store drop box entries in
      */
     public DropBoxManagerService(final Context context, File path) {
+        super(context);
         mDropBoxDir = path;
+        mContentResolver = getContext().getContentResolver();
+        mHandler = new Handler() {
+            @Override
+            public void handleMessage(Message msg) {
+                if (msg.what == MSG_SEND_BROADCAST) {
+                    getContext().sendBroadcastAsUser((Intent)msg.obj, UserHandle.SYSTEM,
+                            android.Manifest.permission.READ_LOGS);
+                }
+            }
+        };
+    }
 
+    @Override
+    public void onStart() {
         // Set up intent receivers
-        mContext = context;
-        mContentResolver = context.getContentResolver();
-
         IntentFilter filter = new IntentFilter();
         filter.addAction(Intent.ACTION_DEVICE_STORAGE_LOW);
-        filter.addAction(Intent.ACTION_BOOT_COMPLETED);
-        context.registerReceiver(mReceiver, filter);
+        getContext().registerReceiver(mReceiver, filter);
 
         mContentResolver.registerContentObserver(
             Settings.Global.CONTENT_URI, true,
             new ContentObserver(new Handler()) {
                 @Override
                 public void onChange(boolean selfChange) {
-                    mReceiver.onReceive(context, (Intent) null);
+                    mReceiver.onReceive(getContext(), (Intent) null);
                 }
             });
 
-        mHandler = new Handler() {
-            @Override
-            public void handleMessage(Message msg) {
-                if (msg.what == MSG_SEND_BROADCAST) {
-                    mContext.sendBroadcastAsUser((Intent)msg.obj, UserHandle.OWNER,
-                            android.Manifest.permission.READ_LOGS);
-                }
-            }
-        };
+        publishBinderService(Context.DROPBOX_SERVICE, mStub);
 
         // The real work gets done lazily in init() -- that way service creation always
         // succeeds, and things like disk problems cause individual method failures.
     }
 
-    /** Unregisters broadcast receivers and any other hooks -- for test instances */
-    public void stop() {
-        mContext.unregisterReceiver(mReceiver);
+    @Override
+    public void onBootPhase(int phase) {
+        switch (phase) {
+            case PHASE_BOOT_COMPLETED:
+                mBooted = true;
+                break;
+        }
     }
 
-    @Override
+    /** Retrieves the binder stub -- for test instances */
+    public IDropBoxManagerService getServiceStub() {
+        return mStub;
+    }
+
     public void add(DropBoxManager.Entry entry) {
         File temp = null;
+        InputStream input = null;
         OutputStream output = null;
         final String tag = entry.getTag();
         try {
@@ -188,7 +228,7 @@ public final class DropBoxManagerService extends IDropBoxManagerService.Stub {
             long lastTrim = System.currentTimeMillis();
 
             byte[] buffer = new byte[mBlockSize];
-            InputStream input = entry.getInputStream();
+            input = entry.getInputStream();
 
             // First, accumulate up to one block worth of data in memory before
             // deciding whether to compress the data or not.
@@ -258,19 +298,25 @@ public final class DropBoxManagerService extends IDropBoxManagerService.Stub {
         } catch (IOException e) {
             Slog.e(TAG, "Can't write: " + tag, e);
         } finally {
-            try { if (output != null) output.close(); } catch (IOException e) {}
+            IoUtils.closeQuietly(output);
+            IoUtils.closeQuietly(input);
             entry.close();
             if (temp != null) temp.delete();
         }
     }
 
     public boolean isTagEnabled(String tag) {
-        return !"disabled".equals(Settings.Global.getString(
-                mContentResolver, Settings.Global.DROPBOX_TAG_PREFIX + tag));
+        final long token = Binder.clearCallingIdentity();
+        try {
+            return !"disabled".equals(Settings.Global.getString(
+                    mContentResolver, Settings.Global.DROPBOX_TAG_PREFIX + tag));
+        } finally {
+            Binder.restoreCallingIdentity(token);
+        }
     }
 
     public synchronized DropBoxManager.Entry getNextEntry(String tag, long millis) {
-        if (mContext.checkCallingOrSelfPermission(android.Manifest.permission.READ_LOGS)
+        if (getContext().checkCallingOrSelfPermission(android.Manifest.permission.READ_LOGS)
                 != PackageManager.PERMISSION_GRANTED) {
             throw new SecurityException("READ_LOGS permission required");
         }
@@ -303,7 +349,7 @@ public final class DropBoxManagerService extends IDropBoxManagerService.Stub {
     }
 
     public synchronized void dump(FileDescriptor fd, PrintWriter pw, String[] args) {
-        if (mContext.checkCallingOrSelfPermission(android.Manifest.permission.DUMP)
+        if (getContext().checkCallingOrSelfPermission(android.Manifest.permission.DUMP)
                 != PackageManager.PERMISSION_GRANTED) {
             pw.println("Permission Denial: Can't dump DropBoxManagerService");
             return;
@@ -402,9 +448,14 @@ public final class DropBoxManagerService extends IDropBoxManagerService.Stub {
                         if (!newline) out.append("\n");
                     } else {
                         String text = dbe.getText(70);
-                        boolean truncated = (text.length() == 70);
-                        out.append("    ").append(text.trim().replace('\n', '/'));
-                        if (truncated) out.append(" ...");
+                        out.append("    ");
+                        if (text == null) {
+                            out.append("[null]");
+                        } else {
+                            boolean truncated = (text.length() == 70);
+                            out.append(text.trim().replace('\n', '/'));
+                            if (truncated) out.append(" ...");
+                        }
                         out.append("\n");
                     }
                 } catch (IOException e) {
@@ -437,7 +488,7 @@ public final class DropBoxManagerService extends IDropBoxManagerService.Stub {
 
     ///////////////////////////////////////////////////////////////////////////
 
-    /** Chronologically sorted list of {@link #EntryFile} */
+    /** Chronologically sorted list of {@link EntryFile} */
     private static final class FileList implements Comparable<FileList> {
         public int blocks = 0;
         public final TreeSet<EntryFile> contents = new TreeSet<EntryFile>();
@@ -562,7 +613,7 @@ public final class DropBoxManagerService extends IDropBoxManagerService.Stub {
 
         /**
          * Creates a EntryFile object with only a timestamp for comparison purposes.
-         * @param timestampMillis to compare with.
+         * @param millis to compare with.
          */
         public EntryFile(long millis) {
             this.tag = null;

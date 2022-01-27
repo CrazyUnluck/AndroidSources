@@ -16,26 +16,33 @@
 
 package android.widget;
 
+import static android.text.format.DateUtils.DAY_IN_MILLIS;
+import static android.text.format.DateUtils.HOUR_IN_MILLIS;
+import static android.text.format.DateUtils.MINUTE_IN_MILLIS;
+import static android.text.format.DateUtils.YEAR_IN_MILLIS;
+import static android.text.format.Time.getJulianDay;
+
+import android.app.ActivityThread;
+import android.content.BroadcastReceiver;
 import android.content.Context;
 import android.content.Intent;
 import android.content.IntentFilter;
-import android.content.BroadcastReceiver;
+import android.content.res.Configuration;
+import android.content.res.TypedArray;
 import android.database.ContentObserver;
-import android.net.Uri;
+import android.icu.util.Calendar;
 import android.os.Handler;
 import android.text.format.Time;
 import android.util.AttributeSet;
-import android.util.Log;
-import android.provider.Settings;
-import android.provider.Settings.SettingNotFoundException;
-import android.widget.TextView;
+import android.view.accessibility.AccessibilityNodeInfo;
 import android.widget.RemoteViews.RemoteView;
 
 import com.android.internal.R;
 
 import java.text.DateFormat;
-import java.text.SimpleDateFormat;
+import java.util.ArrayList;
 import java.util.Date;
+import java.util.TimeZone;
 
 //
 // TODO
@@ -51,11 +58,6 @@ import java.util.Date;
  */
 @RemoteView
 public class DateTimeView extends TextView {
-    private static final String TAG = "DateTimeView";
-
-    private static final long TWELVE_HOURS_IN_MINUTES = 12 * 60;
-    private static final long TWENTY_FOUR_HOURS_IN_MILLIS = 24 * 60 * 60 * 1000;
-
     private static final int SHOW_TIME = 0;
     private static final int SHOW_MONTH_DAY_YEAR = 1;
 
@@ -65,47 +67,88 @@ public class DateTimeView extends TextView {
     int mLastDisplay = -1;
     DateFormat mLastFormat;
 
-    private boolean mAttachedToWindow;
     private long mUpdateTimeMillis;
+    private static final ThreadLocal<ReceiverInfo> sReceiverInfo = new ThreadLocal<ReceiverInfo>();
+    private String mNowText;
+    private boolean mShowRelativeTime;
 
     public DateTimeView(Context context) {
-        super(context);
+        this(context, null);
     }
 
     public DateTimeView(Context context, AttributeSet attrs) {
         super(context, attrs);
+        final TypedArray a = context.obtainStyledAttributes(attrs,
+                com.android.internal.R.styleable.DateTimeView, 0,
+                0);
+
+        final int N = a.getIndexCount();
+        for (int i = 0; i < N; i++) {
+            int attr = a.getIndex(i);
+            switch (attr) {
+                case R.styleable.DateTimeView_showRelative:
+                    boolean relative = a.getBoolean(i, false);
+                    setShowRelativeTime(relative);
+                    break;
+            }
+        }
+        a.recycle();
     }
 
     @Override
     protected void onAttachedToWindow() {
         super.onAttachedToWindow();
-        registerReceivers();
-        mAttachedToWindow = true;
+        ReceiverInfo ri = sReceiverInfo.get();
+        if (ri == null) {
+            ri = new ReceiverInfo();
+            sReceiverInfo.set(ri);
+        }
+        ri.addView(this);
     }
         
     @Override
     protected void onDetachedFromWindow() {
         super.onDetachedFromWindow();
-        unregisterReceivers();
-        mAttachedToWindow = false;
+        final ReceiverInfo ri = sReceiverInfo.get();
+        if (ri != null) {
+            ri.removeView(this);
+        }
     }
 
     @android.view.RemotableViewMethod
     public void setTime(long time) {
         Time t = new Time();
         t.set(time);
-        t.second = 0;
         mTimeMillis = t.toMillis(false);
         mTime = new Date(t.year-1900, t.month, t.monthDay, t.hour, t.minute, 0);
         update();
     }
 
+    @android.view.RemotableViewMethod
+    public void setShowRelativeTime(boolean showRelativeTime) {
+        mShowRelativeTime = showRelativeTime;
+        updateNowText();
+        update();
+    }
+
+    @Override
+    @android.view.RemotableViewMethod
+    public void setVisibility(@Visibility int visibility) {
+        boolean gotVisible = visibility != GONE && getVisibility() == GONE;
+        super.setVisibility(visibility);
+        if (gotVisible) {
+            update();
+        }
+    }
+
     void update() {
-        if (mTime == null) {
+        if (mTime == null || getVisibility() == GONE) {
             return;
         }
-
-        long start = System.nanoTime();
+        if (mShowRelativeTime) {
+            updateRelativeTime();
+            return;
+        }
 
         int display;
         Date time = mTime;
@@ -152,7 +195,7 @@ public class DateTimeView extends TextView {
                     format = getTimeFormat();
                     break;
                 case SHOW_MONTH_DAY_YEAR:
-                    format = getDateFormat();
+                    format = DateFormat.getDateInstance(DateFormat.SHORT);
                     break;
                 default:
                     throw new RuntimeException("unknown display value: " + display);
@@ -180,76 +223,249 @@ public class DateTimeView extends TextView {
                         ? twelveHoursBefore : midnightBefore;
             }
         }
-        if (false) {
-            Log.d(TAG, "update needed for '" + time + "' at '" + new Date(mUpdateTimeMillis)
-                    + "' - text=" + text);
-        }
+    }
 
-        long finish = System.nanoTime();
+    private void updateRelativeTime() {
+        long now = System.currentTimeMillis();
+        long duration = Math.abs(now - mTimeMillis);
+        int count;
+        long millisIncrease;
+        boolean past = (now >= mTimeMillis);
+        String result;
+        if (duration < MINUTE_IN_MILLIS) {
+            setText(mNowText);
+            mUpdateTimeMillis = mTimeMillis + MINUTE_IN_MILLIS + 1;
+            return;
+        } else if (duration < HOUR_IN_MILLIS) {
+            count = (int)(duration / MINUTE_IN_MILLIS);
+            result = String.format(getContext().getResources().getQuantityString(past
+                            ? com.android.internal.R.plurals.duration_minutes_shortest
+                            : com.android.internal.R.plurals.duration_minutes_shortest_future,
+                            count),
+                    count);
+            millisIncrease = MINUTE_IN_MILLIS;
+        } else if (duration < DAY_IN_MILLIS) {
+            count = (int)(duration / HOUR_IN_MILLIS);
+            result = String.format(getContext().getResources().getQuantityString(past
+                            ? com.android.internal.R.plurals.duration_hours_shortest
+                            : com.android.internal.R.plurals.duration_hours_shortest_future,
+                            count),
+                    count);
+            millisIncrease = HOUR_IN_MILLIS;
+        } else if (duration < YEAR_IN_MILLIS) {
+            // In weird cases it can become 0 because of daylight savings
+            TimeZone timeZone = TimeZone.getDefault();
+            count = Math.max(Math.abs(dayDistance(timeZone, mTimeMillis, now)), 1);
+            result = String.format(getContext().getResources().getQuantityString(past
+                            ? com.android.internal.R.plurals.duration_days_shortest
+                            : com.android.internal.R.plurals.duration_days_shortest_future,
+                            count),
+                    count);
+            if (past || count != 1) {
+                mUpdateTimeMillis = computeNextMidnight(timeZone);
+                millisIncrease = -1;
+            } else {
+                millisIncrease = DAY_IN_MILLIS;
+            }
+
+        } else {
+            count = (int)(duration / YEAR_IN_MILLIS);
+            result = String.format(getContext().getResources().getQuantityString(past
+                            ? com.android.internal.R.plurals.duration_years_shortest
+                            : com.android.internal.R.plurals.duration_years_shortest_future,
+                            count),
+                    count);
+            millisIncrease = YEAR_IN_MILLIS;
+        }
+        if (millisIncrease != -1) {
+            if (past) {
+                mUpdateTimeMillis = mTimeMillis + millisIncrease * (count + 1) + 1;
+            } else {
+                mUpdateTimeMillis = mTimeMillis - millisIncrease * count + 1;
+            }
+        }
+        setText(result);
+    }
+
+    /**
+     * @param timeZone the timezone we are in
+     * @return the timepoint in millis at UTC at midnight in the current timezone
+     */
+    private long computeNextMidnight(TimeZone timeZone) {
+        Calendar c = Calendar.getInstance();
+        c.setTimeZone(libcore.icu.DateUtilsBridge.icuTimeZone(timeZone));
+        c.add(Calendar.DAY_OF_MONTH, 1);
+        c.set(Calendar.HOUR_OF_DAY, 0);
+        c.set(Calendar.MINUTE, 0);
+        c.set(Calendar.SECOND, 0);
+        c.set(Calendar.MILLISECOND, 0);
+        return c.getTimeInMillis();
+    }
+
+    @Override
+    protected void onConfigurationChanged(Configuration newConfig) {
+        super.onConfigurationChanged(newConfig);
+        updateNowText();
+        update();
+    }
+
+    private void updateNowText() {
+        if (!mShowRelativeTime) {
+            return;
+        }
+        mNowText = getContext().getResources().getString(
+                com.android.internal.R.string.now_string_shortest);
+    }
+
+    // Return the date difference for the two times in a given timezone.
+    private static int dayDistance(TimeZone timeZone, long startTime,
+            long endTime) {
+        return getJulianDay(endTime, timeZone.getOffset(endTime) / 1000)
+                - getJulianDay(startTime, timeZone.getOffset(startTime) / 1000);
     }
 
     private DateFormat getTimeFormat() {
         return android.text.format.DateFormat.getTimeFormat(getContext());
     }
 
-    private DateFormat getDateFormat() {
-        String format = Settings.System.getString(getContext().getContentResolver(),
-                Settings.System.DATE_FORMAT);
-        if (format == null || "".equals(format)) {
-            return DateFormat.getDateInstance(DateFormat.SHORT);
-        } else {
-            try {
-                return new SimpleDateFormat(format);
-            } catch (IllegalArgumentException e) {
-                // If we tried to use a bad format string, fall back to a default.
-                return DateFormat.getDateInstance(DateFormat.SHORT);
+    void clearFormatAndUpdate() {
+        mLastFormat = null;
+        update();
+    }
+
+    @Override
+    public void onInitializeAccessibilityNodeInfoInternal(AccessibilityNodeInfo info) {
+        super.onInitializeAccessibilityNodeInfoInternal(info);
+        if (mShowRelativeTime) {
+            // The short version of the time might not be completely understandable and for
+            // accessibility we rather have a longer version.
+            long now = System.currentTimeMillis();
+            long duration = Math.abs(now - mTimeMillis);
+            int count;
+            boolean past = (now >= mTimeMillis);
+            String result;
+            if (duration < MINUTE_IN_MILLIS) {
+                result = mNowText;
+            } else if (duration < HOUR_IN_MILLIS) {
+                count = (int)(duration / MINUTE_IN_MILLIS);
+                result = String.format(getContext().getResources().getQuantityString(past
+                                ? com.android.internal.
+                                        R.plurals.duration_minutes_relative
+                                : com.android.internal.
+                                        R.plurals.duration_minutes_relative_future,
+                        count),
+                        count);
+            } else if (duration < DAY_IN_MILLIS) {
+                count = (int)(duration / HOUR_IN_MILLIS);
+                result = String.format(getContext().getResources().getQuantityString(past
+                                ? com.android.internal.
+                                        R.plurals.duration_hours_relative
+                                : com.android.internal.
+                                        R.plurals.duration_hours_relative_future,
+                        count),
+                        count);
+            } else if (duration < YEAR_IN_MILLIS) {
+                // In weird cases it can become 0 because of daylight savings
+                TimeZone timeZone = TimeZone.getDefault();
+                count = Math.max(Math.abs(dayDistance(timeZone, mTimeMillis, now)), 1);
+                result = String.format(getContext().getResources().getQuantityString(past
+                                ? com.android.internal.
+                                        R.plurals.duration_days_relative
+                                : com.android.internal.
+                                        R.plurals.duration_days_relative_future,
+                        count),
+                        count);
+
+            } else {
+                count = (int)(duration / YEAR_IN_MILLIS);
+                result = String.format(getContext().getResources().getQuantityString(past
+                                ? com.android.internal.
+                                        R.plurals.duration_years_relative
+                                : com.android.internal.
+                                        R.plurals.duration_years_relative_future,
+                        count),
+                        count);
             }
+            info.setText(result);
         }
     }
 
-    private void registerReceivers() {
-        Context context = getContext();
+    private static class ReceiverInfo {
+        private final ArrayList<DateTimeView> mAttachedViews = new ArrayList<DateTimeView>();
+        private final BroadcastReceiver mReceiver = new BroadcastReceiver() {
+            @Override
+            public void onReceive(Context context, Intent intent) {
+                String action = intent.getAction();
+                if (Intent.ACTION_TIME_TICK.equals(action)) {
+                    if (System.currentTimeMillis() < getSoonestUpdateTime()) {
+                        // The update() function takes a few milliseconds to run because of
+                        // all of the time conversions it needs to do, so we can't do that
+                        // every minute.
+                        return;
+                    }
+                }
+                // ACTION_TIME_CHANGED can also signal a change of 12/24 hr. format.
+                updateAll();
+            }
+        };
 
-        IntentFilter filter = new IntentFilter();
-        filter.addAction(Intent.ACTION_TIME_TICK);
-        filter.addAction(Intent.ACTION_TIME_CHANGED);
-        filter.addAction(Intent.ACTION_CONFIGURATION_CHANGED);
-        filter.addAction(Intent.ACTION_TIMEZONE_CHANGED);
-        context.registerReceiver(mBroadcastReceiver, filter);
+        private final ContentObserver mObserver = new ContentObserver(new Handler()) {
+            @Override
+            public void onChange(boolean selfChange) {
+                updateAll();
+            }
+        };
 
-        Uri uri = Settings.System.getUriFor(Settings.System.DATE_FORMAT);
-        context.getContentResolver().registerContentObserver(uri, true, mContentObserver);
-    }
+        public void addView(DateTimeView v) {
+            final boolean register = mAttachedViews.isEmpty();
+            mAttachedViews.add(v);
+            if (register) {
+                register(getApplicationContextIfAvailable(v.getContext()));
+            }
+        }
 
-    private void unregisterReceivers() {
-        Context context = getContext();
-        context.unregisterReceiver(mBroadcastReceiver);
-        context.getContentResolver().unregisterContentObserver(mContentObserver);
-    }
+        public void removeView(DateTimeView v) {
+            mAttachedViews.remove(v);
+            if (mAttachedViews.isEmpty()) {
+                unregister(getApplicationContextIfAvailable(v.getContext()));
+            }
+        }
 
-    private BroadcastReceiver mBroadcastReceiver = new BroadcastReceiver() {
-        @Override
-        public void onReceive(Context context, Intent intent) {
-            String action = intent.getAction();
-            if (Intent.ACTION_TIME_TICK.equals(action)) {
-                if (System.currentTimeMillis() < mUpdateTimeMillis) {
-                    // The update() function takes a few milliseconds to run because of
-                    // all of the time conversions it needs to do, so we can't do that
-                    // every minute.
-                    return;
+        void updateAll() {
+            final int count = mAttachedViews.size();
+            for (int i = 0; i < count; i++) {
+                mAttachedViews.get(i).clearFormatAndUpdate();
+            }
+        }
+
+        long getSoonestUpdateTime() {
+            long result = Long.MAX_VALUE;
+            final int count = mAttachedViews.size();
+            for (int i = 0; i < count; i++) {
+                final long time = mAttachedViews.get(i).mUpdateTimeMillis;
+                if (time < result) {
+                    result = time;
                 }
             }
-            // ACTION_TIME_CHANGED can also signal a change of 12/24 hr. format.
-            mLastFormat = null;
-            update();
+            return result;
         }
-    };
 
-    private ContentObserver mContentObserver = new ContentObserver(new Handler()) {
-        @Override
-        public void onChange(boolean selfChange) {
-            mLastFormat = null;
-            update();
+        static final Context getApplicationContextIfAvailable(Context context) {
+            final Context ac = context.getApplicationContext();
+            return ac != null ? ac : ActivityThread.currentApplication().getApplicationContext();
         }
-    };
+
+        void register(Context context) {
+            final IntentFilter filter = new IntentFilter();
+            filter.addAction(Intent.ACTION_TIME_TICK);
+            filter.addAction(Intent.ACTION_TIME_CHANGED);
+            filter.addAction(Intent.ACTION_CONFIGURATION_CHANGED);
+            filter.addAction(Intent.ACTION_TIMEZONE_CHANGED);
+            context.registerReceiver(mReceiver, filter);
+        }
+
+        void unregister(Context context) {
+            context.unregisterReceiver(mReceiver);
+        }
+    }
 }

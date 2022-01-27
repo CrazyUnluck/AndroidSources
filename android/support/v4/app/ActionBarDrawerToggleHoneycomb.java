@@ -20,8 +20,10 @@ package android.support.v4.app;
 import android.R;
 import android.app.ActionBar;
 import android.app.Activity;
+import android.content.Context;
 import android.content.res.TypedArray;
 import android.graphics.drawable.Drawable;
+import android.os.Build;
 import android.util.Log;
 import android.view.View;
 import android.view.ViewGroup;
@@ -75,6 +77,11 @@ class ActionBarDrawerToggleHoneycomb {
             try {
                 final ActionBar actionBar = activity.getActionBar();
                 sii.setHomeActionContentDescription.invoke(actionBar, contentDescRes);
+                if (Build.VERSION.SDK_INT <= 19) {
+                    // For API 19 and earlier, we need to manually force the
+                    // action bar to generate a new content description.
+                    actionBar.setSubtitle(actionBar.getSubtitle());
+                }
             } catch (Exception e) {
                 Log.w(TAG, "Couldn't set content description via JB-MR2 API", e);
             }

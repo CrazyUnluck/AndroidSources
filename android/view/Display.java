@@ -16,13 +16,27 @@
 
 package android.view;
 
+import android.annotation.IntDef;
+import android.annotation.RequiresPermission;
+import android.content.Context;
+import android.content.res.CompatibilityInfo;
+import android.content.res.Resources;
 import android.graphics.PixelFormat;
 import android.graphics.Point;
 import android.graphics.Rect;
 import android.hardware.display.DisplayManagerGlobal;
+import android.os.Parcel;
+import android.os.Parcelable;
+import android.os.Process;
 import android.os.SystemClock;
 import android.util.DisplayMetrics;
 import android.util.Log;
+
+import java.lang.annotation.Retention;
+import java.lang.annotation.RetentionPolicy;
+import java.util.Arrays;
+
+import static android.Manifest.permission.CONFIGURE_DISPLAY_COLOR_TRANSFORM;
 
 /**
  * Provides information about the size and density of a logical display.
@@ -57,7 +71,9 @@ public final class Display {
     private final int mFlags;
     private final int mType;
     private final String mAddress;
-    private final CompatibilityInfoHolder mCompatibilityInfo;
+    private final int mOwnerUid;
+    private final String mOwnerPackageName;
+    private final DisplayAdjustments mDisplayAdjustments;
 
     private DisplayInfo mDisplayInfo; // never null
     private boolean mIsValid;
@@ -79,6 +95,11 @@ public final class Display {
      * assuming there is one.
      */
     public static final int DEFAULT_DISPLAY = 0;
+
+    /**
+     * Invalid display id.
+     */
+    public static final int INVALID_DISPLAY = -1;
 
     /**
      * Display flag: Indicates that the display supports compositing content
@@ -143,6 +164,47 @@ public final class Display {
     public static final int FLAG_SECURE = 1 << 1;
 
     /**
+     * Display flag: Indicates that the display is private.  Only the application that
+     * owns the display can create windows on it.
+     *
+     * @see #getFlags
+     */
+    public static final int FLAG_PRIVATE = 1 << 2;
+
+    /**
+     * Display flag: Indicates that the display is a presentation display.
+     * <p>
+     * This flag identifies secondary displays that are suitable for
+     * use as presentation displays such as HDMI or Wireless displays.  Applications
+     * may automatically project their content to presentation displays to provide
+     * richer second screen experiences.
+     * </p>
+     *
+     * @see #getFlags
+     */
+    public static final int FLAG_PRESENTATION = 1 << 3;
+
+    /**
+     * Display flag: Indicates that the display has a round shape.
+     * <p>
+     * This flag identifies displays that are circular, elliptical or otherwise
+     * do not permit the user to see all the way to the logical corners of the display.
+     * </p>
+     *
+     * @see #getFlags
+     */
+    public static final int FLAG_ROUND = 1 << 4;
+
+    /**
+     * Display flag: Indicates that the contents of the display should not be scaled
+     * to fit the physical screen dimensions.  Used for development only to emulate
+     * devices with smaller physicals screens while preserving density.
+     *
+     * @hide
+     */
+    public static final int FLAG_SCALING_DISABLED = 1 << 30;
+
+    /**
      * Display type: Unknown display type.
      * @hide
      */
@@ -173,6 +235,56 @@ public final class Display {
     public static final int TYPE_OVERLAY = 4;
 
     /**
+     * Display type: Virtual display.
+     * @hide
+     */
+    public static final int TYPE_VIRTUAL = 5;
+
+    /**
+     * Display state: The display state is unknown.
+     *
+     * @see #getState
+     */
+    public static final int STATE_UNKNOWN = 0;
+
+    /**
+     * Display state: The display is off.
+     *
+     * @see #getState
+     */
+    public static final int STATE_OFF = 1;
+
+    /**
+     * Display state: The display is on.
+     *
+     * @see #getState
+     */
+    public static final int STATE_ON = 2;
+
+    /**
+     * Display state: The display is dozing in a low power state; it is still
+     * on but is optimized for showing system-provided content while the
+     * device is non-interactive.
+     *
+     * @see #getState
+     * @see android.os.PowerManager#isInteractive
+     */
+    public static final int STATE_DOZE = 3;
+
+    /**
+     * Display state: The display is dozing in a suspended low power state; it is still
+     * on but is optimized for showing static system-provided content while the device
+     * is non-interactive.  This mode may be used to conserve even more power by allowing
+     * the hardware to stop applying frame buffer updates from the graphics subsystem or
+     * to take over the display and manage it autonomously to implement low power always-on
+     * display functionality.
+     *
+     * @see #getState
+     * @see android.os.PowerManager#isInteractive
+     */
+    public static final int STATE_DOZE_SUSPEND = 4;
+
+    /**
      * Internal method to create a display.
      * Applications should use {@link android.view.WindowManager#getDefaultDisplay()}
      * or {@link android.hardware.display.DisplayManager#getDisplay}
@@ -182,11 +294,11 @@ public final class Display {
      */
     public Display(DisplayManagerGlobal global,
             int displayId, DisplayInfo displayInfo /*not null*/,
-            CompatibilityInfoHolder compatibilityInfo) {
+            DisplayAdjustments daj) {
         mGlobal = global;
         mDisplayId = displayId;
         mDisplayInfo = displayInfo;
-        mCompatibilityInfo = compatibilityInfo;
+        mDisplayAdjustments = new DisplayAdjustments(daj);
         mIsValid = true;
 
         // Cache properties that cannot change as long as the display is valid.
@@ -194,6 +306,8 @@ public final class Display {
         mFlags = displayInfo.flags;
         mType = displayInfo.type;
         mAddress = displayInfo.address;
+        mOwnerUid = displayInfo.ownerUid;
+        mOwnerPackageName = displayInfo.ownerPackageName;
     }
 
     /**
@@ -262,6 +376,7 @@ public final class Display {
      *
      * @see #FLAG_SUPPORTS_PROTECTED_BUFFERS
      * @see #FLAG_SECURE
+     * @see #FLAG_PRIVATE
      */
     public int getFlags() {
         return mFlags;
@@ -277,6 +392,7 @@ public final class Display {
      * @see #TYPE_HDMI
      * @see #TYPE_WIFI
      * @see #TYPE_OVERLAY
+     * @see #TYPE_VIRTUAL
      * @hide
      */
     public int getType() {
@@ -295,13 +411,39 @@ public final class Display {
     }
 
     /**
-     * Gets the compatibility info used by this display instance.
+     * Gets the UID of the application that owns this display, or zero if it is
+     * owned by the system.
+     * <p>
+     * If the display is private, then only the owner can use it.
+     * </p>
      *
-     * @return The compatibility info holder, or null if none is required.
      * @hide
      */
-    public CompatibilityInfoHolder getCompatibilityInfo() {
-        return mCompatibilityInfo;
+    public int getOwnerUid() {
+        return mOwnerUid;
+    }
+
+    /**
+     * Gets the package name of the application that owns this display, or null if it is
+     * owned by the system.
+     * <p>
+     * If the display is private, then only the owner can use it.
+     * </p>
+     *
+     * @hide
+     */
+    public String getOwnerPackageName() {
+        return mOwnerPackageName;
+    }
+
+    /**
+     * Gets the compatibility info used by this display instance.
+     *
+     * @return The display adjustments holder, or null if none is required.
+     * @hide
+     */
+    public DisplayAdjustments getDisplayAdjustments() {
+        return mDisplayAdjustments;
     }
 
     /**
@@ -342,7 +484,7 @@ public final class Display {
     public void getSize(Point outSize) {
         synchronized (this) {
             updateDisplayInfoLocked();
-            mDisplayInfo.getAppMetrics(mTempMetrics, mCompatibilityInfo);
+            mDisplayInfo.getAppMetrics(mTempMetrics, mDisplayAdjustments);
             outSize.x = mTempMetrics.widthPixels;
             outSize.y = mTempMetrics.heightPixels;
         }
@@ -357,7 +499,7 @@ public final class Display {
     public void getRectSize(Rect outSize) {
         synchronized (this) {
             updateDisplayInfoLocked();
-            mDisplayInfo.getAppMetrics(mTempMetrics, mCompatibilityInfo);
+            mDisplayInfo.getAppMetrics(mTempMetrics, mDisplayAdjustments);
             outSize.set(0, 0, mTempMetrics.widthPixels, mTempMetrics.heightPixels);
         }
     }
@@ -467,6 +609,7 @@ public final class Display {
      * 90 degrees clockwise and thus the returned value here will be
      * {@link Surface#ROTATION_90 Surface.ROTATION_90}.
      */
+    @Surface.Rotation
     public int getRotation() {
         synchronized (this) {
             updateDisplayInfoLocked();
@@ -479,6 +622,7 @@ public final class Display {
      * @return orientation of this display.
      */
     @Deprecated
+    @Surface.Rotation
     public int getOrientation() {
         return getRotation();
     }
@@ -501,20 +645,153 @@ public final class Display {
     public float getRefreshRate() {
         synchronized (this) {
             updateDisplayInfoLocked();
-            return mDisplayInfo.refreshRate;
+            return mDisplayInfo.getMode().getRefreshRate();
+        }
+    }
+
+    /**
+     * Get the supported refresh rates of this display in frames per second.
+     * <p>
+     * This method only returns refresh rates for the display's default modes. For more options, use
+     * {@link #getSupportedModes()}.
+     *
+     * @deprecated use {@link #getSupportedModes()} instead
+     */
+    @Deprecated
+    public float[] getSupportedRefreshRates() {
+        synchronized (this) {
+            updateDisplayInfoLocked();
+            return mDisplayInfo.getDefaultRefreshRates();
+        }
+    }
+
+    /**
+     * Returns the active mode of the display.
+     */
+    public Mode getMode() {
+        synchronized (this) {
+            updateDisplayInfoLocked();
+            return mDisplayInfo.getMode();
+        }
+    }
+
+    /**
+     * Gets the supported modes of this display.
+     */
+    public Mode[] getSupportedModes() {
+        synchronized (this) {
+            updateDisplayInfoLocked();
+            final Display.Mode[] modes = mDisplayInfo.supportedModes;
+            return Arrays.copyOf(modes, modes.length);
+        }
+    }
+
+    /**
+     * Request the display applies a color transform.
+     * @hide
+     */
+    @RequiresPermission(CONFIGURE_DISPLAY_COLOR_TRANSFORM)
+    public void requestColorTransform(ColorTransform colorTransform) {
+        mGlobal.requestColorTransform(mDisplayId, colorTransform.getId());
+    }
+
+    /**
+     * Returns the active color transform of this display
+     * @hide
+     */
+    public ColorTransform getColorTransform() {
+        synchronized (this) {
+            updateDisplayInfoLocked();
+            return mDisplayInfo.getColorTransform();
+        }
+    }
+
+    /**
+     * Returns the default color transform of this display
+     * @hide
+     */
+    public ColorTransform getDefaultColorTransform() {
+        synchronized (this) {
+            updateDisplayInfoLocked();
+            return mDisplayInfo.getDefaultColorTransform();
+        }
+    }
+
+    /**
+     * Returns the display's HDR capabilities.
+     */
+    public HdrCapabilities getHdrCapabilities() {
+        synchronized (this) {
+            updateDisplayInfoLocked();
+            return mDisplayInfo.hdrCapabilities;
+        }
+    }
+
+    /**
+     * Gets the supported color transforms of this device.
+     * @hide
+     */
+    public ColorTransform[] getSupportedColorTransforms() {
+        synchronized (this) {
+            updateDisplayInfoLocked();
+            ColorTransform[] transforms = mDisplayInfo.supportedColorTransforms;
+            return Arrays.copyOf(transforms, transforms.length);
+        }
+    }
+
+    /**
+     * Gets the app VSYNC offset, in nanoseconds.  This is a positive value indicating
+     * the phase offset of the VSYNC events provided by Choreographer relative to the
+     * display refresh.  For example, if Choreographer reports that the refresh occurred
+     * at time N, it actually occurred at (N - appVsyncOffset).
+     * <p>
+     * Apps generally do not need to be aware of this.  It's only useful for fine-grained
+     * A/V synchronization.
+     */
+    public long getAppVsyncOffsetNanos() {
+        synchronized (this) {
+            updateDisplayInfoLocked();
+            return mDisplayInfo.appVsyncOffsetNanos;
+        }
+    }
+
+    /**
+     * This is how far in advance a buffer must be queued for presentation at
+     * a given time.  If you want a buffer to appear on the screen at
+     * time N, you must submit the buffer before (N - presentationDeadline).
+     * <p>
+     * The desired presentation time for GLES rendering may be set with
+     * {@link android.opengl.EGLExt#eglPresentationTimeANDROID}.  For video decoding, use
+     * {@link android.media.MediaCodec#releaseOutputBuffer(int, long)}.  Times are
+     * expressed in nanoseconds, using the system monotonic clock
+     * ({@link System#nanoTime}).
+     */
+    public long getPresentationDeadlineNanos() {
+        synchronized (this) {
+            updateDisplayInfoLocked();
+            return mDisplayInfo.presentationDeadlineNanos;
         }
     }
 
     /**
      * Gets display metrics that describe the size and density of this display.
-     * <p>
-     * The size is adjusted based on the current rotation of the display.
-     * </p><p>
      * The size returned by this method does not necessarily represent the
-     * actual raw size (native resolution) of the display.  The returned size may
-     * be adjusted to exclude certain system decor elements that are always visible.
-     * It may also be scaled to provide compatibility with older applications that
+     * actual raw size (native resolution) of the display.
+     * <p>
+     * 1. The returned size may be adjusted to exclude certain system decor elements
+     * that are always visible.
+     * </p><p>
+     * 2. It may be scaled to provide compatibility with older applications that
      * were originally designed for smaller displays.
+     * </p><p>
+     * 3. It can be different depending on the WindowManager to which the display belongs.
+     * <pre>
+     * - If requested from non-Activity context (e.g. Application context via
+     * {@code (WindowManager) getApplicationContext().getSystemService(Context.WINDOW_SERVICE)})
+     * metrics will report real size of the display based on current rotation.
+     * - If requested from activity resulting metrics will correspond to current window metrics.
+     * In this case the size can be smaller than physical size in multi-window mode.
+     * </pre>
      * </p>
      *
      * @param outMetrics A {@link DisplayMetrics} object to receive the metrics.
@@ -522,7 +799,7 @@ public final class Display {
     public void getMetrics(DisplayMetrics outMetrics) {
         synchronized (this) {
             updateDisplayInfoLocked();
-            mDisplayInfo.getAppMetrics(outMetrics, mCompatibilityInfo);
+            mDisplayInfo.getAppMetrics(outMetrics, mDisplayAdjustments);
         }
     }
 
@@ -552,7 +829,7 @@ public final class Display {
      * The size is adjusted based on the current rotation of the display.
      * </p><p>
      * The real size may be smaller than the physical size of the screen when the
-     * window manager is emulating a smaller display (using adb shell am display-size).
+     * window manager is emulating a smaller display (using adb shell wm size).
      * </p>
      *
      * @param outMetrics A {@link DisplayMetrics} object to receive the metrics.
@@ -560,8 +837,47 @@ public final class Display {
     public void getRealMetrics(DisplayMetrics outMetrics) {
         synchronized (this) {
             updateDisplayInfoLocked();
-            mDisplayInfo.getLogicalMetrics(outMetrics, null);
+            mDisplayInfo.getLogicalMetrics(outMetrics,
+                    CompatibilityInfo.DEFAULT_COMPATIBILITY_INFO, null);
         }
+    }
+
+    /**
+     * Gets the state of the display, such as whether it is on or off.
+     *
+     * @return The state of the display: one of {@link #STATE_OFF}, {@link #STATE_ON},
+     * {@link #STATE_DOZE}, {@link #STATE_DOZE_SUSPEND}, or {@link #STATE_UNKNOWN}.
+     */
+    public int getState() {
+        synchronized (this) {
+            updateDisplayInfoLocked();
+            return mIsValid ? mDisplayInfo.state : STATE_UNKNOWN;
+        }
+    }
+
+    /**
+     * Returns true if the specified UID has access to this display.
+     * @hide
+     */
+    public boolean hasAccess(int uid) {
+        return Display.hasAccess(uid, mFlags, mOwnerUid);
+    }
+
+    /** @hide */
+    public static boolean hasAccess(int uid, int flags, int ownerUid) {
+        return (flags & Display.FLAG_PRIVATE) == 0
+                || uid == ownerUid
+                || uid == Process.SYSTEM_UID
+                || uid == 0;
+    }
+
+    /**
+     * Returns true if the display is a public presentation display.
+     * @hide
+     */
+    public boolean isPublicPresentation() {
+        return (mFlags & (Display.FLAG_PRIVATE | Display.FLAG_PRESENTATION)) ==
+                Display.FLAG_PRESENTATION;
     }
 
     private void updateDisplayInfoLocked() {
@@ -591,7 +907,7 @@ public final class Display {
         long now = SystemClock.uptimeMillis();
         if (now > mLastCachedAppSizeUpdate + CACHED_APP_SIZE_DURATION_MILLIS) {
             updateDisplayInfoLocked();
-            mDisplayInfo.getAppMetrics(mTempMetrics, mCompatibilityInfo);
+            mDisplayInfo.getAppMetrics(mTempMetrics, mDisplayAdjustments);
             mCachedAppWidthCompat = mTempMetrics.widthPixels;
             mCachedAppHeightCompat = mTempMetrics.heightPixels;
             mLastCachedAppSizeUpdate = now;
@@ -603,7 +919,7 @@ public final class Display {
     public String toString() {
         synchronized (this) {
             updateDisplayInfoLocked();
-            mDisplayInfo.getAppMetrics(mTempMetrics, mCompatibilityInfo);
+            mDisplayInfo.getAppMetrics(mTempMetrics, mDisplayAdjustments);
             return "Display id " + mDisplayId + ": " + mDisplayInfo
                     + ", " + mTempMetrics + ", isValid=" + mIsValid;
         }
@@ -624,9 +940,400 @@ public final class Display {
                 return "WIFI";
             case TYPE_OVERLAY:
                 return "OVERLAY";
+            case TYPE_VIRTUAL:
+                return "VIRTUAL";
             default:
                 return Integer.toString(type);
         }
     }
-}
 
+    /**
+     * @hide
+     */
+    public static String stateToString(int state) {
+        switch (state) {
+            case STATE_UNKNOWN:
+                return "UNKNOWN";
+            case STATE_OFF:
+                return "OFF";
+            case STATE_ON:
+                return "ON";
+            case STATE_DOZE:
+                return "DOZE";
+            case STATE_DOZE_SUSPEND:
+                return "DOZE_SUSPEND";
+            default:
+                return Integer.toString(state);
+        }
+    }
+
+    /**
+     * Returns true if display updates may be suspended while in the specified
+     * display power state.
+     * @hide
+     */
+    public static boolean isSuspendedState(int state) {
+        return state == STATE_OFF || state == STATE_DOZE_SUSPEND;
+    }
+
+    /**
+     * A mode supported by a given display.
+     *
+     * @see Display#getSupportedModes()
+     */
+    public static final class Mode implements Parcelable {
+        /**
+         * @hide
+         */
+        public static final Mode[] EMPTY_ARRAY = new Mode[0];
+
+        private final int mModeId;
+        private final int mWidth;
+        private final int mHeight;
+        private final float mRefreshRate;
+
+        /**
+         * @hide
+         */
+        public Mode(int modeId, int width, int height, float refreshRate) {
+            mModeId = modeId;
+            mWidth = width;
+            mHeight = height;
+            mRefreshRate = refreshRate;
+        }
+
+        /**
+         * Returns this mode's id.
+         */
+        public int getModeId() {
+            return mModeId;
+        }
+
+        /**
+         * Returns the physical width of the display in pixels when configured in this mode's
+         * resolution.
+         * <p>
+         * Note that due to application UI scaling, the number of pixels made available to
+         * applications when the mode is active (as reported by {@link Display#getWidth()} may
+         * differ from the mode's actual resolution (as reported by this function).
+         * <p>
+         * For example, applications running on a 4K display may have their UI laid out and rendered
+         * in 1080p and then scaled up. Applications can take advantage of the extra resolution by
+         * rendering content through a {@link android.view.SurfaceView} using full size buffers.
+         */
+        public int getPhysicalWidth() {
+            return mWidth;
+        }
+
+        /**
+         * Returns the physical height of the display in pixels when configured in this mode's
+         * resolution.
+         * <p>
+         * Note that due to application UI scaling, the number of pixels made available to
+         * applications when the mode is active (as reported by {@link Display#getHeight()} may
+         * differ from the mode's actual resolution (as reported by this function).
+         * <p>
+         * For example, applications running on a 4K display may have their UI laid out and rendered
+         * in 1080p and then scaled up. Applications can take advantage of the extra resolution by
+         * rendering content through a {@link android.view.SurfaceView} using full size buffers.
+         */
+        public int getPhysicalHeight() {
+            return mHeight;
+        }
+
+        /**
+         * Returns the refresh rate in frames per second.
+         */
+        public float getRefreshRate() {
+            return mRefreshRate;
+        }
+
+        /**
+         * Returns {@code true} if this mode matches the given parameters.
+         *
+         * @hide
+         */
+        public boolean matches(int width, int height, float refreshRate) {
+            return mWidth == width &&
+                    mHeight == height &&
+                    Float.floatToIntBits(mRefreshRate) == Float.floatToIntBits(refreshRate);
+        }
+
+        @Override
+        public boolean equals(Object other) {
+            if (this == other) {
+                return true;
+            }
+            if (!(other instanceof Mode)) {
+                return false;
+            }
+            Mode that = (Mode) other;
+            return mModeId == that.mModeId && matches(that.mWidth, that.mHeight, that.mRefreshRate);
+        }
+
+        @Override
+        public int hashCode() {
+            int hash = 1;
+            hash = hash * 17 + mModeId;
+            hash = hash * 17 + mWidth;
+            hash = hash * 17 + mHeight;
+            hash = hash * 17 + Float.floatToIntBits(mRefreshRate);
+            return hash;
+        }
+
+        @Override
+        public String toString() {
+            return new StringBuilder("{")
+                    .append("id=").append(mModeId)
+                    .append(", width=").append(mWidth)
+                    .append(", height=").append(mHeight)
+                    .append(", fps=").append(mRefreshRate)
+                    .append("}")
+                    .toString();
+        }
+
+        @Override
+        public int describeContents() {
+            return 0;
+        }
+
+        private Mode(Parcel in) {
+            this(in.readInt(), in.readInt(), in.readInt(), in.readFloat());
+        }
+
+        @Override
+        public void writeToParcel(Parcel out, int parcelableFlags) {
+            out.writeInt(mModeId);
+            out.writeInt(mWidth);
+            out.writeInt(mHeight);
+            out.writeFloat(mRefreshRate);
+        }
+
+        @SuppressWarnings("hiding")
+        public static final Parcelable.Creator<Mode> CREATOR
+                = new Parcelable.Creator<Mode>() {
+            @Override
+            public Mode createFromParcel(Parcel in) {
+                return new Mode(in);
+            }
+
+            @Override
+            public Mode[] newArray(int size) {
+                return new Mode[size];
+            }
+        };
+    }
+
+    /**
+     * Encapsulates the HDR capabilities of a given display.
+     * For example, what HDR types it supports and details about the desired luminance data.
+     * <p>You can get an instance for a given {@link Display} object with
+     * {@link Display#getHdrCapabilities getHdrCapabilities()}.
+     */
+    public static final class HdrCapabilities implements Parcelable {
+        /**
+         * Invalid luminance value.
+         */
+        public static final float INVALID_LUMINANCE = -1;
+        /**
+         * Dolby Vision high dynamic range (HDR) display.
+         */
+        public static final int HDR_TYPE_DOLBY_VISION = 1;
+        /**
+         * HDR10 display.
+         */
+        public static final int HDR_TYPE_HDR10 = 2;
+        /**
+         * Hybrid Log-Gamma HDR display.
+         */
+        public static final int HDR_TYPE_HLG = 3;
+
+        /** @hide */
+        @IntDef({
+            HDR_TYPE_DOLBY_VISION,
+            HDR_TYPE_HDR10,
+            HDR_TYPE_HLG,
+        })
+        @Retention(RetentionPolicy.SOURCE)
+        public @interface HdrType {}
+
+        private @HdrType int[] mSupportedHdrTypes = new int[0];
+        private float mMaxLuminance = INVALID_LUMINANCE;
+        private float mMaxAverageLuminance = INVALID_LUMINANCE;
+        private float mMinLuminance = INVALID_LUMINANCE;
+
+        /**
+         * @hide
+         */
+        public HdrCapabilities() {
+        }
+
+        /**
+         * @hide
+         */
+        public HdrCapabilities(int[] supportedHdrTypes, float maxLuminance,
+                float maxAverageLuminance, float minLuminance) {
+            mSupportedHdrTypes = supportedHdrTypes;
+            mMaxLuminance = maxLuminance;
+            mMaxAverageLuminance = maxAverageLuminance;
+            mMinLuminance = minLuminance;
+        }
+
+        /**
+         * Gets the supported HDR types of this display.
+         * Returns empty array if HDR is not supported by the display.
+         */
+        public @HdrType int[] getSupportedHdrTypes() {
+            return mSupportedHdrTypes;
+        }
+        /**
+         * Returns the desired content max luminance data in cd/m2 for this display.
+         */
+        public float getDesiredMaxLuminance() {
+            return mMaxLuminance;
+        }
+        /**
+         * Returns the desired content max frame-average luminance data in cd/m2 for this display.
+         */
+        public float getDesiredMaxAverageLuminance() {
+            return mMaxAverageLuminance;
+        }
+        /**
+         * Returns the desired content min luminance data in cd/m2 for this display.
+         */
+        public float getDesiredMinLuminance() {
+            return mMinLuminance;
+        }
+
+        public static final Creator<HdrCapabilities> CREATOR = new Creator<HdrCapabilities>() {
+            @Override
+            public HdrCapabilities createFromParcel(Parcel source) {
+                return new HdrCapabilities(source);
+            }
+
+            @Override
+            public HdrCapabilities[] newArray(int size) {
+                return new HdrCapabilities[size];
+            }
+        };
+
+        private HdrCapabilities(Parcel source) {
+            readFromParcel(source);
+        }
+
+        /**
+         * @hide
+         */
+        public void readFromParcel(Parcel source) {
+            int types = source.readInt();
+            mSupportedHdrTypes = new int[types];
+            for (int i = 0; i < types; ++i) {
+                mSupportedHdrTypes[i] = source.readInt();
+            }
+            mMaxLuminance = source.readFloat();
+            mMaxAverageLuminance = source.readFloat();
+            mMinLuminance = source.readFloat();
+        }
+
+        @Override
+        public void writeToParcel(Parcel dest, int flags) {
+            dest.writeInt(mSupportedHdrTypes.length);
+            for (int i = 0; i < mSupportedHdrTypes.length; ++i) {
+                dest.writeInt(mSupportedHdrTypes[i]);
+            }
+            dest.writeFloat(mMaxLuminance);
+            dest.writeFloat(mMaxAverageLuminance);
+            dest.writeFloat(mMinLuminance);
+        }
+
+        @Override
+        public int describeContents() {
+            return 0;
+        }
+    }
+
+    /**
+     * A color transform supported by a given display.
+     *
+     * @see Display#getSupportedColorTransforms()
+     * @hide
+     */
+    public static final class ColorTransform implements Parcelable {
+        public static final ColorTransform[] EMPTY_ARRAY = new ColorTransform[0];
+
+        private final int mId;
+        private final int mColorTransform;
+
+        public ColorTransform(int id, int colorTransform) {
+            mId = id;
+            mColorTransform = colorTransform;
+        }
+
+        public int getId() {
+            return mId;
+        }
+
+        public int getColorTransform() {
+            return mColorTransform;
+        }
+
+        @Override
+        public boolean equals(Object other) {
+            if (this == other) {
+                return true;
+            }
+            if (!(other instanceof ColorTransform)) {
+                return false;
+            }
+            ColorTransform that = (ColorTransform) other;
+            return mId == that.mId
+                && mColorTransform == that.mColorTransform;
+        }
+
+        @Override
+        public int hashCode() {
+            int hash = 1;
+            hash = hash * 17 + mId;
+            hash = hash * 17 + mColorTransform;
+            return hash;
+        }
+
+        @Override
+        public String toString() {
+            return new StringBuilder("{")
+                    .append("id=").append(mId)
+                    .append(", colorTransform=").append(mColorTransform)
+                    .append("}")
+                    .toString();
+        }
+
+        @Override
+        public int describeContents() {
+            return 0;
+        }
+
+        private ColorTransform(Parcel in) {
+            this(in.readInt(), in.readInt());
+        }
+
+        @Override
+        public void writeToParcel(Parcel out, int parcelableFlags) {
+            out.writeInt(mId);
+            out.writeInt(mColorTransform);
+        }
+
+        @SuppressWarnings("hiding")
+        public static final Parcelable.Creator<ColorTransform> CREATOR
+                = new Parcelable.Creator<ColorTransform>() {
+            @Override
+            public ColorTransform createFromParcel(Parcel in) {
+                return new ColorTransform(in);
+            }
+
+            @Override
+            public ColorTransform[] newArray(int size) {
+                return new ColorTransform[size];
+            }
+        };
+    }
+}

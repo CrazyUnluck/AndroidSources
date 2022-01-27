@@ -135,6 +135,7 @@ public class Touch {
                                     MetaKeyKeyListener.META_SHIFT_ON) == 1
                             || MetaKeyKeyListener.getMetaState(buffer,
                                     MetaKeyKeyListener.META_SELECTING) != 0;
+
                     float dx;
                     float dy;
                     if (cap) {
@@ -157,7 +158,7 @@ public class Touch {
 
                     ny = Math.min(ny, layout.getHeight() - (widget.getHeight() - padding));
                     ny = Math.max(ny, 0);
-        
+
                     int oldX = widget.getScrollX();
                     int oldY = widget.getScrollY();
 

@@ -25,14 +25,17 @@ package android.graphics;
 public class Shader {
     /**
      * This is set by subclasses, but don't make it public.
-     * 
-     * @hide 
      */
-    public int native_instance;
+    private long native_instance;
+
     /**
+     * Initialization step that should be called by subclasses in their
+     * constructors. Calling again may result in memory leaks.
      * @hide
      */
-    public int native_shader;
+    protected void init(long ni) {
+        native_instance = ni;
+    }
 
     private Matrix mLocalMatrix;
 
@@ -73,12 +76,13 @@ public class Shader {
 
     /**
      * Set the shader's local matrix. Passing null will reset the shader's
-     * matrix to identity
+     * matrix to identity.
+     *
      * @param localM The shader's new local matrix, or null to specify identity
      */
     public void setLocalMatrix(Matrix localM) {
         mLocalMatrix = localM;
-        nativeSetLocalMatrix(native_instance, native_shader,
+        native_instance = nativeSetLocalMatrix(native_instance,
                 localM == null ? 0 : localM.native_instance);
     }
 
@@ -86,11 +90,40 @@ public class Shader {
         try {
             super.finalize();
         } finally {
-            nativeDestructor(native_instance, native_shader);
+            nativeDestructor(native_instance);
+            native_instance = 0;  // Other finalizers can still call us.
         }
     }
 
-    private static native void nativeDestructor(int native_shader, int native_skiaShader);
-    private static native void nativeSetLocalMatrix(int native_shader,
-            int native_skiaShader, int matrix_instance);
+    /**
+     * @hide
+     */
+    protected Shader copy() {
+        final Shader copy = new Shader();
+        copyLocalMatrix(copy);
+        return copy;
+    }
+
+    /**
+     * @hide
+     */
+    protected void copyLocalMatrix(Shader dest) {
+        if (mLocalMatrix != null) {
+            final Matrix lm = new Matrix();
+            getLocalMatrix(lm);
+            dest.setLocalMatrix(lm);
+        } else {
+            dest.setLocalMatrix(null);
+        }
+    }
+
+    /**
+     * @hide
+     */
+    public long getNativeInstance() {
+        return native_instance;
+    }
+
+    private static native void nativeDestructor(long native_shader);
+    private static native long nativeSetLocalMatrix(long native_shader, long matrix_instance);
 }

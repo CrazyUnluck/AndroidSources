@@ -24,11 +24,18 @@ import android.os.RemoteException;
 import android.util.Log;
 
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.List;
 
 /**
  * Transfer a large list of Parcelable objects across an IPC.  Splits into
  * multiple transactions if needed.
+ *
+ * Caveat: for efficiency and security, all elements must be the same concrete type.
+ * In order to avoid writing the class name of each object, we must ensure that
+ * each object is the same type, or else unparceling then reparceling the data may yield
+ * a different result if the class name encoded in the Parcelable is a Base type.
+ * See b/17671747.
  *
  * @hide
  */
@@ -40,15 +47,19 @@ public class ParceledListSlice<T extends Parcelable> implements Parcelable {
      * TODO get this number from somewhere else. For now set it to a quarter of
      * the 1MB limit.
      */
-    private static final int MAX_IPC_SIZE = 256 * 1024;
-    private static final int MAX_FIRST_IPC_SIZE = MAX_IPC_SIZE / 2;
+    private static final int MAX_IPC_SIZE = IBinder.MAX_IPC_SIZE;
 
     private final List<T> mList;
+
+    public static <T extends Parcelable> ParceledListSlice<T> emptyList() {
+        return new ParceledListSlice<T>(Collections.<T> emptyList());
+    }
 
     public ParceledListSlice(List<T> list) {
         mList = list;
     }
 
+    @SuppressWarnings("unchecked")
     private ParceledListSlice(Parcel p, ClassLoader loader) {
         final int N = p.readInt();
         mList = new ArrayList<T>(N);
@@ -56,13 +67,25 @@ public class ParceledListSlice<T extends Parcelable> implements Parcelable {
         if (N <= 0) {
             return;
         }
-        Parcelable.Creator<T> creator = p.readParcelableCreator(loader);
+
+        Parcelable.Creator<?> creator = p.readParcelableCreator(loader);
+        Class<?> listElementClass = null;
+
         int i = 0;
         while (i < N) {
             if (p.readInt() == 0) {
                 break;
             }
-            mList.add(p.readCreator(creator, loader));
+
+            final T parcelable = p.readCreator(creator, loader);
+            if (listElementClass == null) {
+                listElementClass = parcelable.getClass();
+            } else {
+                verifySameType(listElementClass, parcelable.getClass());
+            }
+
+            mList.add(parcelable);
+
             if (DEBUG) Log.d(TAG, "Read inline #" + i + ": " + mList.get(mList.size()-1));
             i++;
         }
@@ -82,12 +105,24 @@ public class ParceledListSlice<T extends Parcelable> implements Parcelable {
                 return;
             }
             while (i < N && reply.readInt() != 0) {
-                mList.add(reply.readCreator(creator, loader));
+                final T parcelable = reply.readCreator(creator, loader);
+                verifySameType(listElementClass, parcelable.getClass());
+
+                mList.add(parcelable);
+
                 if (DEBUG) Log.d(TAG, "Read extra #" + i + ": " + mList.get(mList.size()-1));
                 i++;
             }
             reply.recycle();
             data.recycle();
+        }
+    }
+
+    private static void verifySameType(final Class<?> expected, final Class<?> actual) {
+        if (!actual.equals(expected)) {
+            throw new IllegalArgumentException("Can't unparcel type "
+                    + actual.getName() + " in list of type "
+                    + expected.getName());
         }
     }
 
@@ -116,11 +151,16 @@ public class ParceledListSlice<T extends Parcelable> implements Parcelable {
         dest.writeInt(N);
         if (DEBUG) Log.d(TAG, "Writing " + N + " items");
         if (N > 0) {
+            final Class<?> listElementClass = mList.get(0).getClass();
             dest.writeParcelableCreator(mList.get(0));
             int i = 0;
-            while (i < N && dest.dataSize() < MAX_FIRST_IPC_SIZE) {
+            while (i < N && dest.dataSize() < MAX_IPC_SIZE) {
                 dest.writeInt(1);
-                mList.get(i).writeToParcel(dest, callFlags);
+
+                final T parcelable = mList.get(i);
+                verifySameType(listElementClass, parcelable.getClass());
+                parcelable.writeToParcel(dest, callFlags);
+
                 if (DEBUG) Log.d(TAG, "Wrote inline #" + i + ": " + mList.get(i));
                 i++;
             }
@@ -137,7 +177,11 @@ public class ParceledListSlice<T extends Parcelable> implements Parcelable {
                         if (DEBUG) Log.d(TAG, "Writing more @" + i + " of " + N);
                         while (i < N && reply.dataSize() < MAX_IPC_SIZE) {
                             reply.writeInt(1);
-                            mList.get(i).writeToParcel(reply, callFlags);
+
+                            final T parcelable = mList.get(i);
+                            verifySameType(listElementClass, parcelable.getClass());
+                            parcelable.writeToParcel(reply, callFlags);
+
                             if (DEBUG) Log.d(TAG, "Wrote extra #" + i + ": " + mList.get(i));
                             i++;
                         }

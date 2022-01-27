@@ -16,7 +16,6 @@
 
 package android.media;
 
-import android.graphics.Bitmap;
 import android.net.Uri;
 import android.os.Environment;
 import android.util.Log;
@@ -249,7 +248,8 @@ public class MiniThumbFile {
                 long magic = mBuffer.getLong();
                 int length = mBuffer.getInt();
 
-                if (size >= 1 + 8 + 4 + length && data.length >= length) {
+                if (size >= 1 + 8 + 4 + length && length != 0 && magic != 0 && flag == 1 &&
+                        data.length >= length) {
                     mBuffer.get(data, 0, length);
                     return data;
                 }

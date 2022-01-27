@@ -16,6 +16,8 @@
 
 package android.widget;
 
+import android.annotation.NonNull;
+import android.annotation.Nullable;
 import android.content.Context;
 import android.database.DataSetObserver;
 import android.os.Parcelable;
@@ -28,10 +30,10 @@ import android.view.SoundEffectConstants;
 import android.view.View;
 import android.view.ViewDebug;
 import android.view.ViewGroup;
+import android.view.ViewHierarchyEncoder;
 import android.view.accessibility.AccessibilityEvent;
 import android.view.accessibility.AccessibilityManager;
 import android.view.accessibility.AccessibilityNodeInfo;
-import android.view.accessibility.AccessibilityNodeProvider;
 
 /**
  * An AdapterView is a view whose children are determined by an {@link Adapter}.
@@ -216,7 +218,12 @@ public abstract class AdapterView<T extends Adapter> extends ViewGroup {
     private boolean mDesiredFocusableState;
     private boolean mDesiredFocusableInTouchModeState;
 
+    /** Lazily-constructed runnable for dispatching selection events. */
     private SelectionNotifier mSelectionNotifier;
+
+    /** Selection notifier that's waiting for the next layout pass. */
+    private SelectionNotifier mPendingSelectionNotifier;
+
     /**
      * When set to true, calls to requestLayout() will not propagate up the parent hierarchy.
      * This is used to layout the children during a layout pass.
@@ -224,15 +231,19 @@ public abstract class AdapterView<T extends Adapter> extends ViewGroup {
     boolean mBlockLayoutRequests = false;
 
     public AdapterView(Context context) {
-        super(context);
+        this(context, null);
     }
 
     public AdapterView(Context context, AttributeSet attrs) {
-        super(context, attrs);
+        this(context, attrs, 0);
     }
 
-    public AdapterView(Context context, AttributeSet attrs, int defStyle) {
-        super(context, attrs, defStyle);
+    public AdapterView(Context context, AttributeSet attrs, int defStyleAttr) {
+        this(context, attrs, defStyleAttr, 0);
+    }
+
+    public AdapterView(Context context, AttributeSet attrs, int defStyleAttr, int defStyleRes) {
+        super(context, attrs, defStyleAttr, defStyleRes);
 
         // If not explicitly specified this view is important for accessibility.
         if (getImportantForAccessibility() == IMPORTANT_FOR_ACCESSIBILITY_AUTO) {
@@ -268,7 +279,7 @@ public abstract class AdapterView<T extends Adapter> extends ViewGroup {
      *
      * @param listener The callback that will be invoked.
      */
-    public void setOnItemClickListener(OnItemClickListener listener) {
+    public void setOnItemClickListener(@Nullable OnItemClickListener listener) {
         mOnItemClickListener = listener;
     }
 
@@ -276,12 +287,15 @@ public abstract class AdapterView<T extends Adapter> extends ViewGroup {
      * @return The callback to be invoked with an item in this AdapterView has
      *         been clicked, or null id no callback has been set.
      */
+    @Nullable
     public final OnItemClickListener getOnItemClickListener() {
         return mOnItemClickListener;
     }
 
     /**
-     * Call the OnItemClickListener, if it is defined.
+     * Call the OnItemClickListener, if it is defined. Performs all normal
+     * actions associated with clicking: reporting accessibility event, playing
+     * a sound, etc.
      *
      * @param view The view within the AdapterView that was clicked.
      * @param position The position of the view in the adapter.
@@ -290,16 +304,19 @@ public abstract class AdapterView<T extends Adapter> extends ViewGroup {
      *         called, false otherwise is returned.
      */
     public boolean performItemClick(View view, int position, long id) {
+        final boolean result;
         if (mOnItemClickListener != null) {
             playSoundEffect(SoundEffectConstants.CLICK);
-            if (view != null) {
-                view.sendAccessibilityEvent(AccessibilityEvent.TYPE_VIEW_CLICKED);
-            }
             mOnItemClickListener.onItemClick(this, view, position, id);
-            return true;
+            result = true;
+        } else {
+            result = false;
         }
 
-        return false;
+        if (view != null) {
+            view.sendAccessibilityEvent(AccessibilityEvent.TYPE_VIEW_CLICKED);
+        }
+        return result;
     }
 
     /**
@@ -384,10 +401,11 @@ public abstract class AdapterView<T extends Adapter> extends ViewGroup {
      *
      * @param listener The callback that will run
      */
-    public void setOnItemSelectedListener(OnItemSelectedListener listener) {
+    public void setOnItemSelectedListener(@Nullable OnItemSelectedListener listener) {
         mOnItemSelectedListener = listener;
     }
 
+    @Nullable
     public final OnItemSelectedListener getOnItemSelectedListener() {
         return mOnItemSelectedListener;
     }
@@ -582,19 +600,26 @@ public abstract class AdapterView<T extends Adapter> extends ViewGroup {
     }
 
     /**
-     * Get the position within the adapter's data set for the view, where view is a an adapter item
-     * or a descendant of an adapter item.
+     * Returns the position within the adapter's data set for the view, where
+     * view is a an adapter item or a descendant of an adapter item.
+     * <p>
+     * <strong>Note:</strong> The result of this method only reflects the
+     * position of the data bound to <var>view</var> during the most recent
+     * layout pass. If the adapter's data set has changed without a subsequent
+     * layout pass, the position returned by this method may not match the
+     * current position of the data within the adapter.
      *
-     * @param view an adapter item, or a descendant of an adapter item. This must be visible in this
-     *        AdapterView at the time of the call.
-     * @return the position within the adapter's data set of the view, or {@link #INVALID_POSITION}
-     *         if the view does not correspond to a list item (or it is not currently visible).
+     * @param view an adapter item, or a descendant of an adapter item. This
+     *             must be visible in this AdapterView at the time of the call.
+     * @return the position within the adapter's data set of the view, or
+     *         {@link #INVALID_POSITION} if the view does not correspond to a
+     *         list item (or it is not currently visible)
      */
     public int getPositionForView(View view) {
         View listItem = view;
         try {
             View v;
-            while (!(v = (View) listItem.getParent()).equals(this)) {
+            while ((v = (View) listItem.getParent()) != null && !v.equals(this)) {
                 listItem = v;
             }
         } catch (ClassCastException e) {
@@ -602,11 +627,13 @@ public abstract class AdapterView<T extends Adapter> extends ViewGroup {
             return INVALID_POSITION;
         }
 
-        // Search the children for the list item
-        final int childCount = getChildCount();
-        for (int i = 0; i < childCount; i++) {
-            if (getChildAt(i).equals(listItem)) {
-                return mFirstPosition + i;
+        if (listItem != null) {
+            // Search the children for the list item
+            final int childCount = getChildCount();
+            for (int i = 0; i < childCount; i++) {
+                if (getChildAt(i).equals(listItem)) {
+                    return mFirstPosition + i;
+                }
             }
         }
 
@@ -662,7 +689,7 @@ public abstract class AdapterView<T extends Adapter> extends ViewGroup {
 
     /**
      * When the current adapter is empty, the AdapterView can display a special view
-     * call the empty view. The empty view is used to provide feedback to the user
+     * called the empty view. The empty view is used to provide feedback to the user
      * that no data is available in this AdapterView.
      *
      * @return The view to show if the adapter is empty.
@@ -849,37 +876,49 @@ public abstract class AdapterView<T extends Adapter> extends ViewGroup {
 
     private class SelectionNotifier implements Runnable {
         public void run() {
-            if (mDataChanged) {
-                // Data has changed between when this SelectionNotifier
-                // was posted and now. We need to wait until the AdapterView
-                // has been synched to the new data.
+            mPendingSelectionNotifier = null;
+
+            if (mDataChanged && getViewRootImpl() != null
+                    && getViewRootImpl().isLayoutRequested()) {
+                // Data has changed between when this SelectionNotifier was
+                // posted and now. Postpone the notification until the next
+                // layout is complete and we run checkSelectionChanged().
                 if (getAdapter() != null) {
-                    post(this);
+                    mPendingSelectionNotifier = this;
                 }
             } else {
-                fireOnSelected();
-                performAccessibilityActionsOnSelected();
+                dispatchOnItemSelected();
             }
         }
     }
 
     void selectionChanged() {
+        // We're about to post or run the selection notifier, so we don't need
+        // a pending notifier.
+        mPendingSelectionNotifier = null;
+
         if (mOnItemSelectedListener != null
                 || AccessibilityManager.getInstance(mContext).isEnabled()) {
             if (mInLayout || mBlockLayoutRequests) {
                 // If we are in a layout traversal, defer notification
                 // by posting. This ensures that the view tree is
-                // in a consistent state and is able to accomodate
+                // in a consistent state and is able to accommodate
                 // new layout or invalidate requests.
                 if (mSelectionNotifier == null) {
                     mSelectionNotifier = new SelectionNotifier();
+                } else {
+                    removeCallbacks(mSelectionNotifier);
                 }
                 post(mSelectionNotifier);
             } else {
-                fireOnSelected();
-                performAccessibilityActionsOnSelected();
+                dispatchOnItemSelected();
             }
         }
+    }
+
+    private void dispatchOnItemSelected() {
+        fireOnSelected();
+        performAccessibilityActionsOnSelected();
     }
 
     private void fireOnSelected() {
@@ -907,8 +946,9 @@ public abstract class AdapterView<T extends Adapter> extends ViewGroup {
         }
     }
 
+    /** @hide */
     @Override
-    public boolean dispatchPopulateAccessibilityEvent(AccessibilityEvent event) {
+    public boolean dispatchPopulateAccessibilityEventInternal(AccessibilityEvent event) {
         View selectedView = getSelectedView();
         if (selectedView != null && selectedView.getVisibility() == VISIBLE
                 && selectedView.dispatchPopulateAccessibilityEvent(event)) {
@@ -917,9 +957,10 @@ public abstract class AdapterView<T extends Adapter> extends ViewGroup {
         return false;
     }
 
+    /** @hide */
     @Override
-    public boolean onRequestSendAccessibilityEvent(View child, AccessibilityEvent event) {
-        if (super.onRequestSendAccessibilityEvent(child, event)) {
+    public boolean onRequestSendAccessibilityEventInternal(View child, AccessibilityEvent event) {
+        if (super.onRequestSendAccessibilityEventInternal(child, event)) {
             // Add a record for ourselves as well.
             AccessibilityEvent record = AccessibilityEvent.obtain();
             onInitializeAccessibilityEvent(record);
@@ -932,9 +973,14 @@ public abstract class AdapterView<T extends Adapter> extends ViewGroup {
     }
 
     @Override
-    public void onInitializeAccessibilityNodeInfo(AccessibilityNodeInfo info) {
-        super.onInitializeAccessibilityNodeInfo(info);
-        info.setClassName(AdapterView.class.getName());
+    public CharSequence getAccessibilityClassName() {
+        return AdapterView.class.getName();
+    }
+
+    /** @hide */
+    @Override
+    public void onInitializeAccessibilityNodeInfoInternal(AccessibilityNodeInfo info) {
+        super.onInitializeAccessibilityNodeInfoInternal(info);
         info.setScrollable(isScrollableForAccessibility());
         View selectedView = getSelectedView();
         if (selectedView != null) {
@@ -942,10 +988,10 @@ public abstract class AdapterView<T extends Adapter> extends ViewGroup {
         }
     }
 
+    /** @hide */
     @Override
-    public void onInitializeAccessibilityEvent(AccessibilityEvent event) {
-        super.onInitializeAccessibilityEvent(event);
-        event.setClassName(AdapterView.class.getName());
+    public void onInitializeAccessibilityEventInternal(AccessibilityEvent event) {
+        super.onInitializeAccessibilityEventInternal(event);
         event.setScrollable(isScrollableForAccessibility());
         View selectedView = getSelectedView();
         if (selectedView != null) {
@@ -1034,15 +1080,24 @@ public abstract class AdapterView<T extends Adapter> extends ViewGroup {
             checkSelectionChanged();
         }
 
-        //TODO: Hmm, we do not know the old state so this is sub-optimal
-        notifyAccessibilityStateChanged();
+        notifySubtreeAccessibilityStateChangedIfNeeded();
     }
 
+    /**
+     * Called after layout to determine whether the selection position needs to
+     * be updated. Also used to fire any pending selection events.
+     */
     void checkSelectionChanged() {
         if ((mSelectedPosition != mOldSelectedPosition) || (mSelectedRowId != mOldSelectedRowId)) {
             selectionChanged();
             mOldSelectedPosition = mSelectedPosition;
             mOldSelectedRowId = mSelectedRowId;
+        }
+
+        // If we have a pending selection notification -- and we won't if we
+        // just fired one in selectionChanged() -- run it now.
+        if (mPendingSelectionNotifier != null) {
+            mPendingSelectionNotifier.run();
         }
     }
 
@@ -1203,5 +1258,17 @@ public abstract class AdapterView<T extends Adapter> extends ViewGroup {
                 mSyncMode = SYNC_FIRST_POSITION;
             }
         }
+    }
+
+    /** @hide */
+    @Override
+    protected void encodeProperties(@NonNull ViewHierarchyEncoder encoder) {
+        super.encodeProperties(encoder);
+
+        encoder.addProperty("scrolling:firstPosition", mFirstPosition);
+        encoder.addProperty("list:nextSelectedPosition", mNextSelectedPosition);
+        encoder.addProperty("list:nextSelectedRowId", mNextSelectedRowId);
+        encoder.addProperty("list:selectedPosition", mSelectedPosition);
+        encoder.addProperty("list:itemCount", mItemCount);
     }
 }

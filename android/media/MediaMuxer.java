@@ -16,21 +16,25 @@
 
 package android.media;
 
+import android.annotation.IntDef;
+import android.annotation.NonNull;
+import android.annotation.Nullable;
+import android.media.MediaCodec;
 import android.media.MediaCodec.BufferInfo;
-
 import dalvik.system.CloseGuard;
 
-import java.io.File;
 import java.io.FileDescriptor;
-import java.io.FileOutputStream;
 import java.io.IOException;
+import java.io.RandomAccessFile;
+import java.lang.annotation.Retention;
+import java.lang.annotation.RetentionPolicy;
 import java.nio.ByteBuffer;
 import java.util.Map;
 
 /**
- * MediaMuxer facilitates muxing elementary streams. Currently only supports an
- * mp4 file as the output and at most one audio and/or one video elementary
- * stream.
+ * MediaMuxer facilitates muxing elementary streams. Currently supports mp4 or
+ * webm file as the output and at most one audio and/or one video elementary
+ * stream. MediaMuxer does not support muxing B-frames.
  * <p>
  * It is generally used like this:
  *
@@ -65,8 +69,6 @@ import java.util.Map;
 
 final public class MediaMuxer {
 
-    private int mNativeContext;
-
     static {
         System.loadLibrary("media_jni");
     }
@@ -81,20 +83,30 @@ final public class MediaMuxer {
         private OutputFormat() {}
         /** MPEG4 media file format*/
         public static final int MUXER_OUTPUT_MPEG_4 = 0;
+        public static final int MUXER_OUTPUT_WEBM   = 1;
     };
 
+    /** @hide */
+    @IntDef({
+        OutputFormat.MUXER_OUTPUT_MPEG_4,
+        OutputFormat.MUXER_OUTPUT_WEBM,
+    })
+    @Retention(RetentionPolicy.SOURCE)
+    public @interface Format {}
+
     // All the native functions are listed here.
-    private static native int nativeSetup(FileDescriptor fd, int format);
-    private static native void nativeRelease(int nativeObject);
-    private static native void nativeStart(int nativeObject);
-    private static native void nativeStop(int nativeObject);
-    private static native int nativeAddTrack(int nativeObject, String[] keys,
-            Object[] values);
-    private static native void nativeSetOrientationHint(int nativeObject,
-            int degrees);
-    private static native void nativeWriteSampleData(int nativeObject,
-            int trackIndex, ByteBuffer byteBuf,
-            int offset, int size, long presentationTimeUs, int flags);
+    private static native long nativeSetup(@NonNull FileDescriptor fd, int format);
+    private static native void nativeRelease(long nativeObject);
+    private static native void nativeStart(long nativeObject);
+    private static native void nativeStop(long nativeObject);
+    private static native int nativeAddTrack(
+            long nativeObject, @NonNull String[] keys, @NonNull Object[] values);
+    private static native void nativeSetOrientationHint(
+            long nativeObject, int degrees);
+    private static native void nativeSetLocation(long nativeObject, int latitude, int longitude);
+    private static native void nativeWriteSampleData(
+            long nativeObject, int trackIndex, @NonNull ByteBuffer byteBuf,
+            int offset, int size, long presentationTimeUs, @MediaCodec.BufferFlag int flags);
 
     // Muxer internal states.
     private static final int MUXER_STATE_UNINITIALIZED  = -1;
@@ -107,7 +119,7 @@ final public class MediaMuxer {
     private final CloseGuard mCloseGuard = CloseGuard.get();
     private int mLastTrackIndex = -1;
 
-    private int mNativeObject;
+    private long mNativeObject;
 
     /**
      * Constructor.
@@ -115,26 +127,29 @@ final public class MediaMuxer {
      * @param path The path of the output media file.
      * @param format The format of the output media file.
      * @see android.media.MediaMuxer.OutputFormat
-     * @throws IOException if failed to open the file for write
+     * @throws IllegalArgumentException if path is invalid or format is not supported.
+     * @throws IOException if failed to open the file for write.
      */
-    public MediaMuxer(String path, int format) throws IOException {
+    public MediaMuxer(@NonNull String path, @Format int format) throws IOException {
         if (path == null) {
             throw new IllegalArgumentException("path must not be null");
         }
-        if (format != OutputFormat.MUXER_OUTPUT_MPEG_4) {
+        if (format != OutputFormat.MUXER_OUTPUT_MPEG_4 &&
+                format != OutputFormat.MUXER_OUTPUT_WEBM) {
             throw new IllegalArgumentException("format is invalid");
         }
-        FileOutputStream fos = null;
+        // Use RandomAccessFile so we can open the file with RW access;
+        // RW access allows the native writer to memory map the output file.
+        RandomAccessFile file = null;
         try {
-            File file = new File(path);
-            fos = new FileOutputStream(file);
-            FileDescriptor fd = fos.getFD();
+            file = new RandomAccessFile(path, "rws");
+            FileDescriptor fd = file.getFD();
             mNativeObject = nativeSetup(fd, format);
             mState = MUXER_STATE_INITIALIZED;
             mCloseGuard.open("release");
         } finally {
-            if (fos != null) {
-                fos.close();
+            if (file != null) {
+                file.close();
             }
         }
     }
@@ -151,6 +166,8 @@ final public class MediaMuxer {
      * By default, the rotation degree is 0.</p>
      * @param degrees the angle to be rotated clockwise in degrees.
      * The supported angles are 0, 90, 180, and 270 degrees.
+     * @throws IllegalArgumentException if degree is not supported.
+     * @throws IllegalStateException If this method is called after {@link #start}.
      */
     public void setOrientationHint(int degrees) {
         if (degrees != 0 && degrees != 90  && degrees != 180 && degrees != 270) {
@@ -165,9 +182,46 @@ final public class MediaMuxer {
     }
 
     /**
+     * Set and store the geodata (latitude and longitude) in the output file.
+     * This method should be called before {@link #start}. The geodata is stored
+     * in udta box if the output format is
+     * {@link OutputFormat#MUXER_OUTPUT_MPEG_4}, and is ignored for other output
+     * formats. The geodata is stored according to ISO-6709 standard.
+     *
+     * @param latitude Latitude in degrees. Its value must be in the range [-90,
+     * 90].
+     * @param longitude Longitude in degrees. Its value must be in the range
+     * [-180, 180].
+     * @throws IllegalArgumentException If the given latitude or longitude is out
+     * of range.
+     * @throws IllegalStateException If this method is called after {@link #start}.
+     */
+    public void setLocation(float latitude, float longitude) {
+        int latitudex10000  = (int) (latitude * 10000 + 0.5);
+        int longitudex10000 = (int) (longitude * 10000 + 0.5);
+
+        if (latitudex10000 > 900000 || latitudex10000 < -900000) {
+            String msg = "Latitude: " + latitude + " out of range.";
+            throw new IllegalArgumentException(msg);
+        }
+        if (longitudex10000 > 1800000 || longitudex10000 < -1800000) {
+            String msg = "Longitude: " + longitude + " out of range";
+            throw new IllegalArgumentException(msg);
+        }
+
+        if (mState == MUXER_STATE_INITIALIZED && mNativeObject != 0) {
+            nativeSetLocation(mNativeObject, latitudex10000, longitudex10000);
+        } else {
+            throw new IllegalStateException("Can't set location due to wrong state.");
+        }
+    }
+
+    /**
      * Starts the muxer.
      * <p>Make sure this is called after {@link #addTrack} and before
      * {@link #writeSampleData}.</p>
+     * @throws IllegalStateException If this method is called after {@link #start}
+     * or Muxer is released
      */
     public void start() {
         if (mNativeObject == 0) {
@@ -184,6 +238,7 @@ final public class MediaMuxer {
     /**
      * Stops the muxer.
      * <p>Once the muxer stops, it can not be restarted.</p>
+     * @throws IllegalStateException if muxer is in the wrong state.
      */
     public void stop() {
         if (mState == MUXER_STATE_STARTED) {
@@ -211,11 +266,129 @@ final public class MediaMuxer {
 
     /**
      * Adds a track with the specified format.
-     * @param format The media format for the track.
+     * <p>
+     * The following table summarizes support for specific format keys across android releases.
+     * Keys marked with '+:' are required.
+     *
+     * <table style="width: 0%">
+     *  <thead>
+     *   <tr>
+     *    <th rowspan=2>OS Version(s)</th>
+     *    <td colspan=3>{@code MediaFormat} keys used for</th>
+     *   </tr><tr>
+     *    <th>All Tracks</th>
+     *    <th>Audio Tracks</th>
+     *    <th>Video Tracks</th>
+     *   </tr>
+     *  </thead>
+     *  <tbody>
+     *   <tr>
+     *    <td>{@link android.os.Build.VERSION_CODES#JELLY_BEAN_MR2}</td>
+     *    <td rowspan=7>+: {@link MediaFormat#KEY_MIME}</td>
+     *    <td rowspan=3>+: {@link MediaFormat#KEY_SAMPLE_RATE},<br>
+     *        +: {@link MediaFormat#KEY_CHANNEL_COUNT},<br>
+     *        +: <strong>codec-specific data<sup>AAC</sup></strong></td>
+     *    <td rowspan=5>+: {@link MediaFormat#KEY_WIDTH},<br>
+     *        +: {@link MediaFormat#KEY_HEIGHT},<br>
+     *        no {@code KEY_ROTATION},
+     *        use {@link #setOrientationHint setOrientationHint()}<sup>.mp4</sup>,<br>
+     *        +: <strong>codec-specific data<sup>AVC, MPEG4</sup></strong></td>
+     *   </tr><tr>
+     *    <td>{@link android.os.Build.VERSION_CODES#KITKAT}</td>
+     *   </tr><tr>
+     *    <td>{@link android.os.Build.VERSION_CODES#KITKAT_WATCH}</td>
+     *   </tr><tr>
+     *    <td>{@link android.os.Build.VERSION_CODES#LOLLIPOP}</td>
+     *    <td rowspan=4>as above, plus<br>
+     *        +: <strong>codec-specific data<sup>Vorbis & .webm</sup></strong></td>
+     *   </tr><tr>
+     *    <td>{@link android.os.Build.VERSION_CODES#LOLLIPOP_MR1}</td>
+     *   </tr><tr>
+     *    <td>{@link android.os.Build.VERSION_CODES#M}</td>
+     *    <td>as above, plus<br>
+     *        {@link MediaFormat#KEY_BIT_RATE}<sup>AAC</sup></td>
+     *   </tr><tr>
+     *    <td>{@link android.os.Build.VERSION_CODES#N}</td>
+     *    <td>as above, plus<br>
+     *        <!-- {link MediaFormat#KEY_MAX_BIT_RATE}<sup>AAC, MPEG4</sup>,<br> -->
+     *        {@link MediaFormat#KEY_BIT_RATE}<sup>MPEG4</sup>,<br>
+     *        {@link MediaFormat#KEY_HDR_STATIC_INFO}<sup>#, .webm</sup>,<br>
+     *        {@link MediaFormat#KEY_COLOR_STANDARD}<sup>#</sup>,<br>
+     *        {@link MediaFormat#KEY_COLOR_TRANSFER}<sup>#</sup>,<br>
+     *        {@link MediaFormat#KEY_COLOR_RANGE}<sup>#</sup>,<br>
+     *        +: <strong>codec-specific data<sup>HEVC</sup></strong>,<br>
+     *        codec-specific data<sup>VP9</sup></td>
+     *   </tr>
+     *   <tr>
+     *    <td colspan=4>
+     *     <p class=note><strong>Notes:</strong><br>
+     *      #: storing into container metadata.<br>
+     *      .mp4, .webm&hellip;: for listed containers<br>
+     *      MPEG4, AAC&hellip;: for listed codecs
+     *    </td>
+     *   </tr><tr>
+     *    <td colspan=4>
+     *     <p class=note>Note that the codec-specific data for the track must be specified using
+     *     this method. Furthermore, codec-specific data must not be passed/specified via the
+     *     {@link #writeSampleData writeSampleData()} call.
+     *    </td>
+     *   </tr>
+     *  </tbody>
+     * </table>
+     *
+     * <p>
+     * The following table summarizes codec support for containers across android releases:
+     *
+     * <table style="width: 0%">
+     *  <thead>
+     *   <tr>
+     *    <th rowspan=2>OS Version(s)</th>
+     *    <td colspan=3>Codec support</th>
+     *   </tr><tr>
+     *    <th>{@linkplain OutputFormat#MUXER_OUTPUT_MPEG_4 MP4}</th>
+     *    <th>{@linkplain OutputFormat#MUXER_OUTPUT_WEBM WEBM}</th>
+     *   </tr>
+     *  </thead>
+     *  <tbody>
+     *   <tr>
+     *    <td>{@link android.os.Build.VERSION_CODES#JELLY_BEAN_MR2}</td>
+     *    <td rowspan=6>{@link MediaFormat#MIMETYPE_AUDIO_AAC AAC},<br>
+     *        {@link MediaFormat#MIMETYPE_AUDIO_AMR_NB NB-AMR},<br>
+     *        {@link MediaFormat#MIMETYPE_AUDIO_AMR_WB WB-AMR},<br>
+     *        {@link MediaFormat#MIMETYPE_VIDEO_H263 H.263},<br>
+     *        {@link MediaFormat#MIMETYPE_VIDEO_MPEG4 MPEG-4},<br>
+     *        {@link MediaFormat#MIMETYPE_VIDEO_AVC AVC} (H.264)</td>
+     *    <td rowspan=3>Not supported</td>
+     *   </tr><tr>
+     *    <td>{@link android.os.Build.VERSION_CODES#KITKAT}</td>
+     *   </tr><tr>
+     *    <td>{@link android.os.Build.VERSION_CODES#KITKAT_WATCH}</td>
+     *   </tr><tr>
+     *    <td>{@link android.os.Build.VERSION_CODES#LOLLIPOP}</td>
+     *    <td rowspan=3>{@link MediaFormat#MIMETYPE_AUDIO_VORBIS Vorbis},<br>
+     *        {@link MediaFormat#MIMETYPE_VIDEO_VP8 VP8}</td>
+     *   </tr><tr>
+     *    <td>{@link android.os.Build.VERSION_CODES#LOLLIPOP_MR1}</td>
+     *   </tr><tr>
+     *    <td>{@link android.os.Build.VERSION_CODES#M}</td>
+     *   </tr><tr>
+     *    <td>{@link android.os.Build.VERSION_CODES#N}</td>
+     *    <td>as above, plus<br>
+     *        {@link MediaFormat#MIMETYPE_VIDEO_HEVC HEVC} (H.265)</td>
+     *    <td>as above, plus<br>
+     *        {@link MediaFormat#MIMETYPE_VIDEO_VP9 VP9}</td>
+     *   </tr>
+     *  </tbody>
+     * </table>
+     *
+     * @param format The media format for the track.  This must not be an empty
+     *               MediaFormat.
      * @return The track index for this newly added track, and it should be used
      * in the {@link #writeSampleData}.
+     * @throws IllegalArgumentException if format is invalid.
+     * @throws IllegalStateException if muxer is in the wrong state.
      */
-    public int addTrack(MediaFormat format) {
+    public int addTrack(@NonNull MediaFormat format) {
         if (format == null) {
             throw new IllegalArgumentException("format must not be null.");
         }
@@ -264,11 +437,13 @@ final public class MediaMuxer {
      * @param byteBuf The encoded sample.
      * @param trackIndex The track index for this sample.
      * @param bufferInfo The buffer information related to this sample.
+     * @throws IllegalArgumentException if trackIndex, byteBuf or bufferInfo is  invalid.
+     * @throws IllegalStateException if muxer is in wrong state.
      * MediaMuxer uses the flags provided in {@link MediaCodec.BufferInfo},
      * to signal sync frames.
      */
-    public void writeSampleData(int trackIndex, ByteBuffer byteBuf,
-            BufferInfo bufferInfo) {
+    public void writeSampleData(int trackIndex, @NonNull ByteBuffer byteBuf,
+            @NonNull BufferInfo bufferInfo) {
         if (trackIndex < 0 || trackIndex > mLastTrackIndex) {
             throw new IllegalArgumentException("trackIndex is invalid");
         }

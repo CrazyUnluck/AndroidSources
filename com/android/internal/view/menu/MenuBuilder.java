@@ -17,6 +17,7 @@
 package com.android.internal.view.menu;
 
 
+import android.annotation.NonNull;
 import android.content.ComponentName;
 import android.content.Context;
 import android.content.Intent;
@@ -186,7 +187,6 @@ public class MenuBuilder implements Menu {
     public MenuBuilder(Context context) {
         mContext = context;
         mResources = context.getResources();
-        
         mItems = new ArrayList<MenuItemImpl>();
         
         mVisibleItems = new ArrayList<MenuItemImpl>();
@@ -212,8 +212,21 @@ public class MenuBuilder implements Menu {
      * @param presenter The presenter to add
      */
     public void addMenuPresenter(MenuPresenter presenter) {
+        addMenuPresenter(presenter, mContext);
+    }
+
+    /**
+     * Add a presenter to this menu that uses an alternate context for
+     * inflating menu items. This will only hold a WeakReference; you do not
+     * need to explicitly remove a presenter, but you can using
+     * {@link #removeMenuPresenter(MenuPresenter)}.
+     *
+     * @param presenter The presenter to add
+     * @param menuContext The context used to inflate menu items
+     */
+    public void addMenuPresenter(MenuPresenter presenter, Context menuContext) {
         mPresenters.add(new WeakReference<MenuPresenter>(presenter));
-        presenter.initForMenu(mContext, this);
+        presenter.initForMenu(menuContext, this);
         mIsActionItemsStale = true;
     }
 
@@ -247,10 +260,16 @@ public class MenuBuilder implements Menu {
         startDispatchingItemsChanged();
     }
     
-    private boolean dispatchSubMenuSelected(SubMenuBuilder subMenu) {
+    private boolean dispatchSubMenuSelected(SubMenuBuilder subMenu,
+            MenuPresenter preferredPresenter) {
         if (mPresenters.isEmpty()) return false;
 
         boolean result = false;
+
+        // Try the preferred presenter first.
+        if (preferredPresenter != null) {
+            result = preferredPresenter.onSubMenuSelected(subMenu);
+        }
 
         for (WeakReference<MenuPresenter> ref : mPresenters) {
             final MenuPresenter presenter = ref.get();
@@ -386,8 +405,8 @@ public class MenuBuilder implements Menu {
     private MenuItem addInternal(int group, int id, int categoryOrder, CharSequence title) {
         final int ordering = getOrdering(categoryOrder);
         
-        final MenuItemImpl item = new MenuItemImpl(this, group, id, categoryOrder,
-                ordering, title, mDefaultShowAsAction);
+        final MenuItemImpl item = createNewMenuItem(group, id, categoryOrder, ordering, title,
+                mDefaultShowAsAction);
 
         if (mCurrentMenuInfo != null) {
             // Pass along the current menu info
@@ -399,7 +418,14 @@ public class MenuBuilder implements Menu {
         
         return item;
     }
-    
+
+    // Layoutlib overrides this method to return its custom implementation of MenuItemImpl
+    private MenuItemImpl createNewMenuItem(int group, int id, int categoryOrder, int ordering,
+            CharSequence title, int defaultShowAsAction) {
+        return new MenuItemImpl(this, group, id, categoryOrder, ordering, title,
+                defaultShowAsAction);
+    }
+
     public MenuItem add(CharSequence title) {
         return addInternal(0, 0, 0, title);
     }
@@ -765,7 +791,7 @@ public class MenuBuilder implements Menu {
         }
         
         if ((flags & FLAG_ALWAYS_PERFORM_CLOSE) != 0) {
-            close(true);
+            close(true /* closeAllMenus */);
         }
         
         return handled;
@@ -865,6 +891,10 @@ public class MenuBuilder implements Menu {
     }
 
     public boolean performItemAction(MenuItem item, int flags) {
+        return performItemAction(item, null, flags);
+    }
+
+    public boolean performItemAction(MenuItem item, MenuPresenter preferredPresenter, int flags) {
         MenuItemImpl itemImpl = (MenuItemImpl) item;
         
         if (itemImpl == null || !itemImpl.isEnabled()) {
@@ -877,10 +907,10 @@ public class MenuBuilder implements Menu {
         final boolean providerHasSubMenu = provider != null && provider.hasSubMenu();
         if (itemImpl.hasCollapsibleActionView()) {
             invoked |= itemImpl.expandActionView();
-            if (invoked) close(true);
+            if (invoked) {
+                close(true /* closeAllMenus */);
+            }
         } else if (itemImpl.hasSubMenu() || providerHasSubMenu) {
-            close(false);
-
             if (!itemImpl.hasSubMenu()) {
                 itemImpl.setSubMenu(new SubMenuBuilder(getContext(), this, itemImpl));
             }
@@ -889,11 +919,13 @@ public class MenuBuilder implements Menu {
             if (providerHasSubMenu) {
                 provider.onPrepareSubMenu(subMenu);
             }
-            invoked |= dispatchSubMenuSelected(subMenu);
-            if (!invoked) close(true);
+            invoked |= dispatchSubMenuSelected(subMenu, preferredPresenter);
+            if (!invoked) {
+                close(true /* closeAllMenus */);
+            }
         } else {
             if ((flags & FLAG_PERFORM_NO_CLOSE) == 0) {
-                close(true);
+                close(true /* closeAllMenus */);
             }
         }
         
@@ -901,15 +933,14 @@ public class MenuBuilder implements Menu {
     }
     
     /**
-     * Closes the visible menu.
-     * 
-     * @param allMenusAreClosing Whether the menus are completely closing (true),
-     *            or whether there is another menu coming in this menu's place
-     *            (false). For example, if the menu is closing because a
-     *            sub menu is about to be shown, <var>allMenusAreClosing</var>
-     *            is false.
+     * Closes the menu.
+     *
+     * @param closeAllMenus {@code true} if all displayed menus and submenus
+     *                      should be completely closed (as when a menu item is
+     *                      selected) or {@code false} if only this menu should
+     *                      be closed
      */
-    final void close(boolean allMenusAreClosing) {
+    public final void close(boolean closeAllMenus) {
         if (mIsClosing) return;
 
         mIsClosing = true;
@@ -918,7 +949,7 @@ public class MenuBuilder implements Menu {
             if (presenter == null) {
                 mPresenters.remove(ref);
             } else {
-                presenter.onCloseMenu(this, allMenusAreClosing);
+                presenter.onCloseMenu(this, closeAllMenus);
             }
         }
         mIsClosing = false;
@@ -926,7 +957,7 @@ public class MenuBuilder implements Menu {
 
     /** {@inheritDoc} */
     public void close() {
-        close(true);
+        close(true /* closeAllMenus */);
     }
 
     /**
@@ -936,7 +967,7 @@ public class MenuBuilder implements Menu {
      *                         false if only item properties changed.
      *                         (Visibility is a structural property since it affects layout.)
      */
-    void onItemsChanged(boolean structureChanged) {
+    public void onItemsChanged(boolean structureChanged) {
         if (!mPreventDispatchingItemsChanged) {
             if (structureChanged) {
                 mIsVisibleItemsStale = true;
@@ -989,23 +1020,24 @@ public class MenuBuilder implements Menu {
         mIsActionItemsStale = true;
         onItemsChanged(true);
     }
-    
-    ArrayList<MenuItemImpl> getVisibleItems() {
+
+    @NonNull
+    public ArrayList<MenuItemImpl> getVisibleItems() {
         if (!mIsVisibleItemsStale) return mVisibleItems;
-        
+
         // Refresh the visible items
         mVisibleItems.clear();
-        
+
         final int itemsSize = mItems.size(); 
         MenuItemImpl item;
         for (int i = 0; i < itemsSize; i++) {
             item = mItems.get(i);
             if (item.isVisible()) mVisibleItems.add(item);
         }
-        
+
         mIsVisibleItemsStale = false;
         mIsActionItemsStale = true;
-        
+
         return mVisibleItems;
     }
 
@@ -1034,6 +1066,10 @@ public class MenuBuilder implements Menu {
      * to avoid inadvertent reordering that may break the app's intended design.
      */
     public void flagActionItems() {
+        // Important side effect: if getVisibleItems is stale it may refresh,
+        // which can affect action items staleness.
+        final ArrayList<MenuItemImpl> visibleItems = getVisibleItems();
+
         if (!mIsActionItemsStale) {
             return;
         }
@@ -1052,7 +1088,6 @@ public class MenuBuilder implements Menu {
         if (flagged) {
             mActionItems.clear();
             mNonActionItems.clear();
-            ArrayList<MenuItemImpl> visibleItems = getVisibleItems();
             final int itemsSize = visibleItems.size();
             for (int i = 0; i < itemsSize; i++) {
                 MenuItemImpl item = visibleItems.get(i);
@@ -1072,12 +1107,12 @@ public class MenuBuilder implements Menu {
         mIsActionItemsStale = false;
     }
     
-    ArrayList<MenuItemImpl> getActionItems() {
+    public ArrayList<MenuItemImpl> getActionItems() {
         flagActionItems();
         return mActionItems;
     }
     
-    ArrayList<MenuItemImpl> getNonActionItems() {
+    public ArrayList<MenuItemImpl> getNonActionItems() {
         flagActionItems();
         return mNonActionItems;
     }
@@ -1108,7 +1143,7 @@ public class MenuBuilder implements Menu {
             }
             
             if (iconRes > 0) {
-                mHeaderIcon = r.getDrawable(iconRes);
+                mHeaderIcon = getContext().getDrawable(iconRes);
             } else if (icon != null) {
                 mHeaderIcon = icon;
             }

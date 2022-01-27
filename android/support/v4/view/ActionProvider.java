@@ -27,6 +27,12 @@ import android.view.View;
  * responsible for creating a view that performs an action that accomplishes the task. This class
  * also implements other functions such a performing a default action.
  *
+ * <p class="note"><strong>Note:</strong> This class is included in the <a
+ * href="{@docRoot}tools/extras/support-library.html">support library</a> for compatibility
+ * with API level 4 and higher. If you're developing your app for API level 14 and higher
+ * <em>only</em>, you should instead use the framework {@link android.view.ActionProvider}
+ * class.</p>
+ *
  * <p>An ActionProvider can be
  * optionally specified for a {@link android.view.MenuItem} and in such a case it will be
  * responsible for
@@ -45,16 +51,71 @@ import android.view.View;
  *
  * <li>Declaring the action provider in the menu XML resource. For example:
  *
- * <pre>
- * <code>
+ * <pre><code>
  *   &lt;item android:id="@+id/my_menu_item"
- *     android:title="Title"
+ *     android:title="@string/my_menu_item_title"
  *     android:icon="@drawable/my_menu_item_icon"
  *     android:showAsAction="ifRoom"
  *     android:actionProviderClass="foo.bar.SomeActionProvider" /&gt;
- * </code>
- * </pre>
+ * </code></pre>
  * </li></ul></p>
+ *
+ * <h3>Creating a custom action provider</h3>
+ *
+ * <p>To create a custom action provider, extend ActionProvider and implement
+ * its callback methods as necessary. In particular, implement the following
+ * methods:</p>
+ *
+ * <dl>
+ * <dt>{@link #ActionProvider ActionProvider()} constructor</dt>
+ * <dd>This constructor is passed the application context. You should
+ * save the context in a member field to use in the other callback methods.</dd>
+ *
+ * <dt>{@link #onCreateActionView onCreateActionView(MenuItem)}</dt>
+ * <dd>The system calls this method when the action provider is created.
+ * You define the action provider's layout through the implementation of this
+ * method. Use the context acquired
+ * from the constructor to instantiate a {@link android.view.LayoutInflater} and
+ * inflate your action provider's layout from an XML resource, then hook up
+ * event listeners for the view's components. For example:
+ *
+ *<pre>
+ * public View onCreateActionView(MenuItem forItem) {
+ *     // Inflate the action provider to be shown on the action bar.
+ *     LayoutInflater layoutInflater = LayoutInflater.from(mContext);
+ *     View providerView =
+ *         layoutInflater.inflate(R.layout.my_action_provider, null);
+ *     ImageButton button =
+ *         (ImageButton) providerView.findViewById(R.id.button);
+ *     button.setOnClickListener(new View.OnClickListener() {
+ *         &#64;Override
+ *         public void onClick(View v) {
+ *             // Do something...
+ *         }
+ *     });
+ *     return providerView;
+ * }</pre>
+ * </dd>
+ *
+ * <dt>{@link #onPerformDefaultAction onPerformDefaultAction()}</dt>
+ * <dd><p>The system calls this method when the user selects a menu item from the action
+ * overflow. The action provider should perform a default action for the
+ * menu item. The system does not call this method if the menu item opens a submenu.</p>
+ *
+ * <p>If your action provider presents a submenu through the
+ * {@link #onPrepareSubMenu onPrepareSubMenu()} callback, the submenu
+ * appears even if the action provider is in the overflow menu.
+ * Thus, the system never calls {@link #onPerformDefaultAction
+ * onPerformDefaultAction()} if there is a submenu.</p>
+ *
+ * <p class="note"> <strong>Note:</strong> An activity or a fragment that
+ * implements <code>onOptionsItemSelected()</code> can override the action
+ * provider's default behavior (unless it uses a submenu) by handling the
+ * item-selected event and returning <code>true</code>. In this case, the
+ * system does not call
+ * {@link #onPerformDefaultAction onPerformDefaultAction()}.</p></dd>
+ * </dl>
+ *
  *
  * @see android.support.v4.view.MenuItemCompat#setActionProvider(android.view.MenuItem, ActionProvider)
  * @see android.support.v4.view.MenuItemCompat#getActionProvider(android.view.MenuItem)
@@ -235,6 +296,14 @@ public abstract class ActionProvider {
                     " instance while it is still in use somewhere else?");
         }
         mVisibilityListener = listener;
+    }
+
+    /**
+     * @hide
+     */
+    public void reset() {
+        mVisibilityListener = null;
+        mSubUiVisibilityListener = null;
     }
 
     /**

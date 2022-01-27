@@ -24,11 +24,12 @@ import com.android.internal.telephony.BaseCommands;
 import com.android.internal.telephony.CommandsInterface;
 import com.android.internal.telephony.UUSInfo;
 import com.android.internal.telephony.cdma.CdmaSmsBroadcastConfigInfo;
+import com.android.internal.telephony.dataconnection.DataProfile;
 import com.android.internal.telephony.gsm.SmsBroadcastConfigInfo;
 
 /**
  * SIP doesn't need CommandsInterface. The class does nothing but made to work
- * with PhoneBase's constructor.
+ * with Phone's constructor.
  */
 class SipCommandInterface extends BaseCommands implements CommandsInterface {
     SipCommandInterface(Context context) {
@@ -217,7 +218,25 @@ class SipCommandInterface extends BaseCommands implements CommandsInterface {
     }
 
     @Override
+    public void sendSMSExpectMore (String smscPDU, String pdu, Message result) {
+    }
+
+    @Override
     public void sendCdmaSms(byte[] pdu, Message result) {
+    }
+
+    @Override
+    public void sendImsGsmSms (String smscPDU, String pdu,
+            int retry, int messageRef, Message response) {
+    }
+
+    @Override
+    public void sendImsCdmaSms(byte[] pdu, int retry, int messageRef,
+            Message response) {
+    }
+
+    @Override
+    public void getImsRegistrationState (Message result) {
     }
 
     @Override
@@ -237,8 +256,8 @@ class SipCommandInterface extends BaseCommands implements CommandsInterface {
     }
 
     @Override
-    public void setupDataCall(String radioTechnology, String profile,
-            String apn, String user, String password, String authType,
+    public void setupDataCall(int radioTechnology, int profile,
+            String apn, String user, String password, int authType,
             String protocol, Message result) {
     }
 
@@ -453,7 +472,7 @@ class SipCommandInterface extends BaseCommands implements CommandsInterface {
     }
 
     @Override
-    public void setPhoneType(int phoneType) { //Set by CDMAPhone and GSMPhone constructor
+    public void setPhoneType(int phoneType) { //Set by GsmCdmaPhone
     }
 
     @Override
@@ -526,6 +545,10 @@ class SipCommandInterface extends BaseCommands implements CommandsInterface {
     }
 
     @Override
+    public void requestIccSimAuthentication(int authContext, String data, String aid, Message response) {
+    }
+
+    @Override
     public void getVoiceRadioTechnology(Message result) {
     }
 
@@ -536,4 +559,72 @@ class SipCommandInterface extends BaseCommands implements CommandsInterface {
     @Override
     public void setCellInfoListRate(int rateInMillis, Message response) {
     }
+
+    @Override
+    public void setInitialAttachApn(String apn, String protocol, int authType, String username,
+            String password, Message result) {
+    }
+
+    @Override
+    public void setDataProfile(DataProfile[] dps, Message result) {
+    }
+
+    @Override
+    public void iccOpenLogicalChannel(String AID, Message response) {
+    }
+
+    @Override
+    public void iccCloseLogicalChannel(int channel, Message response) {
+    }
+
+    @Override
+    public void iccTransmitApduLogicalChannel(int channel, int cla, int instruction,
+            int p1, int p2, int p3, String data, Message response) {
+    }
+
+    @Override
+    public void iccTransmitApduBasicChannel(int cla, int instruction, int p1, int p2,
+            int p3, String data, Message response) {
+    }
+
+    @Override
+    public void nvReadItem(int itemID, Message response) {
+    }
+
+    @Override
+    public void nvWriteItem(int itemID, String itemValue, Message response) {
+    }
+
+    @Override
+    public void nvWriteCdmaPrl(byte[] preferredRoamingList, Message response) {
+    }
+
+    @Override
+    public void nvResetConfig(int resetType, Message response) {
+    }
+
+    @Override
+    public void getHardwareConfig(Message result) {
+    }
+
+    @Override
+    public void requestShutdown(Message result) {
+    }
+
+    @Override
+    public void startLceService(int reportIntervalMs, boolean pullMode, Message result) {
+    }
+
+    @Override
+    public void stopLceService(Message result) {
+    }
+
+    @Override
+    public void pullLceData(Message result) {
+    }
+
+    @Override
+    public void getModemActivityInfo(Message result) {
+    }
+
 }

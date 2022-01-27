@@ -24,14 +24,15 @@ import android.net.Uri;
 import android.support.v4.content.AsyncTaskLoader;
 import android.util.DisplayMetrics;
 
-import com.android.ex.photo.fragments.PhotoViewFragment;
-import com.android.ex.photo.loaders.PhotoBitmapLoader.BitmapResult;
+import com.android.ex.photo.PhotoViewController;
+import com.android.ex.photo.loaders.PhotoBitmapLoaderInterface.BitmapResult;
 import com.android.ex.photo.util.ImageUtils;
 
 /**
  * Loader for the bitmap of a photo.
  */
-public class PhotoBitmapLoader extends AsyncTaskLoader<BitmapResult> {
+public class PhotoBitmapLoader extends AsyncTaskLoader<BitmapResult>
+    implements PhotoBitmapLoaderInterface {
     private String mPhotoUri;
     private Bitmap mBitmap;
 
@@ -40,6 +41,7 @@ public class PhotoBitmapLoader extends AsyncTaskLoader<BitmapResult> {
         mPhotoUri = photoUri;
     }
 
+    @Override
     public void setPhotoUri(String photoUri) {
         mPhotoUri = photoUri;
     }
@@ -52,7 +54,7 @@ public class PhotoBitmapLoader extends AsyncTaskLoader<BitmapResult> {
             final ContentResolver resolver = context.getContentResolver();
             try {
                 result = ImageUtils.createLocalBitmap(resolver, Uri.parse(mPhotoUri),
-                        PhotoViewFragment.sPhotoSize);
+                        PhotoViewController.sMaxPhotoSize);
                 if (result.bitmap != null) {
                     result.bitmap.setDensity(DisplayMetrics.DENSITY_MEDIUM);
                 }
@@ -79,6 +81,7 @@ public class PhotoBitmapLoader extends AsyncTaskLoader<BitmapResult> {
             if (bitmap != null) {
                 onReleaseResources(bitmap);
             }
+            return;
         }
         Bitmap oldBitmap = mBitmap;
         mBitmap = bitmap;
@@ -166,13 +169,5 @@ public class PhotoBitmapLoader extends AsyncTaskLoader<BitmapResult> {
         if (bitmap != null && !bitmap.isRecycled()) {
             bitmap.recycle();
         }
-    }
-
-    public static class BitmapResult {
-        public static final int STATUS_SUCCESS = 0;
-        public static final int STATUS_EXCEPTION = 1;
-
-        public Bitmap bitmap;
-        public int status;
     }
 }

@@ -16,28 +16,34 @@
 
 package android.content;
 
-import static android.content.pm.PackageManager.GET_PROVIDERS;
+import static android.Manifest.permission.INTERACT_ACROSS_USERS;
+import static android.app.AppOpsManager.MODE_ALLOWED;
+import static android.app.AppOpsManager.MODE_ERRORED;
+import static android.app.AppOpsManager.MODE_IGNORED;
 import static android.content.pm.PackageManager.PERMISSION_GRANTED;
 
+import android.annotation.NonNull;
+import android.annotation.Nullable;
 import android.app.AppOpsManager;
-import android.content.pm.PackageManager;
 import android.content.pm.PathPermission;
 import android.content.pm.ProviderInfo;
 import android.content.res.AssetFileDescriptor;
 import android.content.res.Configuration;
 import android.database.Cursor;
+import android.database.MatrixCursor;
 import android.database.SQLException;
 import android.net.Uri;
 import android.os.AsyncTask;
 import android.os.Binder;
 import android.os.Bundle;
 import android.os.CancellationSignal;
+import android.os.IBinder;
 import android.os.ICancellationSignal;
 import android.os.OperationCanceledException;
 import android.os.ParcelFileDescriptor;
 import android.os.Process;
-import android.os.RemoteException;
 import android.os.UserHandle;
+import android.text.TextUtils;
 import android.util.Log;
 
 import java.io.File;
@@ -46,6 +52,7 @@ import java.io.FileNotFoundException;
 import java.io.IOException;
 import java.io.PrintWriter;
 import java.util.ArrayList;
+import java.util.Arrays;
 
 /**
  * Content providers are one of the primary building blocks of Android applications, providing
@@ -98,11 +105,19 @@ public abstract class ContentProvider implements ComponentCallbacks2 {
 
     private Context mContext = null;
     private int mMyUid;
+
+    // Since most Providers have only one authority, we keep both a String and a String[] to improve
+    // performance.
+    private String mAuthority;
+    private String[] mAuthorities;
     private String mReadPermission;
     private String mWritePermission;
     private PathPermission[] mPathPermissions;
     private boolean mExported;
     private boolean mNoPerms;
+    private boolean mSingleUser;
+
+    private final ThreadLocal<String> mCallingPackage = new ThreadLocal<String>();
 
     private Transport mTransport = new Transport();
 
@@ -192,260 +207,481 @@ public abstract class ContentProvider implements ComponentCallbacks2 {
         public Cursor query(String callingPkg, Uri uri, String[] projection,
                 String selection, String[] selectionArgs, String sortOrder,
                 ICancellationSignal cancellationSignal) {
-            if (enforceReadPermission(callingPkg, uri) != AppOpsManager.MODE_ALLOWED) {
-                return rejectQuery(uri, projection, selection, selectionArgs, sortOrder,
-                        CancellationSignal.fromTransport(cancellationSignal));
+            validateIncomingUri(uri);
+            uri = getUriWithoutUserId(uri);
+            if (enforceReadPermission(callingPkg, uri, null) != AppOpsManager.MODE_ALLOWED) {
+                // The caller has no access to the data, so return an empty cursor with
+                // the columns in the requested order. The caller may ask for an invalid
+                // column and we would not catch that but this is not a problem in practice.
+                // We do not call ContentProvider#query with a modified where clause since
+                // the implementation is not guaranteed to be backed by a SQL database, hence
+                // it may not handle properly the tautology where clause we would have created.
+                if (projection != null) {
+                    return new MatrixCursor(projection, 0);
+                }
+
+                // Null projection means all columns but we have no idea which they are.
+                // However, the caller may be expecting to access them my index. Hence,
+                // we have to execute the query as if allowed to get a cursor with the
+                // columns. We then use the column names to return an empty cursor.
+                Cursor cursor = ContentProvider.this.query(uri, projection, selection,
+                        selectionArgs, sortOrder, CancellationSignal.fromTransport(
+                                cancellationSignal));
+                if (cursor == null) {
+                    return null;
+                }
+
+                // Return an empty cursor for all columns.
+                return new MatrixCursor(cursor.getColumnNames(), 0);
             }
-            return ContentProvider.this.query(uri, projection, selection, selectionArgs, sortOrder,
-                    CancellationSignal.fromTransport(cancellationSignal));
+            final String original = setCallingPackage(callingPkg);
+            try {
+                return ContentProvider.this.query(
+                        uri, projection, selection, selectionArgs, sortOrder,
+                        CancellationSignal.fromTransport(cancellationSignal));
+            } finally {
+                setCallingPackage(original);
+            }
         }
 
         @Override
         public String getType(Uri uri) {
+            validateIncomingUri(uri);
+            uri = getUriWithoutUserId(uri);
             return ContentProvider.this.getType(uri);
         }
 
         @Override
         public Uri insert(String callingPkg, Uri uri, ContentValues initialValues) {
-            if (enforceWritePermission(callingPkg, uri) != AppOpsManager.MODE_ALLOWED) {
+            validateIncomingUri(uri);
+            int userId = getUserIdFromUri(uri);
+            uri = getUriWithoutUserId(uri);
+            if (enforceWritePermission(callingPkg, uri, null) != AppOpsManager.MODE_ALLOWED) {
                 return rejectInsert(uri, initialValues);
             }
-            return ContentProvider.this.insert(uri, initialValues);
+            final String original = setCallingPackage(callingPkg);
+            try {
+                return maybeAddUserId(ContentProvider.this.insert(uri, initialValues), userId);
+            } finally {
+                setCallingPackage(original);
+            }
         }
 
         @Override
         public int bulkInsert(String callingPkg, Uri uri, ContentValues[] initialValues) {
-            if (enforceWritePermission(callingPkg, uri) != AppOpsManager.MODE_ALLOWED) {
+            validateIncomingUri(uri);
+            uri = getUriWithoutUserId(uri);
+            if (enforceWritePermission(callingPkg, uri, null) != AppOpsManager.MODE_ALLOWED) {
                 return 0;
             }
-            return ContentProvider.this.bulkInsert(uri, initialValues);
+            final String original = setCallingPackage(callingPkg);
+            try {
+                return ContentProvider.this.bulkInsert(uri, initialValues);
+            } finally {
+                setCallingPackage(original);
+            }
         }
 
         @Override
         public ContentProviderResult[] applyBatch(String callingPkg,
                 ArrayList<ContentProviderOperation> operations)
                 throws OperationApplicationException {
-            for (ContentProviderOperation operation : operations) {
+            int numOperations = operations.size();
+            final int[] userIds = new int[numOperations];
+            for (int i = 0; i < numOperations; i++) {
+                ContentProviderOperation operation = operations.get(i);
+                Uri uri = operation.getUri();
+                validateIncomingUri(uri);
+                userIds[i] = getUserIdFromUri(uri);
+                if (userIds[i] != UserHandle.USER_CURRENT) {
+                    // Removing the user id from the uri.
+                    operation = new ContentProviderOperation(operation, true);
+                    operations.set(i, operation);
+                }
                 if (operation.isReadOperation()) {
-                    if (enforceReadPermission(callingPkg, operation.getUri())
+                    if (enforceReadPermission(callingPkg, uri, null)
                             != AppOpsManager.MODE_ALLOWED) {
                         throw new OperationApplicationException("App op not allowed", 0);
                     }
                 }
-
                 if (operation.isWriteOperation()) {
-                    if (enforceWritePermission(callingPkg, operation.getUri())
+                    if (enforceWritePermission(callingPkg, uri, null)
                             != AppOpsManager.MODE_ALLOWED) {
                         throw new OperationApplicationException("App op not allowed", 0);
                     }
                 }
             }
-            return ContentProvider.this.applyBatch(operations);
+            final String original = setCallingPackage(callingPkg);
+            try {
+                ContentProviderResult[] results = ContentProvider.this.applyBatch(operations);
+                if (results != null) {
+                    for (int i = 0; i < results.length ; i++) {
+                        if (userIds[i] != UserHandle.USER_CURRENT) {
+                            // Adding the userId to the uri.
+                            results[i] = new ContentProviderResult(results[i], userIds[i]);
+                        }
+                    }
+                }
+                return results;
+            } finally {
+                setCallingPackage(original);
+            }
         }
 
         @Override
         public int delete(String callingPkg, Uri uri, String selection, String[] selectionArgs) {
-            if (enforceWritePermission(callingPkg, uri) != AppOpsManager.MODE_ALLOWED) {
+            validateIncomingUri(uri);
+            uri = getUriWithoutUserId(uri);
+            if (enforceWritePermission(callingPkg, uri, null) != AppOpsManager.MODE_ALLOWED) {
                 return 0;
             }
-            return ContentProvider.this.delete(uri, selection, selectionArgs);
+            final String original = setCallingPackage(callingPkg);
+            try {
+                return ContentProvider.this.delete(uri, selection, selectionArgs);
+            } finally {
+                setCallingPackage(original);
+            }
         }
 
         @Override
         public int update(String callingPkg, Uri uri, ContentValues values, String selection,
                 String[] selectionArgs) {
-            if (enforceWritePermission(callingPkg, uri) != AppOpsManager.MODE_ALLOWED) {
+            validateIncomingUri(uri);
+            uri = getUriWithoutUserId(uri);
+            if (enforceWritePermission(callingPkg, uri, null) != AppOpsManager.MODE_ALLOWED) {
                 return 0;
             }
-            return ContentProvider.this.update(uri, values, selection, selectionArgs);
+            final String original = setCallingPackage(callingPkg);
+            try {
+                return ContentProvider.this.update(uri, values, selection, selectionArgs);
+            } finally {
+                setCallingPackage(original);
+            }
         }
 
         @Override
-        public ParcelFileDescriptor openFile(String callingPkg, Uri uri, String mode)
+        public ParcelFileDescriptor openFile(
+                String callingPkg, Uri uri, String mode, ICancellationSignal cancellationSignal,
+                IBinder callerToken) throws FileNotFoundException {
+            validateIncomingUri(uri);
+            uri = getUriWithoutUserId(uri);
+            enforceFilePermission(callingPkg, uri, mode, callerToken);
+            final String original = setCallingPackage(callingPkg);
+            try {
+                return ContentProvider.this.openFile(
+                        uri, mode, CancellationSignal.fromTransport(cancellationSignal));
+            } finally {
+                setCallingPackage(original);
+            }
+        }
+
+        @Override
+        public AssetFileDescriptor openAssetFile(
+                String callingPkg, Uri uri, String mode, ICancellationSignal cancellationSignal)
                 throws FileNotFoundException {
-            enforceFilePermission(callingPkg, uri, mode);
-            return ContentProvider.this.openFile(uri, mode);
+            validateIncomingUri(uri);
+            uri = getUriWithoutUserId(uri);
+            enforceFilePermission(callingPkg, uri, mode, null);
+            final String original = setCallingPackage(callingPkg);
+            try {
+                return ContentProvider.this.openAssetFile(
+                        uri, mode, CancellationSignal.fromTransport(cancellationSignal));
+            } finally {
+                setCallingPackage(original);
+            }
         }
 
         @Override
-        public AssetFileDescriptor openAssetFile(String callingPkg, Uri uri, String mode)
-                throws FileNotFoundException {
-            enforceFilePermission(callingPkg, uri, mode);
-            return ContentProvider.this.openAssetFile(uri, mode);
-        }
-
-        @Override
-        public Bundle call(String callingPkg, String method, String arg, Bundle extras) {
-            return ContentProvider.this.callFromPackage(callingPkg, method, arg, extras);
+        public Bundle call(
+                String callingPkg, String method, @Nullable String arg, @Nullable Bundle extras) {
+            Bundle.setDefusable(extras, true);
+            final String original = setCallingPackage(callingPkg);
+            try {
+                return ContentProvider.this.call(method, arg, extras);
+            } finally {
+                setCallingPackage(original);
+            }
         }
 
         @Override
         public String[] getStreamTypes(Uri uri, String mimeTypeFilter) {
+            validateIncomingUri(uri);
+            uri = getUriWithoutUserId(uri);
             return ContentProvider.this.getStreamTypes(uri, mimeTypeFilter);
         }
 
         @Override
         public AssetFileDescriptor openTypedAssetFile(String callingPkg, Uri uri, String mimeType,
-                Bundle opts) throws FileNotFoundException {
-            enforceFilePermission(callingPkg, uri, "r");
-            return ContentProvider.this.openTypedAssetFile(uri, mimeType, opts);
+                Bundle opts, ICancellationSignal cancellationSignal) throws FileNotFoundException {
+            Bundle.setDefusable(opts, true);
+            validateIncomingUri(uri);
+            uri = getUriWithoutUserId(uri);
+            enforceFilePermission(callingPkg, uri, "r", null);
+            final String original = setCallingPackage(callingPkg);
+            try {
+                return ContentProvider.this.openTypedAssetFile(
+                        uri, mimeType, opts, CancellationSignal.fromTransport(cancellationSignal));
+            } finally {
+                setCallingPackage(original);
+            }
         }
 
         @Override
-        public ICancellationSignal createCancellationSignal() throws RemoteException {
+        public ICancellationSignal createCancellationSignal() {
             return CancellationSignal.createTransport();
         }
 
-        private void enforceFilePermission(String callingPkg, Uri uri, String mode)
-                throws FileNotFoundException, SecurityException {
+        @Override
+        public Uri canonicalize(String callingPkg, Uri uri) {
+            validateIncomingUri(uri);
+            int userId = getUserIdFromUri(uri);
+            uri = getUriWithoutUserId(uri);
+            if (enforceReadPermission(callingPkg, uri, null) != AppOpsManager.MODE_ALLOWED) {
+                return null;
+            }
+            final String original = setCallingPackage(callingPkg);
+            try {
+                return maybeAddUserId(ContentProvider.this.canonicalize(uri), userId);
+            } finally {
+                setCallingPackage(original);
+            }
+        }
+
+        @Override
+        public Uri uncanonicalize(String callingPkg, Uri uri) {
+            validateIncomingUri(uri);
+            int userId = getUserIdFromUri(uri);
+            uri = getUriWithoutUserId(uri);
+            if (enforceReadPermission(callingPkg, uri, null) != AppOpsManager.MODE_ALLOWED) {
+                return null;
+            }
+            final String original = setCallingPackage(callingPkg);
+            try {
+                return maybeAddUserId(ContentProvider.this.uncanonicalize(uri), userId);
+            } finally {
+                setCallingPackage(original);
+            }
+        }
+
+        private void enforceFilePermission(String callingPkg, Uri uri, String mode,
+                IBinder callerToken) throws FileNotFoundException, SecurityException {
             if (mode != null && mode.indexOf('w') != -1) {
-                if (enforceWritePermission(callingPkg, uri) != AppOpsManager.MODE_ALLOWED) {
+                if (enforceWritePermission(callingPkg, uri, callerToken)
+                        != AppOpsManager.MODE_ALLOWED) {
                     throw new FileNotFoundException("App op not allowed");
                 }
             } else {
-                if (enforceReadPermission(callingPkg, uri) != AppOpsManager.MODE_ALLOWED) {
+                if (enforceReadPermission(callingPkg, uri, callerToken)
+                        != AppOpsManager.MODE_ALLOWED) {
                     throw new FileNotFoundException("App op not allowed");
                 }
             }
         }
 
-        private int enforceReadPermission(String callingPkg, Uri uri) throws SecurityException {
-            enforceReadPermissionInner(uri);
+        private int enforceReadPermission(String callingPkg, Uri uri, IBinder callerToken)
+                throws SecurityException {
+            final int mode = enforceReadPermissionInner(uri, callingPkg, callerToken);
+            if (mode != MODE_ALLOWED) {
+                return mode;
+            }
+
             if (mReadOp != AppOpsManager.OP_NONE) {
-                return mAppOpsManager.noteOp(mReadOp, Binder.getCallingUid(), callingPkg);
+                return mAppOpsManager.noteProxyOp(mReadOp, callingPkg);
             }
+
             return AppOpsManager.MODE_ALLOWED;
         }
 
-        private void enforceReadPermissionInner(Uri uri) throws SecurityException {
-            final Context context = getContext();
-            final int pid = Binder.getCallingPid();
-            final int uid = Binder.getCallingUid();
-            String missingPerm = null;
-
-            if (UserHandle.isSameApp(uid, mMyUid)) {
-                return;
+        private int enforceWritePermission(String callingPkg, Uri uri, IBinder callerToken)
+                throws SecurityException {
+            final int mode = enforceWritePermissionInner(uri, callingPkg, callerToken);
+            if (mode != MODE_ALLOWED) {
+                return mode;
             }
 
-            if (mExported) {
-                final String componentPerm = getReadPermission();
-                if (componentPerm != null) {
-                    if (context.checkPermission(componentPerm, pid, uid) == PERMISSION_GRANTED) {
-                        return;
-                    } else {
-                        missingPerm = componentPerm;
-                    }
-                }
-
-                // track if unprotected read is allowed; any denied
-                // <path-permission> below removes this ability
-                boolean allowDefaultRead = (componentPerm == null);
-
-                final PathPermission[] pps = getPathPermissions();
-                if (pps != null) {
-                    final String path = uri.getPath();
-                    for (PathPermission pp : pps) {
-                        final String pathPerm = pp.getReadPermission();
-                        if (pathPerm != null && pp.match(path)) {
-                            if (context.checkPermission(pathPerm, pid, uid) == PERMISSION_GRANTED) {
-                                return;
-                            } else {
-                                // any denied <path-permission> means we lose
-                                // default <provider> access.
-                                allowDefaultRead = false;
-                                missingPerm = pathPerm;
-                            }
-                        }
-                    }
-                }
-
-                // if we passed <path-permission> checks above, and no default
-                // <provider> permission, then allow access.
-                if (allowDefaultRead) return;
-            }
-
-            // last chance, check against any uri grants
-            if (context.checkUriPermission(uri, pid, uid, Intent.FLAG_GRANT_READ_URI_PERMISSION)
-                    == PERMISSION_GRANTED) {
-                return;
-            }
-
-            final String failReason = mExported
-                    ? " requires " + missingPerm + ", or grantUriPermission()"
-                    : " requires the provider be exported, or grantUriPermission()";
-            throw new SecurityException("Permission Denial: reading "
-                    + ContentProvider.this.getClass().getName() + " uri " + uri + " from pid=" + pid
-                    + ", uid=" + uid + failReason);
-        }
-
-        private int enforceWritePermission(String callingPkg, Uri uri) throws SecurityException {
-            enforceWritePermissionInner(uri);
             if (mWriteOp != AppOpsManager.OP_NONE) {
-                return mAppOpsManager.noteOp(mWriteOp, Binder.getCallingUid(), callingPkg);
+                return mAppOpsManager.noteProxyOp(mWriteOp, callingPkg);
             }
+
             return AppOpsManager.MODE_ALLOWED;
         }
+    }
 
-        private void enforceWritePermissionInner(Uri uri) throws SecurityException {
-            final Context context = getContext();
-            final int pid = Binder.getCallingPid();
-            final int uid = Binder.getCallingUid();
-            String missingPerm = null;
+    boolean checkUser(int pid, int uid, Context context) {
+        return UserHandle.getUserId(uid) == context.getUserId()
+                || mSingleUser
+                || context.checkPermission(INTERACT_ACROSS_USERS, pid, uid)
+                == PERMISSION_GRANTED;
+    }
 
-            if (UserHandle.isSameApp(uid, mMyUid)) {
-                return;
+    /**
+     * Verify that calling app holds both the given permission and any app-op
+     * associated with that permission.
+     */
+    private int checkPermissionAndAppOp(String permission, String callingPkg,
+            IBinder callerToken) {
+        if (getContext().checkPermission(permission, Binder.getCallingPid(), Binder.getCallingUid(),
+                callerToken) != PERMISSION_GRANTED) {
+            return MODE_ERRORED;
+        }
+
+        final int permOp = AppOpsManager.permissionToOpCode(permission);
+        if (permOp != AppOpsManager.OP_NONE) {
+            return mTransport.mAppOpsManager.noteProxyOp(permOp, callingPkg);
+        }
+
+        return MODE_ALLOWED;
+    }
+
+    /** {@hide} */
+    protected int enforceReadPermissionInner(Uri uri, String callingPkg, IBinder callerToken)
+            throws SecurityException {
+        final Context context = getContext();
+        final int pid = Binder.getCallingPid();
+        final int uid = Binder.getCallingUid();
+        String missingPerm = null;
+        int strongestMode = MODE_ALLOWED;
+
+        if (UserHandle.isSameApp(uid, mMyUid)) {
+            return MODE_ALLOWED;
+        }
+
+        if (mExported && checkUser(pid, uid, context)) {
+            final String componentPerm = getReadPermission();
+            if (componentPerm != null) {
+                final int mode = checkPermissionAndAppOp(componentPerm, callingPkg, callerToken);
+                if (mode == MODE_ALLOWED) {
+                    return MODE_ALLOWED;
+                } else {
+                    missingPerm = componentPerm;
+                    strongestMode = Math.max(strongestMode, mode);
+                }
             }
 
-            if (mExported) {
-                final String componentPerm = getWritePermission();
-                if (componentPerm != null) {
-                    if (context.checkPermission(componentPerm, pid, uid) == PERMISSION_GRANTED) {
-                        return;
-                    } else {
-                        missingPerm = componentPerm;
-                    }
-                }
+            // track if unprotected read is allowed; any denied
+            // <path-permission> below removes this ability
+            boolean allowDefaultRead = (componentPerm == null);
 
-                // track if unprotected write is allowed; any denied
-                // <path-permission> below removes this ability
-                boolean allowDefaultWrite = (componentPerm == null);
-
-                final PathPermission[] pps = getPathPermissions();
-                if (pps != null) {
-                    final String path = uri.getPath();
-                    for (PathPermission pp : pps) {
-                        final String pathPerm = pp.getWritePermission();
-                        if (pathPerm != null && pp.match(path)) {
-                            if (context.checkPermission(pathPerm, pid, uid) == PERMISSION_GRANTED) {
-                                return;
-                            } else {
-                                // any denied <path-permission> means we lose
-                                // default <provider> access.
-                                allowDefaultWrite = false;
-                                missingPerm = pathPerm;
-                            }
+            final PathPermission[] pps = getPathPermissions();
+            if (pps != null) {
+                final String path = uri.getPath();
+                for (PathPermission pp : pps) {
+                    final String pathPerm = pp.getReadPermission();
+                    if (pathPerm != null && pp.match(path)) {
+                        final int mode = checkPermissionAndAppOp(pathPerm, callingPkg, callerToken);
+                        if (mode == MODE_ALLOWED) {
+                            return MODE_ALLOWED;
+                        } else {
+                            // any denied <path-permission> means we lose
+                            // default <provider> access.
+                            allowDefaultRead = false;
+                            missingPerm = pathPerm;
+                            strongestMode = Math.max(strongestMode, mode);
                         }
                     }
                 }
-
-                // if we passed <path-permission> checks above, and no default
-                // <provider> permission, then allow access.
-                if (allowDefaultWrite) return;
             }
 
-            // last chance, check against any uri grants
-            if (context.checkUriPermission(uri, pid, uid, Intent.FLAG_GRANT_WRITE_URI_PERMISSION)
-                    == PERMISSION_GRANTED) {
-                return;
-            }
-
-            final String failReason = mExported
-                    ? " requires " + missingPerm + ", or grantUriPermission()"
-                    : " requires the provider be exported, or grantUriPermission()";
-            throw new SecurityException("Permission Denial: writing "
-                    + ContentProvider.this.getClass().getName() + " uri " + uri + " from pid=" + pid
-                    + ", uid=" + uid + failReason);
+            // if we passed <path-permission> checks above, and no default
+            // <provider> permission, then allow access.
+            if (allowDefaultRead) return MODE_ALLOWED;
         }
+
+        // last chance, check against any uri grants
+        final int callingUserId = UserHandle.getUserId(uid);
+        final Uri userUri = (mSingleUser && !UserHandle.isSameUser(mMyUid, uid))
+                ? maybeAddUserId(uri, callingUserId) : uri;
+        if (context.checkUriPermission(userUri, pid, uid, Intent.FLAG_GRANT_READ_URI_PERMISSION,
+                callerToken) == PERMISSION_GRANTED) {
+            return MODE_ALLOWED;
+        }
+
+        // If the worst denial we found above was ignored, then pass that
+        // ignored through; otherwise we assume it should be a real error below.
+        if (strongestMode == MODE_IGNORED) {
+            return MODE_IGNORED;
+        }
+
+        final String failReason = mExported
+                ? " requires " + missingPerm + ", or grantUriPermission()"
+                : " requires the provider be exported, or grantUriPermission()";
+        throw new SecurityException("Permission Denial: reading "
+                + ContentProvider.this.getClass().getName() + " uri " + uri + " from pid=" + pid
+                + ", uid=" + uid + failReason);
+    }
+
+    /** {@hide} */
+    protected int enforceWritePermissionInner(Uri uri, String callingPkg, IBinder callerToken)
+            throws SecurityException {
+        final Context context = getContext();
+        final int pid = Binder.getCallingPid();
+        final int uid = Binder.getCallingUid();
+        String missingPerm = null;
+        int strongestMode = MODE_ALLOWED;
+
+        if (UserHandle.isSameApp(uid, mMyUid)) {
+            return MODE_ALLOWED;
+        }
+
+        if (mExported && checkUser(pid, uid, context)) {
+            final String componentPerm = getWritePermission();
+            if (componentPerm != null) {
+                final int mode = checkPermissionAndAppOp(componentPerm, callingPkg, callerToken);
+                if (mode == MODE_ALLOWED) {
+                    return MODE_ALLOWED;
+                } else {
+                    missingPerm = componentPerm;
+                    strongestMode = Math.max(strongestMode, mode);
+                }
+            }
+
+            // track if unprotected write is allowed; any denied
+            // <path-permission> below removes this ability
+            boolean allowDefaultWrite = (componentPerm == null);
+
+            final PathPermission[] pps = getPathPermissions();
+            if (pps != null) {
+                final String path = uri.getPath();
+                for (PathPermission pp : pps) {
+                    final String pathPerm = pp.getWritePermission();
+                    if (pathPerm != null && pp.match(path)) {
+                        final int mode = checkPermissionAndAppOp(pathPerm, callingPkg, callerToken);
+                        if (mode == MODE_ALLOWED) {
+                            return MODE_ALLOWED;
+                        } else {
+                            // any denied <path-permission> means we lose
+                            // default <provider> access.
+                            allowDefaultWrite = false;
+                            missingPerm = pathPerm;
+                            strongestMode = Math.max(strongestMode, mode);
+                        }
+                    }
+                }
+            }
+
+            // if we passed <path-permission> checks above, and no default
+            // <provider> permission, then allow access.
+            if (allowDefaultWrite) return MODE_ALLOWED;
+        }
+
+        // last chance, check against any uri grants
+        if (context.checkUriPermission(uri, pid, uid, Intent.FLAG_GRANT_WRITE_URI_PERMISSION,
+                callerToken) == PERMISSION_GRANTED) {
+            return MODE_ALLOWED;
+        }
+
+        // If the worst denial we found above was ignored, then pass that
+        // ignored through; otherwise we assume it should be a real error below.
+        if (strongestMode == MODE_IGNORED) {
+            return MODE_IGNORED;
+        }
+
+        final String failReason = mExported
+                ? " requires " + missingPerm + ", or grantUriPermission()"
+                : " requires the provider be exported, or grantUriPermission()";
+        throw new SecurityException("Permission Denial: writing "
+                + ContentProvider.this.getClass().getName() + " uri " + uri + " from pid=" + pid
+                + ", uid=" + uid + failReason);
     }
 
     /**
@@ -453,9 +689,75 @@ public abstract class ContentProvider implements ComponentCallbacks2 {
      * {@link #onCreate} has been called -- this will return {@code null} in the
      * constructor.
      */
-    public final Context getContext() {
+    public final @Nullable Context getContext() {
         return mContext;
     }
+
+    /**
+     * Set the calling package, returning the current value (or {@code null})
+     * which can be used later to restore the previous state.
+     */
+    private String setCallingPackage(String callingPackage) {
+        final String original = mCallingPackage.get();
+        mCallingPackage.set(callingPackage);
+        return original;
+    }
+
+    /**
+     * Return the package name of the caller that initiated the request being
+     * processed on the current thread. The returned package will have been
+     * verified to belong to the calling UID. Returns {@code null} if not
+     * currently processing a request.
+     * <p>
+     * This will always return {@code null} when processing
+     * {@link #getType(Uri)} or {@link #getStreamTypes(Uri, String)} requests.
+     *
+     * @see Binder#getCallingUid()
+     * @see Context#grantUriPermission(String, Uri, int)
+     * @throws SecurityException if the calling package doesn't belong to the
+     *             calling UID.
+     */
+    public final @Nullable String getCallingPackage() {
+        final String pkg = mCallingPackage.get();
+        if (pkg != null) {
+            mTransport.mAppOpsManager.checkPackage(Binder.getCallingUid(), pkg);
+        }
+        return pkg;
+    }
+
+    /**
+     * Change the authorities of the ContentProvider.
+     * This is normally set for you from its manifest information when the provider is first
+     * created.
+     * @hide
+     * @param authorities the semi-colon separated authorities of the ContentProvider.
+     */
+    protected final void setAuthorities(String authorities) {
+        if (authorities != null) {
+            if (authorities.indexOf(';') == -1) {
+                mAuthority = authorities;
+                mAuthorities = null;
+            } else {
+                mAuthority = null;
+                mAuthorities = authorities.split(";");
+            }
+        }
+    }
+
+    /** @hide */
+    protected final boolean matchesOurAuthorities(String authority) {
+        if (mAuthority != null) {
+            return mAuthority.equals(authority);
+        }
+        if (mAuthorities != null) {
+            int length = mAuthorities.length;
+            for (int i = 0; i < length; i++) {
+                if (mAuthorities[i].equals(authority)) return true;
+            }
+        }
+        return false;
+    }
+
 
     /**
      * Change the permission required to read data from the content
@@ -464,7 +766,7 @@ public abstract class ContentProvider implements ComponentCallbacks2 {
      *
      * @param permission Name of the permission required for read-only access.
      */
-    protected final void setReadPermission(String permission) {
+    protected final void setReadPermission(@Nullable String permission) {
         mReadPermission = permission;
     }
 
@@ -475,7 +777,7 @@ public abstract class ContentProvider implements ComponentCallbacks2 {
      * <a href="{@docRoot}guide/topics/fundamentals/processes-and-threads.html#Threads">Processes
      * and Threads</a>.
      */
-    public final String getReadPermission() {
+    public final @Nullable String getReadPermission() {
         return mReadPermission;
     }
 
@@ -486,7 +788,7 @@ public abstract class ContentProvider implements ComponentCallbacks2 {
      *
      * @param permission Name of the permission required for read/write access.
      */
-    protected final void setWritePermission(String permission) {
+    protected final void setWritePermission(@Nullable String permission) {
         mWritePermission = permission;
     }
 
@@ -497,7 +799,7 @@ public abstract class ContentProvider implements ComponentCallbacks2 {
      * <a href="{@docRoot}guide/topics/fundamentals/processes-and-threads.html#Threads">Processes
      * and Threads</a>.
      */
-    public final String getWritePermission() {
+    public final @Nullable String getWritePermission() {
         return mWritePermission;
     }
 
@@ -508,7 +810,7 @@ public abstract class ContentProvider implements ComponentCallbacks2 {
      *
      * @param permissions Array of path permission descriptions.
      */
-    protected final void setPathPermissions(PathPermission[] permissions) {
+    protected final void setPathPermissions(@Nullable PathPermission[] permissions) {
         mPathPermissions = permissions;
     }
 
@@ -519,15 +821,13 @@ public abstract class ContentProvider implements ComponentCallbacks2 {
      * <a href="{@docRoot}guide/topics/fundamentals/processes-and-threads.html#Threads">Processes
      * and Threads</a>.
      */
-    public final PathPermission[] getPathPermissions() {
+    public final @Nullable PathPermission[] getPathPermissions() {
         return mPathPermissions;
     }
 
     /** @hide */
     public final void setAppOps(int readOp, int writeOp) {
         if (!mNoPerms) {
-            mTransport.mAppOpsManager = (AppOpsManager)mContext.getSystemService(
-                    Context.APP_OPS_SERVICE);
             mTransport.mReadOp = readOp;
             mTransport.mWriteOp = writeOp;
         }
@@ -593,31 +893,6 @@ public abstract class ContentProvider implements ComponentCallbacks2 {
     }
 
     /**
-     * @hide
-     * Implementation when a caller has performed a query on the content
-     * provider, but that call has been rejected for the operation given
-     * to {@link #setAppOps(int, int)}.  The default implementation
-     * rewrites the <var>selection</var> argument to include a condition
-     * that is never true (so will always result in an empty cursor)
-     * and calls through to {@link #query(android.net.Uri, String[], String, String[],
-     * String, android.os.CancellationSignal)} with that.
-     */
-    public Cursor rejectQuery(Uri uri, String[] projection,
-            String selection, String[] selectionArgs, String sortOrder,
-            CancellationSignal cancellationSignal) {
-        // The read is not allowed...  to fake it out, we replace the given
-        // selection statement with a dummy one that will always be false.
-        // This way we will get a cursor back that has the correct structure
-        // but contains no rows.
-        if (selection == null || selection.isEmpty()) {
-            selection = "'A' = 'B'";
-        } else {
-            selection = "'A' = 'B' AND (" + selection + ")";
-        }
-        return query(uri, projection, selection, selectionArgs, sortOrder, cancellationSignal);
-    }
-
-    /**
      * Implement this to handle query requests from clients.
      * This method can be called from multiple threads, as described in
      * <a href="{@docRoot}guide/topics/fundamentals/processes-and-threads.html#Threads">Processes
@@ -672,8 +947,9 @@ public abstract class ContentProvider implements ComponentCallbacks2 {
      *      If {@code null} then the provider is free to define the sort order.
      * @return a Cursor or {@code null}.
      */
-    public abstract Cursor query(Uri uri, String[] projection,
-            String selection, String[] selectionArgs, String sortOrder);
+    public abstract @Nullable Cursor query(@NonNull Uri uri, @Nullable String[] projection,
+            @Nullable String selection, @Nullable String[] selectionArgs,
+            @Nullable String sortOrder);
 
     /**
      * Implement this to handle query requests from clients with support for cancellation.
@@ -738,9 +1014,9 @@ public abstract class ContentProvider implements ComponentCallbacks2 {
      * when the query is executed.
      * @return a Cursor or {@code null}.
      */
-    public Cursor query(Uri uri, String[] projection,
-            String selection, String[] selectionArgs, String sortOrder,
-            CancellationSignal cancellationSignal) {
+    public @Nullable Cursor query(@NonNull Uri uri, @Nullable String[] projection,
+            @Nullable String selection, @Nullable String[] selectionArgs,
+            @Nullable String sortOrder, @Nullable CancellationSignal cancellationSignal) {
         return query(uri, projection, selection, selectionArgs, sortOrder);
     }
 
@@ -762,7 +1038,59 @@ public abstract class ContentProvider implements ComponentCallbacks2 {
      * @param uri the URI to query.
      * @return a MIME type string, or {@code null} if there is no type.
      */
-    public abstract String getType(Uri uri);
+    public abstract @Nullable String getType(@NonNull Uri uri);
+
+    /**
+     * Implement this to support canonicalization of URIs that refer to your
+     * content provider.  A canonical URI is one that can be transported across
+     * devices, backup/restore, and other contexts, and still be able to refer
+     * to the same data item.  Typically this is implemented by adding query
+     * params to the URI allowing the content provider to verify that an incoming
+     * canonical URI references the same data as it was originally intended for and,
+     * if it doesn't, to find that data (if it exists) in the current environment.
+     *
+     * <p>For example, if the content provider holds people and a normal URI in it
+     * is created with a row index into that people database, the cananical representation
+     * may have an additional query param at the end which specifies the name of the
+     * person it is intended for.  Later calls into the provider with that URI will look
+     * up the row of that URI's base index and, if it doesn't match or its entry's
+     * name doesn't match the name in the query param, perform a query on its database
+     * to find the correct row to operate on.</p>
+     *
+     * <p>If you implement support for canonical URIs, <b>all</b> incoming calls with
+     * URIs (including this one) must perform this verification and recovery of any
+     * canonical URIs they receive.  In addition, you must also implement
+     * {@link #uncanonicalize} to strip the canonicalization of any of these URIs.</p>
+     *
+     * <p>The default implementation of this method returns null, indicating that
+     * canonical URIs are not supported.</p>
+     *
+     * @param url The Uri to canonicalize.
+     *
+     * @return Return the canonical representation of <var>url</var>, or null if
+     * canonicalization of that Uri is not supported.
+     */
+    public @Nullable Uri canonicalize(@NonNull Uri url) {
+        return null;
+    }
+
+    /**
+     * Remove canonicalization from canonical URIs previously returned by
+     * {@link #canonicalize}.  For example, if your implementation is to add
+     * a query param to canonicalize a URI, this method can simply trip any
+     * query params on the URI.  The default implementation always returns the
+     * same <var>url</var> that was passed in.
+     *
+     * @param url The Uri to remove any canonicalization from.
+     *
+     * @return Return the non-canonical representation of <var>url</var>, return
+     * the <var>url</var> as-is if there is nothing to do, or return null if
+     * the data identified by the canonical representation can not be found in
+     * the current environment.
+     */
+    public @Nullable Uri uncanonicalize(@NonNull Uri url) {
+        return url;
+    }
 
     /**
      * @hide
@@ -793,7 +1121,7 @@ public abstract class ContentProvider implements ComponentCallbacks2 {
      *     This must not be {@code null}.
      * @return The URI for the newly inserted item.
      */
-    public abstract Uri insert(Uri uri, ContentValues values);
+    public abstract @Nullable Uri insert(@NonNull Uri uri, @Nullable ContentValues values);
 
     /**
      * Override this to handle requests to insert a set of new rows, or the
@@ -810,7 +1138,7 @@ public abstract class ContentProvider implements ComponentCallbacks2 {
      *    This must not be {@code null}.
      * @return The number of values that were inserted.
      */
-    public int bulkInsert(Uri uri, ContentValues[] values) {
+    public int bulkInsert(@NonNull Uri uri, @NonNull ContentValues[] values) {
         int numValues = values.length;
         for (int i = 0; i < numValues; i++) {
             insert(uri, values[i]);
@@ -822,7 +1150,7 @@ public abstract class ContentProvider implements ComponentCallbacks2 {
      * Implement this to handle requests to delete one or more rows.
      * The implementation should apply the selection clause when performing
      * deletion, allowing the operation to affect multiple rows in a directory.
-     * As a courtesy, call {@link ContentResolver#notifyChange(android.net.Uri ,android.database.ContentObserver) notifyDelete()}
+     * As a courtesy, call {@link ContentResolver#notifyChange(android.net.Uri ,android.database.ContentObserver) notifyChange()}
      * after deleting.
      * This method can be called from multiple threads, as described in
      * <a href="{@docRoot}guide/topics/fundamentals/processes-and-threads.html#Threads">Processes
@@ -838,7 +1166,8 @@ public abstract class ContentProvider implements ComponentCallbacks2 {
      * @return The number of rows affected.
      * @throws SQLException
      */
-    public abstract int delete(Uri uri, String selection, String[] selectionArgs);
+    public abstract int delete(@NonNull Uri uri, @Nullable String selection,
+            @Nullable String[] selectionArgs);
 
     /**
      * Implement this to handle requests to update one or more rows.
@@ -857,8 +1186,8 @@ public abstract class ContentProvider implements ComponentCallbacks2 {
      * @param selection An optional filter to match rows to update.
      * @return the number of rows affected.
      */
-    public abstract int update(Uri uri, ContentValues values, String selection,
-            String[] selectionArgs);
+    public abstract int update(@NonNull Uri uri, @Nullable ContentValues values,
+            @Nullable String selection, @Nullable String[] selectionArgs);
 
     /**
      * Override this to handle requests to open a file blob.
@@ -874,6 +1203,18 @@ public abstract class ContentProvider implements ComponentCallbacks2 {
      * <p>The returned ParcelFileDescriptor is owned by the caller, so it is
      * their responsibility to close it when done.  That is, the implementation
      * of this method should create a new ParcelFileDescriptor for each call.
+     * <p>
+     * If opened with the exclusive "r" or "w" modes, the returned
+     * ParcelFileDescriptor can be a pipe or socket pair to enable streaming
+     * of data. Opening with the "rw" or "rwt" modes implies a file on disk that
+     * supports seeking.
+     * <p>
+     * If you need to detect when the returned ParcelFileDescriptor has been
+     * closed, or if the remote process has crashed or encountered some other
+     * error, you can use {@link ParcelFileDescriptor#open(File, int,
+     * android.os.Handler, android.os.ParcelFileDescriptor.OnCloseListener)},
+     * {@link ParcelFileDescriptor#createReliablePipe()}, or
+     * {@link ParcelFileDescriptor#createReliableSocketPair()}.
      *
      * <p class="note">For use in Intents, you will want to implement {@link #getType}
      * to return the appropriate MIME type for the data returned here with
@@ -903,11 +1244,81 @@ public abstract class ContentProvider implements ComponentCallbacks2 {
      * @see #openAssetFile(Uri, String)
      * @see #openFileHelper(Uri, String)
      * @see #getType(android.net.Uri)
+     * @see ParcelFileDescriptor#parseMode(String)
      */
-    public ParcelFileDescriptor openFile(Uri uri, String mode)
+    public @Nullable ParcelFileDescriptor openFile(@NonNull Uri uri, @NonNull String mode)
             throws FileNotFoundException {
         throw new FileNotFoundException("No files supported by provider at "
                 + uri);
+    }
+
+    /**
+     * Override this to handle requests to open a file blob.
+     * The default implementation always throws {@link FileNotFoundException}.
+     * This method can be called from multiple threads, as described in
+     * <a href="{@docRoot}guide/topics/fundamentals/processes-and-threads.html#Threads">Processes
+     * and Threads</a>.
+     *
+     * <p>This method returns a ParcelFileDescriptor, which is returned directly
+     * to the caller.  This way large data (such as images and documents) can be
+     * returned without copying the content.
+     *
+     * <p>The returned ParcelFileDescriptor is owned by the caller, so it is
+     * their responsibility to close it when done.  That is, the implementation
+     * of this method should create a new ParcelFileDescriptor for each call.
+     * <p>
+     * If opened with the exclusive "r" or "w" modes, the returned
+     * ParcelFileDescriptor can be a pipe or socket pair to enable streaming
+     * of data. Opening with the "rw" or "rwt" modes implies a file on disk that
+     * supports seeking.
+     * <p>
+     * If you need to detect when the returned ParcelFileDescriptor has been
+     * closed, or if the remote process has crashed or encountered some other
+     * error, you can use {@link ParcelFileDescriptor#open(File, int,
+     * android.os.Handler, android.os.ParcelFileDescriptor.OnCloseListener)},
+     * {@link ParcelFileDescriptor#createReliablePipe()}, or
+     * {@link ParcelFileDescriptor#createReliableSocketPair()}.
+     *
+     * <p class="note">For use in Intents, you will want to implement {@link #getType}
+     * to return the appropriate MIME type for the data returned here with
+     * the same URI.  This will allow intent resolution to automatically determine the data MIME
+     * type and select the appropriate matching targets as part of its operation.</p>
+     *
+     * <p class="note">For better interoperability with other applications, it is recommended
+     * that for any URIs that can be opened, you also support queries on them
+     * containing at least the columns specified by {@link android.provider.OpenableColumns}.
+     * You may also want to support other common columns if you have additional meta-data
+     * to supply, such as {@link android.provider.MediaStore.MediaColumns#DATE_ADDED}
+     * in {@link android.provider.MediaStore.MediaColumns}.</p>
+     *
+     * @param uri The URI whose file is to be opened.
+     * @param mode Access mode for the file. May be "r" for read-only access,
+     *            "w" for write-only access, "rw" for read and write access, or
+     *            "rwt" for read and write access that truncates any existing
+     *            file.
+     * @param signal A signal to cancel the operation in progress, or
+     *            {@code null} if none. For example, if you are downloading a
+     *            file from the network to service a "rw" mode request, you
+     *            should periodically call
+     *            {@link CancellationSignal#throwIfCanceled()} to check whether
+     *            the client has canceled the request and abort the download.
+     *
+     * @return Returns a new ParcelFileDescriptor which you can use to access
+     * the file.
+     *
+     * @throws FileNotFoundException Throws FileNotFoundException if there is
+     * no file associated with the given URI or the mode is invalid.
+     * @throws SecurityException Throws SecurityException if the caller does
+     * not have permission to access the file.
+     *
+     * @see #openAssetFile(Uri, String)
+     * @see #openFileHelper(Uri, String)
+     * @see #getType(android.net.Uri)
+     * @see ParcelFileDescriptor#parseMode(String)
+     */
+    public @Nullable ParcelFileDescriptor openFile(@NonNull Uri uri, @NonNull String mode,
+            @Nullable CancellationSignal signal) throws FileNotFoundException {
+        return openFile(uri, mode);
     }
 
     /**
@@ -924,11 +1335,14 @@ public abstract class ContentProvider implements ComponentCallbacks2 {
      * {@link ContentResolver#openInputStream ContentResolver.openInputStream}
      * or {@link ContentResolver#openOutputStream ContentResolver.openOutputStream}
      * methods.
+     * <p>
+     * The returned AssetFileDescriptor can be a pipe or socket pair to enable
+     * streaming of data.
      *
      * <p class="note">If you are implementing this to return a full file, you
      * should create the AssetFileDescriptor with
      * {@link AssetFileDescriptor#UNKNOWN_LENGTH} to be compatible with
-     * applications that can not handle sub-sections of files.</p>
+     * applications that cannot handle sub-sections of files.</p>
      *
      * <p class="note">For use in Intents, you will want to implement {@link #getType}
      * to return the appropriate MIME type for the data returned here with
@@ -958,10 +1372,72 @@ public abstract class ContentProvider implements ComponentCallbacks2 {
      * @see #openFileHelper(Uri, String)
      * @see #getType(android.net.Uri)
      */
-    public AssetFileDescriptor openAssetFile(Uri uri, String mode)
+    public @Nullable AssetFileDescriptor openAssetFile(@NonNull Uri uri, @NonNull String mode)
             throws FileNotFoundException {
         ParcelFileDescriptor fd = openFile(uri, mode);
         return fd != null ? new AssetFileDescriptor(fd, 0, -1) : null;
+    }
+
+    /**
+     * This is like {@link #openFile}, but can be implemented by providers
+     * that need to be able to return sub-sections of files, often assets
+     * inside of their .apk.
+     * This method can be called from multiple threads, as described in
+     * <a href="{@docRoot}guide/topics/fundamentals/processes-and-threads.html#Threads">Processes
+     * and Threads</a>.
+     *
+     * <p>If you implement this, your clients must be able to deal with such
+     * file slices, either directly with
+     * {@link ContentResolver#openAssetFileDescriptor}, or by using the higher-level
+     * {@link ContentResolver#openInputStream ContentResolver.openInputStream}
+     * or {@link ContentResolver#openOutputStream ContentResolver.openOutputStream}
+     * methods.
+     * <p>
+     * The returned AssetFileDescriptor can be a pipe or socket pair to enable
+     * streaming of data.
+     *
+     * <p class="note">If you are implementing this to return a full file, you
+     * should create the AssetFileDescriptor with
+     * {@link AssetFileDescriptor#UNKNOWN_LENGTH} to be compatible with
+     * applications that cannot handle sub-sections of files.</p>
+     *
+     * <p class="note">For use in Intents, you will want to implement {@link #getType}
+     * to return the appropriate MIME type for the data returned here with
+     * the same URI.  This will allow intent resolution to automatically determine the data MIME
+     * type and select the appropriate matching targets as part of its operation.</p>
+     *
+     * <p class="note">For better interoperability with other applications, it is recommended
+     * that for any URIs that can be opened, you also support queries on them
+     * containing at least the columns specified by {@link android.provider.OpenableColumns}.</p>
+     *
+     * @param uri The URI whose file is to be opened.
+     * @param mode Access mode for the file.  May be "r" for read-only access,
+     * "w" for write-only access (erasing whatever data is currently in
+     * the file), "wa" for write-only access to append to any existing data,
+     * "rw" for read and write access on any existing data, and "rwt" for read
+     * and write access that truncates any existing file.
+     * @param signal A signal to cancel the operation in progress, or
+     *            {@code null} if none. For example, if you are downloading a
+     *            file from the network to service a "rw" mode request, you
+     *            should periodically call
+     *            {@link CancellationSignal#throwIfCanceled()} to check whether
+     *            the client has canceled the request and abort the download.
+     *
+     * @return Returns a new AssetFileDescriptor which you can use to access
+     * the file.
+     *
+     * @throws FileNotFoundException Throws FileNotFoundException if there is
+     * no file associated with the given URI or the mode is invalid.
+     * @throws SecurityException Throws SecurityException if the caller does
+     * not have permission to access the file.
+     *
+     * @see #openFile(Uri, String)
+     * @see #openFileHelper(Uri, String)
+     * @see #getType(android.net.Uri)
+     */
+    public @Nullable AssetFileDescriptor openAssetFile(@NonNull Uri uri, @NonNull String mode,
+            @Nullable CancellationSignal signal) throws FileNotFoundException {
+        return openAssetFile(uri, mode);
     }
 
     /**
@@ -978,8 +1454,8 @@ public abstract class ContentProvider implements ComponentCallbacks2 {
      * @return Returns a new ParcelFileDescriptor that can be used by the
      * client to access the file.
      */
-    protected final ParcelFileDescriptor openFileHelper(Uri uri,
-            String mode) throws FileNotFoundException {
+    protected final @NonNull ParcelFileDescriptor openFileHelper(@NonNull Uri uri,
+            @NonNull String mode) throws FileNotFoundException {
         Cursor c = query(uri, new String[]{"_data"}, null, null, null);
         int count = (c != null) ? c.getCount() : 0;
         if (count != 1) {
@@ -1002,7 +1478,7 @@ public abstract class ContentProvider implements ComponentCallbacks2 {
             throw new FileNotFoundException("Column _data not found.");
         }
 
-        int modeBits = ContentResolver.modeToMode(uri, mode);
+        int modeBits = ParcelFileDescriptor.parseMode(mode);
         return ParcelFileDescriptor.open(new File(path), modeBits);
     }
 
@@ -1016,7 +1492,7 @@ public abstract class ContentProvider implements ComponentCallbacks2 {
      *
      * @param uri The data in the content provider being queried.
      * @param mimeTypeFilter The type of data the client desires.  May be
-     * a pattern, such as *\/* to retrieve all possible data types.
+     * a pattern, such as *&#47;* to retrieve all possible data types.
      * @return Returns {@code null} if there are no possible data streams for the
      * given mimeTypeFilter.  Otherwise returns an array of all available
      * concrete MIME types.
@@ -1025,7 +1501,7 @@ public abstract class ContentProvider implements ComponentCallbacks2 {
      * @see #openTypedAssetFile(Uri, String, Bundle)
      * @see ClipDescription#compareMimeTypes(String, String)
      */
-    public String[] getStreamTypes(Uri uri, String mimeTypeFilter) {
+    public @Nullable String[] getStreamTypes(@NonNull Uri uri, @NonNull String mimeTypeFilter) {
         return null;
     }
 
@@ -1041,6 +1517,9 @@ public abstract class ContentProvider implements ComponentCallbacks2 {
      *
      * <p>See {@link ClipData} for examples of the use and implementation
      * of this method.
+     * <p>
+     * The returned AssetFileDescriptor can be a pipe or socket pair to enable
+     * streaming of data.
      *
      * <p class="note">For better interoperability with other applications, it is recommended
      * that for any URIs that can be opened, you also support queries on them
@@ -1051,7 +1530,7 @@ public abstract class ContentProvider implements ComponentCallbacks2 {
      *
      * @param uri The data in the content provider being queried.
      * @param mimeTypeFilter The type of data the client desires.  May be
-     * a pattern, such as *\/*, if the caller does not have specific type
+     * a pattern, such as *&#47;*, if the caller does not have specific type
      * requirements; in this case the content provider will pick its best
      * type matching the pattern.
      * @param opts Additional options from the client.  The definitions of
@@ -1071,8 +1550,8 @@ public abstract class ContentProvider implements ComponentCallbacks2 {
      * @see #openAssetFile(Uri, String)
      * @see ClipDescription#compareMimeTypes(String, String)
      */
-    public AssetFileDescriptor openTypedAssetFile(Uri uri, String mimeTypeFilter, Bundle opts)
-            throws FileNotFoundException {
+    public @Nullable AssetFileDescriptor openTypedAssetFile(@NonNull Uri uri,
+            @NonNull String mimeTypeFilter, @Nullable Bundle opts) throws FileNotFoundException {
         if ("*/*".equals(mimeTypeFilter)) {
             // If they can take anything, the untyped open call is good enough.
             return openAssetFile(uri, "r");
@@ -1084,6 +1563,64 @@ public abstract class ContentProvider implements ComponentCallbacks2 {
             return openAssetFile(uri, "r");
         }
         throw new FileNotFoundException("Can't open " + uri + " as type " + mimeTypeFilter);
+    }
+
+
+    /**
+     * Called by a client to open a read-only stream containing data of a
+     * particular MIME type.  This is like {@link #openAssetFile(Uri, String)},
+     * except the file can only be read-only and the content provider may
+     * perform data conversions to generate data of the desired type.
+     *
+     * <p>The default implementation compares the given mimeType against the
+     * result of {@link #getType(Uri)} and, if they match, simply calls
+     * {@link #openAssetFile(Uri, String)}.
+     *
+     * <p>See {@link ClipData} for examples of the use and implementation
+     * of this method.
+     * <p>
+     * The returned AssetFileDescriptor can be a pipe or socket pair to enable
+     * streaming of data.
+     *
+     * <p class="note">For better interoperability with other applications, it is recommended
+     * that for any URIs that can be opened, you also support queries on them
+     * containing at least the columns specified by {@link android.provider.OpenableColumns}.
+     * You may also want to support other common columns if you have additional meta-data
+     * to supply, such as {@link android.provider.MediaStore.MediaColumns#DATE_ADDED}
+     * in {@link android.provider.MediaStore.MediaColumns}.</p>
+     *
+     * @param uri The data in the content provider being queried.
+     * @param mimeTypeFilter The type of data the client desires.  May be
+     * a pattern, such as *&#47;*, if the caller does not have specific type
+     * requirements; in this case the content provider will pick its best
+     * type matching the pattern.
+     * @param opts Additional options from the client.  The definitions of
+     * these are specific to the content provider being called.
+     * @param signal A signal to cancel the operation in progress, or
+     *            {@code null} if none. For example, if you are downloading a
+     *            file from the network to service a "rw" mode request, you
+     *            should periodically call
+     *            {@link CancellationSignal#throwIfCanceled()} to check whether
+     *            the client has canceled the request and abort the download.
+     *
+     * @return Returns a new AssetFileDescriptor from which the client can
+     * read data of the desired type.
+     *
+     * @throws FileNotFoundException Throws FileNotFoundException if there is
+     * no file associated with the given URI or the mode is invalid.
+     * @throws SecurityException Throws SecurityException if the caller does
+     * not have permission to access the data.
+     * @throws IllegalArgumentException Throws IllegalArgumentException if the
+     * content provider does not support the requested MIME type.
+     *
+     * @see #getStreamTypes(Uri, String)
+     * @see #openAssetFile(Uri, String)
+     * @see ClipDescription#compareMimeTypes(String, String)
+     */
+    public @Nullable AssetFileDescriptor openTypedAssetFile(@NonNull Uri uri,
+            @NonNull String mimeTypeFilter, @Nullable Bundle opts,
+            @Nullable CancellationSignal signal) throws FileNotFoundException {
+        return openTypedAssetFile(uri, mimeTypeFilter, opts);
     }
 
     /**
@@ -1104,8 +1641,8 @@ public abstract class ContentProvider implements ComponentCallbacks2 {
          * @param opts Options supplied by caller.
          * @param args Your own custom arguments.
          */
-        public void writeDataToPipe(ParcelFileDescriptor output, Uri uri, String mimeType,
-                Bundle opts, T args);
+        public void writeDataToPipe(@NonNull ParcelFileDescriptor output, @NonNull Uri uri,
+                @NonNull String mimeType, @Nullable Bundle opts, @Nullable T args);
     }
 
     /**
@@ -1125,9 +1662,9 @@ public abstract class ContentProvider implements ComponentCallbacks2 {
      * the pipe.  This should be returned to the caller for reading; the caller
      * is responsible for closing it when done.
      */
-    public <T> ParcelFileDescriptor openPipeHelper(final Uri uri, final String mimeType,
-            final Bundle opts, final T args, final PipeDataWriter<T> func)
-            throws FileNotFoundException {
+    public @NonNull <T> ParcelFileDescriptor openPipeHelper(final @NonNull Uri uri,
+            final @NonNull String mimeType, final @Nullable Bundle opts, final @Nullable T args,
+            final @NonNull PipeDataWriter<T> func) throws FileNotFoundException {
         try {
             final ParcelFileDescriptor[] fds = ParcelFileDescriptor.createPipe();
 
@@ -1190,12 +1727,6 @@ public abstract class ContentProvider implements ComponentCallbacks2 {
     }
 
     private void attachInfo(Context context, ProviderInfo info, boolean testing) {
-        /*
-         * We may be using AsyncTask from binder threads.  Make it init here
-         * so its static handler is on the main thread.
-         */
-        AsyncTask.init();
-
         mNoPerms = testing;
 
         /*
@@ -1204,12 +1735,18 @@ public abstract class ContentProvider implements ComponentCallbacks2 {
          */
         if (mContext == null) {
             mContext = context;
+            if (context != null) {
+                mTransport.mAppOpsManager = (AppOpsManager) context.getSystemService(
+                        Context.APP_OPS_SERVICE);
+            }
             mMyUid = Process.myUid();
             if (info != null) {
                 setReadPermission(info.readPermission);
                 setWritePermission(info.writePermission);
                 setPathPermissions(info.pathPermissions);
                 mExported = info.exported;
+                mSingleUser = (info.flags & ProviderInfo.FLAG_SINGLE_USER) != 0;
+                setAuthorities(info.authority);
             }
             ContentProvider.this.onCreate();
         }
@@ -1232,23 +1769,15 @@ public abstract class ContentProvider implements ComponentCallbacks2 {
      * @throws OperationApplicationException thrown if any operation fails.
      * @see ContentProviderOperation#apply
      */
-    public ContentProviderResult[] applyBatch(ArrayList<ContentProviderOperation> operations)
-            throws OperationApplicationException {
+    public @NonNull ContentProviderResult[] applyBatch(
+            @NonNull ArrayList<ContentProviderOperation> operations)
+                    throws OperationApplicationException {
         final int numOperations = operations.size();
         final ContentProviderResult[] results = new ContentProviderResult[numOperations];
         for (int i = 0; i < numOperations; i++) {
             results[i] = operations.get(i).apply(this, results, i);
         }
         return results;
-    }
-
-    /**
-     * @hide
-     * Front-end to {@link #call(String, String, android.os.Bundle)} that provides the name
-     * of the calling package.
-     */
-    public Bundle callFromPackage(String callingPackag, String method, String arg, Bundle extras) {
-        return call(method, arg, extras);
     }
 
     /**
@@ -1269,7 +1798,8 @@ public abstract class ContentProvider implements ComponentCallbacks2 {
      * @return provider-defined return value.  May be {@code null}, which is also
      *   the default for providers which don't implement any call methods.
      */
-    public Bundle call(String method, String arg, Bundle extras) {
+    public @Nullable Bundle call(@NonNull String method, @Nullable String arg,
+            @Nullable Bundle extras) {
         return null;
     }
 
@@ -1311,5 +1841,96 @@ public abstract class ContentProvider implements ComponentCallbacks2 {
      */
     public void dump(FileDescriptor fd, PrintWriter writer, String[] args) {
         writer.println("nothing to dump");
+    }
+
+    /** @hide */
+    private void validateIncomingUri(Uri uri) throws SecurityException {
+        String auth = uri.getAuthority();
+        int userId = getUserIdFromAuthority(auth, UserHandle.USER_CURRENT);
+        if (userId != UserHandle.USER_CURRENT && userId != mContext.getUserId()) {
+            throw new SecurityException("trying to query a ContentProvider in user "
+                    + mContext.getUserId() + " with a uri belonging to user " + userId);
+        }
+        if (!matchesOurAuthorities(getAuthorityWithoutUserId(auth))) {
+            String message = "The authority of the uri " + uri + " does not match the one of the "
+                    + "contentProvider: ";
+            if (mAuthority != null) {
+                message += mAuthority;
+            } else {
+                message += Arrays.toString(mAuthorities);
+            }
+            throw new SecurityException(message);
+        }
+    }
+
+    /** @hide */
+    public static int getUserIdFromAuthority(String auth, int defaultUserId) {
+        if (auth == null) return defaultUserId;
+        int end = auth.lastIndexOf('@');
+        if (end == -1) return defaultUserId;
+        String userIdString = auth.substring(0, end);
+        try {
+            return Integer.parseInt(userIdString);
+        } catch (NumberFormatException e) {
+            Log.w(TAG, "Error parsing userId.", e);
+            return UserHandle.USER_NULL;
+        }
+    }
+
+    /** @hide */
+    public static int getUserIdFromAuthority(String auth) {
+        return getUserIdFromAuthority(auth, UserHandle.USER_CURRENT);
+    }
+
+    /** @hide */
+    public static int getUserIdFromUri(Uri uri, int defaultUserId) {
+        if (uri == null) return defaultUserId;
+        return getUserIdFromAuthority(uri.getAuthority(), defaultUserId);
+    }
+
+    /** @hide */
+    public static int getUserIdFromUri(Uri uri) {
+        return getUserIdFromUri(uri, UserHandle.USER_CURRENT);
+    }
+
+    /**
+     * Removes userId part from authority string. Expects format:
+     * userId@some.authority
+     * If there is no userId in the authority, it symply returns the argument
+     * @hide
+     */
+    public static String getAuthorityWithoutUserId(String auth) {
+        if (auth == null) return null;
+        int end = auth.lastIndexOf('@');
+        return auth.substring(end+1);
+    }
+
+    /** @hide */
+    public static Uri getUriWithoutUserId(Uri uri) {
+        if (uri == null) return null;
+        Uri.Builder builder = uri.buildUpon();
+        builder.authority(getAuthorityWithoutUserId(uri.getAuthority()));
+        return builder.build();
+    }
+
+    /** @hide */
+    public static boolean uriHasUserId(Uri uri) {
+        if (uri == null) return false;
+        return !TextUtils.isEmpty(uri.getUserInfo());
+    }
+
+    /** @hide */
+    public static Uri maybeAddUserId(Uri uri, int userId) {
+        if (uri == null) return null;
+        if (userId != UserHandle.USER_CURRENT
+                && ContentResolver.SCHEME_CONTENT.equals(uri.getScheme())) {
+            if (!uriHasUserId(uri)) {
+                //We don't add the user Id if there's already one
+                Uri.Builder builder = uri.buildUpon();
+                builder.encodedAuthority("" + userId + "@" + uri.getEncodedAuthority());
+                return builder.build();
+            }
+        }
+        return uri;
     }
 }

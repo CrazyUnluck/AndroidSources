@@ -16,45 +16,32 @@
 
 package com.android.server.updates;
 
+import com.android.server.EventLogTags;
+import com.android.internal.util.HexDump;
+
 import android.content.BroadcastReceiver;
-import android.content.ContentResolver;
 import android.content.Context;
 import android.content.Intent;
-import android.provider.Settings;
-import android.os.FileUtils;
-import android.util.Base64;
+import android.net.Uri;
 import android.util.EventLog;
 import android.util.Slog;
 
-import com.android.server.EventLogTags;
-
-import java.io.ByteArrayInputStream;
 import java.io.File;
-import java.io.FileNotFoundException;
 import java.io.FileOutputStream;
-import java.io.InputStream;
 import java.io.IOException;
-import java.security.cert.Certificate;
-import java.security.cert.CertificateException;
-import java.security.cert.CertificateFactory;
-import java.security.cert.X509Certificate;
+import java.io.InputStream;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
-import java.security.Signature;
-import java.security.SignatureException;
 
 import libcore.io.IoUtils;
+import libcore.io.Streams;
 
 public class ConfigUpdateInstallReceiver extends BroadcastReceiver {
 
     private static final String TAG = "ConfigUpdateInstallReceiver";
 
-    private static final String EXTRA_CONTENT_PATH = "CONTENT_PATH";
     private static final String EXTRA_REQUIRED_HASH = "REQUIRED_HASH";
-    private static final String EXTRA_SIGNATURE = "SIGNATURE";
     private static final String EXTRA_VERSION_NUMBER = "VERSION";
-
-    private static final String UPDATE_CERTIFICATE_KEY = "config_update_certificate";
 
     protected final File updateDir;
     protected final File updateContent;
@@ -74,16 +61,12 @@ public class ConfigUpdateInstallReceiver extends BroadcastReceiver {
             @Override
             public void run() {
                 try {
-                    // get the certificate from Settings.Secure
-                    X509Certificate cert = getCert(context.getContentResolver());
                     // get the content path from the extras
-                    byte[] altContent = getAltContent(intent);
+                    byte[] altContent = getAltContent(context, intent);
                     // get the version from the extras
                     int altVersion = getVersionFromIntent(intent);
                     // get the previous value from the extras
                     String altRequiredHash = getRequiredHashFromIntent(intent);
-                    // get the signature from the extras
-                    String altSig = getSignatureFromIntent(intent);
                     // get the version currently being used
                     int currentVersion = getCurrentVersion();
                     // get the hash of the currently used value
@@ -93,10 +76,6 @@ public class ConfigUpdateInstallReceiver extends BroadcastReceiver {
                     } else if (!verifyPreviousHash(currentHash, altRequiredHash)) {
                         EventLog.writeEvent(EventLogTags.CONFIG_INSTALL_FAILED,
                                             "Current hash did not match required value");
-                    } else if (!verifySignature(altContent, altVersion, altRequiredHash, altSig,
-                               cert)) {
-                        EventLog.writeEvent(EventLogTags.CONFIG_INSTALL_FAILED,
-                                            "Signature did not verify");
                     } else {
                         // install the new content
                         Slog.i(TAG, "Found new update, installing...");
@@ -117,26 +96,12 @@ public class ConfigUpdateInstallReceiver extends BroadcastReceiver {
         }.start();
     }
 
-    private X509Certificate getCert(ContentResolver cr) {
-        // get the cert from settings
-        String cert = Settings.Secure.getString(cr, UPDATE_CERTIFICATE_KEY);
-        // convert it into a real certificate
-        try {
-            byte[] derCert = Base64.decode(cert.getBytes(), Base64.DEFAULT);
-            InputStream istream = new ByteArrayInputStream(derCert);
-            CertificateFactory cf = CertificateFactory.getInstance("X.509");
-            return (X509Certificate) cf.generateCertificate(istream);
-        } catch (CertificateException e) {
-            throw new IllegalStateException("Got malformed certificate from settings, ignoring");
-        }
-    }
-
-    private String getContentFromIntent(Intent i) {
-        String extraValue = i.getStringExtra(EXTRA_CONTENT_PATH);
-        if (extraValue == null) {
+    private Uri getContentFromIntent(Intent i) {
+        Uri data = i.getData();
+        if (data == null) {
             throw new IllegalStateException("Missing required content path, ignoring.");
         }
-        return extraValue;
+        return data;
     }
 
     private int getVersionFromIntent(Intent i) throws NumberFormatException {
@@ -155,14 +120,6 @@ public class ConfigUpdateInstallReceiver extends BroadcastReceiver {
         return extraValue.trim();
     }
 
-    private String getSignatureFromIntent(Intent i) {
-        String extraValue = i.getStringExtra(EXTRA_SIGNATURE);
-        if (extraValue == null) {
-            throw new IllegalStateException("Missing required signature, ignoring.");
-        }
-        return extraValue.trim();
-    }
-
     private int getCurrentVersion() throws NumberFormatException {
         try {
             String strVersion = IoUtils.readFileAsString(updateVersion.getCanonicalPath()).trim();
@@ -173,8 +130,14 @@ public class ConfigUpdateInstallReceiver extends BroadcastReceiver {
         }
     }
 
-    private byte[] getAltContent(Intent i) throws IOException {
-        return IoUtils.readFileAsByteArray(getContentFromIntent(i));
+    private byte[] getAltContent(Context c, Intent i) throws IOException {
+        Uri content = getContentFromIntent(i);
+        InputStream is = c.getContentResolver().openInputStream(content);
+        try {
+            return Streams.readFullyNoClose(is);
+        } finally {
+            is.close();
+        }
     }
 
     private byte[] getCurrentContent() {
@@ -193,7 +156,7 @@ public class ConfigUpdateInstallReceiver extends BroadcastReceiver {
         try {
             MessageDigest dgst = MessageDigest.getInstance("SHA512");
             byte[] fingerprint = dgst.digest(content);
-            return IntegralToString.bytesToHexString(fingerprint, false);
+            return HexDump.toHexString(fingerprint, false);
         } catch (NoSuchAlgorithmException e) {
             throw new AssertionError(e);
         }
@@ -210,16 +173,6 @@ public class ConfigUpdateInstallReceiver extends BroadcastReceiver {
         }
         // otherwise, verify that we match correctly
         return current.equals(required);
-    }
-
-    private boolean verifySignature(byte[] content, int version, String requiredPrevious,
-                                   String signature, X509Certificate cert) throws Exception {
-        Signature signer = Signature.getInstance("SHA512withRSA");
-        signer.initVerify(cert);
-        signer.update(content);
-        signer.update(Long.toString(version).getBytes());
-        signer.update(requiredPrevious.getBytes());
-        return signer.verify(Base64.decode(signature.getBytes(), Base64.DEFAULT));
     }
 
     protected void writeUpdate(File dir, File file, byte[] content) throws IOException {

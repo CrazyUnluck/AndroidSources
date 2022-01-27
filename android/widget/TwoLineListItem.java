@@ -20,8 +20,6 @@ import android.annotation.Widget;
 import android.content.Context;
 import android.content.res.TypedArray;
 import android.util.AttributeSet;
-import android.view.accessibility.AccessibilityEvent;
-import android.view.accessibility.AccessibilityNodeInfo;
 import android.widget.RelativeLayout;
 
 /**
@@ -56,11 +54,15 @@ public class TwoLineListItem extends RelativeLayout {
         this(context, attrs, 0); 
     }
 
-    public TwoLineListItem(Context context, AttributeSet attrs, int defStyle) {
-        super(context, attrs, defStyle);
+    public TwoLineListItem(Context context, AttributeSet attrs, int defStyleAttr) {
+        this(context, attrs, defStyleAttr, 0);
+    }
 
-        TypedArray a = context.obtainStyledAttributes(attrs,
-                com.android.internal.R.styleable.TwoLineListItem, defStyle, 0);
+    public TwoLineListItem(Context context, AttributeSet attrs, int defStyleAttr, int defStyleRes) {
+        super(context, attrs, defStyleAttr, defStyleRes);
+
+        final TypedArray a = context.obtainStyledAttributes(
+                attrs, com.android.internal.R.styleable.TwoLineListItem, defStyleAttr, defStyleRes);
 
         a.recycle();
     }
@@ -90,14 +92,7 @@ public class TwoLineListItem extends RelativeLayout {
     }
 
     @Override
-    public void onInitializeAccessibilityEvent(AccessibilityEvent event) {
-        super.onInitializeAccessibilityEvent(event);
-        event.setClassName(TwoLineListItem.class.getName());
-    }
-
-    @Override
-    public void onInitializeAccessibilityNodeInfo(AccessibilityNodeInfo info) {
-        super.onInitializeAccessibilityNodeInfo(info);
-        info.setClassName(TwoLineListItem.class.getName());
+    public CharSequence getAccessibilityClassName() {
+        return TwoLineListItem.class.getName();
     }
 }

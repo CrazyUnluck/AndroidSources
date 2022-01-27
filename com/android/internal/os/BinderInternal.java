@@ -16,18 +16,14 @@
 
 package com.android.internal.os;
 
-import android.os.Binder;
 import android.os.IBinder;
 import android.os.SystemClock;
 import android.util.EventLog;
-import android.util.Log;
 
-import java.io.FileDescriptor;
-import java.io.FileOutputStream;
-import java.io.IOException;
-import java.io.PrintWriter;
+import dalvik.system.VMRuntime;
+
 import java.lang.ref.WeakReference;
-import java.lang.reflect.Modifier;
+import java.util.ArrayList;
 
 /**
  * Private and debugging Binder APIs.
@@ -35,19 +31,35 @@ import java.lang.reflect.Modifier;
  * @see IBinder
  */
 public class BinderInternal {
-    static WeakReference<GcWatcher> mGcWatcher
+    static WeakReference<GcWatcher> sGcWatcher
             = new WeakReference<GcWatcher>(new GcWatcher());
-    static long mLastGcTime;
-    
+    static ArrayList<Runnable> sGcWatchers = new ArrayList<>();
+    static Runnable[] sTmpWatchers = new Runnable[1];
+    static long sLastGcTime;
+
     static final class GcWatcher {
         @Override
         protected void finalize() throws Throwable {
             handleGc();
-            mLastGcTime = SystemClock.uptimeMillis();
-            mGcWatcher = new WeakReference<GcWatcher>(new GcWatcher());
+            sLastGcTime = SystemClock.uptimeMillis();
+            synchronized (sGcWatchers) {
+                sTmpWatchers = sGcWatchers.toArray(sTmpWatchers);
+            }
+            for (int i=0; i<sTmpWatchers.length; i++) {
+                if (sTmpWatchers[i] != null) {
+                    sTmpWatchers[i].run();
+                }
+            }
+            sGcWatcher = new WeakReference<GcWatcher>(new GcWatcher());
         }
     }
-    
+
+    public static void addGcWatcher(Runnable watcher) {
+        synchronized (sGcWatchers) {
+            sGcWatchers.add(watcher);
+        }
+    }
+
     /**
      * Add the calling thread to the IPC thread pool.  This function does
      * not return until the current process is exiting.
@@ -65,7 +77,7 @@ public class BinderInternal {
      * SystemClock.uptimeMillis()} of the last garbage collection.
      */
     public static long getLastGcTime() {
-        return mLastGcTime;
+        return sLastGcTime;
     }
 
     /**
@@ -81,12 +93,14 @@ public class BinderInternal {
      * @hide
      */
     public static final native void disableBackgroundScheduling(boolean disable);
+
+    public static final native void setMaxThreads(int numThreads);
     
     static native final void handleGc();
     
     public static void forceGc(String reason) {
         EventLog.writeEvent(2741, reason);
-        Runtime.getRuntime().gc();
+        VMRuntime.getRuntime().requestConcurrentGC();
     }
     
     static void forceBinderGc() {

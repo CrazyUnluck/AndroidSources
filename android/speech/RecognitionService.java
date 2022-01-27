@@ -21,12 +21,15 @@ import android.annotation.SdkConstant.SdkConstantType;
 import android.app.Service;
 import android.content.Intent;
 import android.content.pm.PackageManager;
+import android.os.Binder;
 import android.os.Bundle;
 import android.os.Handler;
 import android.os.IBinder;
 import android.os.Message;
 import android.os.RemoteException;
 import android.util.Log;
+
+import java.lang.ref.WeakReference;
 
 /**
  * This class provides a base class for recognition service implementations. This class should be
@@ -76,7 +79,7 @@ public abstract class RecognitionService extends Service {
             switch (msg.what) {
                 case MSG_START_LISTENING:
                     StartListeningArgs args = (StartListeningArgs) msg.obj;
-                    dispatchStartListening(args.mIntent, args.mListener);
+                    dispatchStartListening(args.mIntent, args.mListener, args.mCallingUid);
                     break;
                 case MSG_STOP_LISTENING:
                     dispatchStopListening((IRecognitionListener) msg.obj);
@@ -91,10 +94,22 @@ public abstract class RecognitionService extends Service {
         }
     };
 
-    private void dispatchStartListening(Intent intent, IRecognitionListener listener) {
+    private void dispatchStartListening(Intent intent, final IRecognitionListener listener,
+            int callingUid) {
         if (mCurrentCallback == null) {
             if (DBG) Log.d(TAG, "created new mCurrentCallback, listener = " + listener.asBinder());
-            mCurrentCallback = new Callback(listener);
+            try {
+                listener.asBinder().linkToDeath(new IBinder.DeathRecipient() {
+                    @Override
+                    public void binderDied() {
+                        mHandler.sendMessage(mHandler.obtainMessage(MSG_CANCEL, listener));
+                    }
+                }, 0);
+            } catch (RemoteException re) {
+                Log.e(TAG, "dead listener on startListening");
+                return;
+            }
+            mCurrentCallback = new Callback(listener, callingUid);
             RecognitionService.this.onStartListening(intent, mCurrentCallback);
         } else {
             try {
@@ -142,10 +157,12 @@ public abstract class RecognitionService extends Service {
         public final Intent mIntent;
 
         public final IRecognitionListener mListener;
+        public final int mCallingUid;
 
-        public StartListeningArgs(Intent intent, IRecognitionListener listener) {
+        public StartListeningArgs(Intent intent, IRecognitionListener listener, int callingUid) {
             this.mIntent = intent;
             this.mListener = listener;
+            this.mCallingUid = callingUid;
         }
     }
 
@@ -214,9 +231,11 @@ public abstract class RecognitionService extends Service {
      */
     public class Callback {
         private final IRecognitionListener mListener;
+        private final int mCallingUid;
 
-        private Callback(IRecognitionListener listener) {
+        private Callback(IRecognitionListener listener, int callingUid) {
             mListener = listener;
+            mCallingUid = callingUid;
         }
 
         /**
@@ -284,7 +303,7 @@ public abstract class RecognitionService extends Service {
          * The service should call this method when recognition results are ready.
          * 
          * @param results the recognition results. To retrieve the results in {@code
-         *        ArrayList&lt;String&gt;} format use {@link Bundle#getStringArrayList(String)} with
+         *        ArrayList<String>} format use {@link Bundle#getStringArrayList(String)} with
          *        {@link SpeechRecognizer#RESULTS_RECOGNITION} as a parameter
          */
         public void results(Bundle results) throws RemoteException {
@@ -301,43 +320,57 @@ public abstract class RecognitionService extends Service {
         public void rmsChanged(float rmsdB) throws RemoteException {
             mListener.onRmsChanged(rmsdB);
         }
+
+        /**
+         * Return the Linux uid assigned to the process that sent you the current transaction that
+         * is being processed. This is obtained from {@link Binder#getCallingUid()}.
+         */
+        public int getCallingUid() {
+            return mCallingUid;
+        }
     }
 
     /** Binder of the recognition service */
-    private static class RecognitionServiceBinder extends IRecognitionService.Stub {
-        private RecognitionService mInternalService;
+    private static final class RecognitionServiceBinder extends IRecognitionService.Stub {
+        private final WeakReference<RecognitionService> mServiceRef;
 
         public RecognitionServiceBinder(RecognitionService service) {
-            mInternalService = service;
+            mServiceRef = new WeakReference<RecognitionService>(service);
         }
 
+        @Override
         public void startListening(Intent recognizerIntent, IRecognitionListener listener) {
             if (DBG) Log.d(TAG, "startListening called by:" + listener.asBinder());
-            if (mInternalService != null && mInternalService.checkPermissions(listener)) {
-                mInternalService.mHandler.sendMessage(Message.obtain(mInternalService.mHandler,
-                        MSG_START_LISTENING, mInternalService.new StartListeningArgs(
-                                recognizerIntent, listener)));
+            final RecognitionService service = mServiceRef.get();
+            if (service != null && service.checkPermissions(listener)) {
+                service.mHandler.sendMessage(Message.obtain(service.mHandler,
+                        MSG_START_LISTENING, service.new StartListeningArgs(
+                                recognizerIntent, listener, Binder.getCallingUid())));
             }
         }
 
+        @Override
         public void stopListening(IRecognitionListener listener) {
             if (DBG) Log.d(TAG, "stopListening called by:" + listener.asBinder());
-            if (mInternalService != null && mInternalService.checkPermissions(listener)) {
-                mInternalService.mHandler.sendMessage(Message.obtain(mInternalService.mHandler,
+            final RecognitionService service = mServiceRef.get();
+            if (service != null && service.checkPermissions(listener)) {
+                service.mHandler.sendMessage(Message.obtain(service.mHandler,
                         MSG_STOP_LISTENING, listener));
             }
         }
 
+        @Override
         public void cancel(IRecognitionListener listener) {
             if (DBG) Log.d(TAG, "cancel called by:" + listener.asBinder());
-            if (mInternalService != null && mInternalService.checkPermissions(listener)) {
-                mInternalService.mHandler.sendMessage(Message.obtain(mInternalService.mHandler,
+            final RecognitionService service = mServiceRef.get();
+            if (service != null && service.checkPermissions(listener)) {
+                service.mHandler.sendMessage(Message.obtain(service.mHandler,
                         MSG_CANCEL, listener));
             }
         }
 
         public void clearReference() {
-            mInternalService = null;
+            mServiceRef.clear();
         }
     }
 }

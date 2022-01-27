@@ -23,24 +23,32 @@ import android.graphics.ImageFormat;
 import android.util.Log;
 
 /**
- * <p>Type is an allocation template. It consists of an Element and one or more
- * dimensions. It describes only the layout of memory but does not allocate any
- * storage for the data that is described.</p>
+ * <p>A Type describes the {@link android.support.v8.renderscript.Element} and
+ * dimensions used for an {@link android.support.v8.renderscript.Allocation} or
+ * a parallel operation. Types are created through
+ * {@link android.support.v8.renderscript.Type.Builder}.</p>
  *
- * <p>A Type consists of several dimensions. Those are X, Y, Z, LOD (level of
- * detail), Faces (faces of a cube map).  The X,Y,Z dimensions can be assigned
- * any positive integral value within the constraints of available memory.  A
- * single dimension allocation would have an X dimension of greater than zero
- * while the Y and Z dimensions would be zero to indicate not present.  In this
- * regard an allocation of x=10, y=1 would be considered 2 dimensionsal while
- * x=10, y=0 would be considered 1 dimensional.</p>
+ * <p>A Type always includes an {@link android.support.v8.renderscript.Element}
+ * and an X dimension. A Type may be multidimensional, up to three dimensions.
+ * A nonzero value in the Y or Z dimensions indicates that the dimension is
+ * present. Note that a Type with only a given X dimension and a Type with the
+ * same X dimension but Y = 1 are not equivalent.</p>
  *
- * <p>The LOD and Faces dimensions are booleans to indicate present or not present.</p>
+ * <p>A Type also supports inclusion of level of detail (LOD) or cube map
+ * faces. LOD and cube map faces are booleans to indicate present or not
+ * present. </p>
+ *
+ * <p>A Type also supports YUV format information to support an {@link
+ * android.support.v8.renderscript.Allocation} in a YUV format. The YUV formats
+ * supported are {@link android.graphics.ImageFormat#YV12} and {@link
+ * android.graphics.ImageFormat#NV21}.</p>
  *
  * <div class="special reference">
  * <h3>Developer Guides</h3>
- * <p>For more information about creating an application that uses Renderscript, read the
- * <a href="{@docRoot}guide/topics/graphics/renderscript.html">Renderscript</a> developer guide.</p>
+ * <p>For more information about creating an application that uses RenderScript,
+ * read the
+ * <a href="{@docRoot}guide/topics/renderscript/index.html">RenderScript</a>
+ * developer guide.</p>
  * </div>
  **/
 public class Type extends BaseObj {
@@ -104,6 +112,15 @@ public class Type extends BaseObj {
     }
 
     /**
+     * Get the YUV format
+     *
+     * @return int
+     */
+    public int getYuv() {
+        return mDimYuv;
+    }
+
+    /**
      * Return if the Type has a mipmap chain.
      *
      * @return boolean
@@ -119,13 +136,6 @@ public class Type extends BaseObj {
      */
     public boolean hasFaces() {
         return mDimFaces;
-    }
-
-    /**
-     * @hide
-     */
-    public int getYuv() {
-        return mDimYuv;
     }
 
     /**
@@ -175,8 +185,91 @@ public class Type extends BaseObj {
     }
 
 
-    Type(int id, RenderScript rs) {
+    Type(long id, RenderScript rs) {
         super(id, rs);
+    }
+
+    /*
+     * Get an identical dummy Type for Compat Context
+     *
+     */
+    public long getDummyType(RenderScript mRS, long eid) {
+        return mRS.nIncTypeCreate(eid, mDimX, mDimY, mDimZ, mDimMipmaps, mDimFaces, mDimYuv);
+    }
+
+    /**
+     * Utility function for creating basic 1D types. The type is
+     * created without mipmaps enabled.
+     *
+     * @param rs The RenderScript context
+     * @param e The Element for the Type
+     * @param dimX The X dimension, must be > 0
+     *
+     * @return Type
+     */
+    static public Type createX(RenderScript rs, Element e, int dimX) {
+        if (dimX < 1) {
+            throw new RSInvalidStateException("Dimension must be >= 1.");
+        }
+
+        long id = rs.nTypeCreate(e.getID(rs), dimX, 0, 0, false, false, 0);
+        Type t = new Type(id, rs);
+        t.mElement = e;
+        t.mDimX = dimX;
+        t.calcElementCount();
+        return t;
+    }
+
+    /**
+     * Utility function for creating basic 2D types. The type is
+     * created without mipmaps or cubemaps.
+     *
+     * @param rs The RenderScript context
+     * @param e The Element for the Type
+     * @param dimX The X dimension, must be > 0
+     * @param dimY The Y dimension, must be > 0
+     *
+     * @return Type
+     */
+    static public Type createXY(RenderScript rs, Element e, int dimX, int dimY) {
+        if ((dimX < 1) || (dimY < 1)) {
+            throw new RSInvalidStateException("Dimension must be >= 1.");
+        }
+
+        long id = rs.nTypeCreate(e.getID(rs), dimX, dimY, 0, false, false, 0);
+        Type t = new Type(id, rs);
+        t.mElement = e;
+        t.mDimX = dimX;
+        t.mDimY = dimY;
+        t.calcElementCount();
+        return t;
+    }
+
+    /**
+     * Utility function for creating basic 3D types. The type is
+     * created without mipmaps.
+     *
+     * @param rs The RenderScript context
+     * @param e The Element for the Type
+     * @param dimX The X dimension, must be > 0
+     * @param dimY The Y dimension, must be > 0
+     * @param dimZ The Z dimension, must be > 0
+     *
+     * @return Type
+     */
+    static public Type createXYZ(RenderScript rs, Element e, int dimX, int dimY, int dimZ) {
+        if ((dimX < 1) || (dimY < 1) || (dimZ < 1)) {
+            throw new RSInvalidStateException("Dimension must be >= 1.");
+        }
+
+        long id = rs.nTypeCreate(e.getID(rs), dimX, dimY, dimZ, false, false, 0);
+        Type t = new Type(id, rs);
+        t.mElement = e;
+        t.mDimX = dimX;
+        t.mDimY = dimY;
+        t.mDimZ = dimZ;
+        t.calcElementCount();
+        return t;
     }
 
     /**
@@ -247,9 +340,9 @@ public class Type extends BaseObj {
         }
 
         /**
-         * @hide
+         * Set the YUV layout for a Type.
          *
-         * only NV21, YV12.  Enums from ImageFormat
+         * @param yuvFormat {@link android.graphics.ImageFormat#YV12} or {@link android.graphics.ImageFormat#NV21}
          */
         public Builder setYuvFormat(int yuvFormat) {
             switch (yuvFormat) {
@@ -267,7 +360,7 @@ public class Type extends BaseObj {
 
 
         /**
-         * Validate structure and create a new type.
+         * Validate structure and create a new Type.
          *
          * @return Type
          */
@@ -298,15 +391,10 @@ public class Type extends BaseObj {
             }
 
             Type t;
-            if (mRS.isNative) {
-                RenderScriptThunker rst = (RenderScriptThunker)mRS;
-                t = TypeThunker.create(rst, mElement, mDimX, mDimY, mDimZ,
-                                       mDimMipmaps, mDimFaces, mYuv);
-            } else {
-                int id = mRS.nTypeCreate(mElement.getID(mRS),
-                                         mDimX, mDimY, mDimZ, mDimMipmaps, mDimFaces, mYuv);
-                t = new Type(id, mRS);
-            }
+            long id = mRS.nTypeCreate(mElement.getID(mRS),
+                                     mDimX, mDimY, mDimZ, mDimMipmaps, mDimFaces, mYuv);
+            t = new Type(id, mRS);
+
             t.mElement = mElement;
             t.mDimX = mDimX;
             t.mDimY = mDimY;

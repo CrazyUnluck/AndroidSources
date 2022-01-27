@@ -16,11 +16,10 @@
 
 package android.mtp;
 
-import android.content.IContentProvider;
+import android.content.ContentProviderClient;
 import android.database.Cursor;
 import android.net.Uri;
 import android.os.RemoteException;
-import android.provider.MediaStore;
 import android.provider.MediaStore.Audio;
 import android.provider.MediaStore.Files;
 import android.provider.MediaStore.Images;
@@ -49,8 +48,7 @@ class MtpPropertyGroup {
     }
 
     private final MtpDatabase mDatabase;
-    private final IContentProvider mProvider;
-    private final String mPackageName;
+    private final ContentProviderClient mProvider;
     private final String mVolumeName;
     private final Uri mUri;
 
@@ -66,13 +64,12 @@ class MtpPropertyGroup {
     private static final String PARENT_WHERE = Files.FileColumns.PARENT + "=?";
     private static final String PARENT_FORMAT_WHERE = PARENT_WHERE + " AND " + FORMAT_WHERE;
     // constructs a property group for a list of properties
-    public MtpPropertyGroup(MtpDatabase database, IContentProvider provider, String packageName,
-            String volume, int[] properties) {
+    public MtpPropertyGroup(MtpDatabase database, ContentProviderClient provider, String volumeName,
+            int[] properties) {
         mDatabase = database;
         mProvider = provider;
-        mPackageName = packageName;
-        mVolumeName = volume;
-        mUri = Files.getMtpObjectsUri(volume);
+        mVolumeName = volumeName;
+        mUri = Files.getMtpObjectsUri(volumeName);
 
         int count = properties.length;
         ArrayList<String> columns = new ArrayList<String>(count);
@@ -173,6 +170,17 @@ class MtpPropertyGroup {
                 column = Images.ImageColumns.DESCRIPTION;
                 type = MtpConstants.TYPE_STR;
                 break;
+            case MtpConstants.PROPERTY_AUDIO_WAVE_CODEC:
+            case MtpConstants.PROPERTY_AUDIO_BITRATE:
+            case MtpConstants.PROPERTY_SAMPLE_RATE:
+                // these are special cased
+                type = MtpConstants.TYPE_UINT32;
+                break;
+            case MtpConstants.PROPERTY_BITRATE_TYPE:
+            case MtpConstants.PROPERTY_NUMBER_OF_CHANNELS:
+                // these are special cased
+                type = MtpConstants.TYPE_UINT16;
+                break;
             default:
                 type = MtpConstants.TYPE_UNDEFINED;
                 Log.e(TAG, "unsupported property " + code);
@@ -191,7 +199,7 @@ class MtpPropertyGroup {
         Cursor c = null;
         try {
             // for now we are only reading properties from the "objects" table
-            c = mProvider.query(mPackageName, mUri,
+            c = mProvider.query(mUri,
                             new String [] { Files.FileColumns._ID, column },
                             ID_WHERE, new String[] { Integer.toString(id) }, null, null);
             if (c != null && c.moveToNext()) {
@@ -211,7 +219,7 @@ class MtpPropertyGroup {
     private String queryAudio(int id, String column) {
         Cursor c = null;
         try {
-            c = mProvider.query(mPackageName, Audio.Media.getContentUri(mVolumeName),
+            c = mProvider.query(Audio.Media.getContentUri(mVolumeName),
                             new String [] { Files.FileColumns._ID, column },
                             ID_WHERE, new String[] { Integer.toString(id) }, null, null);
             if (c != null && c.moveToNext()) {
@@ -232,7 +240,7 @@ class MtpPropertyGroup {
         Cursor c = null;
         try {
             Uri uri = Audio.Genres.getContentUriForAudioId(mVolumeName, id);
-            c = mProvider.query(mPackageName, uri,
+            c = mProvider.query(uri,
                             new String [] { Files.FileColumns._ID, Audio.GenresColumns.NAME },
                             null, null, null, null);
             if (c != null && c.moveToNext()) {
@@ -254,7 +262,7 @@ class MtpPropertyGroup {
         Cursor c = null;
         try {
             // for now we are only reading properties from the "objects" table
-            c = mProvider.query(mPackageName, mUri,
+            c = mProvider.query(mUri,
                             new String [] { Files.FileColumns._ID, column },
                             ID_WHERE, new String[] { Integer.toString(id) }, null, null);
             if (c != null && c.moveToNext()) {
@@ -325,7 +333,7 @@ class MtpPropertyGroup {
         try {
             // don't query if not necessary
             if (depth > 0 || handle == 0xFFFFFFFF || mColumns.length > 1) {
-                c = mProvider.query(mPackageName, mUri, mColumns, where, whereArgs, null, null);
+                c = mProvider.query(mUri, mColumns, where, whereArgs, null, null);
                 if (c == null) {
                     return new MtpPropertyList(0, MtpConstants.RESPONSE_INVALID_OBJECT_HANDLE);
                 }
@@ -420,6 +428,17 @@ class MtpPropertyGroup {
                             } else {
                                 result.setResult(MtpConstants.RESPONSE_INVALID_OBJECT_HANDLE);
                             }
+                            break;
+                        case MtpConstants.PROPERTY_AUDIO_WAVE_CODEC:
+                        case MtpConstants.PROPERTY_AUDIO_BITRATE:
+                        case MtpConstants.PROPERTY_SAMPLE_RATE:
+                            // we don't have these in our database, so return 0
+                            result.append(handle, propertyCode, MtpConstants.TYPE_UINT32, 0);
+                            break;
+                        case MtpConstants.PROPERTY_BITRATE_TYPE:
+                        case MtpConstants.PROPERTY_NUMBER_OF_CHANNELS:
+                            // we don't have these in our database, so return 0
+                            result.append(handle, propertyCode, MtpConstants.TYPE_UINT16, 0);
                             break;
                         default:
                             if (property.type == MtpConstants.TYPE_STR) {

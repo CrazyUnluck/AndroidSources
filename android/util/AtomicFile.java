@@ -102,7 +102,7 @@ public class AtomicFile {
             str = new FileOutputStream(mBaseName);
         } catch (FileNotFoundException e) {
             File parent = mBaseName.getParentFile();
-            if (!parent.mkdir()) {
+            if (!parent.mkdirs()) {
                 throw new IOException("Couldn't create directory " + mBaseName);
             }
             FileUtils.setPermissions(
@@ -197,6 +197,20 @@ public class AtomicFile {
             mBackupName.renameTo(mBaseName);
         }
         return new FileInputStream(mBaseName);
+    }
+
+    /**
+     * Gets the last modified time of the atomic file.
+     * {@hide}
+     *
+     * @return last modified time in milliseconds since epoch.
+     * @throws IOException
+     */
+    public long getLastModifiedTime() throws IOException {
+        if (mBackupName.exists()) {
+            return mBackupName.lastModified();
+        }
+        return mBaseName.lastModified();
     }
 
     /**

@@ -16,8 +16,6 @@
 
 package android.database;
 
-import org.apache.commons.codec.binary.Hex;
-
 import android.content.ContentValues;
 import android.content.Context;
 import android.content.OperationApplicationException;
@@ -272,7 +270,7 @@ public class DatabaseUtils {
         window.setStartPosition(position);
         window.setNumColumns(numColumns);
         if (cursor.moveToPosition(position)) {
-            do {
+            rowloop: do {
                 if (!window.allocRow()) {
                     break;
                 }
@@ -309,7 +307,7 @@ public class DatabaseUtils {
                     }
                     if (!success) {
                         window.freeLastRow();
-                        break;
+                        break rowloop;
                     }
                 }
                 position += 1;
@@ -416,9 +414,31 @@ public class DatabaseUtils {
      * @return the collation key in hex format
      */
     public static String getHexCollationKey(String name) {
-        byte [] arr = getCollationKeyInBytes(name);
-        char[] keys = Hex.encodeHex(arr);
+        byte[] arr = getCollationKeyInBytes(name);
+        char[] keys = encodeHex(arr);
         return new String(keys, 0, getKeyLen(arr) * 2);
+    }
+
+
+    /**
+     * Used building output as Hex
+     */
+    private static final char[] DIGITS = {
+            '0', '1', '2', '3', '4', '5', '6', '7',
+            '8', '9', 'a', 'b', 'c', 'd', 'e', 'f'
+    };
+
+    private static char[] encodeHex(byte[] input) {
+        int l = input.length;
+        char[] out = new char[l << 1];
+
+        // two characters form the hex value.
+        for (int i = 0, j = 0; i < l; i++) {
+            out[j++] = DIGITS[(0xF0 & input[i]) >>> 4 ];
+            out[j++] = DIGITS[ 0x0F & input[i] ];
+        }
+
+        return out;
     }
 
     private static int getKeyLen(byte[] arr) {
@@ -789,6 +809,18 @@ public class DatabaseUtils {
         String s = (!TextUtils.isEmpty(selection)) ? " where " + selection : "";
         return longForQuery(db, "select count(*) from " + table + s,
                     selectionArgs);
+    }
+
+    /**
+     * Query the table to check whether a table is empty or not
+     * @param db the database the table is in
+     * @param table the name of the table to query
+     * @return True if the table is empty
+     * @hide
+     */
+    public static boolean queryIsEmpty(SQLiteDatabase db, String table) {
+        long isEmpty = longForQuery(db, "select exists(select 1 from " + table + ")", null);
+        return isEmpty == 0;
     }
 
     /**
@@ -1364,7 +1396,7 @@ public class DatabaseUtils {
         if (sql.length() < 3) {
             return STATEMENT_OTHER;
         }
-        String prefixSql = sql.substring(0, 3).toUpperCase(Locale.US);
+        String prefixSql = sql.substring(0, 3).toUpperCase(Locale.ROOT);
         if (prefixSql.equals("SEL")) {
             return STATEMENT_SELECT;
         } else if (prefixSql.equals("INS") ||

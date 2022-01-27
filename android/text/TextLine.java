@@ -100,6 +100,9 @@ class TextLine {
         tl.mText = null;
         tl.mPaint = null;
         tl.mDirections = null;
+        tl.mSpanned = null;
+        tl.mTabs = null;
+        tl.mChars = null;
 
         tl.mMetricAffectingSpanSpanSet.recycle();
         tl.mCharacterStyleSpanSet.recycle();
@@ -125,7 +128,7 @@ class TextLine {
      * @param limit the limit of the line relative to the text
      * @param dir the paragraph direction of this line
      * @param directions the directions information of this line
-     * @param hasTabs true if the line might contain tabs or emoji
+     * @param hasTabs true if the line might contain tabs
      * @param tabStops the tabStops. Can be null.
      */
     void set(TextPaint paint, CharSequence text, int start, int limit, int dir,
@@ -153,7 +156,7 @@ class TextLine {
 
         if (mCharsValid) {
             if (mChars == null || mChars.length < mLen) {
-                mChars = new char[ArrayUtils.idealCharArraySize(mLen)];
+                mChars = ArrayUtils.newUnpaddedCharArray(mLen);
             }
             TextUtils.getChars(text, start, limit, mChars, 0);
             if (hasReplacement) {
@@ -201,7 +204,6 @@ class TextLine {
 
         float h = 0;
         int[] runs = mDirections.mDirections;
-        RectF emojiRect = null;
 
         int lastRunIndex = runs.length - 2;
         for (int i = 0; i < runs.length; i += 2) {
@@ -215,41 +217,23 @@ class TextLine {
             int segstart = runStart;
             for (int j = mHasTabs ? runStart : runLimit; j <= runLimit; j++) {
                 int codept = 0;
-                Bitmap bm = null;
-
                 if (mHasTabs && j < runLimit) {
                     codept = mChars[j];
-                    if (codept >= 0xd800 && codept < 0xdc00 && j + 1 < runLimit) {
+                    if (codept >= 0xD800 && codept < 0xDC00 && j + 1 < runLimit) {
                         codept = Character.codePointAt(mChars, j);
-                        if (codept >= Layout.MIN_EMOJI && codept <= Layout.MAX_EMOJI) {
-                            bm = Layout.EMOJI_FACTORY.getBitmapFromAndroidPua(codept);
-                        } else if (codept > 0xffff) {
+                        if (codept > 0xFFFF) {
                             ++j;
                             continue;
                         }
                     }
                 }
 
-                if (j == runLimit || codept == '\t' || bm != null) {
+                if (j == runLimit || codept == '\t') {
                     h += drawRun(c, segstart, j, runIsRtl, x+h, top, y, bottom,
                             i != lastRunIndex || j != mLen);
 
                     if (codept == '\t') {
                         h = mDir * nextTab(h * mDir);
-                    } else if (bm != null) {
-                        float bmAscent = ascent(j);
-                        float bitmapHeight = bm.getHeight();
-                        float scale = -bmAscent / bitmapHeight;
-                        float width = bm.getWidth() * scale;
-
-                        if (emojiRect == null) {
-                            emojiRect = new RectF();
-                        }
-                        emojiRect.set(x + h, y + bmAscent,
-                                x + h + width, y);
-                        c.drawBitmap(bm, null, emojiRect, mPaint);
-                        h += width;
-                        j++;
                     }
                     segstart = j + 1;
                 }
@@ -310,22 +294,18 @@ class TextLine {
             int segstart = runStart;
             for (int j = mHasTabs ? runStart : runLimit; j <= runLimit; j++) {
                 int codept = 0;
-                Bitmap bm = null;
-
                 if (mHasTabs && j < runLimit) {
                     codept = chars[j];
-                    if (codept >= 0xd800 && codept < 0xdc00 && j + 1 < runLimit) {
+                    if (codept >= 0xD800 && codept < 0xDC00 && j + 1 < runLimit) {
                         codept = Character.codePointAt(chars, j);
-                        if (codept >= Layout.MIN_EMOJI && codept <= Layout.MAX_EMOJI) {
-                            bm = Layout.EMOJI_FACTORY.getBitmapFromAndroidPua(codept);
-                        } else if (codept > 0xffff) {
+                        if (codept > 0xFFFF) {
                             ++j;
                             continue;
                         }
                     }
                 }
 
-                if (j == runLimit || codept == '\t' || bm != null) {
+                if (j == runLimit || codept == '\t') {
                     boolean inSegment = target >= segstart && target < j;
 
                     boolean advance = (mDir == Layout.DIR_RIGHT_TO_LEFT) == runIsRtl;
@@ -348,13 +328,6 @@ class TextLine {
                         if (target == j) {
                             return h;
                         }
-                    }
-
-                    if (bm != null) {
-                        float bmAscent = ascent(j);
-                        float wid = bm.getWidth() * -bmAscent / bm.getHeight();
-                        h += mDir * wid;
-                        j++;
                     }
 
                     segstart = j + 1;
@@ -664,14 +637,14 @@ class TextLine {
             }
         }
 
-        int flags = runIsRtl ? Paint.DIRECTION_RTL : Paint.DIRECTION_LTR;
+        int dir = runIsRtl ? Paint.DIRECTION_RTL : Paint.DIRECTION_LTR;
         int cursorOpt = after ? Paint.CURSOR_AFTER : Paint.CURSOR_BEFORE;
         if (mCharsValid) {
             return wp.getTextRunCursor(mChars, spanStart, spanLimit - spanStart,
-                    flags, offset, cursorOpt);
+                    dir, offset, cursorOpt);
         } else {
             return wp.getTextRunCursor(mText, mStart + spanStart,
-                    mStart + spanLimit, flags, mStart + offset, cursorOpt) - mStart;
+                    mStart + spanLimit, dir, mStart + offset, cursorOpt) - mStart;
         }
     }
 
@@ -702,7 +675,7 @@ class TextLine {
 
     /**
      * Utility function for measuring and rendering text.  The text must
-     * not include a tab or emoji.
+     * not include a tab.
      *
      * @param wp the working paint
      * @param start the start of the text
@@ -715,13 +688,14 @@ class TextLine {
      * @param bottom the bottom of the line
      * @param fmi receives metrics information, can be null
      * @param needWidth true if the width of the run is needed
+     * @param offset the offset for the purpose of measuring
      * @return the signed width of the run based on the run direction; only
      * valid if needWidth is true
      */
     private float handleText(TextPaint wp, int start, int end,
             int contextStart, int contextEnd, boolean runIsRtl,
             Canvas c, float x, int top, int y, int bottom,
-            FontMetricsInt fmi, boolean needWidth) {
+            FontMetricsInt fmi, boolean needWidth, int offset) {
 
         // Get metrics first (even for empty strings or "0" width runs)
         if (fmi != null) {
@@ -736,17 +710,14 @@ class TextLine {
 
         float ret = 0;
 
-        int contextLen = contextEnd - contextStart;
         if (needWidth || (c != null && (wp.bgColor != 0 || wp.underlineColor != 0 || runIsRtl))) {
-            int flags = runIsRtl ? Paint.DIRECTION_RTL : Paint.DIRECTION_LTR;
             if (mCharsValid) {
-                ret = wp.getTextRunAdvances(mChars, start, runLen,
-                        contextStart, contextLen, flags, null, 0);
+                ret = wp.getRunAdvance(mChars, start, end, contextStart, contextEnd,
+                        runIsRtl, offset);
             } else {
                 int delta = mStart;
-                ret = wp.getTextRunAdvances(mText, delta + start,
-                        delta + end, delta + contextStart, delta + contextEnd,
-                        flags, null, 0);
+                ret = wp.getRunAdvance(mText, delta + start, delta + end,
+                        delta + contextStart, delta + contextEnd, runIsRtl, delta + offset);
             }
         }
 
@@ -860,7 +831,7 @@ class TextLine {
 
     /**
      * Utility function for handling a unidirectional run.  The run must not
-     * contain tabs or emoji but can contain styles.
+     * contain tabs but can contain styles.
      *
      *
      * @param start the line-relative start of the run
@@ -895,8 +866,8 @@ class TextLine {
             TextPaint wp = mWorkPaint;
             wp.set(mPaint);
             final int mlimit = measureLimit;
-            return handleText(wp, start, mlimit, start, limit, runIsRtl, c, x, top,
-                    y, bottom, fmi, needWidth || mlimit < measureLimit);
+            return handleText(wp, start, limit, start, limit, runIsRtl, c, x, top,
+                    y, bottom, fmi, needWidth || mlimit < measureLimit, mlimit);
         }
 
         mMetricAffectingSpanSpanSet.init(mSpanned, mStart + start, mStart + limit);
@@ -940,21 +911,26 @@ class TextLine {
             }
 
             for (int j = i, jnext; j < mlimit; j = jnext) {
-                jnext = mCharacterStyleSpanSet.getNextTransition(mStart + j, mStart + mlimit) -
+                jnext = mCharacterStyleSpanSet.getNextTransition(mStart + j, mStart + inext) -
                         mStart;
+                int offset = Math.min(jnext, mlimit);
 
                 wp.set(mPaint);
                 for (int k = 0; k < mCharacterStyleSpanSet.numberOfSpans; k++) {
                     // Intentionally using >= and <= as explained above
-                    if ((mCharacterStyleSpanSet.spanStarts[k] >= mStart + jnext) ||
+                    if ((mCharacterStyleSpanSet.spanStarts[k] >= mStart + offset) ||
                             (mCharacterStyleSpanSet.spanEnds[k] <= mStart + j)) continue;
 
                     CharacterStyle span = mCharacterStyleSpanSet.spans[k];
                     span.updateDrawState(wp);
                 }
 
+                // Only draw hyphen on last run in line
+                if (jnext < mLen) {
+                    wp.setHyphenEdit(0);
+                }
                 x += handleText(wp, j, jnext, i, inext, runIsRtl, c, x,
-                        top, y, bottom, fmi, needWidth || jnext < measureLimit);
+                        top, y, bottom, fmi, needWidth || jnext < measureLimit, offset);
             }
         }
 
@@ -977,43 +953,16 @@ class TextLine {
     private void drawTextRun(Canvas c, TextPaint wp, int start, int end,
             int contextStart, int contextEnd, boolean runIsRtl, float x, int y) {
 
-        int flags = runIsRtl ? Canvas.DIRECTION_RTL : Canvas.DIRECTION_LTR;
         if (mCharsValid) {
             int count = end - start;
             int contextCount = contextEnd - contextStart;
             c.drawTextRun(mChars, start, count, contextStart, contextCount,
-                    x, y, flags, wp);
+                    x, y, runIsRtl, wp);
         } else {
             int delta = mStart;
             c.drawTextRun(mText, delta + start, delta + end,
-                    delta + contextStart, delta + contextEnd, x, y, flags, wp);
+                    delta + contextStart, delta + contextEnd, x, y, runIsRtl, wp);
         }
-    }
-
-    /**
-     * Returns the ascent of the text at start.  This is used for scaling
-     * emoji.
-     *
-     * @param pos the line-relative position
-     * @return the ascent of the text at start
-     */
-    float ascent(int pos) {
-        if (mSpanned == null) {
-            return mPaint.ascent();
-        }
-
-        pos += mStart;
-        MetricAffectingSpan[] spans = mSpanned.getSpans(pos, pos + 1, MetricAffectingSpan.class);
-        if (spans.length == 0) {
-            return mPaint.ascent();
-        }
-
-        TextPaint wp = mWorkPaint;
-        wp.set(mPaint);
-        for (MetricAffectingSpan span : spans) {
-            span.updateMeasureState(wp);
-        }
-        return wp.ascent();
     }
 
     /**

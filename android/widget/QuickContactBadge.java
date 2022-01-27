@@ -37,8 +37,6 @@ import android.provider.ContactsContract.RawContacts;
 import android.util.AttributeSet;
 import android.view.View;
 import android.view.View.OnClickListener;
-import android.view.accessibility.AccessibilityEvent;
-import android.view.accessibility.AccessibilityNodeInfo;
 
 /**
  * Widget used to show an image with the standard QuickContact badge
@@ -52,6 +50,7 @@ public class QuickContactBadge extends ImageView implements OnClickListener {
     private QueryHandler mQueryHandler;
     private Drawable mDefaultAvatar;
     private Bundle mExtras = null;
+    private String mPrioritizedMimeType;
 
     protected String[] mExcludeMimes = null;
 
@@ -84,30 +83,63 @@ public class QuickContactBadge extends ImageView implements OnClickListener {
         this(context, attrs, 0);
     }
 
-    public QuickContactBadge(Context context, AttributeSet attrs, int defStyle) {
-        super(context, attrs, defStyle);
+    public QuickContactBadge(Context context, AttributeSet attrs, int defStyleAttr) {
+        this(context, attrs, defStyleAttr, 0);
+    }
+
+    public QuickContactBadge(
+            Context context, AttributeSet attrs, int defStyleAttr, int defStyleRes) {
+        super(context, attrs, defStyleAttr, defStyleRes);
 
         TypedArray styledAttributes = mContext.obtainStyledAttributes(R.styleable.Theme);
         mOverlay = styledAttributes.getDrawable(
                 com.android.internal.R.styleable.Theme_quickContactBadgeOverlay);
         styledAttributes.recycle();
 
-        mQueryHandler = new QueryHandler(mContext.getContentResolver());
         setOnClickListener(this);
+    }
+
+    @Override
+    protected void onAttachedToWindow() {
+        super.onAttachedToWindow();
+
+        if (!isInEditMode()) {
+            mQueryHandler = new QueryHandler(mContext.getContentResolver());
+        }
     }
 
     @Override
     protected void drawableStateChanged() {
         super.drawableStateChanged();
-        if (mOverlay != null && mOverlay.isStateful()) {
-            mOverlay.setState(getDrawableState());
-            invalidate();
+
+        final Drawable overlay = mOverlay;
+        if (overlay != null && overlay.isStateful()
+                && overlay.setState(getDrawableState())) {
+            invalidateDrawable(overlay);
+        }
+    }
+
+    @Override
+    public void drawableHotspotChanged(float x, float y) {
+        super.drawableHotspotChanged(x, y);
+
+        if (mOverlay != null) {
+            mOverlay.setHotspot(x, y);
         }
     }
 
     /** This call has no effect anymore, as there is only one QuickContact mode */
     @SuppressWarnings("unused")
     public void setMode(int size) {
+    }
+
+    /**
+     * Set which mimetype should be prioritized in the QuickContacts UI. For example, passing the
+     * value {@link Email#CONTENT_ITEM_TYPE} can cause emails to be displayed more prominently in
+     * QuickContacts.
+     */
+    public void setPrioritizedMimeType(String prioritizedMimeType) {
+        mPrioritizedMimeType = prioritizedMimeType;
     }
 
     @Override
@@ -148,7 +180,7 @@ public class QuickContactBadge extends ImageView implements OnClickListener {
      */
     public void setImageToDefault() {
         if (mDefaultAvatar == null) {
-            mDefaultAvatar = getResources().getDrawable(R.drawable.ic_contact_picture);
+            mDefaultAvatar = mContext.getDrawable(R.drawable.ic_contact_picture);
         }
         setImageDrawable(mDefaultAvatar);
     }
@@ -199,7 +231,7 @@ public class QuickContactBadge extends ImageView implements OnClickListener {
     public void assignContactFromEmail(String emailAddress, boolean lazyLookup, Bundle extras) {
         mContactEmail = emailAddress;
         mExtras = extras;
-        if (!lazyLookup) {
+        if (!lazyLookup && mQueryHandler != null) {
             mQueryHandler.startQuery(TOKEN_EMAIL_LOOKUP, null,
                     Uri.withAppendedPath(Email.CONTENT_LOOKUP_URI, Uri.encode(mContactEmail)),
                     EMAIL_LOOKUP_PROJECTION, null, null, null);
@@ -239,7 +271,7 @@ public class QuickContactBadge extends ImageView implements OnClickListener {
     public void assignContactFromPhone(String phoneNumber, boolean lazyLookup, Bundle extras) {
         mContactPhone = phoneNumber;
         mExtras = extras;
-        if (!lazyLookup) {
+        if (!lazyLookup && mQueryHandler != null) {
             mQueryHandler.startQuery(TOKEN_PHONE_LOOKUP, null,
                     Uri.withAppendedPath(PhoneLookup.CONTENT_FILTER_URI, mContactPhone),
                     PHONE_LOOKUP_PROJECTION, null, null, null);
@@ -247,6 +279,16 @@ public class QuickContactBadge extends ImageView implements OnClickListener {
             mContactUri = null;
             onContactUriChanged();
         }
+    }
+
+    /**
+     * Assigns the drawable that is to be drawn on top of the assigned contact photo.
+     *
+     * @param overlay Drawable to be drawn over the assigned contact photo. Must have a non-zero
+     *         instrinsic width and height.
+     */
+    public void setOverlay(Drawable overlay) {
+        mOverlay = overlay;
     }
 
     private void onContactUriChanged() {
@@ -261,13 +303,13 @@ public class QuickContactBadge extends ImageView implements OnClickListener {
         final Bundle extras = (mExtras == null) ? new Bundle() : mExtras;
         if (mContactUri != null) {
             QuickContact.showQuickContact(getContext(), QuickContactBadge.this, mContactUri,
-                    QuickContact.MODE_LARGE, mExcludeMimes);
-        } else if (mContactEmail != null) {
+                    mExcludeMimes, mPrioritizedMimeType);
+        } else if (mContactEmail != null && mQueryHandler != null) {
             extras.putString(EXTRA_URI_CONTENT, mContactEmail);
             mQueryHandler.startQuery(TOKEN_EMAIL_LOOKUP_AND_TRIGGER, extras,
                     Uri.withAppendedPath(Email.CONTENT_LOOKUP_URI, Uri.encode(mContactEmail)),
                     EMAIL_LOOKUP_PROJECTION, null, null, null);
-        } else if (mContactPhone != null) {
+        } else if (mContactPhone != null && mQueryHandler != null) {
             extras.putString(EXTRA_URI_CONTENT, mContactPhone);
             mQueryHandler.startQuery(TOKEN_PHONE_LOOKUP_AND_TRIGGER, extras,
                     Uri.withAppendedPath(PhoneLookup.CONTENT_FILTER_URI, mContactPhone),
@@ -279,15 +321,8 @@ public class QuickContactBadge extends ImageView implements OnClickListener {
     }
 
     @Override
-    public void onInitializeAccessibilityEvent(AccessibilityEvent event) {
-        super.onInitializeAccessibilityEvent(event);
-        event.setClassName(QuickContactBadge.class.getName());
-    }
-
-    @Override
-    public void onInitializeAccessibilityNodeInfo(AccessibilityNodeInfo info) {
-        super.onInitializeAccessibilityNodeInfo(info);
-        info.setClassName(QuickContactBadge.class.getName());
+    public CharSequence getAccessibilityClassName() {
+        return QuickContactBadge.class.getName();
     }
 
     /**
@@ -351,10 +386,10 @@ public class QuickContactBadge extends ImageView implements OnClickListener {
             mContactUri = lookupUri;
             onContactUriChanged();
 
-            if (trigger && lookupUri != null) {
+            if (trigger && mContactUri != null) {
                 // Found contact, so trigger QuickContact
-                QuickContact.showQuickContact(getContext(), QuickContactBadge.this, lookupUri,
-                        QuickContact.MODE_LARGE, mExcludeMimes);
+                QuickContact.showQuickContact(getContext(), QuickContactBadge.this, mContactUri,
+                        mExcludeMimes, mPrioritizedMimeType);
             } else if (createUri != null) {
                 // Prompt user to add this person to contacts
                 final Intent intent = new Intent(Intents.SHOW_OR_CREATE_CONTACT, createUri);

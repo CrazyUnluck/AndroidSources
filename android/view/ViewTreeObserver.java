@@ -37,6 +37,8 @@ public final class ViewTreeObserver {
     private CopyOnWriteArrayList<OnWindowAttachListener> mOnWindowAttachListeners;
     private CopyOnWriteArrayList<OnGlobalFocusChangeListener> mOnGlobalFocusListeners;
     private CopyOnWriteArrayList<OnTouchModeChangeListener> mOnTouchModeChangeListeners;
+    private CopyOnWriteArrayList<OnEnterAnimationCompleteListener>
+            mOnEnterAnimationCompleteListeners;
 
     // Non-recursive listeners use CopyOnWriteArray
     // Any listener invoked from ViewRootImpl.performTraversals() should not be recursive
@@ -44,9 +46,14 @@ public final class ViewTreeObserver {
     private CopyOnWriteArray<OnComputeInternalInsetsListener> mOnComputeInternalInsetsListeners;
     private CopyOnWriteArray<OnScrollChangedListener> mOnScrollChangedListeners;
     private CopyOnWriteArray<OnPreDrawListener> mOnPreDrawListeners;
+    private CopyOnWriteArray<OnWindowShownListener> mOnWindowShownListeners;
 
     // These listeners cannot be mutated during dispatch
     private ArrayList<OnDrawListener> mOnDrawListeners;
+
+    /** Remains false until #dispatchOnWindowShown() is called. If a listener registers after
+     * that the listener will be immediately called. */
+    private boolean mWindowShown;
 
     private boolean mAlive = true;
 
@@ -174,6 +181,19 @@ public final class ViewTreeObserver {
     }
 
     /**
+     * Interface definition for a callback noting when a system window has been displayed.
+     * This is only used for non-Activity windows. Activity windows can use
+     * Activity.onEnterAnimationComplete() to get the same signal.
+     * @hide
+     */
+    public interface OnWindowShownListener {
+        /**
+         * Callback method to be invoked when a non-activity window is fully shown.
+         */
+        void onWindowShown();
+    }
+
+    /**
      * Parameters used with OnComputeInternalInsetsListener.
      * 
      * We are not yet ready to commit to this API and support it, so
@@ -241,11 +261,18 @@ public final class ViewTreeObserver {
             mTouchableInsets = TOUCHABLE_INSETS_FRAME;
         }
 
+        boolean isEmpty() {
+            return contentInsets.isEmpty()
+                    && visibleInsets.isEmpty()
+                    && touchableRegion.isEmpty()
+                    && mTouchableInsets == TOUCHABLE_INSETS_FRAME;
+        }
+
         @Override
         public int hashCode() {
-            int result = contentInsets != null ? contentInsets.hashCode() : 0;
-            result = 31 * result + (visibleInsets != null ? visibleInsets.hashCode() : 0);
-            result = 31 * result + (touchableRegion != null ? touchableRegion.hashCode() : 0);
+            int result = contentInsets.hashCode();
+            result = 31 * result + visibleInsets.hashCode();
+            result = 31 * result + touchableRegion.hashCode();
             result = 31 * result + mTouchableInsets;
             return result;
         }
@@ -288,6 +315,13 @@ public final class ViewTreeObserver {
          * returned, if there are multiple such listeners in the window.
          */
         public void onComputeInternalInsets(InternalInsetsInfo inoutInfo);
+    }
+
+    /**
+     * @hide
+     */
+    public interface OnEnterAnimationCompleteListener {
+        public void onEnterAnimationComplete();
     }
 
     /**
@@ -365,6 +399,14 @@ public final class ViewTreeObserver {
                 mOnScrollChangedListeners.addAll(observer.mOnScrollChangedListeners);
             } else {
                 mOnScrollChangedListeners = observer.mOnScrollChangedListeners;
+            }
+        }
+
+        if (observer.mOnWindowShownListeners != null) {
+            if (mOnWindowShownListeners != null) {
+                mOnWindowShownListeners.addAll(observer.mOnWindowShownListeners);
+            } else {
+                mOnWindowShownListeners = observer.mOnWindowShownListeners;
             }
         }
 
@@ -561,6 +603,45 @@ public final class ViewTreeObserver {
     }
 
     /**
+     * Register a callback to be invoked when the view tree window has been shown
+     *
+     * @param listener The callback to add
+     *
+     * @throws IllegalStateException If {@link #isAlive()} returns false
+     * @hide
+     */
+    public void addOnWindowShownListener(OnWindowShownListener listener) {
+        checkIsAlive();
+
+        if (mOnWindowShownListeners == null) {
+            mOnWindowShownListeners = new CopyOnWriteArray<OnWindowShownListener>();
+        }
+
+        mOnWindowShownListeners.add(listener);
+        if (mWindowShown) {
+            listener.onWindowShown();
+        }
+    }
+
+    /**
+     * Remove a previously installed window shown callback
+     *
+     * @param victim The callback to remove
+     *
+     * @throws IllegalStateException If {@link #isAlive()} returns false
+     *
+     * @see #addOnWindowShownListener(OnWindowShownListener)
+     * @hide
+     */
+    public void removeOnWindowShownListener(OnWindowShownListener victim) {
+        checkIsAlive();
+        if (mOnWindowShownListeners == null) {
+            return;
+        }
+        mOnWindowShownListeners.remove(victim);
+    }
+
+    /**
      * <p>Register a callback to be invoked when the view tree is about to be drawn.</p>
      * <p><strong>Note:</strong> this method <strong>cannot</strong> be invoked from
      * {@link android.view.ViewTreeObserver.OnDrawListener#onDraw()}.</p>
@@ -708,6 +789,29 @@ public final class ViewTreeObserver {
         mOnComputeInternalInsetsListeners.remove(victim);
     }
 
+    /**
+     * @hide
+     */
+    public void addOnEnterAnimationCompleteListener(OnEnterAnimationCompleteListener listener) {
+        checkIsAlive();
+        if (mOnEnterAnimationCompleteListeners == null) {
+            mOnEnterAnimationCompleteListeners =
+                    new CopyOnWriteArrayList<OnEnterAnimationCompleteListener>();
+        }
+        mOnEnterAnimationCompleteListeners.add(listener);
+    }
+
+    /**
+     * @hide
+     */
+    public void removeOnEnterAnimationCompleteListener(OnEnterAnimationCompleteListener listener) {
+        checkIsAlive();
+        if (mOnEnterAnimationCompleteListeners == null) {
+            return;
+        }
+        mOnEnterAnimationCompleteListeners.remove(listener);
+    }
+
     private void checkIsAlive() {
         if (!mAlive) {
             throw new IllegalStateException("This ViewTreeObserver is not alive, call "
@@ -814,6 +918,13 @@ public final class ViewTreeObserver {
     }
 
     /**
+     * Returns whether there are listeners for on pre-draw events.
+     */
+    final boolean hasOnPreDrawListeners() {
+        return mOnPreDrawListeners != null && mOnPreDrawListeners.size() > 0;
+    }
+
+    /**
      * Notifies registered listeners that the drawing pass is about to start. If a
      * listener returns true, then the drawing pass is canceled and rescheduled. This can
      * be called manually if you are forcing the drawing on a View or a hierarchy of Views
@@ -837,6 +948,27 @@ public final class ViewTreeObserver {
             }
         }
         return cancelDraw;
+    }
+
+    /**
+     * Notifies registered listeners that the window is now shown
+     * @hide
+     */
+    @SuppressWarnings("unchecked")
+    public final void dispatchOnWindowShown() {
+        mWindowShown = true;
+        final CopyOnWriteArray<OnWindowShownListener> listeners = mOnWindowShownListeners;
+        if (listeners != null && listeners.size() > 0) {
+            CopyOnWriteArray.Access<OnWindowShownListener> access = listeners.start();
+            try {
+                int count = access.size();
+                for (int i = 0; i < count; i++) {
+                    access.get(i).onWindowShown();
+                }
+            } finally {
+                listeners.end();
+            }
+        }
     }
 
     /**
@@ -922,6 +1054,23 @@ public final class ViewTreeObserver {
     }
 
     /**
+     * @hide
+     */
+    public final void dispatchOnEnterAnimationComplete() {
+        // NOTE: because of the use of CopyOnWriteArrayList, we *must* use an iterator to
+        // perform the dispatching. The iterator is a safe guard against listeners that
+        // could mutate the list by calling the various add/remove methods. This prevents
+        // the array from being modified while we iterate it.
+        final CopyOnWriteArrayList<OnEnterAnimationCompleteListener> listeners =
+                mOnEnterAnimationCompleteListeners;
+        if (listeners != null && !listeners.isEmpty()) {
+            for (OnEnterAnimationCompleteListener listener : listeners) {
+                listener.onEnterAnimationComplete();
+            }
+        }
+    }
+
+    /**
      * Copy on write array. This array is not thread safe, and only one loop can
      * iterate over this array at any given time. This class avoids allocations
      * until a concurrent modification happens.
@@ -983,6 +1132,8 @@ public final class ViewTreeObserver {
             mStart = false;
             if (mDataCopy != null) {
                 mData = mDataCopy;
+                mAccess.mData.clear();
+                mAccess.mSize = 0;
             }
             mDataCopy = null;
         }

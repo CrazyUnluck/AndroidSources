@@ -62,6 +62,16 @@ public class InvisibleRecipientChip extends ReplacementSpan implements DrawableR
     }
 
     @Override
+    public Long getDirectoryId() {
+        return mDelegate.getDirectoryId();
+    }
+
+    @Override
+    public String getLookupKey() {
+        return mDelegate.getLookupKey();
+    }
+
+    @Override
     public long getDataId() {
         return mDelegate.getDataId();
     }

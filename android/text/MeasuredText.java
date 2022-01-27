@@ -16,7 +16,6 @@
 
 package android.text;
 
-import android.graphics.Canvas;
 import android.graphics.Paint;
 import android.text.style.MetricAffectingSpan;
 import android.text.style.ReplacementSpan;
@@ -40,13 +39,14 @@ class MeasuredText {
 
     private int mPos;
     private TextPaint mWorkPaint;
+    private StaticLayout.Builder mBuilder;
 
     private MeasuredText() {
         mWorkPaint = new TextPaint();
     }
 
     private static final Object[] sLock = new Object[0];
-    private static MeasuredText[] sCached = new MeasuredText[3];
+    private static final MeasuredText[] sCached = new MeasuredText[3];
 
     static MeasuredText obtain() {
         MeasuredText mt;
@@ -67,19 +67,27 @@ class MeasuredText {
     }
 
     static MeasuredText recycle(MeasuredText mt) {
-        mt.mText = null;
-        if (mt.mLen < 1000) {
-            synchronized(sLock) {
-                for (int i = 0; i < sCached.length; ++i) {
-                    if (sCached[i] == null) {
-                        sCached[i] = mt;
-                        mt.mText = null;
-                        break;
-                    }
+        mt.finish();
+        synchronized(sLock) {
+            for (int i = 0; i < sCached.length; ++i) {
+                if (sCached[i] == null) {
+                    sCached[i] = mt;
+                    mt.mText = null;
+                    break;
                 }
             }
         }
         return null;
+    }
+
+    void finish() {
+        mText = null;
+        mBuilder = null;
+        if (mLen > 1000) {
+            mWidths = null;
+            mChars = null;
+            mLevels = null;
+        }
     }
 
     void setPos(int pos) {
@@ -89,7 +97,9 @@ class MeasuredText {
     /**
      * Analyzes text for bidirectional runs.  Allocates working buffers.
      */
-    void setPara(CharSequence text, int start, int end, TextDirectionHeuristic textDir) {
+    void setPara(CharSequence text, int start, int end, TextDirectionHeuristic textDir,
+            StaticLayout.Builder builder) {
+        mBuilder = builder;
         mText = text;
         mTextStart = start;
 
@@ -98,10 +108,10 @@ class MeasuredText {
         mPos = 0;
 
         if (mWidths == null || mWidths.length < len) {
-            mWidths = new float[ArrayUtils.idealFloatArraySize(len)];
+            mWidths = ArrayUtils.newUnpaddedFloatArray(len);
         }
         if (mChars == null || mChars.length < len) {
-            mChars = new char[ArrayUtils.idealCharArraySize(len)];
+            mChars = ArrayUtils.newUnpaddedCharArray(len);
         }
         TextUtils.getChars(text, start, end, mChars, 0);
 
@@ -130,7 +140,7 @@ class MeasuredText {
             mEasy = true;
         } else {
             if (mLevels == null || mLevels.length < len) {
-                mLevels = new byte[ArrayUtils.idealByteArraySize(len)];
+                mLevels = ArrayUtils.newUnpaddedByteArray(len);
             }
             int bidiRequest;
             if (textDir == TextDirectionHeuristics.LTR) {
@@ -158,19 +168,40 @@ class MeasuredText {
         int p = mPos;
         mPos = p + len;
 
+        // try to do widths measurement in native code, but use Java if paint has been subclassed
+        // FIXME: may want to eliminate special case for subclass
+        float[] widths = null;
+        if (mBuilder == null || paint.getClass() != TextPaint.class) {
+            widths = mWidths;
+        }
         if (mEasy) {
-            int flags = mDir == Layout.DIR_LEFT_TO_RIGHT
-                ? Canvas.DIRECTION_LTR : Canvas.DIRECTION_RTL;
-            return paint.getTextRunAdvances(mChars, p, len, p, len, flags, mWidths, p);
+            boolean isRtl = mDir != Layout.DIR_LEFT_TO_RIGHT;
+            float width = 0;
+            if (widths != null) {
+                width = paint.getTextRunAdvances(mChars, p, len, p, len, isRtl, widths, p);
+                if (mBuilder != null) {
+                    mBuilder.addMeasuredRun(p, p + len, widths);
+                }
+            } else {
+                width = mBuilder.addStyleRun(paint, p, p + len, isRtl);
+            }
+            return width;
         }
 
         float totalAdvance = 0;
         int level = mLevels[p];
         for (int q = p, i = p + 1, e = p + len;; ++i) {
             if (i == e || mLevels[i] != level) {
-                int flags = (level & 0x1) == 0 ? Canvas.DIRECTION_LTR : Canvas.DIRECTION_RTL;
-                totalAdvance +=
-                        paint.getTextRunAdvances(mChars, q, i - q, q, i - q, flags, mWidths, q);
+                boolean isRtl = (level & 0x1) != 0;
+                if (widths != null) {
+                    totalAdvance +=
+                            paint.getTextRunAdvances(mChars, q, i - q, q, i - q, isRtl, widths, q);
+                    if (mBuilder != null) {
+                        mBuilder.addMeasuredRun(q, i, widths);
+                    }
+                } else {
+                    totalAdvance += mBuilder.addStyleRun(paint, q, i, isRtl);
+                }
                 if (i == e) {
                     break;
                 }
@@ -206,10 +237,14 @@ class MeasuredText {
             // Use original text.  Shouldn't matter.
             wid = replacement.getSize(workPaint, mText, mTextStart + mPos,
                     mTextStart + mPos + len, fm);
-            float[] w = mWidths;
-            w[mPos] = wid;
-            for (int i = mPos + 1, e = mPos + len; i < e; i++)
-                w[i] = 0;
+            if (mBuilder == null) {
+                float[] w = mWidths;
+                w[mPos] = wid;
+                for (int i = mPos + 1, e = mPos + len; i < e; i++)
+                    w[i] = 0;
+            } else {
+                mBuilder.addReplacementRun(mPos, mPos + len, wid);
+            }
             mPos += len;
         }
 

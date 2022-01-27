@@ -18,7 +18,9 @@ package org.json;
 
 import java.math.BigDecimal;
 import java.math.BigInteger;
+import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.Collection;
 import java.util.Collections;
 import java.util.HashMap;
 import java.util.HashSet;
@@ -26,6 +28,7 @@ import java.util.Iterator;
 import java.util.Map;
 import java.util.NoSuchElementException;
 import java.util.Set;
+import java.util.TreeMap;
 import junit.framework.TestCase;
 
 /**
@@ -156,7 +159,7 @@ public class JSONObjectTest extends TestCase {
     public void testPutNullRemoves() throws JSONException {
         JSONObject object = new JSONObject();
         object.put("foo", "bar");
-        object.put("foo", null);
+        object.put("foo", (Collection) null);
         assertEquals(0, object.length());
         assertFalse(object.has("foo"));
         try {
@@ -734,7 +737,7 @@ public class JSONObjectTest extends TestCase {
         }
     }
 
-    public void testStringonstructorParseFail() {
+    public void testStringConstructorParseFail() {
         try {
             new JSONObject("{");
             fail();
@@ -813,7 +816,7 @@ public class JSONObjectTest extends TestCase {
     public void testNullValue() throws JSONException {
         JSONObject object = new JSONObject();
         object.put("foo", JSONObject.NULL);
-        object.put("bar", null);
+        object.put("bar", (Collection) null);
 
         // there are two ways to represent null; each behaves differently!
         assertTrue(object.has("foo"));
@@ -959,6 +962,79 @@ public class JSONObjectTest extends TestCase {
             JSONObject.numberToString(null);
             fail();
         } catch (JSONException e) {
+        }
+    }
+
+    public void test_wrap() throws Exception {
+        assertEquals(JSONObject.NULL, JSONObject.wrap(null));
+
+        JSONArray a = new JSONArray();
+        assertEquals(a, JSONObject.wrap(a));
+
+        JSONObject o = new JSONObject();
+        assertEquals(o, JSONObject.wrap(o));
+
+        assertEquals(JSONObject.NULL, JSONObject.wrap(JSONObject.NULL));
+
+        assertTrue(JSONObject.wrap(new byte[0]) instanceof JSONArray);
+        assertTrue(JSONObject.wrap(new ArrayList<String>()) instanceof JSONArray);
+        assertTrue(JSONObject.wrap(new HashMap<String, String>()) instanceof JSONObject);
+        assertTrue(JSONObject.wrap(Double.valueOf(0)) instanceof Double);
+        assertTrue(JSONObject.wrap("hello") instanceof String);
+    }
+
+    // https://code.google.com/p/android/issues/detail?id=55114
+    public void test_toString_listAsMapValue() throws Exception {
+        ArrayList<Object> list = new ArrayList<Object>();
+        list.add("a");
+        list.add(new ArrayList<String>());
+        Map<String, Object> map = new TreeMap<String, Object>();
+        map.put("x", "l");
+        map.put("y", list);
+        assertEquals("{\"x\":\"l\",\"y\":[\"a\",[]]}", new JSONObject(map).toString());
+    }
+
+    public void testAppendExistingInvalidKey() throws JSONException {
+        JSONObject object = new JSONObject();
+        object.put("foo", 5);
+        try {
+            object.append("foo", 6);
+            fail();
+        } catch (JSONException expected) {
+        }
+    }
+
+    public void testAppendExistingArray() throws JSONException {
+        JSONArray array = new JSONArray();
+        JSONObject object = new JSONObject();
+        object.put("foo", array);
+        object.append("foo", 5);
+        assertEquals("[5]", array.toString());
+    }
+
+    public void testAppendPutArray() throws JSONException {
+        JSONObject object = new JSONObject();
+        object.append("foo", 5);
+        assertEquals("{\"foo\":[5]}", object.toString());
+        object.append("foo", new JSONArray());
+        assertEquals("{\"foo\":[5,[]]}", object.toString());
+    }
+
+    public void testAppendNull() {
+        JSONObject object = new JSONObject();
+        try {
+            object.append(null, 5);
+            fail();
+        } catch (JSONException e) {
+        }
+    }
+
+    // https://code.google.com/p/android/issues/detail?id=103641
+    public void testInvalidUnicodeEscape() {
+        try {
+            new JSONObject("{\"q\":\"\\u\", \"r\":[]}");
+            fail();
+        } catch (JSONException expected) {
         }
     }
 }

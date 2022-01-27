@@ -16,36 +16,34 @@
 
 package android.net.http;
 
-import android.content.Context;
+import com.android.okhttp.Cache;
+import com.android.okhttp.AndroidShimResponseCache;
+import com.android.okhttp.OkCacheContainer;
+
 import java.io.Closeable;
 import java.io.File;
 import java.io.IOException;
 import java.net.CacheRequest;
 import java.net.CacheResponse;
-import java.net.ExtendedResponseCache;
-import java.net.HttpURLConnection;
 import java.net.ResponseCache;
-import java.net.ResponseSource;
 import java.net.URI;
 import java.net.URLConnection;
 import java.util.List;
 import java.util.Map;
-import javax.net.ssl.HttpsURLConnection;
-import libcore.io.DiskLruCache;
-import libcore.io.IoUtils;
-import org.apache.http.impl.client.DefaultHttpClient;
 
 /**
  * Caches HTTP and HTTPS responses to the filesystem so they may be reused,
- * saving time and bandwidth. This class supports {@link HttpURLConnection} and
- * {@link HttpsURLConnection}; there is no platform-provided cache for {@link
- * DefaultHttpClient} or {@link AndroidHttpClient}.
+ * saving time and bandwidth. This class supports {@link
+ * java.net.HttpURLConnection} and {@link javax.net.ssl.HttpsURLConnection};
+ * there is no platform-provided cache for {@code DefaultHttpClient} or
+ * {@code AndroidHttpClient}. Installation and instances are thread
+ * safe.
  *
  * <h3>Installing an HTTP response cache</h3>
  * Enable caching of all of your application's HTTP requests by installing the
  * cache at application startup. For example, this code installs a 10 MiB cache
- * in the {@link Context#getCacheDir() application-specific cache directory} of
- * the filesystem}: <pre>   {@code
+ * in the {@link android.content.Context#getCacheDir() application-specific
+ * cache directory} of the filesystem}: <pre>   {@code
  *   protected void onCreate(Bundle savedInstanceState) {
  *       ...
  *
@@ -77,10 +75,10 @@ import org.apache.http.impl.client.DefaultHttpClient;
  * contain private data.</strong> Although it often has more free space,
  * external storage is optional and&#8212;even if available&#8212;can disappear
  * during use. Retrieve the external cache directory using {@link
- * Context#getExternalCacheDir()}. If this method returns null, your application
- * should fall back to either not caching or caching on non-external storage. If
- * the external storage is removed during use, the cache hit rate will drop to
- * zero and ongoing cache reads will fail.
+ * android.content.Context#getExternalCacheDir()}. If this method returns null,
+ * your application should fall back to either not caching or caching on
+ * non-external storage. If the external storage is removed during use, the
+ * cache hit rate will drop to zero and ongoing cache reads will fail.
  *
  * <p>Flushing the cache forces its data to the filesystem. This ensures that
  * all responses written to the cache will be readable the next time the
@@ -151,13 +149,12 @@ import org.apache.http.impl.client.DefaultHttpClient;
  *       } catch (Exception httpResponseCacheNotAvailable) {
  *       }}</pre>
  */
-public final class HttpResponseCache extends ResponseCache
-        implements Closeable, ExtendedResponseCache {
+public final class HttpResponseCache extends ResponseCache implements Closeable, OkCacheContainer {
 
-    private final libcore.net.http.HttpResponseCache delegate;
+    private final AndroidShimResponseCache delegate;
 
-    private HttpResponseCache(File directory, long maxSize) throws IOException {
-        this.delegate = new libcore.net.http.HttpResponseCache(directory, maxSize);
+    private HttpResponseCache(AndroidShimResponseCache delegate) {
+        this.delegate = delegate;
     }
 
     /**
@@ -166,12 +163,14 @@ public final class HttpResponseCache extends ResponseCache
      */
     public static HttpResponseCache getInstalled() {
         ResponseCache installed = ResponseCache.getDefault();
-        return installed instanceof HttpResponseCache ? (HttpResponseCache) installed : null;
+        if (installed instanceof HttpResponseCache) {
+            return (HttpResponseCache) installed;
+        }
+        return null;
     }
 
     /**
-     * Creates a new HTTP response cache and {@link ResponseCache#setDefault
-     * sets it} as the system default cache.
+     * Creates a new HTTP response cache and sets it as the system default cache.
      *
      * @param directory the directory to hold cache data.
      * @param maxSize the maximum size of the cache in bytes.
@@ -180,23 +179,26 @@ public final class HttpResponseCache extends ResponseCache
      *     Most applications should respond to this exception by logging a
      *     warning.
      */
-    public static HttpResponseCache install(File directory, long maxSize) throws IOException {
-        HttpResponseCache installed = getInstalled();
-        if (installed != null) {
+    public static synchronized HttpResponseCache install(File directory, long maxSize)
+            throws IOException {
+        ResponseCache installed = ResponseCache.getDefault();
+        if (installed instanceof HttpResponseCache) {
+            HttpResponseCache installedResponseCache = (HttpResponseCache) installed;
             // don't close and reopen if an equivalent cache is already installed
-            DiskLruCache installedCache = installed.delegate.getCache();
-            if (installedCache.getDirectory().equals(directory)
-                    && installedCache.maxSize() == maxSize
-                    && !installedCache.isClosed()) {
-                return installed;
+            AndroidShimResponseCache trueResponseCache = installedResponseCache.delegate;
+            if (trueResponseCache.isEquivalent(directory, maxSize)) {
+                return installedResponseCache;
             } else {
-                IoUtils.closeQuietly(installed);
+                // The HttpResponseCache that owns this object is about to be replaced.
+                trueResponseCache.close();
             }
         }
 
-        HttpResponseCache result = new HttpResponseCache(directory, maxSize);
-        ResponseCache.setDefault(result);
-        return result;
+        AndroidShimResponseCache trueResponseCache =
+                AndroidShimResponseCache.create(directory, maxSize);
+        HttpResponseCache newResponseCache = new HttpResponseCache(trueResponseCache);
+        ResponseCache.setDefault(newResponseCache);
+        return newResponseCache;
     }
 
     @Override public CacheResponse get(URI uri, String requestMethod,
@@ -211,10 +213,15 @@ public final class HttpResponseCache extends ResponseCache
     /**
      * Returns the number of bytes currently being used to store the values in
      * this cache. This may be greater than the {@link #maxSize} if a background
-     * deletion is pending.
+     * deletion is pending. {@code -1} is returned if the size cannot be determined.
      */
     public long size() {
-        return delegate.getCache().size();
+        try {
+            return delegate.size();
+        } catch (IOException e) {
+            // This can occur if the cache failed to lazily initialize.
+            return -1;
+        }
     }
 
     /**
@@ -222,7 +229,7 @@ public final class HttpResponseCache extends ResponseCache
      * its data.
      */
     public long maxSize() {
-        return delegate.getCache().maxSize();
+        return delegate.maxSize();
     }
 
     /**
@@ -232,7 +239,7 @@ public final class HttpResponseCache extends ResponseCache
      */
     public void flush() {
         try {
-            delegate.getCache().flush();
+            delegate.flush();
         } catch (IOException ignored) {
         }
     }
@@ -263,21 +270,6 @@ public final class HttpResponseCache extends ResponseCache
         return delegate.getRequestCount();
     }
 
-    /** @hide */
-    @Override public void trackResponse(ResponseSource source) {
-        delegate.trackResponse(source);
-    }
-
-    /** @hide */
-    @Override public void trackConditionalCacheHit() {
-        delegate.trackConditionalCacheHit();
-    }
-
-    /** @hide */
-    @Override public void update(CacheResponse conditionalCacheHit, HttpURLConnection connection) {
-        delegate.update(conditionalCacheHit, connection);
-    }
-
     /**
      * Uninstalls the cache and releases any active resources. Stored contents
      * will remain on the filesystem.
@@ -286,7 +278,7 @@ public final class HttpResponseCache extends ResponseCache
         if (ResponseCache.getDefault() == this) {
             ResponseCache.setDefault(null);
         }
-        delegate.getCache().close();
+        delegate.close();
     }
 
     /**
@@ -296,6 +288,13 @@ public final class HttpResponseCache extends ResponseCache
         if (ResponseCache.getDefault() == this) {
             ResponseCache.setDefault(null);
         }
-        delegate.getCache().delete();
+        delegate.delete();
     }
+
+    /** @hide Needed for OkHttp integration. */
+    @Override
+    public Cache getCache() {
+        return delegate.getCache();
+    }
+
 }

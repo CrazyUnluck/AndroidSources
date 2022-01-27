@@ -17,37 +17,49 @@
 package com.android.systemui.statusbar.phone;
 
 import android.content.Context;
-import android.os.Handler;
+import android.content.res.Configuration;
+import android.content.res.Resources;
 import android.util.AttributeSet;
-import android.util.Slog;
 import android.view.View;
 import android.widget.LinearLayout;
 
-import com.android.internal.statusbar.StatusBarIcon;
-
 import com.android.systemui.R;
-import com.android.systemui.statusbar.StatusBarIconView;
 
 public class IconMerger extends LinearLayout {
     private static final String TAG = "IconMerger";
     private static final boolean DEBUG = false;
 
     private int mIconSize;
+    private int mIconHPadding;
+
     private View mMoreView;
 
     public IconMerger(Context context, AttributeSet attrs) {
         super(context, attrs);
-
-        mIconSize = context.getResources().getDimensionPixelSize(
-                R.dimen.status_bar_icon_size);
-
+        reloadDimens();
         if (DEBUG) {
             setBackgroundColor(0x800099FF);
         }
     }
 
+    private void reloadDimens() {
+        Resources res = mContext.getResources();
+        mIconSize = res.getDimensionPixelSize(R.dimen.status_bar_icon_size);
+        mIconHPadding = res.getDimensionPixelSize(R.dimen.status_bar_icon_padding);
+    }
+
+    @Override
+    protected void onConfigurationChanged(Configuration newConfig) {
+        super.onConfigurationChanged(newConfig);
+        reloadDimens();
+    }
+
     public void setOverflowIndicator(View v) {
         mMoreView = v;
+    }
+
+    private int getFullIconWidth() {
+        return mIconSize + 2 * mIconHPadding;
     }
 
     @Override
@@ -55,7 +67,7 @@ public class IconMerger extends LinearLayout {
         super.onMeasure(widthMeasureSpec, heightMeasureSpec);
         // we need to constrain this to an integral multiple of our children
         int width = getMeasuredWidth();
-        setMeasuredDimension(width - (width % mIconSize), getMeasuredHeight());
+        setMeasuredDimension(width - (width % getFullIconWidth()), getMeasuredHeight());
     }
 
     @Override
@@ -75,7 +87,7 @@ public class IconMerger extends LinearLayout {
         final boolean overflowShown = (mMoreView.getVisibility() == View.VISIBLE);
         // let's assume we have one more slot if the more icon is already showing
         if (overflowShown) visibleChildren --;
-        final boolean moreRequired = visibleChildren * mIconSize > width;
+        final boolean moreRequired = visibleChildren * getFullIconWidth() > width;
         if (moreRequired != overflowShown) {
             post(new Runnable() {
                 @Override

@@ -17,6 +17,7 @@
 package android.view;
 
 import android.graphics.Rect;
+import android.os.Bundle;
 import android.view.accessibility.AccessibilityEvent;
 
 /**
@@ -148,9 +149,11 @@ public interface ViewParent {
     /**
      * Change the z order of the child so it's on top of all other children.
      * This ordering change may affect layout, if this container
-     * uses an order-dependent layout scheme (e.g., LinearLayout). This
+     * uses an order-dependent layout scheme (e.g., LinearLayout). Prior
+     * to {@link android.os.Build.VERSION_CODES#KITKAT} this
      * method should be followed by calls to {@link #requestLayout()} and
-     * {@link View#invalidate()} on this parent.
+     * {@link View#invalidate()} on this parent to force the parent to redraw
+     * with the new child ordering.
      * 
      * @param child The child to bring to the top of the z order
      */
@@ -166,17 +169,45 @@ public interface ViewParent {
     public void focusableViewAvailable(View v);
 
     /**
-     * Bring up a context menu for the specified view or its ancestors.
-     *
-     * <p>In most cases, a subclass does not need to override this.  However, if
+     * Shows the context menu for the specified view or its ancestors.
+     * <p>
+     * In most cases, a subclass does not need to override this. However, if
      * the subclass is added directly to the window manager (for example,
      * {@link ViewManager#addView(View, android.view.ViewGroup.LayoutParams)})
-     * then it should override this and show the context menu.</p>
-     * 
-     * @param originalView The source view where the context menu was first invoked
-     * @return true if a context menu was displayed
+     * then it should override this and show the context menu.
+     *
+     * @param originalView the source view where the context menu was first
+     *                     invoked
+     * @return {@code true} if the context menu was shown, {@code false}
+     *         otherwise
+     * @see #showContextMenuForChild(View, float, float)
      */
     public boolean showContextMenuForChild(View originalView);
+
+    /**
+     * Shows the context menu for the specified view or its ancestors anchored
+     * to the specified view-relative coordinate.
+     * <p>
+     * In most cases, a subclass does not need to override this. However, if
+     * the subclass is added directly to the window manager (for example,
+     * {@link ViewManager#addView(View, android.view.ViewGroup.LayoutParams)})
+     * then it should override this and show the context menu.
+     * <p>
+     * If a subclass overrides this method it should also override
+     * {@link #showContextMenuForChild(View)}.
+     *
+     * @param originalView the source view where the context menu was first
+     *                     invoked
+     * @param x the X coordinate in pixels relative to the original view to
+     *          which the menu should be anchored, or {@link Float#NaN} to
+     *          disable anchoring
+     * @param y the Y coordinate in pixels relative to the original view to
+     *          which the menu should be anchored, or {@link Float#NaN} to
+     *          disable anchoring
+     * @return {@code true} if the context menu was shown, {@code false}
+     *         otherwise
+     */
+    boolean showContextMenuForChild(View originalView, float x, float y);
 
     /**
      * Have the parent populate the specified context menu if it has anything to
@@ -187,7 +218,8 @@ public interface ViewParent {
     public void createContextMenu(ContextMenu menu);
 
     /**
-     * Start an action mode for the specified view.
+     * Start an action mode for the specified view with the default type
+     * {@link ActionMode#TYPE_PRIMARY}.
      *
      * <p>In most cases, a subclass does not need to override this. However, if the
      * subclass is added directly to the window manager (for example,
@@ -197,8 +229,26 @@ public interface ViewParent {
      * @param originalView The source view where the action mode was first invoked
      * @param callback The callback that will handle lifecycle events for the action mode
      * @return The new action mode if it was started, null otherwise
+     *
+     * @see #startActionModeForChild(View, android.view.ActionMode.Callback, int)
      */
     public ActionMode startActionModeForChild(View originalView, ActionMode.Callback callback);
+
+    /**
+     * Start an action mode of a specific type for the specified view.
+     *
+     * <p>In most cases, a subclass does not need to override this. However, if the
+     * subclass is added directly to the window manager (for example,
+     * {@link ViewManager#addView(View, android.view.ViewGroup.LayoutParams)})
+     * then it should override this and start the action mode.</p>
+     *
+     * @param originalView The source view where the action mode was first invoked
+     * @param callback The callback that will handle lifecycle events for the action mode
+     * @param type One of {@link ActionMode#TYPE_PRIMARY} or {@link ActionMode#TYPE_FLOATING}.
+     * @return The new action mode if it was started, null otherwise
+     */
+    public ActionMode startActionModeForChild(
+            View originalView, ActionMode.Callback callback, int type);
 
     /**
      * This method is called on the parent when a child's drawable state
@@ -207,7 +257,7 @@ public interface ViewParent {
      * @param child The child whose drawable state has changed.
      */
     public void childDrawableStateChanged(View child);
-    
+
     /**
      * Called when a child does not want this parent and its ancestors to
      * intercept touch events with
@@ -221,14 +271,14 @@ public interface ViewParent {
      *            intercept touch events.
      */
     public void requestDisallowInterceptTouchEvent(boolean disallowIntercept);
-    
+
     /**
      * Called when a child of this group wants a particular rectangle to be
      * positioned onto the screen.  {@link ViewGroup}s overriding this can trust
      * that:
      * <ul>
      *   <li>child will be a direct child of this group</li>
-     *   <li>rectangle will be in the child's coordinates</li>
+     *   <li>rectangle will be in the child's content coordinates</li>
      * </ul>
      *
      * <p>{@link ViewGroup}s overriding this should uphold the contract:</p>
@@ -269,10 +319,25 @@ public interface ViewParent {
     /**
      * Called when a child view now has or no longer is tracking transient state.
      *
+     * <p>"Transient state" is any state that a View might hold that is not expected to
+     * be reflected in the data model that the View currently presents. This state only
+     * affects the presentation to the user within the View itself, such as the current
+     * state of animations in progress or the state of a text selection operation.</p>
+     *
+     * <p>Transient state is useful for hinting to other components of the View system
+     * that a particular view is tracking something complex but encapsulated.
+     * A <code>ListView</code> for example may acknowledge that list item Views
+     * with transient state should be preserved within their position or stable item ID
+     * instead of treating that view as trivially replaceable by the backing adapter.
+     * This allows adapter implementations to be simpler instead of needing to track
+     * the state of item view animations in progress such that they could be restored
+     * in the event of an unexpected recycling and rebinding of attached item views.</p>
+     *
+     * <p>This method is called on a parent view when a child view or a view within
+     * its subtree begins or ends tracking of internal transient state.</p>
+     *
      * @param child Child view whose state has changed
      * @param hasTransientState true if this child has transient state
-     *
-     * @hide
      */
     public void childHasTransientStateChanged(View child, boolean hasTransientState);
 
@@ -292,21 +357,27 @@ public interface ViewParent {
     public ViewParent getParentForAccessibility();
 
     /**
-     * A child notifies its parent that its state for accessibility has changed.
-     * That is some of the child properties reported to accessibility services has
-     * changed, hence the interested services have to be notified for the new state.
-     *
-     * @hide
+     * Notifies a view parent that the accessibility state of one of its
+     * descendants has changed and that the structure of the subtree is
+     * different.
+     * @param child The direct child whose subtree has changed.
+     * @param source The descendant view that changed.
+     * @param changeType A bit mask of the types of changes that occurred. One
+     *            or more of:
+     *            <ul>
+     *            <li>{@link AccessibilityEvent#CONTENT_CHANGE_TYPE_CONTENT_DESCRIPTION}
+     *            <li>{@link AccessibilityEvent#CONTENT_CHANGE_TYPE_SUBTREE}
+     *            <li>{@link AccessibilityEvent#CONTENT_CHANGE_TYPE_TEXT}
+     *            <li>{@link AccessibilityEvent#CONTENT_CHANGE_TYPE_UNDEFINED}
+     *            </ul>
      */
-    public void childAccessibilityStateChanged(View child);
+    public void notifySubtreeAccessibilityStateChanged(View child, View source, int changeType);
 
     /**
      * Tells if this view parent can resolve the layout direction.
      * See {@link View#setLayoutDirection(int)}
      *
      * @return True if this view parent can resolve the layout direction.
-     *
-     * @hide
      */
     public boolean canResolveLayoutDirection();
 
@@ -315,8 +386,6 @@ public interface ViewParent {
      * See {@link View#setLayoutDirection(int)}
      *
      * @return True if this view parent layout direction is resolved.
-     *
-     * @hide
      */
     public boolean isLayoutDirectionResolved();
 
@@ -325,8 +394,6 @@ public interface ViewParent {
      *
      * @return {@link View#LAYOUT_DIRECTION_RTL} if the layout direction is RTL or returns
      * {@link View#LAYOUT_DIRECTION_LTR} if the layout direction is not RTL.
-     *
-     * @hide
      */
     public int getLayoutDirection();
 
@@ -335,8 +402,6 @@ public interface ViewParent {
      * See {@link View#setTextDirection(int)}
      *
      * @return True if this view parent can resolve the text direction.
-     *
-     * @hide
      */
     public boolean canResolveTextDirection();
 
@@ -345,8 +410,6 @@ public interface ViewParent {
      * See {@link View#setTextDirection(int)}
      *
      * @return True if this view parent text direction is resolved.
-     *
-     * @hide
      */
     public boolean isTextDirectionResolved();
 
@@ -360,8 +423,6 @@ public interface ViewParent {
      * {@link View#TEXT_DIRECTION_LTR},
      * {@link View#TEXT_DIRECTION_RTL},
      * {@link View#TEXT_DIRECTION_LOCALE}
-     *
-     * @hide
      */
     public int getTextDirection();
 
@@ -370,8 +431,6 @@ public interface ViewParent {
      * See {@link View#setTextAlignment(int)}
      *
      * @return True if this view parent can resolve the text alignment.
-     *
-     * @hide
      */
     public boolean canResolveTextAlignment();
 
@@ -380,8 +439,6 @@ public interface ViewParent {
      * See {@link View#setTextAlignment(int)}
      *
      * @return True if this view parent text alignment is resolved.
-     *
-     * @hide
      */
     public boolean isTextAlignmentResolved();
 
@@ -396,8 +453,169 @@ public interface ViewParent {
      * {@link View#TEXT_ALIGNMENT_TEXT_END},
      * {@link View#TEXT_ALIGNMENT_VIEW_START},
      * {@link View#TEXT_ALIGNMENT_VIEW_END}
-     *
-     * @hide
      */
     public int getTextAlignment();
+
+    /**
+     * React to a descendant view initiating a nestable scroll operation, claiming the
+     * nested scroll operation if appropriate.
+     *
+     * <p>This method will be called in response to a descendant view invoking
+     * {@link View#startNestedScroll(int)}. Each parent up the view hierarchy will be
+     * given an opportunity to respond and claim the nested scrolling operation by returning
+     * <code>true</code>.</p>
+     *
+     * <p>This method may be overridden by ViewParent implementations to indicate when the view
+     * is willing to support a nested scrolling operation that is about to begin. If it returns
+     * true, this ViewParent will become the target view's nested scrolling parent for the duration
+     * of the scroll operation in progress. When the nested scroll is finished this ViewParent
+     * will receive a call to {@link #onStopNestedScroll(View)}.
+     * </p>
+     *
+     * @param child Direct child of this ViewParent containing target
+     * @param target View that initiated the nested scroll
+     * @param nestedScrollAxes Flags consisting of {@link View#SCROLL_AXIS_HORIZONTAL},
+     *                         {@link View#SCROLL_AXIS_VERTICAL} or both
+     * @return true if this ViewParent accepts the nested scroll operation
+     */
+    public boolean onStartNestedScroll(View child, View target, int nestedScrollAxes);
+
+    /**
+     * React to the successful claiming of a nested scroll operation.
+     *
+     * <p>This method will be called after
+     * {@link #onStartNestedScroll(View, View, int) onStartNestedScroll} returns true. It offers
+     * an opportunity for the view and its superclasses to perform initial configuration
+     * for the nested scroll. Implementations of this method should always call their superclass's
+     * implementation of this method if one is present.</p>
+     *
+     * @param child Direct child of this ViewParent containing target
+     * @param target View that initiated the nested scroll
+     * @param nestedScrollAxes Flags consisting of {@link View#SCROLL_AXIS_HORIZONTAL},
+     *                         {@link View#SCROLL_AXIS_VERTICAL} or both
+     * @see #onStartNestedScroll(View, View, int)
+     * @see #onStopNestedScroll(View)
+     */
+    public void onNestedScrollAccepted(View child, View target, int nestedScrollAxes);
+
+    /**
+     * React to a nested scroll operation ending.
+     *
+     * <p>Perform cleanup after a nested scrolling operation.
+     * This method will be called when a nested scroll stops, for example when a nested touch
+     * scroll ends with a {@link MotionEvent#ACTION_UP} or {@link MotionEvent#ACTION_CANCEL} event.
+     * Implementations of this method should always call their superclass's implementation of this
+     * method if one is present.</p>
+     *
+     * @param target View that initiated the nested scroll
+     */
+    public void onStopNestedScroll(View target);
+
+    /**
+     * React to a nested scroll in progress.
+     *
+     * <p>This method will be called when the ViewParent's current nested scrolling child view
+     * dispatches a nested scroll event. To receive calls to this method the ViewParent must have
+     * previously returned <code>true</code> for a call to
+     * {@link #onStartNestedScroll(View, View, int)}.</p>
+     *
+     * <p>Both the consumed and unconsumed portions of the scroll distance are reported to the
+     * ViewParent. An implementation may choose to use the consumed portion to match or chase scroll
+     * position of multiple child elements, for example. The unconsumed portion may be used to
+     * allow continuous dragging of multiple scrolling or draggable elements, such as scrolling
+     * a list within a vertical drawer where the drawer begins dragging once the edge of inner
+     * scrolling content is reached.</p>
+     *
+     * @param target The descendent view controlling the nested scroll
+     * @param dxConsumed Horizontal scroll distance in pixels already consumed by target
+     * @param dyConsumed Vertical scroll distance in pixels already consumed by target
+     * @param dxUnconsumed Horizontal scroll distance in pixels not consumed by target
+     * @param dyUnconsumed Vertical scroll distance in pixels not consumed by target
+     */
+    public void onNestedScroll(View target, int dxConsumed, int dyConsumed,
+            int dxUnconsumed, int dyUnconsumed);
+
+    /**
+     * React to a nested scroll in progress before the target view consumes a portion of the scroll.
+     *
+     * <p>When working with nested scrolling often the parent view may want an opportunity
+     * to consume the scroll before the nested scrolling child does. An example of this is a
+     * drawer that contains a scrollable list. The user will want to be able to scroll the list
+     * fully into view before the list itself begins scrolling.</p>
+     *
+     * <p><code>onNestedPreScroll</code> is called when a nested scrolling child invokes
+     * {@link View#dispatchNestedPreScroll(int, int, int[], int[])}. The implementation should
+     * report how any pixels of the scroll reported by dx, dy were consumed in the
+     * <code>consumed</code> array. Index 0 corresponds to dx and index 1 corresponds to dy.
+     * This parameter will never be null. Initial values for consumed[0] and consumed[1]
+     * will always be 0.</p>
+     *
+     * @param target View that initiated the nested scroll
+     * @param dx Horizontal scroll distance in pixels
+     * @param dy Vertical scroll distance in pixels
+     * @param consumed Output. The horizontal and vertical scroll distance consumed by this parent
+     */
+    public void onNestedPreScroll(View target, int dx, int dy, int[] consumed);
+
+    /**
+     * Request a fling from a nested scroll.
+     *
+     * <p>This method signifies that a nested scrolling child has detected suitable conditions
+     * for a fling. Generally this means that a touch scroll has ended with a
+     * {@link VelocityTracker velocity} in the direction of scrolling that meets or exceeds
+     * the {@link ViewConfiguration#getScaledMinimumFlingVelocity() minimum fling velocity}
+     * along a scrollable axis.</p>
+     *
+     * <p>If a nested scrolling child view would normally fling but it is at the edge of
+     * its own content, it can use this method to delegate the fling to its nested scrolling
+     * parent instead. The parent may optionally consume the fling or observe a child fling.</p>
+     *
+     * @param target View that initiated the nested scroll
+     * @param velocityX Horizontal velocity in pixels per second
+     * @param velocityY Vertical velocity in pixels per second
+     * @param consumed true if the child consumed the fling, false otherwise
+     * @return true if this parent consumed or otherwise reacted to the fling
+     */
+    public boolean onNestedFling(View target, float velocityX, float velocityY, boolean consumed);
+
+    /**
+     * React to a nested fling before the target view consumes it.
+     *
+     * <p>This method siginfies that a nested scrolling child has detected a fling with the given
+     * velocity along each axis. Generally this means that a touch scroll has ended with a
+     * {@link VelocityTracker velocity} in the direction of scrolling that meets or exceeds
+     * the {@link ViewConfiguration#getScaledMinimumFlingVelocity() minimum fling velocity}
+     * along a scrollable axis.</p>
+     *
+     * <p>If a nested scrolling parent is consuming motion as part of a
+     * {@link #onNestedPreScroll(View, int, int, int[]) pre-scroll}, it may be appropriate for
+     * it to also consume the pre-fling to complete that same motion. By returning
+     * <code>true</code> from this method, the parent indicates that the child should not
+     * fling its own internal content as well.</p>
+     *
+     * @param target View that initiated the nested scroll
+     * @param velocityX Horizontal velocity in pixels per second
+     * @param velocityY Vertical velocity in pixels per second
+     * @return true if this parent consumed the fling ahead of the target view
+     */
+    public boolean onNestedPreFling(View target, float velocityX, float velocityY);
+
+    /**
+     * React to an accessibility action delegated by a target descendant view before the target
+     * processes it.
+     *
+     * <p>This method may be called by a target descendant view if the target wishes to give
+     * a view in its parent chain a chance to react to the event before normal processing occurs.
+     * Most commonly this will be a scroll event such as
+     * {@link android.view.accessibility.AccessibilityNodeInfo#ACTION_SCROLL_FORWARD}.
+     * A ViewParent that supports acting as a nested scrolling parent should override this
+     * method and act accordingly to implement scrolling via accesibility systems.</p>
+     *
+     * @param target The target view dispatching this action
+     * @param action Action being performed; see
+     *               {@link android.view.accessibility.AccessibilityNodeInfo}
+     * @param arguments Optional action arguments
+     * @return true if the action was consumed by this ViewParent
+     */
+    public boolean onNestedPrePerformAccessibilityAction(View target, int action, Bundle arguments);
 }

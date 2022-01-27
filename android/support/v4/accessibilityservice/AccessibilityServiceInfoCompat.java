@@ -26,7 +26,7 @@ import android.view.View;
  * Helper for accessing features in {@link android.accessibilityservice.AccessibilityService}
  * introduced after API level 4 in a backwards compatible fashion.
  */
-public class AccessibilityServiceInfoCompat {
+public final class AccessibilityServiceInfoCompat {
 
     static interface AccessibilityServiceInfoVersionImpl {
         public String getId(AccessibilityServiceInfo info);
@@ -175,8 +175,9 @@ public class AccessibilityServiceInfoCompat {
      * If this flag is set the system will regard views that are not important
      * for accessibility in addition to the ones that are important for accessibility.
      * That is, views that are marked as not important for accessibility via
-     * {@link View#IMPORTANT_FOR_ACCESSIBILITY_NO} and views that are marked as
-     * potentially important for accessibility via
+     * {@link View#IMPORTANT_FOR_ACCESSIBILITY_NO} or
+     * {@link View#IMPORTANT_FOR_ACCESSIBILITY_NO_HIDE_DESCENDANTS} and views that are
+     * marked as potentially important for accessibility via
      * {@link View#IMPORTANT_FOR_ACCESSIBILITY_AUTO} for which the system has determined
      * that are not important for accessibility, are both reported while querying the
      * window content and also the accessibility service will receive accessibility events
@@ -276,9 +277,7 @@ public class AccessibilityServiceInfoCompat {
     /*
      * Hide constructor
      */
-    private AccessibilityServiceInfoCompat() {
-
-    }
+    private AccessibilityServiceInfoCompat() {}
 
     /**
      * The accessibility service id.

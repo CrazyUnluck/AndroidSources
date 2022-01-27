@@ -20,20 +20,28 @@ import android.app.ActivityManagerNative;
 import android.app.IActivityManager;
 import android.app.IActivityManager.ContentProviderHolder;
 import android.content.IContentProvider;
+import android.database.Cursor;
+import android.net.Uri;
 import android.os.Binder;
 import android.os.Bundle;
 import android.os.IBinder;
+import android.os.Process;
 import android.os.RemoteException;
 import android.os.UserHandle;
 import android.provider.Settings;
 
+import java.util.ArrayList;
+import java.util.Collections;
+import java.util.List;
+
 public final class SettingsCmd {
-    static final String TAG = "settings";
 
     enum CommandVerb {
         UNSPECIFIED,
         GET,
-        PUT
+        PUT,
+        DELETE,
+        LIST,
     }
 
     static String[] mArgs;
@@ -45,7 +53,7 @@ public final class SettingsCmd {
     String mValue = null;
 
     public static void main(String[] args) {
-        if (args == null || args.length < 3) {
+        if (args == null || args.length < 2) {
             printUsage();
             return;
         }
@@ -68,12 +76,21 @@ public final class SettingsCmd {
                         // --user specified more than once; invalid
                         break;
                     }
-                    mUser = Integer.parseInt(nextArg());
+                    arg = nextArg();
+                    if ("current".equals(arg) || "cur".equals(arg)) {
+                        mUser = UserHandle.USER_CURRENT;
+                    } else {
+                        mUser = Integer.parseInt(arg);
+                    }
                 } else if (mVerb == CommandVerb.UNSPECIFIED) {
                     if ("get".equalsIgnoreCase(arg)) {
                         mVerb = CommandVerb.GET;
                     } else if ("put".equalsIgnoreCase(arg)) {
                         mVerb = CommandVerb.PUT;
+                    } else if ("delete".equalsIgnoreCase(arg)) {
+                        mVerb = CommandVerb.DELETE;
+                    } else if ("list".equalsIgnoreCase(arg)) {
+                        mVerb = CommandVerb.LIST;
                     } else {
                         // invalid
                         System.err.println("Invalid command: " + arg);
@@ -87,7 +104,11 @@ public final class SettingsCmd {
                         break;  // invalid
                     }
                     mTable = arg.toLowerCase();
-                } else if (mVerb == CommandVerb.GET) {
+                    if (mVerb == CommandVerb.LIST) {
+                        valid = true;
+                        break;
+                    }
+                } else if (mVerb == CommandVerb.GET || mVerb == CommandVerb.DELETE) {
                     mKey = arg;
                     if (mNextArg >= mArgs.length) {
                         valid = true;
@@ -113,17 +134,19 @@ public final class SettingsCmd {
         }
 
         if (valid) {
-            if (mUser < 0) {
-                mUser = UserHandle.USER_OWNER;
-            }
-
             try {
                 IActivityManager activityManager = ActivityManagerNative.getDefault();
+                if (mUser == UserHandle.USER_CURRENT) {
+                    mUser = activityManager.getCurrentUser().id;
+                }
+                if (mUser < 0) {
+                    mUser = UserHandle.USER_SYSTEM;
+                }
                 IContentProvider provider = null;
                 IBinder token = new Binder();
                 try {
                     ContentProviderHolder holder = activityManager.getContentProviderExternal(
-                            "settings", UserHandle.USER_OWNER, token);
+                            "settings", UserHandle.USER_SYSTEM, token);
                     if (holder == null) {
                         throw new IllegalStateException("Could not find settings provider");
                     }
@@ -135,6 +158,15 @@ public final class SettingsCmd {
                             break;
                         case PUT:
                             putForUser(provider, mUser, mTable, mKey, mValue);
+                            break;
+                        case DELETE:
+                            System.out.println("Deleted "
+                                    + deleteForUser(provider, mUser, mTable, mKey) + " rows");
+                            break;
+                        case LIST:
+                            for (String line : listForUser(provider, mUser, mTable)) {
+                                System.out.println(line);
+                            }
                             break;
                         default:
                             System.err.println("Unspecified command");
@@ -154,6 +186,34 @@ public final class SettingsCmd {
         } else {
             printUsage();
         }
+    }
+
+    private List<String> listForUser(IContentProvider provider, int userHandle, String table) {
+        final Uri uri = "system".equals(table) ? Settings.System.CONTENT_URI
+                : "secure".equals(table) ? Settings.Secure.CONTENT_URI
+                : "global".equals(table) ? Settings.Global.CONTENT_URI
+                : null;
+        final ArrayList<String> lines = new ArrayList<String>();
+        if (uri == null) {
+            return lines;
+        }
+        try {
+            final Cursor cursor = provider.query(resolveCallingPackage(), uri, null, null, null,
+                    null, null);
+            try {
+                while (cursor != null && cursor.moveToNext()) {
+                    lines.add(cursor.getString(1) + "=" + cursor.getString(2));
+                }
+            } finally {
+                if (cursor != null) {
+                    cursor.close();
+                }
+            }
+            Collections.sort(lines);
+        } catch (RemoteException e) {
+            System.err.println("List failed in " + table + " for user " + userHandle);
+        }
+        return lines;
     }
 
     private String nextArg() {
@@ -180,7 +240,7 @@ public final class SettingsCmd {
         try {
             Bundle arg = new Bundle();
             arg.putInt(Settings.CALL_METHOD_USER_KEY, userHandle);
-            Bundle b = provider.call(null, callGetCommand, key, arg);
+            Bundle b = provider.call(resolveCallingPackage(), callGetCommand, key, arg);
             if (b != null) {
                 result = b.getPairValue();
             }
@@ -205,16 +265,56 @@ public final class SettingsCmd {
             Bundle arg = new Bundle();
             arg.putString(Settings.NameValueTable.VALUE, value);
             arg.putInt(Settings.CALL_METHOD_USER_KEY, userHandle);
-            provider.call(null, callPutCommand, key, arg);
+            provider.call(resolveCallingPackage(), callPutCommand, key, arg);
         } catch (RemoteException e) {
             System.err.println("Can't set key " + key + " in " + table + " for user " + userHandle);
         }
     }
 
+    int deleteForUser(IContentProvider provider, int userHandle,
+            final String table, final String key) {
+        Uri targetUri;
+        if ("system".equals(table)) targetUri = Settings.System.getUriFor(key);
+        else if ("secure".equals(table)) targetUri = Settings.Secure.getUriFor(key);
+        else if ("global".equals(table)) targetUri = Settings.Global.getUriFor(key);
+        else {
+            System.err.println("Invalid table; no delete performed");
+            throw new IllegalArgumentException("Invalid table " + table);
+        }
+
+        int num = 0;
+        try {
+            num = provider.delete(resolveCallingPackage(), targetUri, null, null);
+        } catch (RemoteException e) {
+            System.err.println("Can't clear key " + key + " in " + table + " for user "
+                    + userHandle);
+        }
+        return num;
+    }
+
     private static void printUsage() {
-        System.err.println("usage:  settings [--user NUM] get namespace key");
-        System.err.println("        settings [--user NUM] put namespace key value");
+        System.err.println("usage:  settings [--user <USER_ID> | current] get namespace key");
+        System.err.println("        settings [--user <USER_ID> | current] put namespace key value");
+        System.err.println("        settings [--user <USER_ID> | current] delete namespace key");
+        System.err.println("        settings [--user <USER_ID> | current] list namespace");
         System.err.println("\n'namespace' is one of {system, secure, global}, case-insensitive");
-        System.err.println("If '--user NUM' is not given, the operations are performed on the owner user.");
+        System.err.println("If '--user <USER_ID> | current' is not given, the operations are "
+                + "performed on the system user.");
+    }
+
+    public static String resolveCallingPackage() {
+        switch (android.os.Process.myUid()) {
+            case Process.ROOT_UID: {
+                return "root";
+            }
+
+            case Process.SHELL_UID: {
+                return "com.android.shell";
+            }
+
+            default: {
+                return null;
+            }
+        }
     }
 }

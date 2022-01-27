@@ -37,10 +37,9 @@ import android.os.ParcelFileDescriptor;
  */
 public interface BackupHelper {
     /**
-     * Based on <code>oldState</code>, determine which of the files from the
-     * application's data directory need to be backed up, write them to
-     * <code>data</code>, and fill in <code>newState</code> with the state as it
-     * exists now.
+     * Based on <code>oldState</code>, determine what application content
+     * needs to be backed up, write it to <code>data</code>, and fill in
+     * <code>newState</code> with the complete state as it exists now.
      * <p>
      * Implementing this method is much like implementing
      * {@link BackupAgent#onBackup(ParcelFileDescriptor, BackupDataOutput, ParcelFileDescriptor)
@@ -51,7 +50,11 @@ public interface BackupHelper {
      * new state after performing the backup operation.
      * <p class="note">
      * <strong>Note:</strong> The helper should not close or seek either the {@code oldState} or
-     * the {@code newState} file descriptors.</p>
+     * the {@code newState} file descriptors.  It is essential that when reading the helper's
+     * saved state from the {@code oldState} file, no extra content is consumed beyond
+     * what was stored by this helper.  If more old state data is read, even accidentally,
+     * it will make it impossible for additional helpers that may be invoked after this one
+     * to properly reconstruct their prior state.</p>
      *
      * @param oldState An open, read-only {@link android.os.ParcelFileDescriptor} pointing to the
      *            last backup state provided by the application. May be

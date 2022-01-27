@@ -29,8 +29,6 @@ import android.view.MotionEvent;
 import android.view.View;
 import android.view.ViewConfiguration;
 import android.view.ViewGroup;
-import android.view.accessibility.AccessibilityEvent;
-import android.view.accessibility.AccessibilityNodeInfo;
 import android.widget.RemoteViews.OnClickHandler;
 
 import java.util.ArrayList;
@@ -173,10 +171,15 @@ public abstract class AdapterViewAnimator extends AdapterView<Adapter>
     }
 
     public AdapterViewAnimator(Context context, AttributeSet attrs, int defStyleAttr) {
-        super(context, attrs, defStyleAttr);
+        this(context, attrs, defStyleAttr, 0);
+    }
 
-        TypedArray a = context.obtainStyledAttributes(attrs,
-                com.android.internal.R.styleable.AdapterViewAnimator, defStyleAttr, 0);
+    public AdapterViewAnimator(
+            Context context, AttributeSet attrs, int defStyleAttr, int defStyleRes) {
+        super(context, attrs, defStyleAttr, defStyleRes);
+
+        final TypedArray a = context.obtainStyledAttributes(attrs,
+                com.android.internal.R.styleable.AdapterViewAnimator, defStyleAttr, defStyleRes);
         int resource = a.getResourceId(
                 com.android.internal.R.styleable.AdapterViewAnimator_inAnimation, 0);
         if (resource > 0) {
@@ -398,12 +401,11 @@ public abstract class AdapterViewAnimator extends AdapterView<Adapter>
      }
 
     LayoutParams createOrReuseLayoutParams(View v) {
-        final ViewGroup.LayoutParams currentLp = v.getLayoutParams();
-        if (currentLp instanceof ViewGroup.LayoutParams) {
-            LayoutParams lp = (LayoutParams) currentLp;
-            return lp;
+        final LayoutParams currentLp = v.getLayoutParams();
+        if (currentLp != null) {
+            return currentLp;
         }
-        return new ViewGroup.LayoutParams(0, 0);
+        return new LayoutParams(0, 0);
     }
 
     void refreshChildren() {
@@ -1080,14 +1082,7 @@ public abstract class AdapterViewAnimator extends AdapterView<Adapter>
     }
 
     @Override
-    public void onInitializeAccessibilityEvent(AccessibilityEvent event) {
-        super.onInitializeAccessibilityEvent(event);
-        event.setClassName(AdapterViewAnimator.class.getName());
-    }
-
-    @Override
-    public void onInitializeAccessibilityNodeInfo(AccessibilityNodeInfo info) {
-        super.onInitializeAccessibilityNodeInfo(info);
-        info.setClassName(AdapterViewAnimator.class.getName());
+    public CharSequence getAccessibilityClassName() {
+        return AdapterViewAnimator.class.getName();
     }
 }

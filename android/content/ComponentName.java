@@ -18,6 +18,9 @@ package android.content;
 
 import android.os.Parcel;
 import android.os.Parcelable;
+import android.text.TextUtils;
+
+import java.io.PrintWriter;
 import java.lang.Comparable;
 
 /**
@@ -33,6 +36,56 @@ import java.lang.Comparable;
 public final class ComponentName implements Parcelable, Cloneable, Comparable<ComponentName> {
     private final String mPackage;
     private final String mClass;
+
+    /**
+     * Create a new component identifier where the class name may be specified
+     * as either absolute or relative to the containing package.
+     *
+     * <p>Relative package names begin with a <code>'.'</code> character. For a package
+     * <code>"com.example"</code> and class name <code>".app.MyActivity"</code> this method
+     * will return a ComponentName with the package <code>"com.example"</code>and class name
+     * <code>"com.example.app.MyActivity"</code>. Fully qualified class names are also
+     * permitted.</p>
+     *
+     * @param pkg the name of the package the component exists in
+     * @param cls the name of the class inside of <var>pkg</var> that implements
+     *            the component
+     * @return the new ComponentName
+     */
+    public static ComponentName createRelative(String pkg, String cls) {
+        if (TextUtils.isEmpty(cls)) {
+            throw new IllegalArgumentException("class name cannot be empty");
+        }
+
+        final String fullName;
+        if (cls.charAt(0) == '.') {
+            // Relative to the package. Prepend the package name.
+            fullName = pkg + cls;
+        } else {
+            // Fully qualified package name.
+            fullName = cls;
+        }
+        return new ComponentName(pkg, fullName);
+    }
+
+    /**
+     * Create a new component identifier where the class name may be specified
+     * as either absolute or relative to the containing package.
+     *
+     * <p>Relative package names begin with a <code>'.'</code> character. For a package
+     * <code>"com.example"</code> and class name <code>".app.MyActivity"</code> this method
+     * will return a ComponentName with the package <code>"com.example"</code>and class name
+     * <code>"com.example.app.MyActivity"</code>. Fully qualified class names are also
+     * permitted.</p>
+     *
+     * @param pkg a Context for the package implementing the component
+     * @param cls the name of the class inside of <var>pkg</var> that implements
+     *            the component
+     * @return the new ComponentName
+     */
+    public static ComponentName createRelative(Context pkg, String cls) {
+        return createRelative(pkg.getPackageName(), cls);
+    }
 
     /**
      * Create a new component identifier.
@@ -109,6 +162,32 @@ public final class ComponentName implements Parcelable, Cloneable, Comparable<Co
         return mClass;
     }
     
+    private static void appendShortClassName(StringBuilder sb, String packageName,
+            String className) {
+        if (className.startsWith(packageName)) {
+            int PN = packageName.length();
+            int CN = className.length();
+            if (CN > PN && className.charAt(PN) == '.') {
+                sb.append(className, PN, CN);
+                return;
+            }
+        }
+        sb.append(className);
+    }
+
+    private static void printShortClassName(PrintWriter pw, String packageName,
+            String className) {
+        if (className.startsWith(packageName)) {
+            int PN = packageName.length();
+            int CN = className.length();
+            if (CN > PN && className.charAt(PN) == '.') {
+                pw.write(className, PN, CN-PN);
+                return;
+            }
+        }
+        pw.print(className);
+    }
+
     /**
      * Return a String that unambiguously describes both the package and
      * class names contained in the ComponentName.  You can later recover
@@ -137,9 +216,29 @@ public final class ComponentName implements Parcelable, Cloneable, Comparable<Co
      * @see #unflattenFromString(String)
      */
     public String flattenToShortString() {
-        return mPackage + "/" + getShortClassName();
+        StringBuilder sb = new StringBuilder(mPackage.length() + mClass.length());
+        appendShortString(sb, mPackage, mClass);
+        return sb.toString();
     }
-    
+
+    /** @hide */
+    public void appendShortString(StringBuilder sb) {
+        appendShortString(sb, mPackage, mClass);
+    }
+
+    /** @hide */
+    public static void appendShortString(StringBuilder sb, String packageName, String className) {
+        sb.append(packageName).append('/');
+        appendShortClassName(sb, packageName, className);
+    }
+
+    /** @hide */
+    public static void printShortString(PrintWriter pw, String packageName, String className) {
+        pw.print(packageName);
+        pw.print('/');
+        printShortClassName(pw, packageName, className);
+    }
+
     /**
      * Recover a ComponentName from a String that was previously created with
      * {@link #flattenToString()}.  It splits the string at the first '/',

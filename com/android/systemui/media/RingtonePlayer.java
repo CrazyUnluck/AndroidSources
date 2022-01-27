@@ -16,24 +16,31 @@
 
 package com.android.systemui.media;
 
+import android.content.ContentResolver;
 import android.content.Context;
 import android.content.pm.PackageManager.NameNotFoundException;
+import android.database.Cursor;
+import android.media.AudioAttributes;
 import android.media.IAudioService;
 import android.media.IRingtonePlayer;
 import android.media.Ringtone;
 import android.net.Uri;
 import android.os.Binder;
 import android.os.IBinder;
+import android.os.ParcelFileDescriptor;
 import android.os.Process;
 import android.os.RemoteException;
 import android.os.ServiceManager;
 import android.os.UserHandle;
-import android.util.Slog;
+import android.provider.MediaStore;
+import android.provider.MediaStore.Audio.AudioColumns;
+import android.util.Log;
 
+import com.android.internal.util.Preconditions;
 import com.android.systemui.SystemUI;
-import com.google.android.collect.Maps;
 
 import java.io.FileDescriptor;
+import java.io.IOException;
 import java.io.PrintWriter;
 import java.util.HashMap;
 
@@ -50,7 +57,7 @@ public class RingtonePlayer extends SystemUI {
     private IAudioService mAudioService;
 
     private final NotificationPlayer mAsyncPlayer = new NotificationPlayer(TAG);
-    private final HashMap<IBinder, Client> mClients = Maps.newHashMap();
+    private final HashMap<IBinder, Client> mClients = new HashMap<IBinder, Client>();
 
     @Override
     public void start() {
@@ -61,7 +68,7 @@ public class RingtonePlayer extends SystemUI {
         try {
             mAudioService.setRingtonePlayer(mCallback);
         } catch (RemoteException e) {
-            Slog.e(TAG, "Problem registering RingtonePlayer: " + e);
+            Log.e(TAG, "Problem registering RingtonePlayer: " + e);
         }
     }
 
@@ -72,17 +79,17 @@ public class RingtonePlayer extends SystemUI {
         private final IBinder mToken;
         private final Ringtone mRingtone;
 
-        public Client(IBinder token, Uri uri, UserHandle user, int streamType) {
+        public Client(IBinder token, Uri uri, UserHandle user, AudioAttributes aa) {
             mToken = token;
 
             mRingtone = new Ringtone(getContextForUser(user), false);
-            mRingtone.setStreamType(streamType);
+            mRingtone.setAudioAttributes(aa);
             mRingtone.setUri(uri);
         }
 
         @Override
         public void binderDied() {
-            if (LOGD) Slog.d(TAG, "binderDied() token=" + mToken);
+            if (LOGD) Log.d(TAG, "binderDied() token=" + mToken);
             synchronized (mClients) {
                 mClients.remove(mToken);
             }
@@ -92,9 +99,10 @@ public class RingtonePlayer extends SystemUI {
 
     private IRingtonePlayer mCallback = new IRingtonePlayer.Stub() {
         @Override
-        public void play(IBinder token, Uri uri, int streamType) throws RemoteException {
+        public void play(IBinder token, Uri uri, AudioAttributes aa, float volume, boolean looping)
+                throws RemoteException {
             if (LOGD) {
-                Slog.d(TAG, "play(token=" + token + ", uri=" + uri + ", uid="
+                Log.d(TAG, "play(token=" + token + ", uri=" + uri + ", uid="
                         + Binder.getCallingUid() + ")");
             }
             Client client;
@@ -102,17 +110,19 @@ public class RingtonePlayer extends SystemUI {
                 client = mClients.get(token);
                 if (client == null) {
                     final UserHandle user = Binder.getCallingUserHandle();
-                    client = new Client(token, uri, user, streamType);
+                    client = new Client(token, uri, user, aa);
                     token.linkToDeath(client, 0);
                     mClients.put(token, client);
                 }
             }
+            client.mRingtone.setLooping(looping);
+            client.mRingtone.setVolume(volume);
             client.mRingtone.play();
         }
 
         @Override
         public void stop(IBinder token) {
-            if (LOGD) Slog.d(TAG, "stop(token=" + token + ")");
+            if (LOGD) Log.d(TAG, "stop(token=" + token + ")");
             Client client;
             synchronized (mClients) {
                 client = mClients.remove(token);
@@ -125,7 +135,7 @@ public class RingtonePlayer extends SystemUI {
 
         @Override
         public boolean isPlaying(IBinder token) {
-            if (LOGD) Slog.d(TAG, "isPlaying(token=" + token + ")");
+            if (LOGD) Log.d(TAG, "isPlaying(token=" + token + ")");
             Client client;
             synchronized (mClients) {
                 client = mClients.get(token);
@@ -138,22 +148,72 @@ public class RingtonePlayer extends SystemUI {
         }
 
         @Override
-        public void playAsync(Uri uri, UserHandle user, boolean looping, int streamType) {
-            if (LOGD) Slog.d(TAG, "playAsync(uri=" + uri + ", user=" + user + ")");
+        public void setPlaybackProperties(IBinder token, float volume, boolean looping) {
+            Client client;
+            synchronized (mClients) {
+                client = mClients.get(token);
+            }
+            if (client != null) {
+                client.mRingtone.setVolume(volume);
+                client.mRingtone.setLooping(looping);
+            }
+            // else no client for token when setting playback properties but will be set at play()
+        }
+
+        @Override
+        public void playAsync(Uri uri, UserHandle user, boolean looping, AudioAttributes aa) {
+            if (LOGD) Log.d(TAG, "playAsync(uri=" + uri + ", user=" + user + ")");
             if (Binder.getCallingUid() != Process.SYSTEM_UID) {
                 throw new SecurityException("Async playback only available from system UID.");
             }
-
-            mAsyncPlayer.play(getContextForUser(user), uri, looping, streamType);
+            if (UserHandle.ALL.equals(user)) {
+                user = UserHandle.SYSTEM;
+            }
+            mAsyncPlayer.play(getContextForUser(user), uri, looping, aa);
         }
 
         @Override
         public void stopAsync() {
-            if (LOGD) Slog.d(TAG, "stopAsync()");
+            if (LOGD) Log.d(TAG, "stopAsync()");
             if (Binder.getCallingUid() != Process.SYSTEM_UID) {
                 throw new SecurityException("Async playback only available from system UID.");
             }
             mAsyncPlayer.stop();
+        }
+
+        @Override
+        public String getTitle(Uri uri) {
+            final UserHandle user = Binder.getCallingUserHandle();
+            return Ringtone.getTitle(getContextForUser(user), uri,
+                    false /*followSettingsUri*/, false /*allowRemote*/);
+        }
+
+        @Override
+        public ParcelFileDescriptor openRingtone(Uri uri) {
+            final UserHandle user = Binder.getCallingUserHandle();
+            final ContentResolver resolver = getContextForUser(user).getContentResolver();
+
+            // Only open the requested Uri if it's a well-known ringtone or
+            // other sound from the platform media store, otherwise this opens
+            // up arbitrary access to any file on external storage.
+            if (uri.toString().startsWith(MediaStore.Audio.Media.EXTERNAL_CONTENT_URI.toString())) {
+                try (Cursor c = resolver.query(uri, new String[] {
+                        MediaStore.Audio.AudioColumns.IS_RINGTONE,
+                        MediaStore.Audio.AudioColumns.IS_ALARM,
+                        MediaStore.Audio.AudioColumns.IS_NOTIFICATION
+                }, null, null, null)) {
+                    if (c.moveToFirst()) {
+                        if (c.getInt(0) != 0 || c.getInt(1) != 0 || c.getInt(2) != 0) {
+                            try {
+                                return resolver.openFileDescriptor(uri, "r");
+                            } catch (IOException e) {
+                                throw new SecurityException(e);
+                            }
+                        }
+                    }
+                }
+            }
+            throw new SecurityException("Uri is not ringtone, alarm, or notification: " + uri);
         }
     };
 

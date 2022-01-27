@@ -16,46 +16,11 @@
 
 package com.android.internal.util;
 
-import java.io.FileInputStream;
-
+import android.os.Debug;
 import android.os.StrictMode;
 
-public class MemInfoReader {
-    byte[] mBuffer = new byte[1024];
-
-    private long mTotalSize;
-    private long mFreeSize;
-    private long mCachedSize;
-
-    private boolean matchText(byte[] buffer, int index, String text) {
-        int N = text.length();
-        if ((index+N) >= buffer.length) {
-            return false;
-        }
-        for (int i=0; i<N; i++) {
-            if (buffer[index+i] != text.charAt(i)) {
-                return false;
-            }
-        }
-        return true;
-    }
-
-    private long extractMemValue(byte[] buffer, int index) {
-        while (index < buffer.length && buffer[index] != '\n') {
-            if (buffer[index] >= '0' && buffer[index] <= '9') {
-                int start = index;
-                index++;
-                while (index < buffer.length && buffer[index] >= '0'
-                    && buffer[index] <= '9') {
-                    index++;
-                }
-                String str = new String(buffer, 0, start, index-start);
-                return ((long)Integer.parseInt(str)) * 1024;
-            }
-            index++;
-        }
-        return 0;
-    }
+public final class MemInfoReader {
+    final long[] mInfos = new long[Debug.MEMINFO_COUNT];
 
     public void readMemInfo() {
         // Permit disk reads here, as /proc/meminfo isn't really "on
@@ -63,48 +28,86 @@ public class MemInfoReader {
         // /proc/ and /sys/ files perhaps?
         StrictMode.ThreadPolicy savedPolicy = StrictMode.allowThreadDiskReads();
         try {
-            mTotalSize = 0;
-            mFreeSize = 0;
-            mCachedSize = 0;
-            FileInputStream is = new FileInputStream("/proc/meminfo");
-            int len = is.read(mBuffer);
-            is.close();
-            final int BUFLEN = mBuffer.length;
-            int count = 0;
-            for (int i=0; i<len && count < 3; i++) {
-                if (matchText(mBuffer, i, "MemTotal")) {
-                    i += 8;
-                    mTotalSize = extractMemValue(mBuffer, i);
-                    count++;
-                } else if (matchText(mBuffer, i, "MemFree")) {
-                    i += 7;
-                    mFreeSize = extractMemValue(mBuffer, i);
-                    count++;
-                } else if (matchText(mBuffer, i, "Cached")) {
-                    i += 6;
-                    mCachedSize = extractMemValue(mBuffer, i);
-                    count++;
-                }
-                while (i < BUFLEN && mBuffer[i] != '\n') {
-                    i++;
-                }
-            }
-        } catch (java.io.FileNotFoundException e) {
-        } catch (java.io.IOException e) {
+            Debug.getMemInfo(mInfos);
         } finally {
             StrictMode.setThreadPolicy(savedPolicy);
         }
     }
 
+    /**
+     * Total amount of RAM available to the kernel.
+     */
     public long getTotalSize() {
-        return mTotalSize;
+        return mInfos[Debug.MEMINFO_TOTAL] * 1024;
     }
 
+    /**
+     * Amount of RAM that is not being used for anything.
+     */
     public long getFreeSize() {
-        return mFreeSize;
+        return mInfos[Debug.MEMINFO_FREE] * 1024;
     }
 
+    /**
+     * Amount of RAM that the kernel is being used for caches, not counting caches
+     * that are mapped in to processes.
+     */
     public long getCachedSize() {
-        return mCachedSize;
+        return getCachedSizeKb() * 1024;
+    }
+
+    /**
+     * Amount of RAM that is in use by the kernel for actual allocations.
+     */
+    public long getKernelUsedSize() {
+        return getKernelUsedSizeKb() * 1024;
+    }
+
+    /**
+     * Total amount of RAM available to the kernel.
+     */
+    public long getTotalSizeKb() {
+        return mInfos[Debug.MEMINFO_TOTAL];
+    }
+
+    /**
+     * Amount of RAM that is not being used for anything.
+     */
+    public long getFreeSizeKb() {
+        return mInfos[Debug.MEMINFO_FREE];
+    }
+
+    /**
+     * Amount of RAM that the kernel is being used for caches, not counting caches
+     * that are mapped in to processes.
+     */
+    public long getCachedSizeKb() {
+        return mInfos[Debug.MEMINFO_BUFFERS]
+                + mInfos[Debug.MEMINFO_CACHED] - mInfos[Debug.MEMINFO_MAPPED];
+    }
+
+    /**
+     * Amount of RAM that is in use by the kernel for actual allocations.
+     */
+    public long getKernelUsedSizeKb() {
+        return mInfos[Debug.MEMINFO_SHMEM] + mInfos[Debug.MEMINFO_SLAB]
+                + mInfos[Debug.MEMINFO_VM_ALLOC_USED] + mInfos[Debug.MEMINFO_PAGE_TABLES]
+                + mInfos[Debug.MEMINFO_KERNEL_STACK];
+    }
+
+    public long getSwapTotalSizeKb() {
+        return mInfos[Debug.MEMINFO_SWAP_TOTAL];
+    }
+
+    public long getSwapFreeSizeKb() {
+        return mInfos[Debug.MEMINFO_SWAP_FREE];
+    }
+
+    public long getZramTotalSizeKb() {
+        return mInfos[Debug.MEMINFO_ZRAM_TOTAL];
+    }
+
+    public long[] getRawInfo() {
+        return mInfos;
     }
 }

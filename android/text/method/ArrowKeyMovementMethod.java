@@ -56,7 +56,7 @@ public class ArrowKeyMovementMethod extends BaseMovementMethod implements Moveme
                     if (event.getAction() == KeyEvent.ACTION_DOWN
                             && event.getRepeatCount() == 0
                             && MetaKeyKeyListener.getMetaState(buffer,
-                                        MetaKeyKeyListener.META_SELECTING) != 0) {
+                                        MetaKeyKeyListener.META_SELECTING, event) != 0) {
                         return widget.showContextMenu();
                     }
                 }
@@ -232,23 +232,32 @@ public class ArrowKeyMovementMethod extends BaseMovementMethod implements Moveme
             initialScrollY = Touch.getInitialScrollY(widget, buffer);
         }
 
+        boolean wasTouchSelecting = isSelecting(buffer);
         boolean handled = Touch.onTouchEvent(widget, buffer, event);
 
-        if (widget.isFocused() && !widget.didTouchFocusSelect()) {
-            if (action == MotionEvent.ACTION_DOWN) {
-              if (isSelecting(buffer)) {
-                  int offset = widget.getOffsetForPosition(event.getX(), event.getY());
-
-                  buffer.setSpan(LAST_TAP_DOWN, offset, offset, Spannable.SPAN_POINT_POINT);
-
-                  // Disallow intercepting of the touch events, so that
-                  // users can scroll and select at the same time.
-                  // without this, users would get booted out of select
-                  // mode once the view detected it needed to scroll.
-                  widget.getParent().requestDisallowInterceptTouchEvent(true);
-              }
-            } else if (action == MotionEvent.ACTION_MOVE) {
+        if (widget.didTouchFocusSelect()) {
+            return handled;
+        }
+        if (action == MotionEvent.ACTION_DOWN) {
+            // For touch events, the code should run only when selection is active.
+            if (isSelecting(buffer)) {
+                if (!widget.isFocused()) {
+                    if (!widget.requestFocus()) {
+                        return handled;
+                    }
+                }
+                int offset = widget.getOffsetForPosition(event.getX(), event.getY());
+                buffer.setSpan(LAST_TAP_DOWN, offset, offset, Spannable.SPAN_POINT_POINT);
+                // Disallow intercepting of the touch events, so that
+                // users can scroll and select at the same time.
+                // without this, users would get booted out of select
+                // mode once the view detected it needed to scroll.
+                widget.getParent().requestDisallowInterceptTouchEvent(true);
+            }
+        } else if (widget.isFocused()) {
+            if (action == MotionEvent.ACTION_MOVE) {
                 if (isSelecting(buffer) && handled) {
+                    final int startOffset = buffer.getSpanStart(LAST_TAP_DOWN);
                     // Before selecting, make sure we've moved out of the "slop".
                     // handled will be true, if we're in select mode AND we're
                     // OUT of the slop
@@ -260,9 +269,9 @@ public class ArrowKeyMovementMethod extends BaseMovementMethod implements Moveme
                     // Update selection as we're moving the selection area.
 
                     // Get the current touch position
-                    int offset = widget.getOffsetForPosition(event.getX(), event.getY());
-
-                    Selection.extendSelection(buffer, offset);
+                    final int offset = widget.getOffsetForPosition(event.getX(), event.getY());
+                    Selection.setSelection(buffer, Math.min(startOffset, offset),
+                            Math.max(startOffset, offset));
                     return true;
                 }
             } else if (action == MotionEvent.ACTION_UP) {
@@ -276,10 +285,12 @@ public class ArrowKeyMovementMethod extends BaseMovementMethod implements Moveme
                     return true;
                 }
 
-                int offset = widget.getOffsetForPosition(event.getX(), event.getY());
-                if (isSelecting(buffer)) {
+                if (wasTouchSelecting) {
+                    final int startOffset = buffer.getSpanStart(LAST_TAP_DOWN);
+                    final int endOffset = widget.getOffsetForPosition(event.getX(), event.getY());
+                    Selection.setSelection(buffer, Math.min(startOffset, endOffset),
+                            Math.max(startOffset, endOffset));
                     buffer.removeSpan(LAST_TAP_DOWN);
-                    Selection.extendSelection(buffer, offset);
                 }
 
                 MetaKeyKeyListener.adjustMetaAfterKeypress(buffer);
@@ -288,7 +299,6 @@ public class ArrowKeyMovementMethod extends BaseMovementMethod implements Moveme
                 return true;
             }
         }
-
         return handled;
     }
 

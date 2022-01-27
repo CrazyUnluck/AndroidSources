@@ -16,8 +16,8 @@
 
 package benchmarks.regression;
 
+import com.google.caliper.BeforeExperiment;
 import com.google.caliper.Param;
-import com.google.caliper.SimpleBenchmark;
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.OutputStream;
@@ -27,7 +27,7 @@ import java.net.URL;
 import javax.net.SocketFactory;
 import javax.net.ssl.SSLContext;
 
-public class SSLSocketBenchmark extends SimpleBenchmark {
+public class SSLSocketBenchmark {
 
     private static final int BUFFER_SIZE = 8192;
 
@@ -69,24 +69,11 @@ public class SSLSocketBenchmark extends SimpleBenchmark {
         }
     }
 
-    @Param private Implementation implementation;
-
-    public enum Implementation { OPENSSL, HARMONY };
-
     private SocketFactory sf;
 
-    @Override protected void setUp() throws Exception {
-        SSLContext sslContext;
-        switch (implementation) {
-            case OPENSSL:
-                sslContext = SSLContext.getInstance("SSL", "AndroidOpenSSL");
-                break;
-            case HARMONY:
-                sslContext = SSLContext.getInstance("SSL", "HarmonyJSSE");
-                break;
-            default:
-                throw new RuntimeException(implementation.toString());
-        }
+    @BeforeExperiment
+    protected void setUp() throws Exception {
+        SSLContext sslContext = SSLContext.getInstance("SSL");
         sslContext.init(null, null, null);
         this.sf = sslContext.getSocketFactory();
     }

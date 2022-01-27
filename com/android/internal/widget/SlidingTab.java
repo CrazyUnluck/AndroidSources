@@ -21,6 +21,7 @@ import android.content.res.Resources;
 import android.content.res.TypedArray;
 import android.graphics.Rect;
 import android.graphics.drawable.Drawable;
+import android.media.AudioAttributes;
 import android.os.UserHandle;
 import android.os.Vibrator;
 import android.provider.Settings;
@@ -65,6 +66,11 @@ public class SlidingTab extends ViewGroup {
     private static final int ANIM_TARGET_TIME = 500; // Time to show targets (in ms)
     private boolean mHoldLeftOnTransition = true;
     private boolean mHoldRightOnTransition = true;
+
+    private static final AudioAttributes VIBRATION_ATTRIBUTES = new AudioAttributes.Builder()
+            .setContentType(AudioAttributes.CONTENT_TYPE_SONIFICATION)
+            .setUsage(AudioAttributes.USAGE_ASSISTANCE_SONIFICATION)
+            .build();
 
     private OnTriggerListener mOnTriggerListener;
     private int mGrabbedState = OnTriggerListener.NO_HANDLE;
@@ -394,11 +400,13 @@ public class SlidingTab extends ViewGroup {
         /**
          * Ensure all the dependent widgets are measured.
          */
-        public void measure() {
-            tab.measure(View.MeasureSpec.makeMeasureSpec(0, View.MeasureSpec.UNSPECIFIED),
-                    View.MeasureSpec.makeMeasureSpec(0, View.MeasureSpec.UNSPECIFIED));
-            text.measure(View.MeasureSpec.makeMeasureSpec(0, View.MeasureSpec.UNSPECIFIED),
-                    View.MeasureSpec.makeMeasureSpec(0, View.MeasureSpec.UNSPECIFIED));
+        public void measure(int widthMeasureSpec, int heightMeasureSpec) {
+            int width = MeasureSpec.getSize(widthMeasureSpec);
+            int height = MeasureSpec.getSize(heightMeasureSpec);
+            tab.measure(View.MeasureSpec.makeSafeMeasureSpec(width, View.MeasureSpec.UNSPECIFIED),
+                    View.MeasureSpec.makeSafeMeasureSpec(height, View.MeasureSpec.UNSPECIFIED));
+            text.measure(View.MeasureSpec.makeSafeMeasureSpec(width, View.MeasureSpec.UNSPECIFIED),
+                    View.MeasureSpec.makeSafeMeasureSpec(height, View.MeasureSpec.UNSPECIFIED));
         }
 
         /**
@@ -485,8 +493,8 @@ public class SlidingTab extends ViewGroup {
             }
         }
 
-        mLeftSlider.measure();
-        mRightSlider.measure();
+        mLeftSlider.measure(widthMeasureSpec, heightMeasureSpec);
+        mRightSlider.measure(widthMeasureSpec, heightMeasureSpec);
         final int leftTabWidth = mLeftSlider.getTabWidth();
         final int rightTabWidth = mRightSlider.getTabWidth();
         final int leftTabHeight = mLeftSlider.getTabHeight();
@@ -821,7 +829,7 @@ public class SlidingTab extends ViewGroup {
                 mVibrator = (android.os.Vibrator) getContext()
                         .getSystemService(Context.VIBRATOR_SERVICE);
             }
-            mVibrator.vibrate(duration);
+            mVibrator.vibrate(duration, VIBRATION_ATTRIBUTES);
         }
     }
 

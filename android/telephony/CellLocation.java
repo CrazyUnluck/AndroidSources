@@ -19,9 +19,6 @@ package android.telephony;
 import android.os.Bundle;
 import android.os.RemoteException;
 import android.os.ServiceManager;
-import android.os.SystemProperties;
-import android.provider.Settings;
-
 
 import android.telephony.cdma.CdmaCellLocation;
 import android.telephony.gsm.GsmCellLocation;
@@ -82,6 +79,12 @@ public abstract class CellLocation {
      * @hide
      */
     public abstract boolean isEmpty();
+
+    /**
+     * Invalidate this object.  The location area code and the cell id are set to -1.
+     * @hide
+     */
+    public abstract void setStateInvalid();
 
     /**
      * Return a new CellLocation object representing an unknown

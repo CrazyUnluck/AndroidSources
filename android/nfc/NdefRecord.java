@@ -20,9 +20,10 @@ import android.content.Intent;
 import android.net.Uri;
 import android.os.Parcel;
 import android.os.Parcelable;
+
 import java.nio.BufferUnderflowException;
 import java.nio.ByteBuffer;
-import java.nio.charset.Charsets;
+import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
@@ -269,6 +270,7 @@ public final class NdefRecord implements Parcelable {
             "urn:epc:pat:", // 0x20
             "urn:epc:raw:", // 0x21
             "urn:epc:", // 0x22
+            "urn:nfc:", // 0x23
     };
 
     private static final int MAX_PAYLOAD_SIZE = 10 * (1 << 20);  // 10 MB payload limit
@@ -311,7 +313,7 @@ public final class NdefRecord implements Parcelable {
         if (packageName.length() == 0) throw new IllegalArgumentException("packageName is empty");
 
         return new NdefRecord(TNF_EXTERNAL_TYPE, RTD_ANDROID_APP, null,
-                packageName.getBytes(Charsets.UTF_8));
+                packageName.getBytes(StandardCharsets.UTF_8));
     }
 
     /**
@@ -350,7 +352,7 @@ public final class NdefRecord implements Parcelable {
                 break;
             }
         }
-        byte[] uriBytes = uriString.getBytes(Charsets.UTF_8);
+        byte[] uriBytes = uriString.getBytes(StandardCharsets.UTF_8);
         byte[] recordBytes = new byte[uriBytes.length + 1];
         recordBytes[0] = prefix;
         System.arraycopy(uriBytes, 0, recordBytes, 1, uriBytes.length);
@@ -422,7 +424,7 @@ public final class NdefRecord implements Parcelable {
         // missing '/' is allowed
 
         // MIME RFCs suggest ASCII encoding for content-type
-        byte[] typeBytes = mimeType.getBytes(Charsets.US_ASCII);
+        byte[] typeBytes = mimeType.getBytes(StandardCharsets.US_ASCII);
         return new NdefRecord(TNF_MIME_MEDIA, typeBytes, null, mimeData);
     }
 
@@ -456,20 +458,59 @@ public final class NdefRecord implements Parcelable {
         if (domain == null) throw new NullPointerException("domain is null");
         if (type == null) throw new NullPointerException("type is null");
 
-        domain = domain.trim().toLowerCase(Locale.US);
-        type = type.trim().toLowerCase(Locale.US);
+        domain = domain.trim().toLowerCase(Locale.ROOT);
+        type = type.trim().toLowerCase(Locale.ROOT);
 
         if (domain.length() == 0) throw new IllegalArgumentException("domain is empty");
         if (type.length() == 0) throw new IllegalArgumentException("type is empty");
 
-        byte[] byteDomain = domain.getBytes(Charsets.UTF_8);
-        byte[] byteType = type.getBytes(Charsets.UTF_8);
+        byte[] byteDomain = domain.getBytes(StandardCharsets.UTF_8);
+        byte[] byteType = type.getBytes(StandardCharsets.UTF_8);
         byte[] b = new byte[byteDomain.length + 1 + byteType.length];
         System.arraycopy(byteDomain, 0, b, 0, byteDomain.length);
         b[byteDomain.length] = ':';
         System.arraycopy(byteType, 0, b, byteDomain.length + 1, byteType.length);
 
         return new NdefRecord(TNF_EXTERNAL_TYPE, b, null, data);
+    }
+
+    /**
+     * Create a new NDEF record containing UTF-8 text data.<p>
+     *
+     * The caller can either specify the language code for the provided text,
+     * or otherwise the language code corresponding to the current default
+     * locale will be used.
+     *
+     * Reference specification: NFCForum-TS-RTD_Text_1.0
+     * @param languageCode The languageCode for the record. If locale is empty or null,
+     *                     the language code of the current default locale will be used.
+     * @param text   The text to be encoded in the record. Will be represented in UTF-8 format.
+     * @throws IllegalArgumentException if text is null
+     */
+    public static NdefRecord createTextRecord(String languageCode, String text) {
+        if (text == null) throw new NullPointerException("text is null");
+
+        byte[] textBytes = text.getBytes(StandardCharsets.UTF_8);
+
+        byte[] languageCodeBytes = null;
+        if (languageCode != null && !languageCode.isEmpty()) {
+            languageCodeBytes = languageCode.getBytes(StandardCharsets.US_ASCII);
+        } else {
+            languageCodeBytes = Locale.getDefault().getLanguage().
+                    getBytes(StandardCharsets.US_ASCII);
+        }
+        // We only have 6 bits to indicate ISO/IANA language code.
+        if (languageCodeBytes.length >= 64) {
+            throw new IllegalArgumentException("language code is too long, must be <64 bytes.");
+        }
+        ByteBuffer buffer = ByteBuffer.allocate(1 + languageCodeBytes.length + textBytes.length);
+
+        byte status = (byte) (languageCodeBytes.length & 0xFF);
+        buffer.put(status);
+        buffer.put(languageCodeBytes);
+        buffer.put(textBytes);
+
+        return new NdefRecord(TNF_WELL_KNOWN, RTD_TEXT, null, buffer.array());
     }
 
     /**
@@ -643,7 +684,7 @@ public final class NdefRecord implements Parcelable {
                 }
                 break;
             case NdefRecord.TNF_MIME_MEDIA:
-                String mimeType = new String(mType, Charsets.US_ASCII);
+                String mimeType = new String(mType, StandardCharsets.US_ASCII);
                 return Intent.normalizeMimeType(mimeType);
         }
         return null;
@@ -694,14 +735,14 @@ public final class NdefRecord implements Parcelable {
                 break;
 
             case TNF_ABSOLUTE_URI:
-                Uri uri = Uri.parse(new String(mType, Charsets.UTF_8));
+                Uri uri = Uri.parse(new String(mType, StandardCharsets.UTF_8));
                 return uri.normalizeScheme();
 
             case TNF_EXTERNAL_TYPE:
                 if (inSmartPoster) {
                     break;
                 }
-                return Uri.parse("vnd.android.nfc://ext/" + new String(mType, Charsets.US_ASCII));
+                return Uri.parse("vnd.android.nfc://ext/" + new String(mType, StandardCharsets.US_ASCII));
         }
         return null;
     }
@@ -723,7 +764,7 @@ public final class NdefRecord implements Parcelable {
         }
         String prefix = URI_PREFIX_MAP[prefixIndex];
         String suffix = new String(Arrays.copyOfRange(mPayload, 1, mPayload.length),
-                Charsets.UTF_8);
+                StandardCharsets.UTF_8);
         return Uri.parse(prefix + suffix);
     }
 
@@ -774,7 +815,7 @@ public final class NdefRecord implements Parcelable {
                     throw new FormatException("expected TNF_UNCHANGED in non-leading chunk");
                 } else if (!inChunk && tnf == NdefRecord.TNF_UNCHANGED) {
                     throw new FormatException("" +
-                    		"unexpected TNF_UNCHANGED in first chunk or unchunked record");
+                            "unexpected TNF_UNCHANGED in first chunk or unchunked record");
                 }
 
                 int typeLength = buffer.get() & 0xFF;

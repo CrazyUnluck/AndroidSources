@@ -70,6 +70,7 @@ public abstract class InputEvent implements Parcelable {
      * Gets the source of the event.
      * 
      * @return The event source or {@link InputDevice#SOURCE_UNKNOWN} if unknown.
+     * @see InputDevice#getSources
      */
     public abstract int getSource();
 
@@ -193,6 +194,13 @@ public abstract class InputEvent implements Parcelable {
      * @hide
      */
     public abstract long getEventTimeNano();
+
+    /**
+     * Marks the input event as being canceled.
+     *
+     * @hide
+     */
+    public abstract void cancel();
 
     /**
      * Gets the unique sequence number of this event.

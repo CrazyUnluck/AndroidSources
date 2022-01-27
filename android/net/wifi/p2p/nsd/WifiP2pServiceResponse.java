@@ -296,7 +296,7 @@ public class WifiP2pServiceResponse implements Parcelable {
         sbuf.append("serviceType:").append(mServiceType);
         sbuf.append(" status:").append(Status.toString(mStatus));
         sbuf.append(" srcAddr:").append(mDevice.deviceAddress);
-        sbuf.append(" data:").append(mData);
+        sbuf.append(" data:").append(Arrays.toString(mData));
         return sbuf.toString();
     }
 
@@ -334,7 +334,7 @@ public class WifiP2pServiceResponse implements Parcelable {
         result = 31 * result + mTransId;
         result = 31 * result + (mDevice.deviceAddress == null ?
                 0 : mDevice.deviceAddress.hashCode());
-        result = 31 * result + (mData == null ? 0 : mData.hashCode());
+        result = 31 * result + (mData == null ? 0 : Arrays.hashCode(mData));
         return result;
     }
 

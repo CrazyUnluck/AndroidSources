@@ -18,13 +18,11 @@ package android.renderscript;
 
 import java.util.Vector;
 
-import android.util.Log;
-
 /**
  * @hide
  * @deprecated in API 16
  * <p>This class is a container for geometric data displayed with
- * Renderscript. Internally, a mesh is a collection of allocations that
+ * RenderScript. Internally, a mesh is a collection of allocations that
  * represent vertex data (positions, normals, texture
  * coordinates) and index data such as triangles and lines. </p>
  * <p>
@@ -32,7 +30,7 @@ import android.util.Log;
  * allocation that is provided separately, as multiple allocation
  * objects, or done as a combination of both. When a
  * vertex channel name matches an input in the vertex program,
- * Renderscript automatically connects the two together.
+ * RenderScript automatically connects the two together.
  * </p>
  * <p>
  *  Parts of the mesh can be rendered with either explicit
@@ -91,8 +89,9 @@ public class Mesh extends BaseObj {
     Allocation[] mIndexBuffers;
     Primitive[] mPrimitives;
 
-    Mesh(int id, RenderScript rs) {
+    Mesh(long id, RenderScript rs) {
         super(id, rs);
+        guard.open("destroy");
     }
 
     /**
@@ -154,8 +153,8 @@ public class Mesh extends BaseObj {
         int vtxCount = mRS.nMeshGetVertexBufferCount(getID(mRS));
         int idxCount = mRS.nMeshGetIndexCount(getID(mRS));
 
-        int[] vtxIDs = new int[vtxCount];
-        int[] idxIDs = new int[idxCount];
+        long[] vtxIDs = new long[vtxCount];
+        long[] idxIDs = new long[idxCount];
         int[] primitives = new int[idxCount];
 
         mRS.nMeshGetVertices(getID(mRS), vtxIDs, vtxCount);
@@ -350,8 +349,8 @@ public class Mesh extends BaseObj {
         **/
         public Mesh create() {
             mRS.validate();
-            int[] vtx = new int[mVertexTypeCount];
-            int[] idx = new int[mIndexTypes.size()];
+            long[] vtx = new long[mVertexTypeCount];
+            long[] idx = new long[mIndexTypes.size()];
             int[] prim = new int[mIndexTypes.size()];
 
             Allocation[] vertexBuffers = new Allocation[mVertexTypeCount];
@@ -365,6 +364,9 @@ public class Mesh extends BaseObj {
                     alloc = Allocation.createTyped(mRS, entry.t, mUsage);
                 } else if(entry.e != null) {
                     alloc = Allocation.createSized(mRS, entry.e, entry.size, mUsage);
+                } else {
+                    // Should never happen because the builder will always set one
+                    throw new IllegalStateException("Builder corrupt, no valid element in entry.");
                 }
                 vertexBuffers[ct] = alloc;
                 vtx[ct] = alloc.getID(mRS);
@@ -377,8 +379,11 @@ public class Mesh extends BaseObj {
                     alloc = Allocation.createTyped(mRS, entry.t, mUsage);
                 } else if(entry.e != null) {
                     alloc = Allocation.createSized(mRS, entry.e, entry.size, mUsage);
+                } else {
+                    // Should never happen because the builder will always set one
+                    throw new IllegalStateException("Builder corrupt, no valid element in entry.");
                 }
-                int allocID = (alloc == null) ? 0 : alloc.getID(mRS);
+                long allocID = (alloc == null) ? 0 : alloc.getID(mRS);
                 indexBuffers[ct] = alloc;
                 primitives[ct] = entry.prim;
 
@@ -386,7 +391,7 @@ public class Mesh extends BaseObj {
                 prim[ct] = entry.prim.mID;
             }
 
-            int id = mRS.nMeshCreate(vtx, idx, prim);
+            long id = mRS.nMeshCreate(vtx, idx, prim);
             Mesh newMesh = new Mesh(id, mRS);
             newMesh.mVertexBuffers = vertexBuffers;
             newMesh.mIndexBuffers = indexBuffers;
@@ -506,8 +511,8 @@ public class Mesh extends BaseObj {
         public Mesh create() {
             mRS.validate();
 
-            int[] vtx = new int[mVertexTypeCount];
-            int[] idx = new int[mIndexTypes.size()];
+            long[] vtx = new long[mVertexTypeCount];
+            long[] idx = new long[mIndexTypes.size()];
             int[] prim = new int[mIndexTypes.size()];
 
             Allocation[] indexBuffers = new Allocation[mIndexTypes.size()];
@@ -522,7 +527,7 @@ public class Mesh extends BaseObj {
 
             for(int ct = 0; ct < mIndexTypes.size(); ct ++) {
                 Entry entry = (Entry)mIndexTypes.elementAt(ct);
-                int allocID = (entry.a == null) ? 0 : entry.a.getID(mRS);
+                long allocID = (entry.a == null) ? 0 : entry.a.getID(mRS);
                 indexBuffers[ct] = entry.a;
                 primitives[ct] = entry.prim;
 
@@ -530,7 +535,7 @@ public class Mesh extends BaseObj {
                 prim[ct] = entry.prim.mID;
             }
 
-            int id = mRS.nMeshCreate(vtx, idx, prim);
+            long id = mRS.nMeshCreate(vtx, idx, prim);
             Mesh newMesh = new Mesh(id, mRS);
             newMesh.mVertexBuffers = vertexBuffers;
             newMesh.mIndexBuffers = indexBuffers;
@@ -813,9 +818,7 @@ public class Mesh extends BaseObj {
 
             sm.getVertexAllocation(0).copy1DRangeFromUnchecked(0, mMaxIndex, mVtxData);
             if(uploadToBufferObject) {
-                if (uploadToBufferObject) {
-                    sm.getVertexAllocation(0).syncAll(Allocation.USAGE_SCRIPT);
-                }
+                sm.getVertexAllocation(0).syncAll(Allocation.USAGE_SCRIPT);
             }
 
             sm.getIndexSetAllocation(0).copy1DRangeFromUnchecked(0, mIndexCount, mIndexData);

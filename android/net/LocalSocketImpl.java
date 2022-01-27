@@ -22,6 +22,13 @@ import java.io.InputStream;
 import java.io.FileDescriptor;
 import java.net.SocketOptions;
 
+import android.system.ErrnoException;
+import android.system.Os;
+import android.system.OsConstants;
+import android.system.StructLinger;
+import android.system.StructTimeval;
+import android.util.MutableInt;
+
 /**
  * Socket implementation used for android.net.LocalSocket and
  * android.net.LocalServerSocket. Supports only AF_LOCAL sockets.
@@ -35,6 +42,8 @@ class LocalSocketImpl
 
     /** null if closed or not yet created */
     private FileDescriptor fd;
+    /** whether fd is created internally */
+    private boolean mFdCreatedInternally;
 
     // These fields are accessed by native code;
     /** file descriptor array received during a previous read */
@@ -50,7 +59,16 @@ class LocalSocketImpl
         /** {@inheritDoc} */
         @Override
         public int available() throws IOException {
-            return available_native(fd);
+            FileDescriptor myFd = fd;
+            if (myFd == null) throw new IOException("socket closed");
+
+            MutableInt avail = new MutableInt(0);
+            try {
+                Os.ioctlInt(myFd, OsConstants.FIONREAD, avail);
+            } catch (ErrnoException e) {
+                throw e.rethrowAsIOException();
+            }
+            return avail.value;
         }
 
         /** {@inheritDoc} */
@@ -147,19 +165,31 @@ class LocalSocketImpl
         public void flush() throws IOException {
             FileDescriptor myFd = fd;
             if (myFd == null) throw new IOException("socket closed");
-            while(pending_native(myFd) > 0) {
+
+            // Loop until the output buffer is empty.
+            MutableInt pending = new MutableInt(0);
+            while (true) {
+                try {
+                    // See linux/net/unix/af_unix.c
+                    Os.ioctlInt(myFd, OsConstants.TIOCOUTQ, pending);
+                } catch (ErrnoException e) {
+                    throw e.rethrowAsIOException();
+                }
+
+                if (pending.value <= 0) {
+                    // The output buffer is empty.
+                    break;
+                }
+
                 try {
                     Thread.sleep(10);
                 } catch (InterruptedException ie) {
-                    return;
+                    break;
                 }
             }
         }
     }
 
-    private native int pending_native(FileDescriptor fd) throws IOException;
-    private native int available_native(FileDescriptor fd) throws IOException;
-    private native void close_native(FileDescriptor fd) throws IOException;
     private native int read_native(FileDescriptor fd) throws IOException;
     private native int readba_native(byte[] b, int off, int len,
             FileDescriptor fd) throws IOException;
@@ -171,30 +201,8 @@ class LocalSocketImpl
             int namespace) throws IOException;
     private native void bindLocal(FileDescriptor fd, String name, int namespace)
             throws IOException;
-    private native FileDescriptor create_native(boolean stream)
-            throws IOException;
-    private native void listen_native(FileDescriptor fd, int backlog)
-            throws IOException;
-    private native void shutdown(FileDescriptor fd, boolean shutdownInput);
     private native Credentials getPeerCredentials_native(
             FileDescriptor fd) throws IOException;
-    private native int getOption_native(FileDescriptor fd, int optID)
-            throws IOException;
-    private native void setOption_native(FileDescriptor fd, int optID,
-            int b, int value) throws IOException;
-
-//    private native LocalSocketAddress getSockName_native
-//            (FileDescriptor fd) throws IOException;
-
-    /**
-     * Accepts a connection on a server socket.
-     *
-     * @param fd file descriptor of server socket
-     * @param s socket implementation that will become the new socket
-     * @return file descriptor of new socket
-     */
-    private native FileDescriptor accept
-            (FileDescriptor fd, LocalSocketImpl s) throws IOException;
 
     /**
      * Create a new instance.
@@ -222,15 +230,34 @@ class LocalSocketImpl
     /**
      * Creates a socket in the underlying OS.
      *
-     * @param stream true if this should be a stream socket, false for
-     * datagram.
+     * @param sockType either {@link LocalSocket#SOCKET_DGRAM}, {@link LocalSocket#SOCKET_STREAM}
+     * or {@link LocalSocket#SOCKET_SEQPACKET}
      * @throws IOException
      */
-    public void create (boolean stream) throws IOException {
+    public void create(int sockType) throws IOException {
         // no error if socket already created
         // need this for LocalServerSocket.accept()
         if (fd == null) {
-            fd = create_native(stream);
+            int osType;
+            switch (sockType) {
+                case LocalSocket.SOCKET_DGRAM:
+                    osType = OsConstants.SOCK_DGRAM;
+                    break;
+                case LocalSocket.SOCKET_STREAM:
+                    osType = OsConstants.SOCK_STREAM;
+                    break;
+                case LocalSocket.SOCKET_SEQPACKET:
+                    osType = OsConstants.SOCK_SEQPACKET;
+                    break;
+                default:
+                    throw new IllegalStateException("unknown sockType");
+            }
+            try {
+                fd = Os.socket(OsConstants.AF_UNIX, osType, 0);
+                mFdCreatedInternally = true;
+            } catch (ErrnoException e) {
+                e.rethrowAsIOException();
+            }
         }
     }
 
@@ -241,8 +268,15 @@ class LocalSocketImpl
      */
     public void close() throws IOException {
         synchronized (LocalSocketImpl.this) {
-            if (fd == null) return;
-            close_native(fd);
+            if ((fd == null) || (mFdCreatedInternally == false)) {
+                fd = null;
+                return;
+            }
+            try {
+                Os.close(fd);
+            } catch (ErrnoException e) {
+                e.rethrowAsIOException();
+            }
             fd = null;
         }
     }
@@ -279,8 +313,11 @@ class LocalSocketImpl
         if (fd == null) {
             throw new IOException("socket not created");
         }
-
-        listen_native(fd, backlog);
+        try {
+            Os.listen(fd, backlog);
+        } catch (ErrnoException e) {
+            throw e.rethrowAsIOException();
+        }
     }
 
     /**
@@ -290,13 +327,17 @@ class LocalSocketImpl
      * @param s a socket that will be used to represent the new connection.
      * @throws IOException
      */
-    protected void accept(LocalSocketImpl s) throws IOException
-    {
+    protected void accept(LocalSocketImpl s) throws IOException {
         if (fd == null) {
             throw new IOException("socket not created");
         }
 
-        s.fd = accept(fd, s);
+        try {
+            s.fd = Os.accept(fd, null /* address */);
+            s.mFdCreatedInternally = true;
+        } catch (ErrnoException e) {
+            throw e.rethrowAsIOException();
+        }
     }
 
     /**
@@ -363,7 +404,11 @@ class LocalSocketImpl
             throw new IOException("socket not created");
         }
 
-        shutdown(fd, true);
+        try {
+            Os.shutdown(fd, OsConstants.SHUT_RD);
+        } catch (ErrnoException e) {
+            throw e.rethrowAsIOException();
+        }
     }
 
     /**
@@ -377,7 +422,11 @@ class LocalSocketImpl
             throw new IOException("socket not created");
         }
 
-        shutdown(fd, false);
+        try {
+            Os.shutdown(fd, OsConstants.SHUT_WR);
+        } catch (ErrnoException e) {
+            throw e.rethrowAsIOException();
+        }
     }
 
     protected FileDescriptor getFileDescriptor()
@@ -401,24 +450,49 @@ class LocalSocketImpl
             throw new IOException("socket not created");
         }
 
-        if (optID == SocketOptions.SO_TIMEOUT) {
-            return 0;
-        }
-        
-        int value = getOption_native(fd, optID);
-        switch (optID)
-        {
-            case SocketOptions.SO_RCVBUF:
-            case SocketOptions.SO_SNDBUF:
-                return value;
-            case SocketOptions.SO_REUSEADDR:
-            default:
-                return value;
+        try {
+            Object toReturn;
+            switch (optID) {
+                case SocketOptions.SO_TIMEOUT:
+                    StructTimeval timeval = Os.getsockoptTimeval(fd, OsConstants.SOL_SOCKET,
+                            OsConstants.SO_SNDTIMEO);
+                    toReturn = (int) timeval.toMillis();
+                    break;
+                case SocketOptions.SO_RCVBUF:
+                case SocketOptions.SO_SNDBUF:
+                case SocketOptions.SO_REUSEADDR:
+                    int osOpt = javaSoToOsOpt(optID);
+                    toReturn = Os.getsockoptInt(fd, OsConstants.SOL_SOCKET, osOpt);
+                    break;
+                case SocketOptions.SO_LINGER:
+                    StructLinger linger=
+                            Os.getsockoptLinger(fd, OsConstants.SOL_SOCKET, OsConstants.SO_LINGER);
+                    if (!linger.isOn()) {
+                        toReturn = -1;
+                    } else {
+                        toReturn = linger.l_linger;
+                    }
+                    break;
+                case SocketOptions.TCP_NODELAY:
+                    toReturn = Os.getsockoptInt(fd, OsConstants.IPPROTO_TCP,
+                            OsConstants.TCP_NODELAY);
+                    break;
+                default:
+                    throw new IOException("Unknown option: " + optID);
+            }
+            return toReturn;
+        } catch (ErrnoException e) {
+            throw e.rethrowAsIOException();
         }
     }
 
     public void setOption(int optID, Object value)
             throws IOException {
+
+        if (fd == null) {
+            throw new IOException("socket not created");
+        }
+
         /*
          * Boolean.FALSE is used to disable some options, so it
          * is important to distinguish between FALSE and unset.
@@ -427,11 +501,6 @@ class LocalSocketImpl
          */
         int boolValue = -1;
         int intValue = 0;
-
-        if (fd == null) {
-            throw new IOException("socket not created");
-        }
-
         if (value instanceof Integer) {
             intValue = (Integer)value;
         } else if (value instanceof Boolean) {
@@ -440,7 +509,39 @@ class LocalSocketImpl
             throw new IOException("bad value: " + value);
         }
 
-        setOption_native(fd, optID, boolValue, intValue);
+        try {
+            switch (optID) {
+                case SocketOptions.SO_LINGER:
+                    StructLinger linger = new StructLinger(boolValue, intValue);
+                    Os.setsockoptLinger(fd, OsConstants.SOL_SOCKET, OsConstants.SO_LINGER, linger);
+                    break;
+                case SocketOptions.SO_TIMEOUT:
+                    /*
+                     * SO_TIMEOUT from the core library gets converted to
+                     * SO_SNDTIMEO, but the option is supposed to set both
+                     * send and receive timeouts. Note: The incoming timeout
+                     * value is in milliseconds.
+                     */
+                    StructTimeval timeval = StructTimeval.fromMillis(intValue);
+                    Os.setsockoptTimeval(fd, OsConstants.SOL_SOCKET, OsConstants.SO_SNDTIMEO,
+                            timeval);
+                    break;
+                case SocketOptions.SO_RCVBUF:
+                case SocketOptions.SO_SNDBUF:
+                case SocketOptions.SO_REUSEADDR:
+                    int osOpt = javaSoToOsOpt(optID);
+                    Os.setsockoptInt(fd, OsConstants.SOL_SOCKET, osOpt, intValue);
+                    break;
+                case SocketOptions.TCP_NODELAY:
+                    Os.setsockoptInt(fd, OsConstants.IPPROTO_TCP, OsConstants.TCP_NODELAY,
+                            intValue);
+                    break;
+                default:
+                    throw new IOException("Unknown option: " + optID);
+            }
+        } catch (ErrnoException e) {
+            throw e.rethrowAsIOException();
+        }
     }
 
     /**
@@ -484,8 +585,7 @@ class LocalSocketImpl
      * @return non-null; peer credentials
      * @throws IOException
      */
-    public Credentials getPeerCredentials() throws IOException
-    {
+    public Credentials getPeerCredentials() throws IOException {
         return getPeerCredentials_native(fd);
     }
 
@@ -495,16 +595,26 @@ class LocalSocketImpl
      * @return non-null; socket name
      * @throws IOException on failure
      */
-    public LocalSocketAddress getSockAddress() throws IOException
-    {
+    public LocalSocketAddress getSockAddress() throws IOException {
+        // This method has never been implemented.
         return null;
-        //TODO implement this
-        //return getSockName_native(fd);
     }
 
     @Override
     protected void finalize() throws IOException {
         close();
     }
-}
 
+    private static int javaSoToOsOpt(int optID) {
+        switch (optID) {
+            case SocketOptions.SO_SNDBUF:
+                return OsConstants.SO_SNDBUF;
+            case SocketOptions.SO_RCVBUF:
+                return OsConstants.SO_RCVBUF;
+            case SocketOptions.SO_REUSEADDR:
+                return OsConstants.SO_REUSEADDR;
+            default:
+                throw new UnsupportedOperationException("Unknown option: " + optID);
+        }
+    }
+}

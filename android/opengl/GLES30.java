@@ -864,13 +864,13 @@ public class GLES30 extends GLES20 {
         int buffer
     );
 
-	// C function void glTransformFeedbackVaryings ( GLuint program, GLsizei count, const GLchar *varyings, GLenum bufferMode )
+    // C function void glTransformFeedbackVaryings ( GLuint program, GLsizei count, const GLchar *varyings, GLenum bufferMode )
 
-	public static native void glTransformFeedbackVaryings(
+    public static native void glTransformFeedbackVaryings(
         int program,
         String[] varyings,
         int bufferMode
-	);
+    );
 
     // C function void glGetTransformFeedbackVarying ( GLuint program, GLuint index, GLsizei bufSize, GLsizei *length, GLint *size, GLenum *type, GLchar *name )
 
@@ -889,7 +889,10 @@ public class GLES30 extends GLES20 {
     );
 
     // C function void glGetTransformFeedbackVarying ( GLuint program, GLuint index, GLsizei bufSize, GLsizei *length, GLint *size, GLenum *type, GLchar *name )
-
+    /**
+     * @deprecated
+     * Use the version that takes a ByteBuffer as the last argument, or the versions that return a String.
+     * */
     public static native void glGetTransformFeedbackVarying(
         int program,
         int index,
@@ -898,6 +901,18 @@ public class GLES30 extends GLES20 {
         java.nio.IntBuffer size,
         java.nio.IntBuffer type,
         byte name
+    );
+
+    // C function void glGetTransformFeedbackVarying ( GLuint program, GLuint index, GLsizei bufSize, GLsizei *length, GLint *size, GLenum *type, GLchar *name )
+
+    public static native void glGetTransformFeedbackVarying(
+        int program,
+        int index,
+        int bufsize,
+        java.nio.IntBuffer length,
+        java.nio.IntBuffer size,
+        java.nio.IntBuffer type,
+        java.nio.ByteBuffer name
     );
 
     // C function void glGetTransformFeedbackVarying ( GLuint program, GLuint index, GLsizei bufSize, GLsizei *length, GLint *size, GLenum *type, GLchar *name )
@@ -1245,14 +1260,14 @@ public class GLES30 extends GLES20 {
         int size
     );
 
-	// C function void glGetUniformIndices ( GLuint program, GLsizei uniformCount, const GLchar *const *uniformNames, GLuint *uniformIndices )
+    // C function void glGetUniformIndices ( GLuint program, GLsizei uniformCount, const GLchar *const *uniformNames, GLuint *uniformIndices )
 
-	public static native void glGetUniformIndices(
+    public static native void glGetUniformIndices(
         int program,
         String[] uniformNames,
         int[] uniformIndices,
         int uniformIndicesOffset
-	);
+    );
 
     // C function void glGetUniformIndices ( GLuint program, GLsizei uniformCount, const GLchar *const *uniformNames, GLuint *uniformIndices )
 
@@ -1789,6 +1804,18 @@ public class GLES30 extends GLES20 {
         int pname,
         int bufSize,
         java.nio.IntBuffer params
+    );
+
+    // C function void glReadPixels ( GLint x, GLint y, GLsizei width, GLsizei height, GLenum format, GLenum type, GLint offset )
+
+    public static native void glReadPixels(
+        int x,
+        int y,
+        int width,
+        int height,
+        int format,
+        int type,
+        int offset
     );
 
 }

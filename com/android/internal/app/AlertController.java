@@ -20,6 +20,7 @@ import static android.view.ViewGroup.LayoutParams.MATCH_PARENT;
 
 import com.android.internal.R;
 
+import android.annotation.Nullable;
 import android.app.AlertDialog;
 import android.content.Context;
 import android.content.DialogInterface;
@@ -37,7 +38,10 @@ import android.view.LayoutInflater;
 import android.view.View;
 import android.view.ViewGroup;
 import android.view.ViewGroup.LayoutParams;
+import android.view.ViewParent;
+import android.view.ViewStub;
 import android.view.Window;
+import android.view.WindowInsets;
 import android.view.WindowManager;
 import android.widget.AdapterView;
 import android.widget.AdapterView.OnItemClickListener;
@@ -61,81 +65,75 @@ public class AlertController {
     private final Context mContext;
     private final DialogInterface mDialogInterface;
     private final Window mWindow;
-    
+
     private CharSequence mTitle;
-
     private CharSequence mMessage;
-
     private ListView mListView;
-    
     private View mView;
 
+    private int mViewLayoutResId;
+
     private int mViewSpacingLeft;
-    
     private int mViewSpacingTop;
-    
     private int mViewSpacingRight;
-    
     private int mViewSpacingBottom;
-    
     private boolean mViewSpacingSpecified = false;
-    
+
     private Button mButtonPositive;
-
     private CharSequence mButtonPositiveText;
-
     private Message mButtonPositiveMessage;
 
     private Button mButtonNegative;
-
     private CharSequence mButtonNegativeText;
-
     private Message mButtonNegativeMessage;
 
     private Button mButtonNeutral;
-
     private CharSequence mButtonNeutralText;
-
     private Message mButtonNeutralMessage;
 
     private ScrollView mScrollView;
-    
-    private int mIconId = -1;
-    
+
+    private int mIconId = 0;
     private Drawable mIcon;
-    
+
     private ImageView mIconView;
-    
     private TextView mTitleView;
-
     private TextView mMessageView;
-
     private View mCustomTitleView;
-    
+
     private boolean mForceInverseBackground;
-    
+
     private ListAdapter mAdapter;
-    
+
     private int mCheckedItem = -1;
 
     private int mAlertDialogLayout;
+    private int mButtonPanelSideLayout;
     private int mListLayout;
     private int mMultiChoiceItemLayout;
     private int mSingleChoiceItemLayout;
     private int mListItemLayout;
 
+    private boolean mShowTitle;
+
+    private int mButtonPanelLayoutHint = AlertDialog.LAYOUT_HINT_NONE;
+
     private Handler mHandler;
 
-    View.OnClickListener mButtonHandler = new View.OnClickListener() {
+    private final View.OnClickListener mButtonHandler = new View.OnClickListener() {
+        @Override
         public void onClick(View v) {
-            Message m = null;
+            final Message m;
             if (v == mButtonPositive && mButtonPositiveMessage != null) {
                 m = Message.obtain(mButtonPositiveMessage);
             } else if (v == mButtonNegative && mButtonNegativeMessage != null) {
                 m = Message.obtain(mButtonNegativeMessage);
             } else if (v == mButtonNeutral && mButtonNeutralMessage != null) {
                 m = Message.obtain(mButtonNeutralMessage);
+            } else {
+                m = null;
             }
+
             if (m != null) {
                 m.sendToTarget();
             }
@@ -149,23 +147,23 @@ public class AlertController {
     private static final class ButtonHandler extends Handler {
         // Button clicks have Message.what as the BUTTON{1,2,3} constant
         private static final int MSG_DISMISS_DIALOG = 1;
-        
+
         private WeakReference<DialogInterface> mDialog;
 
         public ButtonHandler(DialogInterface dialog) {
-            mDialog = new WeakReference<DialogInterface>(dialog);
+            mDialog = new WeakReference<>(dialog);
         }
 
         @Override
         public void handleMessage(Message msg) {
             switch (msg.what) {
-                
+
                 case DialogInterface.BUTTON_POSITIVE:
                 case DialogInterface.BUTTON_NEGATIVE:
                 case DialogInterface.BUTTON_NEUTRAL:
                     ((DialogInterface.OnClickListener) msg.obj).onClick(mDialog.get(), msg.what);
                     break;
-                    
+
                 case MSG_DISMISS_DIALOG:
                     ((DialogInterface) msg.obj).dismiss();
             }
@@ -173,9 +171,8 @@ public class AlertController {
     }
 
     private static boolean shouldCenterSingleButton(Context context) {
-        TypedValue outValue = new TypedValue();
-        context.getTheme().resolveAttribute(com.android.internal.R.attr.alertDialogCenterButtons,
-                outValue, true);
+        final TypedValue outValue = new TypedValue();
+        context.getTheme().resolveAttribute(R.attr.alertDialogCenterButtons, outValue, true);
         return outValue.data != 0;
     }
 
@@ -185,37 +182,42 @@ public class AlertController {
         mWindow = window;
         mHandler = new ButtonHandler(di);
 
-        TypedArray a = context.obtainStyledAttributes(null,
-                com.android.internal.R.styleable.AlertDialog,
-                com.android.internal.R.attr.alertDialogStyle, 0);
+        final TypedArray a = context.obtainStyledAttributes(null,
+                R.styleable.AlertDialog, R.attr.alertDialogStyle, 0);
 
-        mAlertDialogLayout = a.getResourceId(com.android.internal.R.styleable.AlertDialog_layout,
-                com.android.internal.R.layout.alert_dialog);
+        mAlertDialogLayout = a.getResourceId(
+                R.styleable.AlertDialog_layout, R.layout.alert_dialog);
+        mButtonPanelSideLayout = a.getResourceId(
+                R.styleable.AlertDialog_buttonPanelSideLayout, 0);
         mListLayout = a.getResourceId(
-                com.android.internal.R.styleable.AlertDialog_listLayout,
-                com.android.internal.R.layout.select_dialog);
+                R.styleable.AlertDialog_listLayout, R.layout.select_dialog);
+
         mMultiChoiceItemLayout = a.getResourceId(
-                com.android.internal.R.styleable.AlertDialog_multiChoiceItemLayout,
-                com.android.internal.R.layout.select_dialog_multichoice);
+                R.styleable.AlertDialog_multiChoiceItemLayout,
+                R.layout.select_dialog_multichoice);
         mSingleChoiceItemLayout = a.getResourceId(
-                com.android.internal.R.styleable.AlertDialog_singleChoiceItemLayout,
-                com.android.internal.R.layout.select_dialog_singlechoice);
+                R.styleable.AlertDialog_singleChoiceItemLayout,
+                R.layout.select_dialog_singlechoice);
         mListItemLayout = a.getResourceId(
-                com.android.internal.R.styleable.AlertDialog_listItemLayout,
-                com.android.internal.R.layout.select_dialog_item);
+                R.styleable.AlertDialog_listItemLayout,
+                R.layout.select_dialog_item);
+        mShowTitle = a.getBoolean(R.styleable.AlertDialog_showTitle, true);
 
         a.recycle();
+
+        /* We use a custom title so never request a window title */
+        window.requestFeature(Window.FEATURE_NO_TITLE);
     }
-    
+
     static boolean canTextInput(View v) {
         if (v.onCheckIsTextEditor()) {
             return true;
         }
-        
+
         if (!(v instanceof ViewGroup)) {
             return false;
         }
-        
+
         ViewGroup vg = (ViewGroup)v;
         int i = vg.getChildCount();
         while (i > 0) {
@@ -225,22 +227,27 @@ public class AlertController {
                 return true;
             }
         }
-        
+
         return false;
     }
-    
+
     public void installContent() {
-        /* We use a custom title so never request a window title */
-        mWindow.requestFeature(Window.FEATURE_NO_TITLE);
-        
-        if (mView == null || !canTextInput(mView)) {
-            mWindow.setFlags(WindowManager.LayoutParams.FLAG_ALT_FOCUSABLE_IM,
-                    WindowManager.LayoutParams.FLAG_ALT_FOCUSABLE_IM);
-        }
-        mWindow.setContentView(mAlertDialogLayout);
+        int contentView = selectContentView();
+        mWindow.setContentView(contentView);
         setupView();
     }
-    
+
+    private int selectContentView() {
+        if (mButtonPanelSideLayout == 0) {
+            return mAlertDialogLayout;
+        }
+        if (mButtonPanelLayoutHint == AlertDialog.LAYOUT_HINT_SIDE) {
+            return mButtonPanelSideLayout;
+        }
+        // TODO: use layout hint side for long messages/lists
+        return mAlertDialogLayout;
+    }
+
     public void setTitle(CharSequence title) {
         mTitle = title;
         if (mTitleView != null) {
@@ -254,7 +261,7 @@ public class AlertController {
     public void setCustomTitle(View customTitleView) {
         mCustomTitleView = customTitleView;
     }
-    
+
     public void setMessage(CharSequence message) {
         mMessage = message;
         if (mMessageView != null) {
@@ -263,19 +270,30 @@ public class AlertController {
     }
 
     /**
+     * Set the view resource to display in the dialog.
+     */
+    public void setView(int layoutResId) {
+        mView = null;
+        mViewLayoutResId = layoutResId;
+        mViewSpacingSpecified = false;
+    }
+
+    /**
      * Set the view to display in the dialog.
      */
     public void setView(View view) {
         mView = view;
+        mViewLayoutResId = 0;
         mViewSpacingSpecified = false;
     }
-    
+
     /**
      * Set the view to display in the dialog along with the spacing around that view
      */
     public void setView(View view, int viewSpacingLeft, int viewSpacingTop, int viewSpacingRight,
             int viewSpacingBottom) {
         mView = view;
+        mViewLayoutResId = 0;
         mViewSpacingSpecified = true;
         mViewSpacingLeft = viewSpacingLeft;
         mViewSpacingTop = viewSpacingTop;
@@ -284,9 +302,16 @@ public class AlertController {
     }
 
     /**
+     * Sets a hint for the best button panel layout.
+     */
+    public void setButtonPanelLayoutHint(int layoutHint) {
+        mButtonPanelLayoutHint = layoutHint;
+    }
+
+    /**
      * Sets a click listener or a message to be sent when the button is clicked.
      * You only need to pass one of {@code listener} or {@code msg}.
-     * 
+     *
      * @param whichButton Which button, can be one of
      *            {@link DialogInterface#BUTTON_POSITIVE},
      *            {@link DialogInterface#BUTTON_NEGATIVE}, or
@@ -301,49 +326,65 @@ public class AlertController {
         if (msg == null && listener != null) {
             msg = mHandler.obtainMessage(whichButton, listener);
         }
-        
+
         switch (whichButton) {
 
             case DialogInterface.BUTTON_POSITIVE:
                 mButtonPositiveText = text;
                 mButtonPositiveMessage = msg;
                 break;
-                
+
             case DialogInterface.BUTTON_NEGATIVE:
                 mButtonNegativeText = text;
                 mButtonNegativeMessage = msg;
                 break;
-                
+
             case DialogInterface.BUTTON_NEUTRAL:
                 mButtonNeutralText = text;
                 mButtonNeutralMessage = msg;
                 break;
-                
+
             default:
                 throw new IllegalArgumentException("Button does not exist");
         }
     }
 
     /**
-     * Set resId to 0 if you don't want an icon.
-     * @param resId the resourceId of the drawable to use as the icon or 0
-     * if you don't want an icon.
+     * Specifies the icon to display next to the alert title.
+     *
+     * @param resId the resource identifier of the drawable to use as the icon,
+     *            or 0 for no icon
      */
     public void setIcon(int resId) {
+        mIcon = null;
         mIconId = resId;
+
         if (mIconView != null) {
-            if (resId > 0) {
+            if (resId != 0) {
+                mIconView.setVisibility(View.VISIBLE);
                 mIconView.setImageResource(mIconId);
-            } else if (resId == 0) {
+            } else {
                 mIconView.setVisibility(View.GONE);
             }
         }
     }
-    
+
+    /**
+     * Specifies the icon to display next to the alert title.
+     *
+     * @param icon the drawable to use as the icon or null for no icon
+     */
     public void setIcon(Drawable icon) {
         mIcon = icon;
-        if ((mIconView != null) && (mIcon != null)) {
-            mIconView.setImageDrawable(icon);
+        mIconId = 0;
+
+        if (mIconView != null) {
+            if (icon != null) {
+                mIconView.setVisibility(View.VISIBLE);
+                mIconView.setImageDrawable(icon);
+            } else {
+                mIconView.setVisibility(View.GONE);
+            }
         }
     }
 
@@ -362,11 +403,11 @@ public class AlertController {
     public void setInverseBackgroundForced(boolean forceInverseBackground) {
         mForceInverseBackground = forceInverseBackground;
     }
-    
+
     public ListView getListView() {
         return mListView;
     }
-    
+
     public Button getButton(int whichButton) {
         switch (whichButton) {
             case DialogInterface.BUTTON_POSITIVE:
@@ -379,7 +420,7 @@ public class AlertController {
                 return null;
         }
     }
-    
+
     @SuppressWarnings({"UnusedDeclaration"})
     public boolean onKeyDown(int keyCode, KeyEvent event) {
         return mScrollView != null && mScrollView.executeKeyEvent(event);
@@ -389,95 +430,203 @@ public class AlertController {
     public boolean onKeyUp(int keyCode, KeyEvent event) {
         return mScrollView != null && mScrollView.executeKeyEvent(event);
     }
-    
+
+    /**
+     * Resolves whether a custom or default panel should be used. Removes the
+     * default panel if a custom panel should be used. If the resolved panel is
+     * a view stub, inflates before returning.
+     *
+     * @param customPanel the custom panel
+     * @param defaultPanel the default panel
+     * @return the panel to use
+     */
+    @Nullable
+    private ViewGroup resolvePanel(@Nullable View customPanel, @Nullable View defaultPanel) {
+        if (customPanel == null) {
+            // Inflate the default panel, if needed.
+            if (defaultPanel instanceof ViewStub) {
+                defaultPanel = ((ViewStub) defaultPanel).inflate();
+            }
+
+            return (ViewGroup) defaultPanel;
+        }
+
+        // Remove the default panel entirely.
+        if (defaultPanel != null) {
+            final ViewParent parent = defaultPanel.getParent();
+            if (parent instanceof ViewGroup) {
+                ((ViewGroup) parent).removeView(defaultPanel);
+            }
+        }
+
+        // Inflate the custom panel, if needed.
+        if (customPanel instanceof ViewStub) {
+            customPanel = ((ViewStub) customPanel).inflate();
+        }
+
+        return (ViewGroup) customPanel;
+    }
+
     private void setupView() {
-        LinearLayout contentPanel = (LinearLayout) mWindow.findViewById(R.id.contentPanel);
+        final View parentPanel = mWindow.findViewById(R.id.parentPanel);
+        final View defaultTopPanel = parentPanel.findViewById(R.id.topPanel);
+        final View defaultContentPanel = parentPanel.findViewById(R.id.contentPanel);
+        final View defaultButtonPanel = parentPanel.findViewById(R.id.buttonPanel);
+
+        // Install custom content before setting up the title or buttons so
+        // that we can handle panel overrides.
+        final ViewGroup customPanel = (ViewGroup) parentPanel.findViewById(R.id.customPanel);
+        setupCustomContent(customPanel);
+
+        final View customTopPanel = customPanel.findViewById(R.id.topPanel);
+        final View customContentPanel = customPanel.findViewById(R.id.contentPanel);
+        final View customButtonPanel = customPanel.findViewById(R.id.buttonPanel);
+
+        // Resolve the correct panels and remove the defaults, if needed.
+        final ViewGroup topPanel = resolvePanel(customTopPanel, defaultTopPanel);
+        final ViewGroup contentPanel = resolvePanel(customContentPanel, defaultContentPanel);
+        final ViewGroup buttonPanel = resolvePanel(customButtonPanel, defaultButtonPanel);
+
         setupContent(contentPanel);
-        boolean hasButtons = setupButtons();
-        
-        LinearLayout topPanel = (LinearLayout) mWindow.findViewById(R.id.topPanel);
-        TypedArray a = mContext.obtainStyledAttributes(
-                null, com.android.internal.R.styleable.AlertDialog, com.android.internal.R.attr.alertDialogStyle, 0);
-        boolean hasTitle = setupTitle(topPanel);
-            
-        View buttonPanel = mWindow.findViewById(R.id.buttonPanel);
-        if (!hasButtons) {
-            buttonPanel.setVisibility(View.GONE);
+        setupButtons(buttonPanel);
+        setupTitle(topPanel);
+
+        final boolean hasCustomPanel = customPanel != null
+                && customPanel.getVisibility() != View.GONE;
+        final boolean hasTopPanel = topPanel != null
+                && topPanel.getVisibility() != View.GONE;
+        final boolean hasButtonPanel = buttonPanel != null
+                && buttonPanel.getVisibility() != View.GONE;
+
+        // Only display the text spacer if we don't have buttons.
+        if (!hasButtonPanel) {
+            if (contentPanel != null) {
+                final View spacer = contentPanel.findViewById(R.id.textSpacerNoButtons);
+                if (spacer != null) {
+                    spacer.setVisibility(View.VISIBLE);
+                }
+            }
             mWindow.setCloseOnTouchOutsideIfNotSet(true);
         }
 
-        FrameLayout customPanel = null;
-        if (mView != null) {
-            customPanel = (FrameLayout) mWindow.findViewById(R.id.customPanel);
-            FrameLayout custom = (FrameLayout) mWindow.findViewById(R.id.custom);
-            custom.addView(mView, new LayoutParams(MATCH_PARENT, MATCH_PARENT));
-            if (mViewSpacingSpecified) {
-                custom.setPadding(mViewSpacingLeft, mViewSpacingTop, mViewSpacingRight,
-                        mViewSpacingBottom);
+        if (hasTopPanel) {
+            // Only clip scrolling content to padding if we have a title.
+            if (mScrollView != null) {
+                mScrollView.setClipToPadding(true);
             }
-            if (mListView != null) {
-                ((LinearLayout.LayoutParams) customPanel.getLayoutParams()).weight = 0;
-            }
-        } else {
-            mWindow.findViewById(R.id.customPanel).setVisibility(View.GONE);
-        }
-        
-        /* Only display the divider if we have a title and a 
-         * custom view or a message.
-         */
-        if (hasTitle) {
+
+            // Only show the divider if we have a title.
             View divider = null;
-            if (mMessage != null || mView != null || mListView != null) {
-                divider = mWindow.findViewById(R.id.titleDivider);
+            if (mMessage != null || mListView != null || hasCustomPanel) {
+                if (!hasCustomPanel) {
+                    divider = topPanel.findViewById(R.id.titleDividerNoCustom);
+                }
+                if (divider == null) {
+                    divider = topPanel.findViewById(R.id.titleDivider);
+                }
+
             } else {
-                divider = mWindow.findViewById(R.id.titleDividerTop);
+                divider = topPanel.findViewById(R.id.titleDividerTop);
             }
 
             if (divider != null) {
                 divider.setVisibility(View.VISIBLE);
             }
+        } else {
+            if (contentPanel != null) {
+                final View spacer = contentPanel.findViewById(R.id.textSpacerNoTitle);
+                if (spacer != null) {
+                    spacer.setVisibility(View.VISIBLE);
+                }
+            }
         }
-        
-        setBackground(topPanel, contentPanel, customPanel, hasButtons, a, hasTitle, buttonPanel);
+
+        if (mListView instanceof RecycleListView) {
+            ((RecycleListView) mListView).setHasDecor(hasTopPanel, hasButtonPanel);
+        }
+
+        // Update scroll indicators as needed.
+        if (!hasCustomPanel) {
+            final View content = mListView != null ? mListView : mScrollView;
+            if (content != null) {
+                final int indicators = (hasTopPanel ? View.SCROLL_INDICATOR_TOP : 0)
+                        | (hasButtonPanel ? View.SCROLL_INDICATOR_BOTTOM : 0);
+                content.setScrollIndicators(indicators,
+                        View.SCROLL_INDICATOR_TOP | View.SCROLL_INDICATOR_BOTTOM);
+            }
+        }
+
+        final TypedArray a = mContext.obtainStyledAttributes(
+                null, R.styleable.AlertDialog, R.attr.alertDialogStyle, 0);
+        setBackground(a, topPanel, contentPanel, customPanel, buttonPanel,
+                hasTopPanel, hasCustomPanel, hasButtonPanel);
         a.recycle();
     }
 
-    private boolean setupTitle(LinearLayout topPanel) {
-        boolean hasTitle = true;
-        
-        if (mCustomTitleView != null) {
+    private void setupCustomContent(ViewGroup customPanel) {
+        final View customView;
+        if (mView != null) {
+            customView = mView;
+        } else if (mViewLayoutResId != 0) {
+            final LayoutInflater inflater = LayoutInflater.from(mContext);
+            customView = inflater.inflate(mViewLayoutResId, customPanel, false);
+        } else {
+            customView = null;
+        }
+
+        final boolean hasCustomView = customView != null;
+        if (!hasCustomView || !canTextInput(customView)) {
+            mWindow.setFlags(WindowManager.LayoutParams.FLAG_ALT_FOCUSABLE_IM,
+                    WindowManager.LayoutParams.FLAG_ALT_FOCUSABLE_IM);
+        }
+
+        if (hasCustomView) {
+            final FrameLayout custom = (FrameLayout) mWindow.findViewById(R.id.custom);
+            custom.addView(customView, new LayoutParams(MATCH_PARENT, MATCH_PARENT));
+
+            if (mViewSpacingSpecified) {
+                custom.setPadding(
+                        mViewSpacingLeft, mViewSpacingTop, mViewSpacingRight, mViewSpacingBottom);
+            }
+
+            if (mListView != null) {
+                ((LinearLayout.LayoutParams) customPanel.getLayoutParams()).weight = 0;
+            }
+        } else {
+            customPanel.setVisibility(View.GONE);
+        }
+    }
+
+    private void setupTitle(ViewGroup topPanel) {
+        if (mCustomTitleView != null && mShowTitle) {
             // Add the custom title view directly to the topPanel layout
-            LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(
-                    LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT);
-            
+            final LayoutParams lp = new LayoutParams(
+                    LayoutParams.MATCH_PARENT, LayoutParams.WRAP_CONTENT);
+
             topPanel.addView(mCustomTitleView, 0, lp);
-            
+
             // Hide the title template
-            View titleTemplate = mWindow.findViewById(R.id.title_template);
+            final View titleTemplate = mWindow.findViewById(R.id.title_template);
             titleTemplate.setVisibility(View.GONE);
         } else {
-            final boolean hasTextTitle = !TextUtils.isEmpty(mTitle);
-            
             mIconView = (ImageView) mWindow.findViewById(R.id.icon);
-            if (hasTextTitle) {
-                /* Display the title if a title is supplied, else hide it */
-                mTitleView = (TextView) mWindow.findViewById(R.id.alertTitle);
 
+            final boolean hasTextTitle = !TextUtils.isEmpty(mTitle);
+            if (hasTextTitle && mShowTitle) {
+                // Display the title if a title is supplied, else hide it.
+                mTitleView = (TextView) mWindow.findViewById(R.id.alertTitle);
                 mTitleView.setText(mTitle);
-                
-                /* Do this last so that if the user has supplied any
-                 * icons we use them instead of the default ones. If the
-                 * user has specified 0 then make it disappear.
-                 */
-                if (mIconId > 0) {
+
+                // Do this last so that if the user has supplied any icons we
+                // use them instead of the default ones. If the user has
+                // specified 0 then make it disappear.
+                if (mIconId != 0) {
                     mIconView.setImageResource(mIconId);
                 } else if (mIcon != null) {
                     mIconView.setImageDrawable(mIcon);
-                } else if (mIconId == 0) {
-                    
-                    /* Apply the padding from the icon to ensure the
-                     * title is aligned correctly.
-                     */
+                } else {
+                    // Apply the padding from the icon to ensure the title is
+                    // aligned correctly.
                     mTitleView.setPadding(mIconView.getPaddingLeft(),
                             mIconView.getPaddingTop(),
                             mIconView.getPaddingRight(),
@@ -485,51 +634,58 @@ public class AlertController {
                     mIconView.setVisibility(View.GONE);
                 }
             } else {
-                
                 // Hide the title template
-                View titleTemplate = mWindow.findViewById(R.id.title_template);
+                final View titleTemplate = mWindow.findViewById(R.id.title_template);
                 titleTemplate.setVisibility(View.GONE);
                 mIconView.setVisibility(View.GONE);
                 topPanel.setVisibility(View.GONE);
-                hasTitle = false;
             }
         }
-        return hasTitle;
     }
 
-    private void setupContent(LinearLayout contentPanel) {
-        mScrollView = (ScrollView) mWindow.findViewById(R.id.scrollView);
+    private void setupContent(ViewGroup contentPanel) {
+        mScrollView = (ScrollView) contentPanel.findViewById(R.id.scrollView);
         mScrollView.setFocusable(false);
-        
+
         // Special case for users that only want to display a String
-        mMessageView = (TextView) mWindow.findViewById(R.id.message);
+        mMessageView = (TextView) contentPanel.findViewById(R.id.message);
         if (mMessageView == null) {
             return;
         }
-        
+
         if (mMessage != null) {
             mMessageView.setText(mMessage);
         } else {
             mMessageView.setVisibility(View.GONE);
             mScrollView.removeView(mMessageView);
-            
+
             if (mListView != null) {
-                contentPanel.removeView(mWindow.findViewById(R.id.scrollView));
-                contentPanel.addView(mListView,
-                        new LinearLayout.LayoutParams(MATCH_PARENT, MATCH_PARENT));
-                contentPanel.setLayoutParams(new LinearLayout.LayoutParams(MATCH_PARENT, 0, 1.0f));
+                final ViewGroup scrollParent = (ViewGroup) mScrollView.getParent();
+                final int childIndex = scrollParent.indexOfChild(mScrollView);
+                scrollParent.removeViewAt(childIndex);
+                scrollParent.addView(mListView, childIndex,
+                        new LayoutParams(MATCH_PARENT, MATCH_PARENT));
             } else {
                 contentPanel.setVisibility(View.GONE);
             }
         }
     }
 
-    private boolean setupButtons() {
+    private static void manageScrollIndicators(View v, View upIndicator, View downIndicator) {
+        if (upIndicator != null) {
+            upIndicator.setVisibility(v.canScrollVertically(-1) ? View.VISIBLE : View.INVISIBLE);
+        }
+        if (downIndicator != null) {
+            downIndicator.setVisibility(v.canScrollVertically(1) ? View.VISIBLE : View.INVISIBLE);
+        }
+    }
+
+    private void setupButtons(ViewGroup buttonPanel) {
         int BIT_BUTTON_POSITIVE = 1;
         int BIT_BUTTON_NEGATIVE = 2;
         int BIT_BUTTON_NEUTRAL = 4;
         int whichButtons = 0;
-        mButtonPositive = (Button) mWindow.findViewById(R.id.button1);
+        mButtonPositive = (Button) buttonPanel.findViewById(R.id.button1);
         mButtonPositive.setOnClickListener(mButtonHandler);
 
         if (TextUtils.isEmpty(mButtonPositiveText)) {
@@ -540,7 +696,7 @@ public class AlertController {
             whichButtons = whichButtons | BIT_BUTTON_POSITIVE;
         }
 
-        mButtonNegative = (Button) mWindow.findViewById(R.id.button2);
+        mButtonNegative = (Button) buttonPanel.findViewById(R.id.button2);
         mButtonNegative.setOnClickListener(mButtonHandler);
 
         if (TextUtils.isEmpty(mButtonNegativeText)) {
@@ -552,7 +708,7 @@ public class AlertController {
             whichButtons = whichButtons | BIT_BUTTON_NEGATIVE;
         }
 
-        mButtonNeutral = (Button) mWindow.findViewById(R.id.button3);
+        mButtonNeutral = (Button) buttonPanel.findViewById(R.id.button3);
         mButtonNeutral.setOnClickListener(mButtonHandler);
 
         if (TextUtils.isEmpty(mButtonNeutralText)) {
@@ -572,13 +728,16 @@ public class AlertController {
             if (whichButtons == BIT_BUTTON_POSITIVE) {
                 centerButton(mButtonPositive);
             } else if (whichButtons == BIT_BUTTON_NEGATIVE) {
-                centerButton(mButtonNeutral);
+                centerButton(mButtonNegative);
             } else if (whichButtons == BIT_BUTTON_NEUTRAL) {
                 centerButton(mButtonNeutral);
             }
         }
-        
-        return whichButtons != 0;
+
+        final boolean hasButtons = whichButtons != 0;
+        if (!hasButtons) {
+            buttonPanel.setVisibility(View.GONE);
+        }
     }
 
     private void centerButton(Button button) {
@@ -596,76 +755,86 @@ public class AlertController {
         }
     }
 
-    private void setBackground(LinearLayout topPanel, LinearLayout contentPanel,
-            View customPanel, boolean hasButtons, TypedArray a, boolean hasTitle, 
-            View buttonPanel) {
-        
-        /* Get all the different background required */
-        int fullDark = a.getResourceId(
-                R.styleable.AlertDialog_fullDark, R.drawable.popup_full_dark);
-        int topDark = a.getResourceId(
-                R.styleable.AlertDialog_topDark, R.drawable.popup_top_dark);
-        int centerDark = a.getResourceId(
-                R.styleable.AlertDialog_centerDark, R.drawable.popup_center_dark);
-        int bottomDark = a.getResourceId(
-                R.styleable.AlertDialog_bottomDark, R.drawable.popup_bottom_dark);
-        int fullBright = a.getResourceId(
-                R.styleable.AlertDialog_fullBright, R.drawable.popup_full_bright);
-        int topBright = a.getResourceId(
-                R.styleable.AlertDialog_topBright, R.drawable.popup_top_bright);
-        int centerBright = a.getResourceId(
-                R.styleable.AlertDialog_centerBright, R.drawable.popup_center_bright);
-        int bottomBright = a.getResourceId(
-                R.styleable.AlertDialog_bottomBright, R.drawable.popup_bottom_bright);
-        int bottomMedium = a.getResourceId(
-                R.styleable.AlertDialog_bottomMedium, R.drawable.popup_bottom_medium);
-        
-        /*
-         * We now set the background of all of the sections of the alert.
+    private void setBackground(TypedArray a, View topPanel, View contentPanel, View customPanel,
+            View buttonPanel, boolean hasTitle, boolean hasCustomView, boolean hasButtons) {
+        int fullDark = 0;
+        int topDark = 0;
+        int centerDark = 0;
+        int bottomDark = 0;
+        int fullBright = 0;
+        int topBright = 0;
+        int centerBright = 0;
+        int bottomBright = 0;
+        int bottomMedium = 0;
+
+        // If the needsDefaultBackgrounds attribute is set, we know we're
+        // inheriting from a framework style.
+        final boolean needsDefaultBackgrounds = a.getBoolean(
+                R.styleable.AlertDialog_needsDefaultBackgrounds, true);
+        if (needsDefaultBackgrounds) {
+            fullDark = R.drawable.popup_full_dark;
+            topDark = R.drawable.popup_top_dark;
+            centerDark = R.drawable.popup_center_dark;
+            bottomDark = R.drawable.popup_bottom_dark;
+            fullBright = R.drawable.popup_full_bright;
+            topBright = R.drawable.popup_top_bright;
+            centerBright = R.drawable.popup_center_bright;
+            bottomBright = R.drawable.popup_bottom_bright;
+            bottomMedium = R.drawable.popup_bottom_medium;
+        }
+
+        topBright = a.getResourceId(R.styleable.AlertDialog_topBright, topBright);
+        topDark = a.getResourceId(R.styleable.AlertDialog_topDark, topDark);
+        centerBright = a.getResourceId(R.styleable.AlertDialog_centerBright, centerBright);
+        centerDark = a.getResourceId(R.styleable.AlertDialog_centerDark, centerDark);
+
+        /* We now set the background of all of the sections of the alert.
          * First collect together each section that is being displayed along
          * with whether it is on a light or dark background, then run through
          * them setting their backgrounds.  This is complicated because we need
          * to correctly use the full, top, middle, and bottom graphics depending
          * on how many views they are and where they appear.
          */
-        
-        View[] views = new View[4];
-        boolean[] light = new boolean[4];
+
+        final View[] views = new View[4];
+        final boolean[] light = new boolean[4];
         View lastView = null;
         boolean lastLight = false;
-        
+
         int pos = 0;
         if (hasTitle) {
             views[pos] = topPanel;
             light[pos] = false;
             pos++;
         }
-        
+
         /* The contentPanel displays either a custom text message or
          * a ListView. If it's text we should use the dark background
          * for ListView we should use the light background. If neither
          * are there the contentPanel will be hidden so set it as null.
          */
-        views[pos] = (contentPanel.getVisibility() == View.GONE) 
-                ? null : contentPanel;
+        views[pos] = contentPanel.getVisibility() == View.GONE ? null : contentPanel;
         light[pos] = mListView != null;
         pos++;
-        if (customPanel != null) {
+
+        if (hasCustomView) {
             views[pos] = customPanel;
             light[pos] = mForceInverseBackground;
             pos++;
         }
+
         if (hasButtons) {
             views[pos] = buttonPanel;
             light[pos] = true;
         }
-        
+
         boolean setView = false;
-        for (pos=0; pos<views.length; pos++) {
-            View v = views[pos];
+        for (pos = 0; pos < views.length; pos++) {
+            final View v = views[pos];
             if (v == null) {
                 continue;
             }
+
             if (lastView != null) {
                 if (!setView) {
                     lastView.setBackgroundResource(lastLight ? topBright : topDark);
@@ -674,70 +843,69 @@ public class AlertController {
                 }
                 setView = true;
             }
+
             lastView = v;
             lastLight = light[pos];
         }
-        
+
         if (lastView != null) {
             if (setView) {
-                
-                /* ListViews will use the Bright background but buttons use
-                 * the Medium background.
-                 */ 
+                bottomBright = a.getResourceId(R.styleable.AlertDialog_bottomBright, bottomBright);
+                bottomMedium = a.getResourceId(R.styleable.AlertDialog_bottomMedium, bottomMedium);
+                bottomDark = a.getResourceId(R.styleable.AlertDialog_bottomDark, bottomDark);
+
+                // ListViews will use the Bright background, but buttons use the
+                // Medium background.
                 lastView.setBackgroundResource(
                         lastLight ? (hasButtons ? bottomMedium : bottomBright) : bottomDark);
             } else {
+                fullBright = a.getResourceId(R.styleable.AlertDialog_fullBright, fullBright);
+                fullDark = a.getResourceId(R.styleable.AlertDialog_fullDark, fullDark);
+
                 lastView.setBackgroundResource(lastLight ? fullBright : fullDark);
             }
         }
-        
-        /* TODO: uncomment section below. The logic for this should be if 
-         * it's a Contextual menu being displayed AND only a Cancel button 
-         * is shown then do this.
-         */
-//        if (hasButtons && (mListView != null)) {
-            
-            /* Yet another *special* case. If there is a ListView with buttons
-             * don't put the buttons on the bottom but instead put them in the
-             * footer of the ListView this will allow more items to be
-             * displayed.
-             */
-            
-            /*
-            contentPanel.setBackgroundResource(bottomBright);
-            buttonPanel.setBackgroundResource(centerMedium);
-            ViewGroup parent = (ViewGroup) mWindow.findViewById(R.id.parentPanel);
-            parent.removeView(buttonPanel);
-            AbsListView.LayoutParams params = new AbsListView.LayoutParams(
-                    AbsListView.LayoutParams.MATCH_PARENT, 
-                    AbsListView.LayoutParams.MATCH_PARENT);
-            buttonPanel.setLayoutParams(params);
-            mListView.addFooterView(buttonPanel);
-            */
-//        }
-        
-        if ((mListView != null) && (mAdapter != null)) {
-            mListView.setAdapter(mAdapter);
-            if (mCheckedItem > -1) {
-                mListView.setItemChecked(mCheckedItem, true);
-                mListView.setSelection(mCheckedItem);
+
+        final ListView listView = mListView;
+        if (listView != null && mAdapter != null) {
+            listView.setAdapter(mAdapter);
+            final int checkedItem = mCheckedItem;
+            if (checkedItem > -1) {
+                listView.setItemChecked(checkedItem, true);
+                listView.setSelection(checkedItem);
             }
         }
     }
 
     public static class RecycleListView extends ListView {
+        private final int mPaddingTopNoTitle;
+        private final int mPaddingBottomNoButtons;
+
         boolean mRecycleOnMeasure = true;
 
         public RecycleListView(Context context) {
-            super(context);
+            this(context, null);
         }
 
         public RecycleListView(Context context, AttributeSet attrs) {
             super(context, attrs);
+
+            final TypedArray ta = context.obtainStyledAttributes(
+                    attrs, R.styleable.RecycleListView);
+            mPaddingBottomNoButtons = ta.getDimensionPixelOffset(
+                    R.styleable.RecycleListView_paddingBottomNoButtons, -1);
+            mPaddingTopNoTitle = ta.getDimensionPixelOffset(
+                    R.styleable.RecycleListView_paddingTopNoTitle, -1);
         }
 
-        public RecycleListView(Context context, AttributeSet attrs, int defStyle) {
-            super(context, attrs, defStyle);
+        public void setHasDecor(boolean hasTitle, boolean hasButtons) {
+            if (!hasButtons || !hasTitle) {
+                final int paddingLeft = getPaddingLeft();
+                final int paddingTop = hasTitle ? getPaddingTop() : mPaddingTopNoTitle;
+                final int paddingRight = getPaddingRight();
+                final int paddingBottom = hasButtons ? getPaddingBottom() : mPaddingBottomNoButtons;
+                setPadding(paddingLeft, paddingTop, paddingRight, paddingBottom);
+            }
         }
 
         @Override
@@ -749,7 +917,7 @@ public class AlertController {
     public static class AlertParams {
         public final Context mContext;
         public final LayoutInflater mInflater;
-        
+
         public int mIconId = 0;
         public Drawable mIcon;
         public int mIconAttrId = 0;
@@ -769,6 +937,7 @@ public class AlertController {
         public CharSequence[] mItems;
         public ListAdapter mAdapter;
         public DialogInterface.OnClickListener mOnClickListener;
+        public int mViewLayoutResId;
         public View mView;
         public int mViewSpacingLeft;
         public int mViewSpacingTop;
@@ -793,20 +962,20 @@ public class AlertController {
          * will be bound to an adapter.
          */
         public interface OnPrepareListViewListener {
-            
+
             /**
              * Called before the ListView is bound to an adapter.
              * @param listView The ListView that will be shown in the dialog.
              */
             void onPrepareListView(ListView listView);
         }
-        
+
         public AlertParams(Context context) {
             mContext = context;
             mCancelable = true;
             mInflater = (LayoutInflater) context.getSystemService(Context.LAYOUT_INFLATER_SERVICE);
         }
-    
+
         public void apply(AlertController dialog) {
             if (mCustomTitleView != null) {
                 dialog.setCustomTitle(mCustomTitleView);
@@ -817,10 +986,10 @@ public class AlertController {
                 if (mIcon != null) {
                     dialog.setIcon(mIcon);
                 }
-                if (mIconId >= 0) {
+                if (mIconId != 0) {
                     dialog.setIcon(mIconId);
                 }
-                if (mIconAttrId > 0) {
+                if (mIconAttrId != 0) {
                     dialog.setIcon(dialog.getIconAttributeResId(mIconAttrId));
                 }
             }
@@ -854,8 +1023,10 @@ public class AlertController {
                 } else {
                     dialog.setView(mView);
                 }
+            } else if (mViewLayoutResId != 0) {
+                dialog.setView(mViewLayoutResId);
             }
-            
+
             /*
             dialog.setCancelable(mCancelable);
             dialog.setOnCancelListener(mOnCancelListener);
@@ -864,12 +1035,12 @@ public class AlertController {
             }
             */
         }
-        
+
         private void createListView(final AlertController dialog) {
-            final RecycleListView listView = (RecycleListView)
-                    mInflater.inflate(dialog.mListLayout, null);
-            ListAdapter adapter;
-            
+            final RecycleListView listView =
+                    (RecycleListView) mInflater.inflate(dialog.mListLayout, null);
+            final ListAdapter adapter;
+
             if (mIsMultiChoice) {
                 if (mCursor == null) {
                     adapter = new ArrayAdapter<CharSequence>(
@@ -904,40 +1075,47 @@ public class AlertController {
                             listView.setItemChecked(cursor.getPosition(),
                                     cursor.getInt(mIsCheckedIndex) == 1);
                         }
-    
+
                         @Override
                         public View newView(Context context, Cursor cursor, ViewGroup parent) {
                             return mInflater.inflate(dialog.mMultiChoiceItemLayout,
                                     parent, false);
                         }
-                        
+
                     };
                 }
             } else {
-                int layout = mIsSingleChoice 
-                        ? dialog.mSingleChoiceItemLayout : dialog.mListItemLayout;
-                if (mCursor == null) {
-                    adapter = (mAdapter != null) ? mAdapter
-                            : new ArrayAdapter<CharSequence>(mContext, layout, R.id.text1, mItems);
+                final int layout;
+                if (mIsSingleChoice) {
+                    layout = dialog.mSingleChoiceItemLayout;
                 } else {
-                    adapter = new SimpleCursorAdapter(mContext, layout, 
-                            mCursor, new String[]{mLabelColumn}, new int[]{R.id.text1});
+                    layout = dialog.mListItemLayout;
+                }
+
+                if (mCursor != null) {
+                    adapter = new SimpleCursorAdapter(mContext, layout, mCursor,
+                            new String[] { mLabelColumn }, new int[] { R.id.text1 });
+                } else if (mAdapter != null) {
+                    adapter = mAdapter;
+                } else {
+                    adapter = new CheckedItemAdapter(mContext, layout, R.id.text1, mItems);
                 }
             }
-            
+
             if (mOnPrepareListViewListener != null) {
                 mOnPrepareListViewListener.onPrepareListView(listView);
             }
-            
+
             /* Don't directly set the adapter on the ListView as we might
              * want to add a footer to the ListView later.
              */
             dialog.mAdapter = adapter;
             dialog.mCheckedItem = mCheckedItem;
-            
+
             if (mOnClickListener != null) {
                 listView.setOnItemClickListener(new OnItemClickListener() {
-                    public void onItemClick(AdapterView parent, View v, int position, long id) {
+                    @Override
+                    public void onItemClick(AdapterView<?> parent, View v, int position, long id) {
                         mOnClickListener.onClick(dialog.mDialogInterface, position);
                         if (!mIsSingleChoice) {
                             dialog.mDialogInterface.dismiss();
@@ -946,7 +1124,8 @@ public class AlertController {
                 });
             } else if (mOnCheckboxClickListener != null) {
                 listView.setOnItemClickListener(new OnItemClickListener() {
-                    public void onItemClick(AdapterView parent, View v, int position, long id) {
+                    @Override
+                    public void onItemClick(AdapterView<?> parent, View v, int position, long id) {
                         if (mCheckedItems != null) {
                             mCheckedItems[position] = listView.isItemChecked(position);
                         }
@@ -955,12 +1134,12 @@ public class AlertController {
                     }
                 });
             }
-            
+
             // Attach a given OnItemSelectedListener to the ListView
             if (mOnItemSelectedListener != null) {
                 listView.setOnItemSelectedListener(mOnItemSelectedListener);
             }
-            
+
             if (mIsSingleChoice) {
                 listView.setChoiceMode(ListView.CHOICE_MODE_SINGLE);
             } else if (mIsMultiChoice) {
@@ -971,4 +1150,20 @@ public class AlertController {
         }
     }
 
+    private static class CheckedItemAdapter extends ArrayAdapter<CharSequence> {
+        public CheckedItemAdapter(Context context, int resource, int textViewResourceId,
+                CharSequence[] objects) {
+            super(context, resource, textViewResourceId, objects);
+        }
+
+        @Override
+        public boolean hasStableIds() {
+            return true;
+        }
+
+        @Override
+        public long getItemId(int position) {
+            return position;
+        }
+    }
 }

@@ -19,8 +19,6 @@ package android.net.wifi.p2p;
 import android.annotation.SdkConstant;
 import android.annotation.SdkConstant.SdkConstantType;
 import android.content.Context;
-import android.net.ConnectivityManager;
-import android.net.IConnectivityManager;
 import android.net.wifi.WpsInfo;
 import android.net.wifi.p2p.nsd.WifiP2pDnsSdServiceInfo;
 import android.net.wifi.p2p.nsd.WifiP2pDnsSdServiceResponse;
@@ -29,15 +27,12 @@ import android.net.wifi.p2p.nsd.WifiP2pServiceRequest;
 import android.net.wifi.p2p.nsd.WifiP2pServiceResponse;
 import android.net.wifi.p2p.nsd.WifiP2pUpnpServiceInfo;
 import android.net.wifi.p2p.nsd.WifiP2pUpnpServiceResponse;
-import android.os.Binder;
-import android.os.IBinder;
+import android.os.Bundle;
 import android.os.Handler;
 import android.os.Looper;
 import android.os.Message;
 import android.os.Messenger;
 import android.os.RemoteException;
-import android.os.ServiceManager;
-import android.os.WorkSource;
 import android.text.TextUtils;
 import android.util.Log;
 
@@ -281,6 +276,13 @@ public class WifiP2pManager {
     public static final String WIFI_P2P_PERSISTENT_GROUPS_CHANGED_ACTION =
         "android.net.wifi.p2p.PERSISTENT_GROUPS_CHANGED";
 
+    /**
+     * The lookup key for a handover message returned by the WifiP2pService.
+     * @hide
+     */
+    public static final String EXTRA_HANDOVER_MESSAGE =
+            "android.net.wifi.p2p.EXTRA_HANDOVER_MESSAGE";
+
     IWifiP2pManager mService;
 
     private static final int BASE = Protocol.BASE_WIFI_P2P_MANAGER;
@@ -429,6 +431,43 @@ public class WifiP2pManager {
     public static final int START_WPS_FAILED                        = BASE + 63;
     /** @hide */
     public static final int START_WPS_SUCCEEDED                     = BASE + 64;
+
+    /** @hide */
+    public static final int START_LISTEN                            = BASE + 65;
+    /** @hide */
+    public static final int START_LISTEN_FAILED                     = BASE + 66;
+    /** @hide */
+    public static final int START_LISTEN_SUCCEEDED                  = BASE + 67;
+
+    /** @hide */
+    public static final int STOP_LISTEN                             = BASE + 68;
+    /** @hide */
+    public static final int STOP_LISTEN_FAILED                      = BASE + 69;
+    /** @hide */
+    public static final int STOP_LISTEN_SUCCEEDED                   = BASE + 70;
+
+    /** @hide */
+    public static final int SET_CHANNEL                             = BASE + 71;
+    /** @hide */
+    public static final int SET_CHANNEL_FAILED                      = BASE + 72;
+    /** @hide */
+    public static final int SET_CHANNEL_SUCCEEDED                   = BASE + 73;
+
+    /** @hide */
+    public static final int GET_HANDOVER_REQUEST                    = BASE + 75;
+    /** @hide */
+    public static final int GET_HANDOVER_SELECT                     = BASE + 76;
+    /** @hide */
+    public static final int RESPONSE_GET_HANDOVER_MESSAGE           = BASE + 77;
+    /** @hide */
+    public static final int INITIATOR_REPORT_NFC_HANDOVER           = BASE + 78;
+    /** @hide */
+    public static final int RESPONDER_REPORT_NFC_HANDOVER           = BASE + 79;
+    /** @hide */
+    public static final int REPORT_NFC_HANDOVER_SUCCEEDED           = BASE + 80;
+    /** @hide */
+    public static final int REPORT_NFC_HANDOVER_FAILED              = BASE + 81;
+
 
     /**
      * Create a new WifiP2pManager instance. Applications use
@@ -610,6 +649,14 @@ public class WifiP2pManager {
     }
 
     /**
+     * Interface for callback invocation when Handover Request or Select Message is available
+     * @hide
+     */
+    public interface HandoverMessageListener {
+        public void onHandoverMessageAvailable(String handoverMessage);
+    }
+
+    /**
      * A channel that connects the application to the Wifi p2p framework.
      * Most p2p operations require a Channel as an argument. An instance of Channel is obtained
      * by doing a call on {@link #initialize}
@@ -667,6 +714,10 @@ public class WifiP2pManager {
                     case DELETE_PERSISTENT_GROUP_FAILED:
                     case SET_WFD_INFO_FAILED:
                     case START_WPS_FAILED:
+                    case START_LISTEN_FAILED:
+                    case STOP_LISTEN_FAILED:
+                    case SET_CHANNEL_FAILED:
+                    case REPORT_NFC_HANDOVER_FAILED:
                         if (listener != null) {
                             ((ActionListener) listener).onFailure(message.arg1);
                         }
@@ -689,6 +740,10 @@ public class WifiP2pManager {
                     case DELETE_PERSISTENT_GROUP_SUCCEEDED:
                     case SET_WFD_INFO_SUCCEEDED:
                     case START_WPS_SUCCEEDED:
+                    case START_LISTEN_SUCCEEDED:
+                    case STOP_LISTEN_SUCCEEDED:
+                    case SET_CHANNEL_SUCCEEDED:
+                    case REPORT_NFC_HANDOVER_SUCCEEDED:
                         if (listener != null) {
                             ((ActionListener) listener).onSuccess();
                         }
@@ -722,7 +777,17 @@ public class WifiP2pManager {
                                 onPersistentGroupInfoAvailable(groups);
                         }
                         break;
-                   default:
+                    case RESPONSE_GET_HANDOVER_MESSAGE:
+                        Bundle handoverBundle = (Bundle) message.obj;
+                        if (listener != null) {
+                            String handoverMessage = handoverBundle != null
+                                    ? handoverBundle.getString(EXTRA_HANDOVER_MESSAGE)
+                                    : null;
+                            ((HandoverMessageListener) listener)
+                                    .onHandoverMessageAvailable(handoverMessage);
+                        }
+                        break;
+                    default:
                         Log.d(TAG, "Ignored " + message);
                         break;
                 }
@@ -818,7 +883,20 @@ public class WifiP2pManager {
      * @return Channel instance that is necessary for performing any further p2p operations
      */
     public Channel initialize(Context srcContext, Looper srcLooper, ChannelListener listener) {
-        Messenger messenger = getMessenger();
+        return initalizeChannel(srcContext, srcLooper, listener, getMessenger());
+    }
+
+    /**
+     * Registers the application with the Wi-Fi framework. Enables system-only functionality.
+     * @hide
+     */
+    public Channel initializeInternal(Context srcContext, Looper srcLooper,
+                                      ChannelListener listener) {
+        return initalizeChannel(srcContext, srcLooper, listener, getP2pStateMachineMessenger());
+    }
+
+    private Channel initalizeChannel(Context srcContext, Looper srcLooper, ChannelListener listener,
+                                     Messenger messenger) {
         if (messenger == null) return null;
 
         Channel c = new Channel(srcContext, srcLooper, listener);
@@ -953,6 +1031,22 @@ public class WifiP2pManager {
     public void removeGroup(Channel c, ActionListener listener) {
         checkChannel(c);
         c.mAsyncChannel.sendMessage(REMOVE_GROUP, 0, c.putListener(listener));
+    }
+
+    /** @hide */
+    public void listen(Channel c, boolean enable, ActionListener listener) {
+        checkChannel(c);
+        c.mAsyncChannel.sendMessage(enable ? START_LISTEN : STOP_LISTEN,
+                0, c.putListener(listener));
+    }
+
+    /** @hide */
+    public void setWifiP2pChannels(Channel c, int lc, int oc, ActionListener listener) {
+        checkChannel(c);
+        Bundle p2pChannels = new Bundle();
+        p2pChannels.putInt("lc", lc);
+        p2pChannels.putInt("oc", oc);
+        c.mAsyncChannel.sendMessage(SET_CHANNEL, 0, c.putListener(listener), p2pChannels);
     }
 
     /**
@@ -1268,8 +1362,8 @@ public class WifiP2pManager {
     public void setMiracastMode(int mode) {
         try {
             mService.setMiracastMode(mode);
-        } catch(RemoteException e) {
-           // ignore
+        } catch (RemoteException e) {
+            throw e.rethrowFromSystemServer();
         }
     }
 
@@ -1284,8 +1378,66 @@ public class WifiP2pManager {
         try {
             return mService.getMessenger();
         } catch (RemoteException e) {
-            return null;
+            throw e.rethrowFromSystemServer();
         }
     }
 
+    /**
+     * Get a reference to P2pStateMachine handler. This is used to establish
+     * a priveleged AsyncChannel communication with WifiP2pService.
+     *
+     * @return Messenger pointing to the WifiP2pService handler
+     * @hide
+     */
+    public Messenger getP2pStateMachineMessenger() {
+        try {
+            return mService.getP2pStateMachineMessenger();
+        } catch (RemoteException e) {
+            throw e.rethrowFromSystemServer();
+        }
+    }
+
+    /**
+     * Get a handover request message for use in WFA NFC Handover transfer.
+     * @hide
+     */
+    public void getNfcHandoverRequest(Channel c, HandoverMessageListener listener) {
+        checkChannel(c);
+        c.mAsyncChannel.sendMessage(GET_HANDOVER_REQUEST, 0, c.putListener(listener));
+    }
+
+
+    /**
+     * Get a handover select message for use in WFA NFC Handover transfer.
+     * @hide
+     */
+    public void getNfcHandoverSelect(Channel c, HandoverMessageListener listener) {
+        checkChannel(c);
+        c.mAsyncChannel.sendMessage(GET_HANDOVER_SELECT, 0, c.putListener(listener));
+    }
+
+    /**
+     * @hide
+     */
+    public void initiatorReportNfcHandover(Channel c, String handoverSelect,
+                                              ActionListener listener) {
+        checkChannel(c);
+        Bundle bundle = new Bundle();
+        bundle.putString(EXTRA_HANDOVER_MESSAGE, handoverSelect);
+        c.mAsyncChannel.sendMessage(INITIATOR_REPORT_NFC_HANDOVER, 0,
+                c.putListener(listener), bundle);
+    }
+
+
+    /**
+     * @hide
+     */
+    public void responderReportNfcHandover(Channel c, String handoverRequest,
+                                              ActionListener listener) {
+        checkChannel(c);
+        Bundle bundle = new Bundle();
+        bundle.putString(EXTRA_HANDOVER_MESSAGE, handoverRequest);
+        c.mAsyncChannel.sendMessage(RESPONDER_REPORT_NFC_HANDOVER, 0,
+                c.putListener(listener), bundle);
+    }
 }

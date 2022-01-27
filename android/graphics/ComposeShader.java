@@ -16,10 +16,22 @@
 
 package android.graphics;
 
-/** A subclass of shader that returns the coposition of two other shaders, combined by
+/** A subclass of shader that returns the composition of two other shaders, combined by
     an {@link android.graphics.Xfermode} subclass.
 */
 public class ComposeShader extends Shader {
+
+    private static final int TYPE_XFERMODE = 1;
+    private static final int TYPE_PORTERDUFFMODE = 2;
+
+    /**
+     * Type of the ComposeShader: can be either TYPE_XFERMODE or TYPE_PORTERDUFFMODE
+     */
+    private int mType;
+
+    private Xfermode mXferMode;
+    private PorterDuff.Mode mPorterDuffMode;
+
     /**
      * Hold onto the shaders to avoid GC.
      */
@@ -37,18 +49,12 @@ public class ComposeShader extends Shader {
                         is null, then SRC_OVER is assumed.
     */
     public ComposeShader(Shader shaderA, Shader shaderB, Xfermode mode) {
+        mType = TYPE_XFERMODE;
         mShaderA = shaderA;
         mShaderB = shaderB;
-        native_instance = nativeCreate1(shaderA.native_instance, shaderB.native_instance,
-                (mode != null) ? mode.native_instance : 0);
-        if (mode instanceof PorterDuffXfermode) {
-            PorterDuff.Mode pdMode = ((PorterDuffXfermode) mode).mode;
-            native_shader = nativePostCreate2(native_instance, shaderA.native_shader,
-                    shaderB.native_shader, pdMode != null ? pdMode.nativeInt : 0);
-        } else {
-            native_shader = nativePostCreate1(native_instance, shaderA.native_shader,
-                    shaderB.native_shader, mode != null ? mode.native_instance : 0);
-        }
+        mXferMode = mode;
+        init(nativeCreate1(shaderA.getNativeInstance(), shaderB.getNativeInstance(),
+                (mode != null) ? mode.native_instance : 0));
     }
 
     /** Create a new compose shader, given shaders A, B, and a combining PorterDuff mode.
@@ -59,20 +65,37 @@ public class ComposeShader extends Shader {
         @param mode     The PorterDuff mode that combines the colors from the two shaders.
     */
     public ComposeShader(Shader shaderA, Shader shaderB, PorterDuff.Mode mode) {
+        mType = TYPE_PORTERDUFFMODE;
         mShaderA = shaderA;
         mShaderB = shaderB;
-        native_instance = nativeCreate2(shaderA.native_instance, shaderB.native_instance,
-                mode.nativeInt);
-        native_shader = nativePostCreate2(native_instance, shaderA.native_shader,
-                shaderB.native_shader, mode.nativeInt);
+        mPorterDuffMode = mode;
+        init(nativeCreate2(shaderA.getNativeInstance(), shaderB.getNativeInstance(),
+                mode.nativeInt));
     }
 
-    private static native int nativeCreate1(int native_shaderA, int native_shaderB,
-            int native_mode);
-    private static native int nativeCreate2(int native_shaderA, int native_shaderB,
+    /**
+     * @hide
+     */
+    @Override
+    protected Shader copy() {
+        final ComposeShader copy;
+        switch (mType) {
+            case TYPE_XFERMODE:
+                copy = new ComposeShader(mShaderA.copy(), mShaderB.copy(), mXferMode);
+                break;
+            case TYPE_PORTERDUFFMODE:
+                copy = new ComposeShader(mShaderA.copy(), mShaderB.copy(), mPorterDuffMode);
+                break;
+            default:
+                throw new IllegalArgumentException(
+                        "ComposeShader should be created with either Xfermode or PorterDuffMode");
+        }
+        copyLocalMatrix(copy);
+        return copy;
+    }
+
+    private static native long nativeCreate1(long native_shaderA, long native_shaderB,
+            long native_mode);
+    private static native long nativeCreate2(long native_shaderA, long native_shaderB,
             int porterDuffMode);
-    private static native int nativePostCreate1(int native_shader, int native_skiaShaderA,
-            int native_skiaShaderB, int native_mode);
-    private static native int nativePostCreate2(int native_shader, int native_skiaShaderA,
-            int native_skiaShaderB, int porterDuffMode);
 }

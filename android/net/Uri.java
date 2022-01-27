@@ -19,22 +19,24 @@ package android.net;
 import android.os.Environment;
 import android.os.Parcel;
 import android.os.Parcelable;
-import android.os.Environment.UserEnvironment;
 import android.os.StrictMode;
 import android.util.Log;
+
 import java.io.File;
 import java.io.IOException;
 import java.io.UnsupportedEncodingException;
 import java.net.URLEncoder;
-import java.nio.charset.Charsets;
+import java.nio.charset.StandardCharsets;
 import java.util.AbstractList;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Locale;
+import java.util.Objects;
 import java.util.RandomAccess;
 import java.util.Set;
+
 import libcore.net.UriCodec;
 
 /**
@@ -149,7 +151,7 @@ public abstract class Uri implements Parcelable, Comparable<Uri> {
     }
 
     /**
-     * Returns true if this URI is relative, i.e. if it doesn't contain an
+     * Returns true if this URI is relative, i.e.&nbsp;if it doesn't contain an
      * explicit scheme.
      *
      * @return true if this URI is relative, false if it's absolute
@@ -157,7 +159,7 @@ public abstract class Uri implements Parcelable, Comparable<Uri> {
     public abstract boolean isRelative();
 
     /**
-     * Returns true if this URI is absolute, i.e. if it contains an
+     * Returns true if this URI is absolute, i.e.&nbsp;if it contains an
      * explicit scheme.
      *
      * @return true if this URI is absolute, false if it's relative
@@ -174,8 +176,8 @@ public abstract class Uri implements Parcelable, Comparable<Uri> {
     public abstract String getScheme();
 
     /**
-     * Gets the scheme-specific part of this URI, i.e. everything between the
-     * scheme separator ':' and the fragment separator '#'. If this is a
+     * Gets the scheme-specific part of this URI, i.e.&nbsp;everything between
+     * the scheme separator ':' and the fragment separator '#'. If this is a
      * relative URI, this method returns the entire URI. Decodes escaped octets.
      *
      * <p>Example: "//www.google.com/search?q=android"
@@ -185,8 +187,8 @@ public abstract class Uri implements Parcelable, Comparable<Uri> {
     public abstract String getSchemeSpecificPart();
 
     /**
-     * Gets the scheme-specific part of this URI, i.e. everything between the
-     * scheme separator ':' and the fragment separator '#'. If this is a
+     * Gets the scheme-specific part of this URI, i.e.&nbsp;everything between
+     * the scheme separator ':' and the fragment separator '#'. If this is a
      * relative URI, this method returns the entire URI. Leaves escaped octets
      * intact.
      *
@@ -382,6 +384,11 @@ public abstract class Uri implements Parcelable, Comparable<Uri> {
                     }
                 }
                 return builder.toString();
+            } else if (scheme.equalsIgnoreCase("http") || scheme.equalsIgnoreCase("https")
+                    || scheme.equalsIgnoreCase("ftp")) {
+                ssp = "//" + ((getHost() != null) ? getHost() : "")
+                        + ((getPort() != -1) ? (":" + getPort()) : "")
+                        + "/...";
             }
         }
         // Not a sensitive scheme, but let's still be conservative about
@@ -1650,7 +1657,7 @@ public abstract class Uri implements Parcelable, Comparable<Uri> {
     /**
      * Searches the query string for the first value with the given key.
      *
-     * <p><strong>Warning:</strong> Prior to Ice Cream Sandwich, this decoded
+     * <p><strong>Warning:</strong> Prior to Jelly Bean, this decoded
      * the '+' character as '+' rather than ' '.
      *
      * @param key which will be encoded
@@ -1689,7 +1696,7 @@ public abstract class Uri implements Parcelable, Comparable<Uri> {
                     return "";
                 } else {
                     String encodedValue = query.substring(separator + 1, end);
-                    return UriCodec.decode(encodedValue, true, Charsets.UTF_8, false);
+                    return UriCodec.decode(encodedValue, true, StandardCharsets.UTF_8, false);
                 }
             }
 
@@ -1717,7 +1724,7 @@ public abstract class Uri implements Parcelable, Comparable<Uri> {
         if (flag == null) {
             return defaultValue;
         }
-        flag = flag.toLowerCase();
+        flag = flag.toLowerCase(Locale.ROOT);
         return (!"false".equals(flag) && !"0".equals(flag));
     }
 
@@ -1740,12 +1747,12 @@ public abstract class Uri implements Parcelable, Comparable<Uri> {
      *
      * @return normalized Uri (never null)
      * @see {@link android.content.Intent#setData}
-     * @see {@link #setNormalizedData}
+     * @see {@link android.content.Intent#setDataAndNormalize}
      */
     public Uri normalizeScheme() {
         String scheme = getScheme();
         if (scheme == null) return this;  // give up
-        String lowerScheme = scheme.toLowerCase(Locale.US);
+        String lowerScheme = scheme.toLowerCase(Locale.ROOT);
         if (scheme.equals(lowerScheme)) return this;  // no change
 
         return buildUpon().scheme(lowerScheme).build();
@@ -1928,7 +1935,7 @@ public abstract class Uri implements Parcelable, Comparable<Uri> {
         if (s == null) {
             return null;
         }
-        return UriCodec.decode(s, false, Charsets.UTF_8, false);
+        return UriCodec.decode(s, false, StandardCharsets.UTF_8, false);
     }
 
     /**
@@ -2335,8 +2342,33 @@ public abstract class Uri implements Parcelable, Comparable<Uri> {
      * @hide
      */
     public void checkFileUriExposed(String location) {
-        if ("file".equals(getScheme())) {
-            StrictMode.onFileUriExposed(location);
+        if ("file".equals(getScheme()) && !getPath().startsWith("/system/")) {
+            StrictMode.onFileUriExposed(this, location);
         }
+    }
+
+    /**
+     * Test if this is a path prefix match against the given Uri. Verifies that
+     * scheme, authority, and atomic path segments match.
+     *
+     * @hide
+     */
+    public boolean isPathPrefixMatch(Uri prefix) {
+        if (!Objects.equals(getScheme(), prefix.getScheme())) return false;
+        if (!Objects.equals(getAuthority(), prefix.getAuthority())) return false;
+
+        List<String> seg = getPathSegments();
+        List<String> prefixSeg = prefix.getPathSegments();
+
+        final int prefixSize = prefixSeg.size();
+        if (seg.size() < prefixSize) return false;
+
+        for (int i = 0; i < prefixSize; i++) {
+            if (!Objects.equals(seg.get(i), prefixSeg.get(i))) {
+                return false;
+            }
+        }
+
+        return true;
     }
 }

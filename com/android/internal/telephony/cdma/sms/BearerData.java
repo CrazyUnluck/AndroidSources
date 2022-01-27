@@ -24,9 +24,10 @@ import android.text.format.Time;
 import android.telephony.Rlog;
 
 import com.android.internal.telephony.GsmAlphabet;
+import com.android.internal.telephony.GsmAlphabet.TextEncodingDetails;
 import com.android.internal.telephony.SmsConstants;
 import com.android.internal.telephony.SmsHeader;
-import com.android.internal.telephony.GsmAlphabet.TextEncodingDetails;
+import com.android.internal.telephony.SmsMessageBase;
 import com.android.internal.telephony.uicc.IccUtils;
 import com.android.internal.util.BitwiseInputStream;
 import com.android.internal.util.BitwiseOutputStream;
@@ -469,10 +470,11 @@ public final class BearerData {
      *
      * @param msg message text
      * @param force7BitEncoding ignore (but still count) illegal characters if true
+     * @param isEntireMsg indicates if this is entire msg or a segment in multipart msg
      * @return septet count, or -1 on failure
      */
     public static TextEncodingDetails calcTextEncodingDetails(CharSequence msg,
-            boolean force7BitEncoding) {
+            boolean force7BitEncoding, boolean isEntireMsg) {
         TextEncodingDetails ted;
         int septets = countAsciiSeptets(msg, force7BitEncoding);
         if (septets != -1 && septets <= SmsConstants.MAX_USER_DATA_SEPTETS) {
@@ -484,21 +486,11 @@ public final class BearerData {
         } else {
             ted = com.android.internal.telephony.gsm.SmsMessage.calculateLength(
                     msg, force7BitEncoding);
-            if (ted.msgCount == 1 && ted.codeUnitSize == SmsConstants.ENCODING_7BIT) {
+            if (ted.msgCount == 1 && ted.codeUnitSize == SmsConstants.ENCODING_7BIT &&
+                    isEntireMsg) {
                 // We don't support single-segment EMS, so calculate for 16-bit
                 // TODO: Consider supporting single-segment EMS
-                ted.codeUnitCount = msg.length();
-                int octets = ted.codeUnitCount * 2;
-                if (octets > SmsConstants.MAX_USER_DATA_BYTES) {
-                    ted.msgCount = (octets + (SmsConstants.MAX_USER_DATA_BYTES_WITH_HEADER - 1)) /
-                            SmsConstants.MAX_USER_DATA_BYTES_WITH_HEADER;
-                    ted.codeUnitsRemaining = ((ted.msgCount *
-                            SmsConstants.MAX_USER_DATA_BYTES_WITH_HEADER) - octets) / 2;
-                } else {
-                    ted.msgCount = 1;
-                    ted.codeUnitsRemaining = (SmsConstants.MAX_USER_DATA_BYTES - octets)/2;
-                }
-                ted.codeUnitSize = SmsConstants.ENCODING_16BIT;
+                return SmsMessageBase.calcUnicodeEncodingDetails(msg);
             }
         }
         return ted;

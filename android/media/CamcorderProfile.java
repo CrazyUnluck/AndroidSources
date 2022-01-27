@@ -90,9 +90,14 @@ public class CamcorderProfile
      */
     public static final int QUALITY_QVGA = 7;
 
+    /**
+     * Quality level corresponding to the 2160p (3840x2160) resolution.
+     */
+    public static final int QUALITY_2160P = 8;
+
     // Start and end of quality list
     private static final int QUALITY_LIST_START = QUALITY_LOW;
-    private static final int QUALITY_LIST_END = QUALITY_QVGA;
+    private static final int QUALITY_LIST_END = QUALITY_2160P;
 
     /**
      * Time lapse quality level corresponding to the lowest available resolution.
@@ -134,9 +139,72 @@ public class CamcorderProfile
      */
     public static final int QUALITY_TIME_LAPSE_QVGA = 1007;
 
+    /**
+     * Time lapse quality level corresponding to the 2160p (3840 x 2160) resolution.
+     */
+    public static final int QUALITY_TIME_LAPSE_2160P = 1008;
+
     // Start and end of timelapse quality list
     private static final int QUALITY_TIME_LAPSE_LIST_START = QUALITY_TIME_LAPSE_LOW;
-    private static final int QUALITY_TIME_LAPSE_LIST_END = QUALITY_TIME_LAPSE_QVGA;
+    private static final int QUALITY_TIME_LAPSE_LIST_END = QUALITY_TIME_LAPSE_2160P;
+
+    /**
+     * High speed ( >= 100fps) quality level corresponding to the lowest available resolution.
+     * <p>
+     * For all the high speed profiles defined below ((from {@link #QUALITY_HIGH_SPEED_LOW} to
+     * {@link #QUALITY_HIGH_SPEED_2160P}), they are similar as normal recording profiles, with just
+     * higher output frame rate and bit rate. Therefore, setting these profiles with
+     * {@link MediaRecorder#setProfile} without specifying any other encoding parameters will
+     * produce high speed videos rather than slow motion videos that have different capture and
+     * output (playback) frame rates. To record slow motion videos, the application must set video
+     * output (playback) frame rate and bit rate appropriately via
+     * {@link MediaRecorder#setVideoFrameRate} and {@link MediaRecorder#setVideoEncodingBitRate}
+     * based on the slow motion factor. If the application intends to do the video recording with
+     * {@link MediaCodec} encoder, it must set each individual field of {@link MediaFormat}
+     * similarly according to this CamcorderProfile.
+     * </p>
+     *
+     * @see #videoBitRate
+     * @see #videoFrameRate
+     * @see MediaRecorder
+     * @see MediaCodec
+     * @see MediaFormat
+     */
+    public static final int QUALITY_HIGH_SPEED_LOW = 2000;
+
+    /**
+     * High speed ( >= 100fps) quality level corresponding to the highest available resolution.
+     */
+    public static final int QUALITY_HIGH_SPEED_HIGH = 2001;
+
+    /**
+     * High speed ( >= 100fps) quality level corresponding to the 480p (720 x 480) resolution.
+     *
+     * Note that the horizontal resolution for 480p can also be other
+     * values, such as 640 or 704, instead of 720.
+     */
+    public static final int QUALITY_HIGH_SPEED_480P = 2002;
+
+    /**
+     * High speed ( >= 100fps) quality level corresponding to the 720p (1280 x 720) resolution.
+     */
+    public static final int QUALITY_HIGH_SPEED_720P = 2003;
+
+    /**
+     * High speed ( >= 100fps) quality level corresponding to the 1080p (1920 x 1080 or 1920x1088)
+     * resolution.
+     */
+    public static final int QUALITY_HIGH_SPEED_1080P = 2004;
+
+    /**
+     * High speed ( >= 100fps) quality level corresponding to the 2160p (3840 x 2160)
+     * resolution.
+     */
+    public static final int QUALITY_HIGH_SPEED_2160P = 2005;
+
+    // Start and end of high speed quality list
+    private static final int QUALITY_HIGH_SPEED_LIST_START = QUALITY_HIGH_SPEED_LOW;
+    private static final int QUALITY_HIGH_SPEED_LIST_END = QUALITY_HIGH_SPEED_2160P;
 
     /**
      * Default recording duration in seconds before the session is terminated.
@@ -163,11 +231,56 @@ public class CamcorderProfile
 
     /**
      * The target video output bit rate in bits per second
+     * <p>
+     * This is the target recorded video output bit rate if the application configures the video
+     * recording via {@link MediaRecorder#setProfile} without specifying any other
+     * {@link MediaRecorder} encoding parameters. For example, for high speed quality profiles (from
+     * {@link #QUALITY_HIGH_SPEED_LOW} to {@link #QUALITY_HIGH_SPEED_2160P}), this is the bit rate
+     * where the video is recorded with. If the application intends to record slow motion videos
+     * with the high speed quality profiles, it must set a different video bit rate that is
+     * corresponding to the desired recording output bit rate (i.e., the encoded video bit rate
+     * during normal playback) via {@link MediaRecorder#setVideoEncodingBitRate}. For example, if
+     * {@link #QUALITY_HIGH_SPEED_720P} advertises 240fps {@link #videoFrameRate} and 64Mbps
+     * {@link #videoBitRate} in the high speed CamcorderProfile, and the application intends to
+     * record 1/8 factor slow motion recording videos, the application must set 30fps via
+     * {@link MediaRecorder#setVideoFrameRate} and 8Mbps ( {@link #videoBitRate} * slow motion
+     * factor) via {@link MediaRecorder#setVideoEncodingBitRate}. Failing to do so will result in
+     * videos with unexpected frame rate and bit rate, or {@link MediaRecorder} error if the output
+     * bit rate exceeds the encoder limit. If the application intends to do the video recording with
+     * {@link MediaCodec} encoder, it must set each individual field of {@link MediaFormat}
+     * similarly according to this CamcorderProfile.
+     * </p>
+     *
+     * @see #videoFrameRate
+     * @see MediaRecorder
+     * @see MediaCodec
+     * @see MediaFormat
      */
     public int videoBitRate;
 
     /**
-     * The target video frame rate in frames per second
+     * The target video frame rate in frames per second.
+     * <p>
+     * This is the target recorded video output frame rate per second if the application configures
+     * the video recording via {@link MediaRecorder#setProfile} without specifying any other
+     * {@link MediaRecorder} encoding parameters. For example, for high speed quality profiles (from
+     * {@link #QUALITY_HIGH_SPEED_LOW} to {@link #QUALITY_HIGH_SPEED_2160P}), this is the frame rate
+     * where the video is recorded and played back with. If the application intends to create slow
+     * motion use case with the high speed quality profiles, it must set a different video frame
+     * rate that is corresponding to the desired output (playback) frame rate via
+     * {@link MediaRecorder#setVideoFrameRate}. For example, if {@link #QUALITY_HIGH_SPEED_720P}
+     * advertises 240fps {@link #videoFrameRate} in the CamcorderProfile, and the application
+     * intends to create 1/8 factor slow motion recording videos, the application must set 30fps via
+     * {@link MediaRecorder#setVideoFrameRate}. Failing to do so will result in high speed videos
+     * with normal speed playback frame rate (240fps for above example). If the application intends
+     * to do the video recording with {@link MediaCodec} encoder, it must set each individual field
+     * of {@link MediaFormat} similarly according to this CamcorderProfile.
+     * </p>
+     *
+     * @see #videoBitRate
+     * @see MediaRecorder
+     * @see MediaCodec
+     * @see MediaFormat
      */
     public int videoFrameRate;
 
@@ -230,13 +343,17 @@ public class CamcorderProfile
      * {@link #hasProfile(int, int)}.
      * QUALITY_LOW refers to the lowest quality available, while QUALITY_HIGH refers to
      * the highest quality available.
-     * QUALITY_LOW/QUALITY_HIGH have to match one of qcif, cif, 480p, 720p, or 1080p.
-     * E.g. if the device supports 480p, 720p, and 1080p, then low is 480p and high is
-     * 1080p.
+     * QUALITY_LOW/QUALITY_HIGH have to match one of qcif, cif, 480p, 720p, 1080p or 2160p.
+     * E.g. if the device supports 480p, 720p, 1080p and 2160p, then low is 480p and high is
+     * 2160p.
      *
      * The same is true for time lapse quality levels, i.e. QUALITY_TIME_LAPSE_LOW,
      * QUALITY_TIME_LAPSE_HIGH are guaranteed to be supported and have to match one of
-     * qcif, cif, 480p, 720p, or 1080p.
+     * qcif, cif, 480p, 720p, 1080p, or 2160p.
+     *
+     * For high speed quality levels, they may or may not be supported. If a subset of the levels
+     * are supported, QUALITY_HIGH_SPEED_LOW and QUALITY_HIGH_SPEED_HIGH are guaranteed to be
+     * supported and have to match one of 480p, 720p, or 1080p.
      *
      * A camcorder recording session with higher quality level usually has higher output
      * bit rate, better video and/or audio recording quality, larger video frame
@@ -252,6 +369,7 @@ public class CamcorderProfile
      * @see #QUALITY_480P
      * @see #QUALITY_720P
      * @see #QUALITY_1080P
+     * @see #QUALITY_2160P
      * @see #QUALITY_TIME_LAPSE_LOW
      * @see #QUALITY_TIME_LAPSE_HIGH
      * @see #QUALITY_TIME_LAPSE_QCIF
@@ -259,12 +377,21 @@ public class CamcorderProfile
      * @see #QUALITY_TIME_LAPSE_480P
      * @see #QUALITY_TIME_LAPSE_720P
      * @see #QUALITY_TIME_LAPSE_1080P
-     */
+     * @see #QUALITY_TIME_LAPSE_2160P
+     * @see #QUALITY_HIGH_SPEED_LOW
+     * @see #QUALITY_HIGH_SPEED_HIGH
+     * @see #QUALITY_HIGH_SPEED_480P
+     * @see #QUALITY_HIGH_SPEED_720P
+     * @see #QUALITY_HIGH_SPEED_1080P
+     * @see #QUALITY_HIGH_SPEED_2160P
+    */
     public static CamcorderProfile get(int cameraId, int quality) {
         if (!((quality >= QUALITY_LIST_START &&
                quality <= QUALITY_LIST_END) ||
               (quality >= QUALITY_TIME_LAPSE_LIST_START &&
-               quality <= QUALITY_TIME_LAPSE_LIST_END))) {
+               quality <= QUALITY_TIME_LAPSE_LIST_END) ||
+               (quality >= QUALITY_HIGH_SPEED_LIST_START &&
+               quality <= QUALITY_HIGH_SPEED_LIST_END))) {
             String errMessage = "Unsupported quality level: " + quality;
             throw new IllegalArgumentException(errMessage);
         }
@@ -274,6 +401,24 @@ public class CamcorderProfile
     /**
      * Returns true if camcorder profile exists for the first back-facing
      * camera at the given quality level.
+     *
+     * <p>
+     * When using the Camera 2 API in {@code LEGACY} mode (i.e. when
+     * {@link android.hardware.camera2.CameraCharacteristics#INFO_SUPPORTED_HARDWARE_LEVEL} is set
+     * to
+     * {@link android.hardware.camera2.CameraCharacteristics#INFO_SUPPORTED_HARDWARE_LEVEL_LEGACY}),
+     * {@link #hasProfile} may return {@code true} for unsupported resolutions.  To ensure a
+     * a given resolution is supported in LEGACY mode, the configuration given in
+     * {@link android.hardware.camera2.CameraCharacteristics#SCALER_STREAM_CONFIGURATION_MAP}
+     * must contain the the resolution in the supported output sizes.  The recommended way to check
+     * this is with
+     * {@link android.hardware.camera2.params.StreamConfigurationMap#getOutputSizes(Class)} with the
+     * class of the desired recording endpoint, and check that the desired resolution is contained
+     * in the list returned.
+     * </p>
+     * @see android.hardware.camera2.CameraManager
+     * @see android.hardware.camera2.CameraCharacteristics
+     *
      * @param quality the target quality level for the camcorder profile
      */
     public static boolean hasProfile(int quality) {
@@ -291,6 +436,24 @@ public class CamcorderProfile
     /**
      * Returns true if camcorder profile exists for the given camera at
      * the given quality level.
+     *
+     * <p>
+     * When using the Camera 2 API in LEGACY mode (i.e. when
+     * {@link android.hardware.camera2.CameraCharacteristics#INFO_SUPPORTED_HARDWARE_LEVEL} is set
+     * to
+     * {@link android.hardware.camera2.CameraCharacteristics#INFO_SUPPORTED_HARDWARE_LEVEL_LEGACY}),
+     * {@link #hasProfile} may return {@code true} for unsupported resolutions.  To ensure a
+     * a given resolution is supported in LEGACY mode, the configuration given in
+     * {@link android.hardware.camera2.CameraCharacteristics#SCALER_STREAM_CONFIGURATION_MAP}
+     * must contain the the resolution in the supported output sizes.  The recommended way to check
+     * this is with
+     * {@link android.hardware.camera2.params.StreamConfigurationMap#getOutputSizes(Class)} with the
+     * class of the desired recording endpoint, and check that the desired resolution is contained
+     * in the list returned.
+     * </p>
+     * @see android.hardware.camera2.CameraManager
+     * @see android.hardware.camera2.CameraCharacteristics
+     *
      * @param cameraId the id for the camera
      * @param quality the target quality level for the camcorder profile
      */

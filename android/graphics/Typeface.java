@@ -17,9 +17,23 @@
 package android.graphics;
 
 import android.content.res.AssetManager;
+import android.util.Log;
+import android.util.LongSparseArray;
+import android.util.LruCache;
 import android.util.SparseArray;
 
+import org.xmlpull.v1.XmlPullParserException;
+
 import java.io.File;
+import java.io.FileInputStream;
+import java.io.FileNotFoundException;
+import java.io.IOException;
+import java.nio.ByteBuffer;
+import java.nio.channels.FileChannel;
+import java.util.ArrayList;
+import java.util.HashMap;
+import java.util.List;
+import java.util.Map;
 
 /**
  * The Typeface class specifies the typeface and intrinsic style of a font.
@@ -28,6 +42,8 @@ import java.io.File;
  * how text appears when drawn (and measured).
  */
 public class Typeface {
+
+    private static String TAG = "Typeface";
 
     /** The default NORMAL typeface object */
     public static final Typeface DEFAULT;
@@ -45,10 +61,24 @@ public class Typeface {
     public static final Typeface MONOSPACE;
 
     static Typeface[] sDefaults;
-    private static final SparseArray<SparseArray<Typeface>> sTypefaceCache =
-            new SparseArray<SparseArray<Typeface>>(3);
+    private static final LongSparseArray<SparseArray<Typeface>> sTypefaceCache =
+            new LongSparseArray<SparseArray<Typeface>>(3);
 
-    int native_instance;
+    /**
+     * Cache for Typeface objects dynamically loaded from assets. Currently max size is 16.
+     */
+    private static final LruCache<String, Typeface> sDynamicTypefaceCache = new LruCache<>(16);
+
+    static Typeface sDefaultTypeface;
+    static Map<String, Typeface> sSystemFontMap;
+    static FontFamily[] sFallbackFonts;
+
+    static final String FONTS_CONFIG = "fonts.xml";
+
+    /**
+     * @hide
+     */
+    public long native_instance;
 
     // Style
     public static final int NORMAL = 0;
@@ -57,6 +87,11 @@ public class Typeface {
     public static final int BOLD_ITALIC = 3;
 
     private int mStyle = 0;
+
+    private static void setDefault(Typeface t) {
+        sDefaultTypeface = t;
+        nativeSetDefault(t.native_instance);
+    }
 
     /** Returns the typeface's intrinsic style attributes */
     public int getStyle() {
@@ -85,7 +120,10 @@ public class Typeface {
      * @return The best matching typeface.
      */
     public static Typeface create(String familyName, int style) {
-        return new Typeface(nativeCreate(familyName, style));
+        if (sSystemFontMap != null) {
+            return create(sSystemFontMap.get(familyName), style);
+        }
+        return null;
     }
 
     /**
@@ -100,7 +138,10 @@ public class Typeface {
      * @return The best matching typeface.
      */
     public static Typeface create(Typeface family, int style) {
-        int ni = 0;        
+        if (style < 0 || style > 3) {
+            style = 0;
+        }
+        long ni = 0;
         if (family != null) {
             // Return early if we're asked for the same face/style
             if (family.mStyle == style) {
@@ -138,39 +179,113 @@ public class Typeface {
     public static Typeface defaultFromStyle(int style) {
         return sDefaults[style];
     }
-    
+
     /**
      * Create a new typeface from the specified font data.
-     * @param mgr The application's asset manager
-     * @param path  The file name of the font data in the assets directory
+     *
+     * @param mgr  The application's asset manager
+     * @param path The file name of the font data in the assets directory
      * @return The new typeface.
      */
     public static Typeface createFromAsset(AssetManager mgr, String path) {
-        return new Typeface(nativeCreateFromAsset(mgr, path));
+        if (sFallbackFonts != null) {
+            synchronized (sDynamicTypefaceCache) {
+                final String key = createAssetUid(mgr, path);
+                Typeface typeface = sDynamicTypefaceCache.get(key);
+                if (typeface != null) return typeface;
+
+                FontFamily fontFamily = new FontFamily();
+                if (fontFamily.addFontFromAsset(mgr, path)) {
+                    FontFamily[] families = { fontFamily };
+                    typeface = createFromFamiliesWithDefault(families);
+                    sDynamicTypefaceCache.put(key, typeface);
+                    return typeface;
+                }
+            }
+        }
+        throw new RuntimeException("Font asset not found " + path);
+    }
+
+    /**
+     * Creates a unique id for a given AssetManager and asset path.
+     *
+     * @param mgr  AssetManager instance
+     * @param path The path for the asset.
+     * @return Unique id for a given AssetManager and asset path.
+     */
+    private static String createAssetUid(final AssetManager mgr, String path) {
+        final SparseArray<String> pkgs = mgr.getAssignedPackageIdentifiers();
+        final StringBuilder builder = new StringBuilder();
+        final int size = pkgs.size();
+        for (int i = 0; i < size; i++) {
+            builder.append(pkgs.valueAt(i));
+            builder.append("-");
+        }
+        builder.append(path);
+        return builder.toString();
     }
 
     /**
      * Create a new typeface from the specified font file.
      *
-     * @param path The path to the font data. 
+     * @param path The path to the font data.
      * @return The new typeface.
      */
     public static Typeface createFromFile(File path) {
-        return new Typeface(nativeCreateFromFile(path.getAbsolutePath()));
+        return createFromFile(path.getAbsolutePath());
     }
 
     /**
      * Create a new typeface from the specified font file.
      *
-     * @param path The full path to the font data. 
+     * @param path The full path to the font data.
      * @return The new typeface.
      */
     public static Typeface createFromFile(String path) {
-        return new Typeface(nativeCreateFromFile(path));
+        if (sFallbackFonts != null) {
+            FontFamily fontFamily = new FontFamily();
+            if (fontFamily.addFont(path, 0 /* ttcIndex */)) {
+                FontFamily[] families = { fontFamily };
+                return createFromFamiliesWithDefault(families);
+            }
+        }
+        throw new RuntimeException("Font not found " + path);
+    }
+
+    /**
+     * Create a new typeface from an array of font families.
+     *
+     * @param families array of font families
+     * @hide
+     */
+    public static Typeface createFromFamilies(FontFamily[] families) {
+        long[] ptrArray = new long[families.length];
+        for (int i = 0; i < families.length; i++) {
+            ptrArray[i] = families[i].mNativePtr;
+        }
+        return new Typeface(nativeCreateFromArray(ptrArray));
+    }
+
+    /**
+     * Create a new typeface from an array of font families, including
+     * also the font families in the fallback list.
+     *
+     * @param families array of font families
+     * @hide
+     */
+    public static Typeface createFromFamiliesWithDefault(FontFamily[] families) {
+        long[] ptrArray = new long[families.length + sFallbackFonts.length];
+        for (int i = 0; i < families.length; i++) {
+            ptrArray[i] = families[i].mNativePtr;
+        }
+        for (int i = 0; i < sFallbackFonts.length; i++) {
+            ptrArray[i + families.length] = sFallbackFonts[i].mNativePtr;
+        }
+        return new Typeface(nativeCreateFromArray(ptrArray));
     }
 
     // don't allow clients to call this directly
-    private Typeface(int ni) {
+    private Typeface(long ni) {
         if (ni == 0) {
             throw new RuntimeException("native typeface cannot be made");
         }
@@ -178,25 +293,125 @@ public class Typeface {
         native_instance = ni;
         mStyle = nativeGetStyle(ni);
     }
-    
+
+    private static FontFamily makeFamilyFromParsed(FontListParser.Family family,
+            Map<String, ByteBuffer> bufferForPath) {
+        FontFamily fontFamily = new FontFamily(family.lang, family.variant);
+        for (FontListParser.Font font : family.fonts) {
+            ByteBuffer fontBuffer = bufferForPath.get(font.fontName);
+            if (fontBuffer == null) {
+                try (FileInputStream file = new FileInputStream(font.fontName)) {
+                    FileChannel fileChannel = file.getChannel();
+                    long fontSize = fileChannel.size();
+                    fontBuffer = fileChannel.map(FileChannel.MapMode.READ_ONLY, 0, fontSize);
+                    bufferForPath.put(font.fontName, fontBuffer);
+                } catch (IOException e) {
+                    Log.e(TAG, "Error mapping font file " + font.fontName);
+                    continue;
+                }
+            }
+            if (!fontFamily.addFontWeightStyle(fontBuffer, font.ttcIndex, font.axes,
+                    font.weight, font.isItalic)) {
+                Log.e(TAG, "Error creating font " + font.fontName + "#" + font.ttcIndex);
+            }
+        }
+        return fontFamily;
+    }
+
+    /*
+     * (non-Javadoc)
+     *
+     * This should only be called once, from the static class initializer block.
+     */
+    private static void init() {
+        // Load font config and initialize Minikin state
+        File systemFontConfigLocation = getSystemFontConfigLocation();
+        File configFilename = new File(systemFontConfigLocation, FONTS_CONFIG);
+        try {
+            FileInputStream fontsIn = new FileInputStream(configFilename);
+            FontListParser.Config fontConfig = FontListParser.parse(fontsIn);
+
+            Map<String, ByteBuffer> bufferForPath = new HashMap<String, ByteBuffer>();
+
+            List<FontFamily> familyList = new ArrayList<FontFamily>();
+            // Note that the default typeface is always present in the fallback list;
+            // this is an enhancement from pre-Minikin behavior.
+            for (int i = 0; i < fontConfig.families.size(); i++) {
+                FontListParser.Family f = fontConfig.families.get(i);
+                if (i == 0 || f.name == null) {
+                    familyList.add(makeFamilyFromParsed(f, bufferForPath));
+                }
+            }
+            sFallbackFonts = familyList.toArray(new FontFamily[familyList.size()]);
+            setDefault(Typeface.createFromFamilies(sFallbackFonts));
+
+            Map<String, Typeface> systemFonts = new HashMap<String, Typeface>();
+            for (int i = 0; i < fontConfig.families.size(); i++) {
+                Typeface typeface;
+                FontListParser.Family f = fontConfig.families.get(i);
+                if (f.name != null) {
+                    if (i == 0) {
+                        // The first entry is the default typeface; no sense in
+                        // duplicating the corresponding FontFamily.
+                        typeface = sDefaultTypeface;
+                    } else {
+                        FontFamily fontFamily = makeFamilyFromParsed(f, bufferForPath);
+                        FontFamily[] families = { fontFamily };
+                        typeface = Typeface.createFromFamiliesWithDefault(families);
+                    }
+                    systemFonts.put(f.name, typeface);
+                }
+            }
+            for (FontListParser.Alias alias : fontConfig.aliases) {
+                Typeface base = systemFonts.get(alias.toName);
+                Typeface newFace = base;
+                int weight = alias.weight;
+                if (weight != 400) {
+                    newFace = new Typeface(nativeCreateWeightAlias(base.native_instance, weight));
+                }
+                systemFonts.put(alias.name, newFace);
+            }
+            sSystemFontMap = systemFonts;
+
+        } catch (RuntimeException e) {
+            Log.w(TAG, "Didn't create default family (most likely, non-Minikin build)", e);
+            // TODO: normal in non-Minikin case, remove or make error when Minikin-only
+        } catch (FileNotFoundException e) {
+            Log.e(TAG, "Error opening " + configFilename, e);
+        } catch (IOException e) {
+            Log.e(TAG, "Error reading " + configFilename, e);
+        } catch (XmlPullParserException e) {
+            Log.e(TAG, "XML parse exception for " + configFilename, e);
+        }
+    }
+
     static {
+        init();
+        // Set up defaults and typefaces exposed in public API
         DEFAULT         = create((String) null, 0);
         DEFAULT_BOLD    = create((String) null, Typeface.BOLD);
         SANS_SERIF      = create("sans-serif", 0);
         SERIF           = create("serif", 0);
         MONOSPACE       = create("monospace", 0);
-        
+
         sDefaults = new Typeface[] {
             DEFAULT,
             DEFAULT_BOLD,
             create((String) null, Typeface.ITALIC),
             create((String) null, Typeface.BOLD_ITALIC),
         };
+
     }
 
+    private static File getSystemFontConfigLocation() {
+        return new File("/system/etc/");
+    }
+
+    @Override
     protected void finalize() throws Throwable {
         try {
             nativeUnref(native_instance);
+            native_instance = 0;  // Other finalizers can still call us.
         } finally {
             super.finalize();
         }
@@ -214,15 +429,20 @@ public class Typeface {
 
     @Override
     public int hashCode() {
-        int result = native_instance;
+        /*
+         * Modified method for hashCode with long native_instance derived from
+         * http://developer.android.com/reference/java/lang/Object.html
+         */
+        int result = 17;
+        result = 31 * result + (int) (native_instance ^ (native_instance >>> 32));
         result = 31 * result + mStyle;
         return result;
     }
 
-    private static native int  nativeCreate(String familyName, int style);
-    private static native int  nativeCreateFromTypeface(int native_instance, int style); 
-    private static native void nativeUnref(int native_instance);
-    private static native int  nativeGetStyle(int native_instance);
-    private static native int  nativeCreateFromAsset(AssetManager mgr, String path);
-    private static native int nativeCreateFromFile(String path);
+    private static native long nativeCreateFromTypeface(long native_instance, int style);
+    private static native long nativeCreateWeightAlias(long native_instance, int weight);
+    private static native void nativeUnref(long native_instance);
+    private static native int  nativeGetStyle(long native_instance);
+    private static native long nativeCreateFromArray(long[] familyArray);
+    private static native void nativeSetDefault(long native_instance);
 }

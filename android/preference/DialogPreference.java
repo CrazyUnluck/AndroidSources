@@ -17,6 +17,9 @@
 package android.preference;
 
 
+import android.annotation.CallSuper;
+import android.annotation.DrawableRes;
+import android.annotation.StringRes;
 import android.app.AlertDialog;
 import android.app.Dialog;
 import android.content.Context;
@@ -64,12 +67,13 @@ public abstract class DialogPreference extends Preference implements
 
     /** Which button was clicked. */
     private int mWhichButtonClicked;
-    
-    public DialogPreference(Context context, AttributeSet attrs, int defStyle) {
-        super(context, attrs, defStyle);
-        
-        TypedArray a = context.obtainStyledAttributes(attrs,
-                com.android.internal.R.styleable.DialogPreference, defStyle, 0);
+
+    public DialogPreference(
+            Context context, AttributeSet attrs, int defStyleAttr, int defStyleRes) {
+        super(context, attrs, defStyleAttr, defStyleRes);
+
+        final TypedArray a = context.obtainStyledAttributes(attrs,
+                com.android.internal.R.styleable.DialogPreference, defStyleAttr, defStyleRes);
         mDialogTitle = a.getString(com.android.internal.R.styleable.DialogPreference_dialogTitle);
         if (mDialogTitle == null) {
             // Fallback on the regular title of the preference
@@ -83,13 +87,20 @@ public abstract class DialogPreference extends Preference implements
         mDialogLayoutResId = a.getResourceId(com.android.internal.R.styleable.DialogPreference_dialogLayout,
                 mDialogLayoutResId);
         a.recycle();
-        
+    }
+
+    public DialogPreference(Context context, AttributeSet attrs, int defStyleAttr) {
+        this(context, attrs, defStyleAttr, 0);
     }
 
     public DialogPreference(Context context, AttributeSet attrs) {
         this(context, attrs, com.android.internal.R.attr.dialogPreferenceStyle);
     }
-    
+
+    public DialogPreference(Context context) {
+        this(context, null);
+    }
+
     /**
      * Sets the title of the dialog. This will be shown on subsequent dialogs.
      * 
@@ -160,8 +171,8 @@ public abstract class DialogPreference extends Preference implements
      * 
      * @param dialogIconRes The icon, as a resource ID.
      */
-    public void setDialogIcon(int dialogIconRes) {
-        mDialogIcon = getContext().getResources().getDrawable(dialogIconRes);
+    public void setDialogIcon(@DrawableRes int dialogIconRes) {
+        mDialogIcon = getContext().getDrawable(dialogIconRes);
     }
     
     /**
@@ -186,7 +197,7 @@ public abstract class DialogPreference extends Preference implements
      * @see #setPositiveButtonText(CharSequence)
      * @param positiveButtonTextResId The positive button text as a resource.
      */
-    public void setPositiveButtonText(int positiveButtonTextResId) {
+    public void setPositiveButtonText(@StringRes int positiveButtonTextResId) {
         setPositiveButtonText(getContext().getString(positiveButtonTextResId));
     }
     
@@ -214,7 +225,7 @@ public abstract class DialogPreference extends Preference implements
      * @see #setNegativeButtonText(CharSequence)
      * @param negativeButtonTextResId The negative button text as a resource.
      */
-    public void setNegativeButtonText(int negativeButtonTextResId) {
+    public void setNegativeButtonText(@StringRes int negativeButtonTextResId) {
         setNegativeButtonText(getContext().getString(negativeButtonTextResId));
     }
     
@@ -350,6 +361,7 @@ public abstract class DialogPreference extends Preference implements
      * 
      * @param view The content View of the dialog, if it is custom.
      */
+    @CallSuper
     protected void onBindDialogView(View view) {
         View dialogMessageView = view.findViewById(com.android.internal.R.id.message);
         

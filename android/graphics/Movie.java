@@ -16,13 +16,14 @@
 
 package android.graphics;
 
+import android.content.res.AssetManager;
 import java.io.InputStream;
 import java.io.FileInputStream;
 
 public class Movie {
-    private final int mNativeMovie;
-    
-    private Movie(int nativeMovie) {
+    private long mNativeMovie;
+
+    private Movie(long nativeMovie) {
         if (nativeMovie == 0) {
             throw new RuntimeException("native movie creation failed");
         }
@@ -34,19 +35,37 @@ public class Movie {
     public native boolean isOpaque();
     public native int duration();
 
-    public native boolean setTime(int relativeMilliseconds);    
+    public native boolean setTime(int relativeMilliseconds);
 
-    public native void draw(Canvas canvas, float x, float y, Paint paint);
-    
-    public void draw(Canvas canvas, float x, float y) {
-        draw(canvas, x, y, null);
+    private native void nDraw(long nativeCanvas, float x, float y, long paintHandle);
+
+    public void draw(Canvas canvas, float x, float y, Paint paint) {
+        nDraw(canvas.getNativeCanvasWrapper(), x, y,
+                paint != null ? paint.getNativeInstance() : 0);
     }
 
-    public static native Movie decodeStream(InputStream is);
+    public void draw(Canvas canvas, float x, float y) {
+        nDraw(canvas.getNativeCanvasWrapper(), x, y, 0);
+    }
+
+    public static Movie decodeStream(InputStream is) {
+        if (is == null) {
+            return null;
+        }
+        if (is instanceof AssetManager.AssetInputStream) {
+            final long asset = ((AssetManager.AssetInputStream) is).getNativeAsset();
+            return nativeDecodeAsset(asset);
+        }
+
+        return nativeDecodeStream(is);
+    }
+
+    private static native Movie nativeDecodeAsset(long asset);
+    private static native Movie nativeDecodeStream(InputStream is);
     public static native Movie decodeByteArray(byte[] data, int offset,
                                                int length);
 
-    private static native void nativeDestructor(int nativeMovie);
+    private static native void nativeDestructor(long nativeMovie);
 
     public static Movie decodeFile(String pathName) {
         InputStream is;
@@ -63,6 +82,7 @@ public class Movie {
     protected void finalize() throws Throwable {
         try {
             nativeDestructor(mNativeMovie);
+            mNativeMovie = 0;
         } finally {
             super.finalize();
         }

@@ -49,11 +49,10 @@ public final class PhotoContract {
          */
         public static final String CONTENT_TYPE = "contentType";
         /**
-         * This boolean column indicates that a loading indicator should display permenantly
+         * This boolean column indicates that a loading indicator should display permanently
          * if no image urls are provided.
          */
         public static final String LOADING_INDICATOR = "loadingIndicator";
-
     }
 
     public static interface PhotoQuery {
@@ -63,7 +62,11 @@ public final class PhotoContract {
             PhotoViewColumns.NAME,
             PhotoViewColumns.CONTENT_URI,
             PhotoViewColumns.THUMBNAIL_URI,
-            PhotoViewColumns.CONTENT_TYPE,
+            PhotoViewColumns.CONTENT_TYPE
+        };
+
+        public final static String[] OPTIONAL_COLUMNS = {
+            PhotoViewColumns.LOADING_INDICATOR
         };
     }
 

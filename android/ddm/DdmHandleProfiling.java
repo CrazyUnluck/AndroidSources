@@ -21,7 +21,6 @@ import org.apache.harmony.dalvik.ddmc.ChunkHandler;
 import org.apache.harmony.dalvik.ddmc.DdmServer;
 import android.os.Debug;
 import android.util.Log;
-import java.io.IOException;
 import java.nio.ByteBuffer;
 
 /**
@@ -34,7 +33,10 @@ public class DdmHandleProfiling extends ChunkHandler {
     public static final int CHUNK_MPSS = type("MPSS");
     public static final int CHUNK_MPSE = type("MPSE");
     public static final int CHUNK_MPRQ = type("MPRQ");
+    public static final int CHUNK_SPSS = type("SPSS");
+    public static final int CHUNK_SPSE = type("SPSE");
 
+    private static final boolean DEBUG = false;
     private static DdmHandleProfiling mInstance = new DdmHandleProfiling();
 
 
@@ -50,6 +52,8 @@ public class DdmHandleProfiling extends ChunkHandler {
         DdmServer.registerHandler(CHUNK_MPSS, mInstance);
         DdmServer.registerHandler(CHUNK_MPSE, mInstance);
         DdmServer.registerHandler(CHUNK_MPRQ, mInstance);
+        DdmServer.registerHandler(CHUNK_SPSS, mInstance);
+        DdmServer.registerHandler(CHUNK_SPSE, mInstance);
     }
 
     /**
@@ -68,7 +72,7 @@ public class DdmHandleProfiling extends ChunkHandler {
      * Handle a chunk of data.
      */
     public Chunk handleChunk(Chunk request) {
-        if (false)
+        if (DEBUG)
             Log.v("ddm-heap", "Handling " + name(request.type) + " chunk");
         int type = request.type;
 
@@ -79,9 +83,13 @@ public class DdmHandleProfiling extends ChunkHandler {
         } else if (type == CHUNK_MPSS) {
             return handleMPSS(request);
         } else if (type == CHUNK_MPSE) {
-            return handleMPSE(request);
+            return handleMPSEOrSPSE(request, "Method");
         } else if (type == CHUNK_MPRQ) {
             return handleMPRQ(request);
+        } else if (type == CHUNK_SPSS) {
+            return handleSPSS(request);
+        } else if (type == CHUNK_SPSE) {
+            return handleMPSEOrSPSE(request, "Sample");
         } else {
             throw new RuntimeException("Unknown packet "
                 + ChunkHandler.name(type));
@@ -98,7 +106,7 @@ public class DdmHandleProfiling extends ChunkHandler {
         int flags = in.getInt();
         int len = in.getInt();
         String fileName = getString(in, len);
-        if (false)
+        if (DEBUG)
             Log.v("ddm-heap", "Method profiling start: filename='" + fileName
                 + "', size=" + bufferSize + ", flags=" + flags);
 
@@ -138,13 +146,13 @@ public class DdmHandleProfiling extends ChunkHandler {
 
         int bufferSize = in.getInt();
         int flags = in.getInt();
-        if (false) {
+        if (DEBUG) {
             Log.v("ddm-heap", "Method prof stream start: size=" + bufferSize
                 + ", flags=" + flags);
         }
 
         try {
-            Debug.startMethodTracingDdms(bufferSize, flags);
+            Debug.startMethodTracingDdms(bufferSize, flags, false, 0);
             return null;        // empty response
         } catch (RuntimeException re) {
             return createFailChunk(1, re.getMessage());
@@ -152,20 +160,18 @@ public class DdmHandleProfiling extends ChunkHandler {
     }
 
     /*
-     * Handle a "Method Profiling w/Streaming End" request.
+     * Handle a "Method Profiling w/Streaming End" request or a
+     * "Sample Profiling w/Streaming End" request.
      */
-    private Chunk handleMPSE(Chunk request) {
-        byte result;
-
-        if (false) {
-            Log.v("ddm-heap", "Method prof stream end");
+    private Chunk handleMPSEOrSPSE(Chunk request, String type) {
+        if (DEBUG) {
+            Log.v("ddm-heap", type + " prof stream end");
         }
 
         try {
             Debug.stopMethodTracing();
-            result = 0;
         } catch (RuntimeException re) {
-            Log.w("ddm-heap", "Method prof stream end failed: "
+            Log.w("ddm-heap", type + " prof stream end failed: "
                 + re.getMessage());
             return createFailChunk(1, re.getMessage());
         }
@@ -178,11 +184,33 @@ public class DdmHandleProfiling extends ChunkHandler {
      * Handle a "Method PRofiling Query" request.
      */
     private Chunk handleMPRQ(Chunk request) {
-        int result = Debug.isMethodTracingActive() ? 1 : 0;
+        int result = Debug.getMethodTracingMode();
 
         /* create a non-empty reply so the handler fires on completion */
         byte[] reply = { (byte) result };
         return new Chunk(CHUNK_MPRQ, reply, 0, reply.length);
+    }
+
+    /*
+     * Handle a "Sample Profiling w/Streaming Start" request.
+     */
+    private Chunk handleSPSS(Chunk request) {
+        ByteBuffer in = wrapChunk(request);
+
+        int bufferSize = in.getInt();
+        int flags = in.getInt();
+        int interval = in.getInt();
+        if (DEBUG) {
+            Log.v("ddm-heap", "Sample prof stream start: size=" + bufferSize
+                + ", flags=" + flags + ", interval=" + interval);
+        }
+
+        try {
+            Debug.startMethodTracingDdms(bufferSize, flags, true, interval);
+            return null;        // empty response
+        } catch (RuntimeException re) {
+            return createFailChunk(1, re.getMessage());
+        }
     }
 }
 

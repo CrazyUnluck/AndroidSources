@@ -18,8 +18,10 @@ package com.android.server.display;
 
 import android.content.Context;
 import android.os.Handler;
+import android.view.Display;
 
 import java.io.PrintWriter;
+import java.util.concurrent.atomic.AtomicInteger;
 
 /**
  * A display adapter makes zero or more display devices available to the system
@@ -41,6 +43,18 @@ abstract class DisplayAdapter {
     public static final int DISPLAY_DEVICE_EVENT_ADDED = 1;
     public static final int DISPLAY_DEVICE_EVENT_CHANGED = 2;
     public static final int DISPLAY_DEVICE_EVENT_REMOVED = 3;
+
+    /**
+     * Used to generate globally unique display mode ids.
+     */
+    private static final AtomicInteger NEXT_DISPLAY_MODE_ID = new AtomicInteger(1);  // 0 = no mode.
+
+    /**
+     * Used to generate globally unique color transform ids.
+     *
+     * Valid IDs start at 1 with 0 as the sentinel value for the default mode.
+     */
+    private static final AtomicInteger NEXT_COLOR_TRANSFORM_ID = new AtomicInteger(1);
 
     // Called with SyncRoot lock held.
     public DisplayAdapter(DisplayManagerService.SyncRoot syncRoot,
@@ -120,6 +134,16 @@ abstract class DisplayAdapter {
                 mListener.onTraversalRequested();
             }
         });
+    }
+
+    public static Display.Mode createMode(int width, int height, float refreshRate) {
+        return new Display.Mode(
+                NEXT_DISPLAY_MODE_ID.getAndIncrement(), width, height, refreshRate);
+    }
+
+    public static Display.ColorTransform createColorTransform(int colorTransform) {
+        return new Display.ColorTransform(
+                NEXT_COLOR_TRANSFORM_ID.getAndIncrement(), colorTransform);
     }
 
     public interface Listener {

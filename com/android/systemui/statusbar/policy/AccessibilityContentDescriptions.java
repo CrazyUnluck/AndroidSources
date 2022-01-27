@@ -33,11 +33,11 @@ public class AccessibilityContentDescriptions {
         R.string.accessibility_wifi_three_bars,
         R.string.accessibility_wifi_signal_full
     };
-    static final int[] WIMAX_CONNECTION_STRENGTH = {
-        R.string.accessibility_no_wimax,
-        R.string.accessibility_wimax_one_bar,
-        R.string.accessibility_wimax_two_bars,
-        R.string.accessibility_wimax_three_bars,
-        R.string.accessibility_wimax_signal_full
+
+    static final int WIFI_NO_CONNECTION = R.string.accessibility_no_wifi;
+
+    static final int[] ETHERNET_CONNECTION_VALUES = {
+        R.string.accessibility_ethernet_disconnected,
+        R.string.accessibility_ethernet_connected,
     };
 }

@@ -16,14 +16,22 @@
 
 package android.content.pm;
 
+import android.annotation.NonNull;
+import android.annotation.SystemApi;
 import android.content.res.XmlResourceParser;
 
 import android.graphics.drawable.Drawable;
 import android.os.Bundle;
 import android.os.Parcel;
+import android.os.UserHandle;
+import android.text.BidiFormatter;
+import android.text.Html;
+import android.text.TextPaint;
 import android.text.TextUtils;
 import android.util.Printer;
-
+import android.text.BidiFormatter;
+import android.text.TextPaint;
+import android.text.Html;
 import java.text.Collator;
 import java.util.Comparator;
 
@@ -37,6 +45,7 @@ import java.util.Comparator;
  * in the implementation of Parcelable in subclasses.
  */
 public class PackageItemInfo {
+    private static final float MAX_LABEL_SIZE_PX = 500f;
     /**
      * Public name of this item. From the "android:name" attribute.
      */
@@ -68,6 +77,12 @@ public class PackageItemInfo {
     
     /**
      * A drawable resource identifier (in the package's resources) of this
+     * component's banner.  From the "banner" attribute or, if not set, 0.
+     */
+    public int banner;
+
+    /**
+     * A drawable resource identifier (in the package's resources) of this
      * component's logo. Logos may be larger/wider than icons and are
      * displayed by certain UI elements in place of a name or name/icon
      * combination. From the "logo" attribute or, if not set, 0. 
@@ -80,8 +95,15 @@ public class PackageItemInfo {
      * {@link PackageManager#GET_META_DATA} flag when requesting the info.
      */
     public Bundle metaData;
-    
+
+    /**
+     * If different of UserHandle.USER_NULL, The icon of this item will be the one of that user.
+     * @hide
+     */
+    public int showUserIcon;
+
     public PackageItemInfo() {
+        showUserIcon = UserHandle.USER_NULL;
     }
 
     public PackageItemInfo(PackageItemInfo orig) {
@@ -92,8 +114,10 @@ public class PackageItemInfo {
         nonLocalizedLabel = orig.nonLocalizedLabel;
         if (nonLocalizedLabel != null) nonLocalizedLabel = nonLocalizedLabel.toString().trim();
         icon = orig.icon;
+        banner = orig.banner;
         logo = orig.logo;
         metaData = orig.metaData;
+        showUserIcon = orig.showUserIcon;
     }
 
     /**
@@ -122,7 +146,63 @@ public class PackageItemInfo {
         }
         return packageName;
     }
-    
+ 
+    /**
+     * Same as {@link #loadLabel(PackageManager)} with the addition that
+     * the returned label is safe for being presented in the UI since it
+     * will not contain new lines and the length will be limited to a
+     * reasonable amount. This prevents a malicious party to influence UI
+     * layout via the app label misleading the user into performing a
+     * detrimental for them action. If the label is too long it will be
+     * truncated and ellipsized at the end.
+     *
+     * @param pm A PackageManager from which the label can be loaded; usually
+     * the PackageManager from which you originally retrieved this item
+     * @return Returns a CharSequence containing the item's label. If the
+     * item does not have a label, its name is returned.
+     *
+     * @hide
+     */
+    @SystemApi
+    public @NonNull CharSequence loadSafeLabel(@NonNull PackageManager pm) {
+        // loadLabel() always returns non-null
+        String label = loadLabel(pm).toString();
+        // strip HTML tags to avoid <br> and other tags overwriting original message
+        String labelStr = Html.fromHtml(label).toString();
+
+        // If the label contains new line characters it may push the UI
+        // down to hide a part of it. Labels shouldn't have new line
+        // characters, so just truncate at the first time one is seen.
+        final int labelLength = labelStr.length();
+        int offset = 0;
+        while (offset < labelLength) {
+            final int codePoint = labelStr.codePointAt(offset);
+            final int type = Character.getType(codePoint);
+            if (type == Character.LINE_SEPARATOR
+                    || type == Character.CONTROL
+                    || type == Character.PARAGRAPH_SEPARATOR) {
+                labelStr = labelStr.substring(0, offset);
+                break;
+            }
+            // replace all non-break space to " " in order to be trimmed
+            if (type == Character.SPACE_SEPARATOR) {
+                labelStr = labelStr.substring(0, offset) + " " + labelStr.substring(offset +
+                        Character.charCount(codePoint));
+            }
+            offset += Character.charCount(codePoint);
+        }
+
+        labelStr = labelStr.trim();
+        if (labelStr.isEmpty()) {
+            return packageName;
+        }
+        TextPaint paint = new TextPaint();
+        paint.setTextSize(42);
+
+        return TextUtils.ellipsize(labelStr, paint, MAX_LABEL_SIZE_PX,
+                TextUtils.TruncateAt.END);
+    }
+
     /**
      * Retrieve the current graphical icon associated with this item.  This
      * will call back on the given PackageManager to load the icon from
@@ -136,15 +216,47 @@ public class PackageItemInfo {
      * such as the default activity icon.
      */
     public Drawable loadIcon(PackageManager pm) {
-        if (icon != 0) {
-            Drawable dr = pm.getDrawable(packageName, icon, getApplicationInfo());
+        return pm.loadItemIcon(this, getApplicationInfo());
+    }
+
+    /**
+     * Retrieve the current graphical icon associated with this item without
+     * the addition of a work badge if applicable.
+     * This will call back on the given PackageManager to load the icon from
+     * the application.
+     *
+     * @param pm A PackageManager from which the icon can be loaded; usually
+     * the PackageManager from which you originally retrieved this item.
+     *
+     * @return Returns a Drawable containing the item's icon.  If the
+     * item does not have an icon, the item's default icon is returned
+     * such as the default activity icon.
+     */
+    public Drawable loadUnbadgedIcon(PackageManager pm) {
+        return pm.loadUnbadgedItemIcon(this, getApplicationInfo());
+    }
+
+    /**
+     * Retrieve the current graphical banner associated with this item.  This
+     * will call back on the given PackageManager to load the banner from
+     * the application.
+     *
+     * @param pm A PackageManager from which the banner can be loaded; usually
+     * the PackageManager from which you originally retrieved this item.
+     *
+     * @return Returns a Drawable containing the item's banner.  If the item
+     * does not have a banner, this method will return null.
+     */
+    public Drawable loadBanner(PackageManager pm) {
+        if (banner != 0) {
+            Drawable dr = pm.getDrawable(packageName, banner, getApplicationInfo());
             if (dr != null) {
                 return dr;
             }
         }
-        return loadDefaultIcon(pm);
+        return loadDefaultBanner(pm);
     }
-    
+
     /**
      * Retrieve the default graphical icon associated with this item.
      * 
@@ -156,10 +268,25 @@ public class PackageItemInfo {
      * 
      * @hide
      */
-    protected Drawable loadDefaultIcon(PackageManager pm) {
+    public Drawable loadDefaultIcon(PackageManager pm) {
         return pm.getDefaultActivityIcon();
     }
-    
+
+    /**
+     * Retrieve the default graphical banner associated with this item.
+     *
+     * @param pm A PackageManager from which the banner can be loaded; usually
+     * the PackageManager from which you originally retrieved this item.
+     *
+     * @return Returns a Drawable containing the item's default banner
+     * or null if no default logo is available.
+     *
+     * @hide
+     */
+    protected Drawable loadDefaultBanner(PackageManager pm) {
+        return null;
+    }
+
     /**
      * Retrieve the current graphical logo associated with this item. This
      * will call back on the given PackageManager to load the logo from
@@ -219,15 +346,31 @@ public class PackageItemInfo {
         return null;
     }
 
+    /**
+     * @hide Flag for dumping: include all details.
+     */
+    public static final int DUMP_FLAG_DETAILS = 1<<0;
+
+    /**
+     * @hide Flag for dumping: include nested ApplicationInfo.
+     */
+    public static final int DUMP_FLAG_APPLICATION = 1<<1;
+
+    /**
+     * @hide Flag for dumping: all flags to dump everything.
+     */
+    public static final int DUMP_FLAG_ALL = DUMP_FLAG_DETAILS | DUMP_FLAG_APPLICATION;
+
     protected void dumpFront(Printer pw, String prefix) {
         if (name != null) {
             pw.println(prefix + "name=" + name);
         }
         pw.println(prefix + "packageName=" + packageName);
-        if (labelRes != 0 || nonLocalizedLabel != null || icon != 0) {
+        if (labelRes != 0 || nonLocalizedLabel != null || icon != 0 || banner != 0) {
             pw.println(prefix + "labelRes=0x" + Integer.toHexString(labelRes)
                     + " nonLocalizedLabel=" + nonLocalizedLabel
-                    + " icon=0x" + Integer.toHexString(icon));
+                    + " icon=0x" + Integer.toHexString(icon)
+                    + " banner=0x" + Integer.toHexString(banner));
         }
     }
     
@@ -243,6 +386,8 @@ public class PackageItemInfo {
         dest.writeInt(icon);
         dest.writeInt(logo);
         dest.writeBundle(metaData);
+        dest.writeInt(banner);
+        dest.writeInt(showUserIcon);
     }
     
     protected PackageItemInfo(Parcel source) {
@@ -254,6 +399,8 @@ public class PackageItemInfo {
         icon = source.readInt();
         logo = source.readInt();
         metaData = source.readBundle();
+        banner = source.readInt();
+        showUserIcon = source.readInt();
     }
 
     /**

@@ -26,7 +26,6 @@ import android.database.Cursor;
 import android.graphics.Bitmap;
 import android.graphics.BitmapFactory;
 import android.net.Uri;
-import android.os.Build;
 import android.text.TextUtils;
 import android.util.Log;
 import android.widget.ImageView;
@@ -59,7 +58,7 @@ public class Contacts {
     @Deprecated
     public static final Uri CONTENT_URI = Uri.parse("content://" + AUTHORITY);
 
-    /** 
+    /**
      * Signifies an email address row that is stored in the ContactMethods table
      * @deprecated see {@link android.provider.ContactsContract}
      */
@@ -338,7 +337,7 @@ public class Contacts {
      * @deprecated see {@link android.provider.ContactsContract}
      */
     @Deprecated
-    public static final class People implements BaseColumns, SyncConstValue, PeopleColumns,
+    public static final class People implements BaseColumns, PeopleColumns,
             PhonesColumns, PresenceColumns {
         /**
          * no public constructor since this is a utility class
@@ -791,7 +790,7 @@ public class Contacts {
      */
     @Deprecated
     public static final class Groups
-            implements BaseColumns, SyncConstValue, GroupsColumns {
+            implements BaseColumns, GroupsColumns {
         /**
          * no public constructor since this is a utility class
          */
@@ -1865,7 +1864,7 @@ public class Contacts {
      * @deprecated see {@link android.provider.ContactsContract}
      */
     @Deprecated
-    public static final class Photos implements BaseColumns, PhotosColumns, SyncConstValue {
+    public static final class Photos implements BaseColumns, PhotosColumns {
         /**
          * no public constructor since this is a utility class
          */
@@ -2078,12 +2077,12 @@ public class Contacts {
 
         /**
          * Intents related to the Contacts app UI.
-         * @deprecated see {@link android.provider.ContactsContract}
+         * @deprecated Do not use. This is not supported.
          */
         @Deprecated
         public static final class UI {
             /**
-             * @deprecated see {@link android.provider.ContactsContract}
+             * @deprecated Do not use. This is not supported.
              */
             @Deprecated
             public UI() {
@@ -2091,76 +2090,77 @@ public class Contacts {
 
             /**
              * The action for the default contacts list tab.
-             * @deprecated see {@link android.provider.ContactsContract}
+             * @deprecated Do not use. This is not supported.
              */
             @Deprecated
-            public static final String LIST_DEFAULT = ContactsContract.Intents.UI.LIST_DEFAULT;
+            public static final String LIST_DEFAULT
+                    = "com.android.contacts.action.LIST_DEFAULT";
 
             /**
              * The action for the contacts list tab.
-             * @deprecated see {@link android.provider.ContactsContract}
+             * @deprecated Do not use. This is not supported.
              */
             @Deprecated
             public static final String LIST_GROUP_ACTION =
-                    ContactsContract.Intents.UI.LIST_GROUP_ACTION;
+                    "com.android.contacts.action.LIST_GROUP";
 
             /**
              * When in LIST_GROUP_ACTION mode, this is the group to display.
-             * @deprecated see {@link android.provider.ContactsContract}
+             * @deprecated Do not use. This is not supported.
              */
             @Deprecated
             public static final String GROUP_NAME_EXTRA_KEY =
-                    ContactsContract.Intents.UI.GROUP_NAME_EXTRA_KEY;
+                    "com.android.contacts.extra.GROUP";
             /**
              * The action for the all contacts list tab.
-             * @deprecated see {@link android.provider.ContactsContract}
+             * @deprecated Do not use. This is not supported.
              */
             @Deprecated
             public static final String LIST_ALL_CONTACTS_ACTION =
-                    ContactsContract.Intents.UI.LIST_ALL_CONTACTS_ACTION;
+                    "com.android.contacts.action.LIST_ALL_CONTACTS";
 
             /**
              * The action for the contacts with phone numbers list tab.
-             * @deprecated see {@link android.provider.ContactsContract}
+             * @deprecated Do not use. This is not supported.
              */
             @Deprecated
             public static final String LIST_CONTACTS_WITH_PHONES_ACTION =
-                    ContactsContract.Intents.UI.LIST_CONTACTS_WITH_PHONES_ACTION;
+                    "com.android.contacts.action.LIST_CONTACTS_WITH_PHONES";
 
             /**
              * The action for the starred contacts list tab.
-             * @deprecated see {@link android.provider.ContactsContract}
+             * @deprecated Do not use. This is not supported.
              */
             @Deprecated
             public static final String LIST_STARRED_ACTION =
-                    ContactsContract.Intents.UI.LIST_STARRED_ACTION;
+                    "com.android.contacts.action.LIST_STARRED";
 
             /**
              * The action for the frequent contacts list tab.
-             * @deprecated see {@link android.provider.ContactsContract}
+             * @deprecated Do not use. This is not supported.
              */
             @Deprecated
             public static final String LIST_FREQUENT_ACTION =
-                    ContactsContract.Intents.UI.LIST_FREQUENT_ACTION;
+                    "com.android.contacts.action.LIST_FREQUENT";
 
             /**
              * The action for the "strequent" contacts list tab. It first lists the starred
              * contacts in alphabetical order and then the frequent contacts in descending
              * order of the number of times they have been contacted.
-             * @deprecated see {@link android.provider.ContactsContract}
+             * @deprecated Do not use. This is not supported.
              */
             @Deprecated
             public static final String LIST_STREQUENT_ACTION =
-                    ContactsContract.Intents.UI.LIST_STREQUENT_ACTION;
+                    "com.android.contacts.action.LIST_STREQUENT";
 
             /**
              * A key for to be used as an intent extra to set the activity
              * title to a custom String value.
-             * @deprecated see {@link android.provider.ContactsContract}
+             * @deprecated Do not use. This is not supported.
              */
             @Deprecated
             public static final String TITLE_EXTRA_KEY =
-                    ContactsContract.Intents.UI.TITLE_EXTRA_KEY;
+                    "com.android.contacts.extra.TITLE_EXTRA";
 
             /**
              * Activity Action: Display a filtered list of contacts
@@ -2169,20 +2169,20 @@ public class Contacts {
              * filtering
              * <p>
              * Output: Nothing.
-             * @deprecated see {@link android.provider.ContactsContract}
+             * @deprecated Do not use. This is not supported.
              */
             @Deprecated
             public static final String FILTER_CONTACTS_ACTION =
-                    ContactsContract.Intents.UI.FILTER_CONTACTS_ACTION;
+                    "com.android.contacts.action.FILTER_CONTACTS";
 
             /**
              * Used as an int extra field in {@link #FILTER_CONTACTS_ACTION}
              * intents to supply the text on which to filter.
-             * @deprecated see {@link android.provider.ContactsContract}
+             * @deprecated Do not use. This is not supported.
              */
             @Deprecated
             public static final String FILTER_TEXT_EXTRA_KEY =
-                    ContactsContract.Intents.UI.FILTER_TEXT_EXTRA_KEY;
+                    "com.android.contacts.extra.FILTER_TEXT";
         }
 
         /**
@@ -2200,7 +2200,7 @@ public class Contacts {
             }
 
             /** The action code to use when adding a contact
-             * @deprecated see {@link android.provider.ContactsContract} 
+             * @deprecated see {@link android.provider.ContactsContract}
              */
             @Deprecated
             public static final String ACTION = ContactsContract.Intents.Insert.ACTION;

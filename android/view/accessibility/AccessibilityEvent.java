@@ -240,10 +240,12 @@ import java.util.List;
  *   <li>{@link #getMovementGranularity()} - Sets the granularity at which a view's text
  *       was traversed.</li>
  *   <li>{@link #getText()} -  The text of the source's sub-tree.</li>
- *   <li>{@link #getFromIndex()} - The start of the next/previous text at the specified granularity
- *           - inclusive.</li>
- *   <li>{@link #getToIndex()} - The end of the next/previous text at the specified granularity
- *           - exclusive.</li>
+ *   <li>{@link #getFromIndex()} - The start the text that was skipped over in this movement.
+ *       This is the starting point when moving forward through the text, but not when moving
+ *       back.</li>
+ *   <li>{@link #getToIndex()} - The end of the text that was skipped over in this movement.
+ *       This is the ending point when moving forward through the text, but not when moving
+ *       back.</li>
  *   <li>{@link #isPassword()} - Whether the source is password.</li>
  *   <li>{@link #isEnabled()} - Whether the source is enabled.</li>
  *   <li>{@link #getContentDescription()} - The content description of the source.</li>
@@ -326,6 +328,7 @@ import java.util.List;
  * <em>Properties:</em></br>
  * <ul>
  *   <li>{@link #getEventType()} - The type of the event.</li>
+ *   <li>{@link #getContentChangeTypes()} - The type of content changes.</li>
  *   <li>{@link #getSource()} - The source info (for registered clients).</li>
  *   <li>{@link #getClassName()} - The class name of the source.</li>
  *   <li>{@link #getPackageName()} - The package name of the source.</li>
@@ -342,6 +345,23 @@ import java.util.List;
  * view.</br>
  * </p>
  * <p>
+ * <b>Windows changed</b> - represents the event of changes in the windows shown on
+ * the screen such as a window appeared, a window disappeared, a window size changed,
+ * a window layer changed, etc.</br>
+ * <em>Type:</em> {@link #TYPE_WINDOWS_CHANGED}</br>
+ * <em>Properties:</em></br>
+ * <ul>
+ *   <li>{@link #getEventType()} - The type of the event.</li>
+ *   <li>{@link #getEventTime()} - The event time.</li>
+ * </ul>
+ * <em>Note:</em> You can retrieve the {@link AccessibilityWindowInfo} for the window
+ * source of the event via {@link AccessibilityEvent#getSource()} to get the source
+ * node on which then call {@link AccessibilityNodeInfo#getWindow()
+ * AccessibilityNodeInfo.getWindow()} to get the window. Also all windows on the screen can
+ * be retrieved by a call to {@link android.accessibilityservice.AccessibilityService#getWindows()
+ * android.accessibilityservice.AccessibilityService.getWindows()}.
+ * </p>
+ * <p>
  * <b>NOTIFICATION TYPES</b></br>
  * </p>
  * <p>
@@ -354,7 +374,6 @@ import java.util.List;
  *   <li>{@link #getClassName()} - The class name of the source.</li>
  *   <li>{@link #getPackageName()} - The package name of the source.</li>
  *   <li>{@link #getEventTime()}  - The event time.</li>
- *   <li>{@link #getText()} - The text of the source's sub-tree.</li>
  *   <li>{@link #getParcelableData()} - The posted {@link android.app.Notification}.</li>
  *   <li>{@link #getText()} - Text for providing more context.</li>
  * </ul>
@@ -661,6 +680,45 @@ public final class AccessibilityEvent extends AccessibilityRecord implements Par
     public static final int TYPE_TOUCH_INTERACTION_END = 0x00200000;
 
     /**
+     * Represents the event change in the windows shown on the screen.
+     */
+    public static final int TYPE_WINDOWS_CHANGED = 0x00400000;
+
+    /**
+     * Represents the event of a context click on a {@link android.view.View}.
+     */
+    public static final int TYPE_VIEW_CONTEXT_CLICKED = 0x00800000;
+
+    /**
+     * Represents the event of the assistant currently reading the users screen context.
+     */
+    public static final int TYPE_ASSIST_READING_CONTEXT = 0x01000000;
+
+    /**
+     * Change type for {@link #TYPE_WINDOW_CONTENT_CHANGED} event:
+     * The type of change is not defined.
+     */
+    public static final int CONTENT_CHANGE_TYPE_UNDEFINED = 0x00000000;
+
+    /**
+     * Change type for {@link #TYPE_WINDOW_CONTENT_CHANGED} event:
+     * A node in the subtree rooted at the source node was added or removed.
+     */
+    public static final int CONTENT_CHANGE_TYPE_SUBTREE = 0x00000001;
+
+    /**
+     * Change type for {@link #TYPE_WINDOW_CONTENT_CHANGED} event:
+     * The node's text changed.
+     */
+    public static final int CONTENT_CHANGE_TYPE_TEXT = 0x00000002;
+
+    /**
+     * Change type for {@link #TYPE_WINDOW_CONTENT_CHANGED} event:
+     * The node's content description changed.
+     */
+    public static final int CONTENT_CHANGE_TYPE_CONTENT_DESCRIPTION = 0x00000004;
+
+    /**
      * Mask for {@link AccessibilityEvent} all types.
      *
      * @see #TYPE_VIEW_CLICKED
@@ -683,6 +741,8 @@ public final class AccessibilityEvent extends AccessibilityRecord implements Par
      * @see #TYPE_GESTURE_DETECTION_END
      * @see #TYPE_TOUCH_INTERACTION_START
      * @see #TYPE_TOUCH_INTERACTION_END
+     * @see #TYPE_WINDOWS_CHANGED
+     * @see #TYPE_VIEW_CONTEXT_CLICKED
      */
     public static final int TYPES_ALL_MASK = 0xFFFFFFFF;
 
@@ -695,8 +755,9 @@ public final class AccessibilityEvent extends AccessibilityRecord implements Par
     private long mEventTime;
     int mMovementGranularity;
     int mAction;
+    int mContentChangeTypes;
 
-    private final ArrayList<AccessibilityRecord> mRecords = new ArrayList<AccessibilityRecord>();
+    private ArrayList<AccessibilityRecord> mRecords;
 
     /*
      * Hide constructor from clients.
@@ -714,6 +775,7 @@ public final class AccessibilityEvent extends AccessibilityRecord implements Par
         mEventType = event.mEventType;
         mMovementGranularity = event.mMovementGranularity;
         mAction = event.mAction;
+        mContentChangeTypes = event.mContentChangeTypes;
         mEventTime = event.mEventTime;
         mPackageName = event.mPackageName;
     }
@@ -728,11 +790,13 @@ public final class AccessibilityEvent extends AccessibilityRecord implements Par
     @Override
     public void setSealed(boolean sealed) {
         super.setSealed(sealed);
-        List<AccessibilityRecord> records = mRecords;
-        final int recordCount = records.size();
-        for (int i = 0; i < recordCount; i++) {
-            AccessibilityRecord record = records.get(i);
-            record.setSealed(sealed);
+        final List<AccessibilityRecord> records = mRecords;
+        if (records != null) {
+            final int recordCount = records.size();
+            for (int i = 0; i < recordCount; i++) {
+                AccessibilityRecord record = records.get(i);
+                record.setSealed(sealed);
+            }
         }
     }
 
@@ -742,7 +806,7 @@ public final class AccessibilityEvent extends AccessibilityRecord implements Par
      * @return The number of records.
      */
     public int getRecordCount() {
-        return mRecords.size();
+        return mRecords == null ? 0 : mRecords.size();
     }
 
     /**
@@ -754,6 +818,9 @@ public final class AccessibilityEvent extends AccessibilityRecord implements Par
      */
     public void appendRecord(AccessibilityRecord record) {
         enforceNotSealed();
+        if (mRecords == null) {
+            mRecords = new ArrayList<AccessibilityRecord>();
+        }
         mRecords.add(record);
     }
 
@@ -764,6 +831,9 @@ public final class AccessibilityEvent extends AccessibilityRecord implements Par
      * @return The record at the specified index.
      */
     public AccessibilityRecord getRecord(int index) {
+        if (mRecords == null) {
+            throw new IndexOutOfBoundsException("Invalid index " + index + ", size is 0");
+        }
         return mRecords.get(index);
     }
 
@@ -774,6 +844,36 @@ public final class AccessibilityEvent extends AccessibilityRecord implements Par
      */
     public int getEventType() {
         return mEventType;
+    }
+
+    /**
+     * Gets the bit mask of change types signaled by an
+     * {@link #TYPE_WINDOW_CONTENT_CHANGED} event. A single event may represent
+     * multiple change types.
+     *
+     * @return The bit mask of change types. One or more of:
+     *         <ul>
+     *         <li>{@link AccessibilityEvent#CONTENT_CHANGE_TYPE_CONTENT_DESCRIPTION}
+     *         <li>{@link AccessibilityEvent#CONTENT_CHANGE_TYPE_SUBTREE}
+     *         <li>{@link AccessibilityEvent#CONTENT_CHANGE_TYPE_TEXT}
+     *         <li>{@link AccessibilityEvent#CONTENT_CHANGE_TYPE_UNDEFINED}
+     *         </ul>
+     */
+    public int getContentChangeTypes() {
+        return mContentChangeTypes;
+    }
+
+    /**
+     * Sets the bit mask of node tree changes signaled by an
+     * {@link #TYPE_WINDOW_CONTENT_CHANGED} event.
+     *
+     * @param changeTypes The bit mask of change types.
+     * @throws IllegalStateException If called from an AccessibilityService.
+     * @see #getContentChangeTypes()
+     */
+    public void setContentChangeTypes(int changeTypes) {
+        enforceNotSealed();
+        mContentChangeTypes = changeTypes;
     }
 
     /**
@@ -853,10 +953,20 @@ public final class AccessibilityEvent extends AccessibilityRecord implements Par
 
     /**
      * Sets the performed action that triggered this event.
+     * <p>
+     * Valid actions are defined in {@link AccessibilityNodeInfo}:
+     * <ul>
+     * <li>{@link AccessibilityNodeInfo#ACTION_ACCESSIBILITY_FOCUS}
+     * <li>{@link AccessibilityNodeInfo#ACTION_CLEAR_ACCESSIBILITY_FOCUS}
+     * <li>{@link AccessibilityNodeInfo#ACTION_CLEAR_FOCUS}
+     * <li>{@link AccessibilityNodeInfo#ACTION_CLEAR_SELECTION}
+     * <li>{@link AccessibilityNodeInfo#ACTION_CLICK}
+     * <li>etc.
+     * </ul>
      *
      * @param action The action.
-     *
      * @throws IllegalStateException If called from an AccessibilityService.
+     * @see AccessibilityNodeInfo#performAction(int)
      */
     public void setAction(int action) {
         enforceNotSealed();
@@ -897,11 +1007,14 @@ public final class AccessibilityEvent extends AccessibilityRecord implements Par
         AccessibilityEvent eventClone = AccessibilityEvent.obtain();
         eventClone.init(event);
 
-        final int recordCount = event.mRecords.size();
-        for (int i = 0; i < recordCount; i++) {
-            AccessibilityRecord record = event.mRecords.get(i);
-            AccessibilityRecord recordClone = AccessibilityRecord.obtain(record);
-            eventClone.mRecords.add(recordClone);
+        if (event.mRecords != null) {
+            final int recordCount = event.mRecords.size();
+            eventClone.mRecords = new ArrayList<AccessibilityRecord>(recordCount);
+            for (int i = 0; i < recordCount; i++) {
+                final AccessibilityRecord record = event.mRecords.get(i);
+                final AccessibilityRecord recordClone = AccessibilityRecord.obtain(record);
+                eventClone.mRecords.add(recordClone);
+            }
         }
 
         return eventClone;
@@ -943,11 +1056,14 @@ public final class AccessibilityEvent extends AccessibilityRecord implements Par
         mEventType = 0;
         mMovementGranularity = 0;
         mAction = 0;
+        mContentChangeTypes = 0;
         mPackageName = null;
         mEventTime = 0;
-        while (!mRecords.isEmpty()) {
-            AccessibilityRecord record = mRecords.remove(0);
-            record.recycle();
+        if (mRecords != null) {
+            while (!mRecords.isEmpty()) {
+                AccessibilityRecord record = mRecords.remove(0);
+                record.recycle();
+            }
         }
     }
 
@@ -961,6 +1077,7 @@ public final class AccessibilityEvent extends AccessibilityRecord implements Par
         mEventType = parcel.readInt();
         mMovementGranularity = parcel.readInt();
         mAction = parcel.readInt();
+        mContentChangeTypes = parcel.readInt();
         mPackageName = TextUtils.CHAR_SEQUENCE_CREATOR.createFromParcel(parcel);
         mEventTime = parcel.readLong();
         mConnectionId = parcel.readInt();
@@ -968,11 +1085,14 @@ public final class AccessibilityEvent extends AccessibilityRecord implements Par
 
         // Read the records.
         final int recordCount = parcel.readInt();
-        for (int i = 0; i < recordCount; i++) {
-            AccessibilityRecord record = AccessibilityRecord.obtain();
-            readAccessibilityRecordFromParcel(record, parcel);
-            record.mConnectionId = mConnectionId;
-            mRecords.add(record);
+        if (recordCount > 0) {
+            mRecords = new ArrayList<AccessibilityRecord>(recordCount);
+            for (int i = 0; i < recordCount; i++) {
+                AccessibilityRecord record = AccessibilityRecord.obtain();
+                readAccessibilityRecordFromParcel(record, parcel);
+                record.mConnectionId = mConnectionId;
+                mRecords.add(record);
+            }
         }
     }
 
@@ -1001,7 +1121,7 @@ public final class AccessibilityEvent extends AccessibilityRecord implements Par
         record.mParcelableData = parcel.readParcelable(null);
         parcel.readList(record.mText, null);
         record.mSourceWindowId = parcel.readInt();
-        record.mSourceNodeId = parcel.readLong();
+        record.mSourceNode = parcel.readParcelable(null);
         record.mSealed = (parcel.readInt() == 1);
     }
 
@@ -1013,6 +1133,7 @@ public final class AccessibilityEvent extends AccessibilityRecord implements Par
         parcel.writeInt(mEventType);
         parcel.writeInt(mMovementGranularity);
         parcel.writeInt(mAction);
+        parcel.writeInt(mContentChangeTypes);
         TextUtils.writeToParcel(mPackageName, parcel, 0);
         parcel.writeLong(mEventTime);
         parcel.writeInt(mConnectionId);
@@ -1052,7 +1173,10 @@ public final class AccessibilityEvent extends AccessibilityRecord implements Par
         parcel.writeParcelable(record.mParcelableData, flags);
         parcel.writeList(record.mText);
         parcel.writeInt(record.mSourceWindowId);
-        parcel.writeLong(record.mSourceNodeId);
+        // create copy of the node here because the node would be recycled just after it is written
+        // to parcel
+        parcel.writeParcelable(record.mSourceNode != null ?
+                AccessibilityNodeInfo.obtain(record.mSourceNode) : null, flags);
         parcel.writeInt(record.mSealed ? 1 : 0);
     }
 
@@ -1074,10 +1198,13 @@ public final class AccessibilityEvent extends AccessibilityRecord implements Par
         builder.append(super.toString());
         if (DEBUG) {
             builder.append("\n");
+            builder.append("; ContentChangeTypes: ").append(mContentChangeTypes);
             builder.append("; sourceWindowId: ").append(mSourceWindowId);
-            builder.append("; mSourceNodeId: ").append(mSourceNodeId);
-            for (int i = 0; i < mRecords.size(); i++) {
-                AccessibilityRecord record = mRecords.get(i);
+            if (mSourceNode != null) {
+                builder.append("; mSourceNodeId: ").append(mSourceNode.getSourceNodeId());
+            }
+            for (int i = 0; i < getRecordCount(); i++) {
+                final AccessibilityRecord record = getRecord(i);
                 builder.append("  Record ");
                 builder.append(i);
                 builder.append(":");
@@ -1277,6 +1404,27 @@ public final class AccessibilityEvent extends AccessibilityRecord implements Par
                         builder.append(", ");
                     }
                     builder.append("TYPE_TOUCH_INTERACTION_END");
+                    eventTypeCount++;
+                } break;
+                case TYPE_WINDOWS_CHANGED: {
+                    if (eventTypeCount > 0) {
+                        builder.append(", ");
+                    }
+                    builder.append("TYPE_WINDOWS_CHANGED");
+                    eventTypeCount++;
+                } break;
+                case TYPE_VIEW_CONTEXT_CLICKED: {
+                    if (eventTypeCount > 0) {
+                        builder.append(", ");
+                    }
+                    builder.append("TYPE_VIEW_CONTEXT_CLICKED");
+                    eventTypeCount++;
+                } break;
+                case TYPE_ASSIST_READING_CONTEXT: {
+                    if (eventTypeCount > 0) {
+                        builder.append(", ");
+                    }
+                    builder.append("TYPE_ASSIST_READING_CONTEXT");
                     eventTypeCount++;
                 } break;
             }

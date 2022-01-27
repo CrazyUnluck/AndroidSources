@@ -33,9 +33,8 @@ package java.util.concurrent;
  * and {@code transfer} are effectively synonymous.
  *
  * @since 1.7
- * @hide
  * @author Doug Lea
- * @param <E> the type of elements held in this collection
+ * @param <E> the type of elements held in this queue
  */
 public interface TransferQueue<E> extends BlockingQueue<E> {
     /**

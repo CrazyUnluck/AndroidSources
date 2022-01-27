@@ -18,21 +18,27 @@ package android.graphics;
 
 import java.lang.ref.WeakReference;
 
+import android.annotation.Nullable;
 import android.os.Handler;
 import android.os.Looper;
 import android.os.Message;
+import android.view.Surface;
 
 /**
  * Captures frames from an image stream as an OpenGL ES texture.
  *
- * <p>The image stream may come from either camera preview or video decode.  A SurfaceTexture
- * may be used in place of a SurfaceHolder when specifying the output destination of a
- * {@link android.hardware.Camera} or {@link android.media.MediaPlayer}
- * object.  Doing so will cause all the frames from the image stream to be sent to the
- * SurfaceTexture object rather than to the device's display.  When {@link #updateTexImage} is
- * called, the contents of the texture object specified when the SurfaceTexture was created are
- * updated to contain the most recent image from the image stream.  This may cause some frames of
- * the stream to be skipped.
+ * <p>The image stream may come from either camera preview or video decode. A
+ * {@link android.view.Surface} created from a SurfaceTexture can be used as an output
+ * destination for the {@link android.hardware.camera2}, {@link android.media.MediaCodec},
+ * {@link android.media.MediaPlayer}, and {@link android.renderscript.Allocation} APIs.
+ * When {@link #updateTexImage} is called, the contents of the texture object specified
+ * when the SurfaceTexture was created are updated to contain the most recent image from the image
+ * stream.  This may cause some frames of the stream to be skipped.
+ *
+ * <p>A SurfaceTexture may also be used in place of a SurfaceHolder when specifying the output
+ * destination of the older {@link android.hardware.Camera} API. Doing so will cause all the
+ * frames from the image stream to be sent to the SurfaceTexture object rather than to the device's
+ * display.
  *
  * <p>When sampling from the texture one should first transform the texture coordinates using the
  * matrix queried via {@link #getTransformMatrix(float[])}.  The transform matrix may change each
@@ -61,15 +67,15 @@ import android.os.Message;
  * #updateTexImage} should not be called directly from the callback.
  */
 public class SurfaceTexture {
-
-    private EventHandler mEventHandler;
-    private OnFrameAvailableListener mOnFrameAvailableListener;
+    private final Looper mCreatorLooper;
+    private Handler mOnFrameAvailableHandler;
 
     /**
      * These fields are used by native code, do not access or modify.
      */
-    private int mSurfaceTexture;
-    private int mFrameAvailableListener;
+    private long mSurfaceTexture;
+    private long mProducer;
+    private long mFrameAvailableListener;
 
     /**
      * Callback interface for being notified that a new stream frame is available.
@@ -79,8 +85,13 @@ public class SurfaceTexture {
     }
 
     /**
-     * Exception thrown when a surface couldn't be created or resized
+     * Exception thrown when a SurfaceTexture couldn't be created or resized.
+     *
+     * @deprecated No longer thrown. {@link android.view.Surface.OutOfResourcesException}
+     * is used instead.
      */
+    @SuppressWarnings("serial")
+    @Deprecated
     public static class OutOfResourcesException extends Exception {
         public OutOfResourcesException() {
         }
@@ -93,6 +104,8 @@ public class SurfaceTexture {
      * Construct a new SurfaceTexture to stream images to a given OpenGL texture.
      *
      * @param texName the OpenGL texture object name (e.g. generated via glGenTextures)
+     *
+     * @throws Surface.OutOfResourcesException If the SurfaceTexture cannot be created.
      */
     public SurfaceTexture(int texName) {
         this(texName, false);
@@ -101,34 +114,98 @@ public class SurfaceTexture {
     /**
      * Construct a new SurfaceTexture to stream images to a given OpenGL texture.
      *
-     * @param texName the OpenGL texture object name (e.g. generated via glGenTextures)
-     * @param allowSynchronousMode whether the SurfaceTexture can run in the synchronous mode.
-     *      When the image stream comes from OpenGL, SurfaceTexture may run in the synchronous
-     *      mode where the producer side may be blocked to avoid skipping frames. To avoid the
-     *      thread block, set allowSynchronousMode to false.
+     * In single buffered mode the application is responsible for serializing access to the image
+     * content buffer. Each time the image content is to be updated, the
+     * {@link #releaseTexImage()} method must be called before the image content producer takes
+     * ownership of the buffer. For example, when producing image content with the NDK
+     * ANativeWindow_lock and ANativeWindow_unlockAndPost functions, {@link #releaseTexImage()}
+     * must be called before each ANativeWindow_lock, or that call will fail. When producing
+     * image content with OpenGL ES, {@link #releaseTexImage()} must be called before the first
+     * OpenGL ES function call each frame.
      *
+     * @param texName the OpenGL texture object name (e.g. generated via glGenTextures)
+     * @param singleBufferMode whether the SurfaceTexture will be in single buffered mode.
+     *
+     * @throws Surface.OutOfResourcesException If the SurfaceTexture cannot be created.
+     */
+    public SurfaceTexture(int texName, boolean singleBufferMode) {
+        mCreatorLooper = Looper.myLooper();
+        nativeInit(false, texName, singleBufferMode, new WeakReference<SurfaceTexture>(this));
+    }
+
+    /**
+     * Construct a new SurfaceTexture to stream images to a given OpenGL texture.
+     *
+     * In single buffered mode the application is responsible for serializing access to the image
+     * content buffer. Each time the image content is to be updated, the
+     * {@link #releaseTexImage()} method must be called before the image content producer takes
+     * ownership of the buffer. For example, when producing image content with the NDK
+     * ANativeWindow_lock and ANativeWindow_unlockAndPost functions, {@link #releaseTexImage()}
+     * must be called before each ANativeWindow_lock, or that call will fail. When producing
+     * image content with OpenGL ES, {@link #releaseTexImage()} must be called before the first
+     * OpenGL ES function call each frame.
+     *
+     * Unlike {@link #SurfaceTexture(int, boolean)}, which takes an OpenGL texture object name,
+     * this constructor creates the SurfaceTexture in detached mode. A texture name must be passed
+     * in using {@link #attachToGLContext} before calling {@link #releaseTexImage()} and producing
+     * image content using OpenGL ES.
+     *
+     * @param singleBufferMode whether the SurfaceTexture will be in single buffered mode.
+     *
+     * @throws Surface.OutOfResourcesException If the SurfaceTexture cannot be created.
      * @hide
      */
-    public SurfaceTexture(int texName, boolean allowSynchronousMode) {
-        Looper looper;
-        if ((looper = Looper.myLooper()) != null) {
-            mEventHandler = new EventHandler(looper);
-        } else if ((looper = Looper.getMainLooper()) != null) {
-            mEventHandler = new EventHandler(looper);
-        } else {
-            mEventHandler = null;
-        }
-        nativeInit(texName, new WeakReference<SurfaceTexture>(this), allowSynchronousMode);
+    public SurfaceTexture(boolean singleBufferMode) {
+        mCreatorLooper = Looper.myLooper();
+        nativeInit(true, 0, singleBufferMode, new WeakReference<SurfaceTexture>(this));
     }
 
     /**
      * Register a callback to be invoked when a new image frame becomes available to the
-     * SurfaceTexture.  Note that this callback may be called on an arbitrary thread, so it is not
+     * SurfaceTexture.
+     * <p>
+     * The callback may be called on an arbitrary thread, so it is not
      * safe to call {@link #updateTexImage} without first binding the OpenGL ES context to the
      * thread invoking the callback.
+     * </p>
+     *
+     * @param listener The listener to use, or null to remove the listener.
      */
-    public void setOnFrameAvailableListener(OnFrameAvailableListener l) {
-        mOnFrameAvailableListener = l;
+    public void setOnFrameAvailableListener(@Nullable OnFrameAvailableListener listener) {
+        setOnFrameAvailableListener(listener, null);
+    }
+
+    /**
+     * Register a callback to be invoked when a new image frame becomes available to the
+     * SurfaceTexture.
+     * <p>
+     * If a handler is specified, the callback will be invoked on that handler's thread.
+     * If no handler is specified, then the callback may be called on an arbitrary thread,
+     * so it is not safe to call {@link #updateTexImage} without first binding the OpenGL ES
+     * context to the thread invoking the callback.
+     * </p>
+     *
+     * @param listener The listener to use, or null to remove the listener.
+     * @param handler The handler on which the listener should be invoked, or null
+     * to use an arbitrary thread.
+     */
+    public void setOnFrameAvailableListener(@Nullable final OnFrameAvailableListener listener,
+            @Nullable Handler handler) {
+        if (listener != null) {
+            // Although we claim the thread is arbitrary, earlier implementation would
+            // prefer to send the callback on the creating looper or the main looper
+            // so we preserve this behavior here.
+            Looper looper = handler != null ? handler.getLooper() :
+                    mCreatorLooper != null ? mCreatorLooper : Looper.getMainLooper();
+            mOnFrameAvailableHandler = new Handler(looper, null, true /*async*/) {
+                @Override
+                public void handleMessage(Message msg) {
+                    listener.onFrameAvailable(SurfaceTexture.this);
+                }
+            };
+        } else {
+            mOnFrameAvailableHandler = null;
+        }
     }
 
     /**
@@ -143,9 +220,9 @@ public class SurfaceTexture {
      * android.view.Surface#lockCanvas} is called.  For OpenGL ES, the EGLSurface should be
      * destroyed (via eglDestroySurface), made not-current (via eglMakeCurrent), and then recreated
      * (via eglCreateWindowSurface) to ensure that the new default size has taken effect.
-     * 
+     *
      * The width and height parameters must be no greater than the minimum of
-     * GL_MAX_VIEWPORT_DIMS and GL_MAX_TEXTURE_SIZE (see 
+     * GL_MAX_VIEWPORT_DIMS and GL_MAX_TEXTURE_SIZE (see
      * {@link javax.microedition.khronos.opengles.GL10#glGetIntegerv glGetIntegerv}).
      * An error due to invalid dimensions might not be reported until
      * updateTexImage() is called.
@@ -161,6 +238,15 @@ public class SurfaceTexture {
      */
     public void updateTexImage() {
         nativeUpdateTexImage();
+    }
+
+    /**
+     * Releases the the texture content. This is needed in single buffered mode to allow the image
+     * content producer to take ownership of the image buffer.
+     * For more information see {@link #SurfaceTexture(int, boolean)}.
+     */
+    public void releaseTexImage() {
+        nativeReleaseTexImage();
     }
 
     /**
@@ -261,6 +347,15 @@ public class SurfaceTexture {
         nativeRelease();
     }
 
+    /**
+     * Returns true if the SurfaceTexture was released
+     * @hide
+     */
+    public boolean isReleased() {
+        return nativeIsReleased();
+    }
+
+    @Override
     protected void finalize() throws Throwable {
         try {
             nativeFinalize();
@@ -269,46 +364,34 @@ public class SurfaceTexture {
         }
     }
 
-    private class EventHandler extends Handler {
-        public EventHandler(Looper looper) {
-            super(looper);
-        }
-
-        @Override
-        public void handleMessage(Message msg) {
-            if (mOnFrameAvailableListener != null) {
-                mOnFrameAvailableListener.onFrameAvailable(SurfaceTexture.this);
-            }
-        }
-    }
-
     /**
      * This method is invoked from native code only.
      */
     @SuppressWarnings({"UnusedDeclaration"})
-    private static void postEventFromNative(Object selfRef) {
-        WeakReference weakSelf = (WeakReference)selfRef;
-        SurfaceTexture st = (SurfaceTexture)weakSelf.get();
-        if (st == null) {
-            return;
-        }
-
-        if (st.mEventHandler != null) {
-            Message m = st.mEventHandler.obtainMessage();
-            st.mEventHandler.sendMessage(m);
+    private static void postEventFromNative(WeakReference<SurfaceTexture> weakSelf) {
+        SurfaceTexture st = weakSelf.get();
+        if (st != null) {
+            Handler handler = st.mOnFrameAvailableHandler;
+            if (handler != null) {
+                handler.sendEmptyMessage(0);
+            }
         }
     }
 
-    private native void nativeInit(int texName, Object weakSelf, boolean allowSynchronousMode);
+    private native void nativeInit(boolean isDetached, int texName,
+            boolean singleBufferMode, WeakReference<SurfaceTexture> weakSelf)
+            throws Surface.OutOfResourcesException;
     private native void nativeFinalize();
     private native void nativeGetTransformMatrix(float[] mtx);
     private native long nativeGetTimestamp();
     private native void nativeSetDefaultBufferSize(int width, int height);
     private native void nativeUpdateTexImage();
+    private native void nativeReleaseTexImage();
     private native int nativeDetachFromGLContext();
     private native int nativeAttachToGLContext(int texName);
     private native int nativeGetQueuedCount();
     private native void nativeRelease();
+    private native boolean nativeIsReleased();
 
     /*
      * We use a class initializer to allow the native code to cache some

@@ -16,11 +16,6 @@
 
 package com.android.internal.telephony.uicc;
 
-
-import static com.android.internal.telephony.TelephonyProperties.PROPERTY_ICC_OPERATOR_ISO_COUNTRY;
-import static com.android.internal.telephony.TelephonyProperties.PROPERTY_ICC_OPERATOR_NUMERIC;
-
-import static com.android.internal.telephony.TelephonyProperties.PROPERTY_ICC_OPERATOR_ALPHA;
 import static com.android.internal.telephony.TelephonyProperties.PROPERTY_TEST_CSIM;
 
 import java.io.FileDescriptor;
@@ -32,20 +27,26 @@ import android.content.Context;
 import android.os.AsyncResult;
 import android.os.Message;
 import android.os.SystemProperties;
+import android.telephony.SubscriptionInfo;
+import android.telephony.SubscriptionManager;
 import android.telephony.Rlog;
+import android.text.TextUtils;
+import android.util.Log;
+import android.content.res.Resources;
 
 import com.android.internal.telephony.CommandsInterface;
 import com.android.internal.telephony.GsmAlphabet;
 import com.android.internal.telephony.MccTable;
+import com.android.internal.telephony.SubscriptionController;
 
 import com.android.internal.telephony.cdma.sms.UserData;
 import com.android.internal.telephony.uicc.IccCardApplicationStatus.AppType;
-
+import com.android.internal.util.BitwiseInputStream;
 
 /**
  * {@hide}
  */
-public final class RuimRecords extends IccRecords {
+public class RuimRecords extends IccRecords {
     static final String LOG_TAG = "RuimRecords";
 
     private boolean  mOtaCommited=false;
@@ -64,6 +65,7 @@ public final class RuimRecords extends IccRecords {
     private String mMin;
     private String mHomeSystemId;
     private String mHomeNetworkId;
+    private String mNai;
 
     @Override
     public String toString() {
@@ -132,9 +134,10 @@ public final class RuimRecords extends IccRecords {
     }
 
     protected void resetRecords() {
-        mCountVoiceMessages = 0;
         mMncLength = UNINITIALIZED;
+        log("setting0 mMncLength" + mMncLength);
         mIccId = null;
+        mFullIccId = null;
 
         mAdnCache.reset();
 
@@ -166,6 +169,12 @@ public final class RuimRecords extends IccRecords {
     /** Returns null if RUIM is not yet ready */
     public String getPrlVersion() {
         return mPrlVersion;
+    }
+
+    @Override
+    /** Returns null if RUIM is not yet ready */
+    public String getNAI() {
+        return mNai;
     }
 
     @Override
@@ -293,22 +302,38 @@ public final class RuimRecords extends IccRecords {
             }
 
             if (numBytes == 0) {
-                mSpn = "";
+                setServiceProviderName("");
                 return;
             }
             try {
                 switch (encoding) {
                 case UserData.ENCODING_OCTET:
                 case UserData.ENCODING_LATIN:
-                    mSpn = new String(spnData, 0, numBytes, "ISO-8859-1");
+                    setServiceProviderName(new String(spnData, 0, numBytes, "ISO-8859-1"));
                     break;
                 case UserData.ENCODING_IA5:
                 case UserData.ENCODING_GSM_7BIT_ALPHABET:
-                case UserData.ENCODING_7BIT_ASCII:
-                    mSpn = GsmAlphabet.gsm7BitPackedToString(spnData, 0, (numBytes*8)/7);
+                    setServiceProviderName(
+                            GsmAlphabet.gsm7BitPackedToString(spnData, 0, (numBytes*8)/7));
                     break;
+                case UserData.ENCODING_7BIT_ASCII:
+                    String spn = new String(spnData, 0, numBytes, "US-ASCII");
+                    // To address issues with incorrect encoding scheme
+                    // programmed in some commercial CSIM cards, the decoded
+                    // SPN is checked to have characters in printable ASCII
+                    // range. If not, they are decoded with
+                    // ENCODING_GSM_7BIT_ALPHABET scheme.
+                    if (TextUtils.isPrintableAsciiOnly(spn)) {
+                        setServiceProviderName(spn);
+                    } else {
+                        if (DBG) log("Some corruption in SPN decoding = " + spn);
+                        if (DBG) log("Using ENCODING_GSM_7BIT_ALPHABET scheme...");
+                        setServiceProviderName(
+                                GsmAlphabet.gsm7BitPackedToString(spnData, 0, (numBytes * 8) / 7));
+                    }
+                break;
                 case UserData.ENCODING_UNICODE_16:
-                    mSpn =  new String(spnData, 0, numBytes, "utf-16");
+                    setServiceProviderName(new String(spnData, 0, numBytes, "utf-16"));
                     break;
                 default:
                     log("SPN encoding not supported");
@@ -316,9 +341,10 @@ public final class RuimRecords extends IccRecords {
             } catch(Exception e) {
                 log("spn decode error: " + e);
             }
-            if (DBG) log("spn=" + mSpn);
+            if (DBG) log("spn=" + getServiceProviderName());
             if (DBG) log("spnCondition=" + mCsimSpnDisplayCondition);
-            SystemProperties.set(PROPERTY_ICC_OPERATOR_ALPHA, mSpn);
+            mTelephonyManager.setSimOperatorNameForPhone(
+                    mParentApp.getPhoneId(), getServiceProviderName());
         }
     }
 
@@ -348,7 +374,7 @@ public final class RuimRecords extends IccRecords {
         @Override
         public void onRecordLoaded(AsyncResult ar) {
             byte[] data = (byte[]) ar.result;
-            if (DBG) log("CSIM_IMSIM=" + IccUtils.bytesToHexString(data));
+            if (VDBG) log("CSIM_IMSIM=" + IccUtils.bytesToHexString(data));
             // C.S0065 section 5.2.2 for IMSI_M encoding
             // C.S0005 section 2.3.1 for MIN encoding in IMSI_M.
             boolean provisioned = ((data[7] & 0x80) == 0x80);
@@ -435,6 +461,130 @@ public final class RuimRecords extends IccRecords {
         if (DBG) log("CSIM PRL version=" + mPrlVersion);
     }
 
+    private class EfCsimMipUppLoaded implements IccRecordLoaded {
+        @Override
+        public String getEfName() {
+            return "EF_CSIM_MIPUPP";
+        }
+
+        boolean checkLengthLegal(int length, int expectLength) {
+            if(length < expectLength) {
+                Log.e(LOG_TAG, "CSIM MIPUPP format error, length = " + length  +
+                        "expected length at least =" + expectLength);
+                return false;
+            } else {
+                return true;
+            }
+        }
+
+        @Override
+        public void onRecordLoaded(AsyncResult ar) {
+            // 3GPP2 C.S0065 section 5.2.24
+            byte[] data = (byte[]) ar.result;
+
+            if(data.length < 1) {
+                Log.e(LOG_TAG,"MIPUPP read error");
+                return;
+            }
+
+            BitwiseInputStream bitStream = new BitwiseInputStream(data);
+            try {
+                int  mipUppLength = bitStream.read(8);
+                //transfer length from byte to bit
+                mipUppLength = (mipUppLength << 3);
+
+                if (!checkLengthLegal(mipUppLength, 1)) {
+                    return;
+                }
+                //parse the MIPUPP body 3GPP2 C.S0016-C 3.5.8.6
+                int retryInfoInclude = bitStream.read(1);
+                mipUppLength--;
+
+                if(retryInfoInclude == 1) {
+                    if (!checkLengthLegal(mipUppLength, 11)) {
+                        return;
+                    }
+                    bitStream.skip(11); //not used now
+                    //transfer length from byte to bit
+                    mipUppLength -= 11;
+                }
+
+                if (!checkLengthLegal(mipUppLength, 4)) {
+                    return;
+                }
+                int numNai = bitStream.read(4);
+                mipUppLength -= 4;
+
+                //start parse NAI body
+                for(int index = 0; index < numNai; index++) {
+                    if (!checkLengthLegal(mipUppLength, 4)) {
+                        return;
+                    }
+                    int naiEntryIndex = bitStream.read(4);
+                    mipUppLength -= 4;
+
+                    if (!checkLengthLegal(mipUppLength, 8)) {
+                        return;
+                    }
+                    int naiLength = bitStream.read(8);
+                    mipUppLength -= 8;
+
+                    if(naiEntryIndex == 0) {
+                        //we find the one!
+                        if (!checkLengthLegal(mipUppLength, naiLength << 3)) {
+                            return;
+                        }
+                        char naiCharArray[] = new char[naiLength];
+                        for(int index1 = 0; index1 < naiLength; index1++) {
+                            naiCharArray[index1] = (char)(bitStream.read(8) & 0xFF);
+                        }
+                        mNai =  new String(naiCharArray);
+                        if (Log.isLoggable(LOG_TAG, Log.VERBOSE)) {
+                            Log.v(LOG_TAG,"MIPUPP Nai = " + mNai);
+                        }
+                        return; //need not parsing further
+                    } else {
+                        //ignore this NAI body
+                        if (!checkLengthLegal(mipUppLength, (naiLength << 3) + 102)) {
+                            return;
+                        }
+                        bitStream.skip((naiLength << 3) + 101);//not used
+                        int mnAaaSpiIndicator = bitStream.read(1);
+                        mipUppLength -= ((naiLength << 3) + 102);
+
+                        if(mnAaaSpiIndicator == 1) {
+                            if (!checkLengthLegal(mipUppLength, 32)) {
+                                return;
+                            }
+                            bitStream.skip(32); //not used
+                            mipUppLength -= 32;
+                        }
+
+                        //MN-HA_AUTH_ALGORITHM
+                        if (!checkLengthLegal(mipUppLength, 5)) {
+                            return;
+                        }
+                        bitStream.skip(4);
+                        mipUppLength -= 4;
+                        int mnHaSpiIndicator = bitStream.read(1);
+                        mipUppLength--;
+
+                        if(mnHaSpiIndicator == 1) {
+                            if (!checkLengthLegal(mipUppLength, 32)) {
+                                return;
+                            }
+                            bitStream.skip(32);
+                            mipUppLength -= 32;
+                        }
+                    }
+                }
+            } catch(Exception e) {
+              Log.e(LOG_TAG,"MIPUPP read Exception error!");
+                return;
+            }
+        }
+    }
+
     @Override
     public void handleMessage(Message msg) {
         AsyncResult ar;
@@ -477,14 +627,22 @@ public final class RuimRecords extends IccRecords {
                     mImsi = null;
                 }
 
-                log("IMSI: " + mImsi.substring(0, 6) + "xxxxxxxxx");
+                // FIXME: CSIM IMSI may not contain the MNC.
+                if (false) {
+                    log("IMSI: " + mImsi.substring(0, 6) + "xxxxxxxxx");
 
-                String operatorNumeric = getRUIMOperatorNumeric();
-                if (operatorNumeric != null) {
-                    if(operatorNumeric.length() <= 6){
-                        MccTable.updateMccMncConfiguration(mContext, operatorNumeric);
+                    String operatorNumeric = getRUIMOperatorNumeric();
+                    if (operatorNumeric != null) {
+                        if (operatorNumeric.length() <= 6) {
+                            log("update mccmnc=" + operatorNumeric);
+                            MccTable.updateMccMncConfiguration(mContext, operatorNumeric, false);
+                        }
                     }
+                } else {
+                    String operatorNumeric = getRUIMOperatorNumeric();
+                    log("NO update mccmnc=" + operatorNumeric);
                 }
+
             break;
 
             case EVENT_GET_CDMA_SUBSCRIPTION_DONE:
@@ -513,8 +671,9 @@ public final class RuimRecords extends IccRecords {
                 }
 
                 mIccId = IccUtils.bcdToString(data, 0, data.length);
+                mFullIccId = IccUtils.bchToString(data, 0, data.length);
 
-                log("iccid: " + mIccId);
+                log("iccid: " + SubscriptionInfo.givePrintableIccid(mFullIccId));
 
             break;
 
@@ -559,53 +718,26 @@ public final class RuimRecords extends IccRecords {
         }
     }
 
-    private String findBestLanguage(byte[] languages) {
-        String bestMatch = null;
-        String[] locales = mContext.getAssets().getLocales();
-
-        if ((languages == null) || (locales == null)) return null;
-
-        // Each 2-bytes consists of one language
-        for (int i = 0; (i + 1) < languages.length; i += 2) {
-            try {
-                String lang = new String(languages, i, 2, "ISO-8859-1");
-                for (int j = 0; j < locales.length; j++) {
-                    if (locales[j] != null && locales[j].length() >= 2 &&
-                        locales[j].substring(0, 2).equals(lang)) {
-                        return lang;
-                    }
-                }
-                if (bestMatch != null) break;
-            } catch(java.io.UnsupportedEncodingException e) {
-                log ("Failed to parse SIM language records");
+    /**
+     * Returns an array of languages we have assets for.
+     *
+     * NOTE: This array will have duplicates. If this method will be caused
+     * frequently or in a tight loop, it can be rewritten for efficiency.
+     */
+    private static String[] getAssetLanguages(Context ctx) {
+        final String[] locales = ctx.getAssets().getLocales();
+        final String[] localeLangs = new String[locales.length];
+        for (int i = 0; i < locales.length; ++i) {
+            final String localeStr = locales[i];
+            final int separator = localeStr.indexOf('-');
+            if (separator < 0) {
+                localeLangs[i] = localeStr;
+            } else {
+                localeLangs[i] = localeStr.substring(0, separator);
             }
         }
-        // no match found. return null
-        return null;
-    }
 
-    private void setLocaleFromCsim() {
-        String prefLang = null;
-        // check EFli then EFpl
-        prefLang = findBestLanguage(mEFli);
-
-        if (prefLang == null) {
-            prefLang = findBestLanguage(mEFpl);
-        }
-
-        if (prefLang != null) {
-            // check country code from SIM
-            String imsi = getIMSI();
-            String country = null;
-            if (imsi != null) {
-                country = MccTable.countryCodeForMcc(
-                                    Integer.parseInt(imsi.substring(0,3)));
-            }
-            log("Setting locale to " + prefLang + "_" + country);
-            MccTable.setSystemLocale(mContext, prefLang, country);
-        } else {
-            log ("No suitable CSIM selected locale");
-        }
+        return localeLangs;
     }
 
     @Override
@@ -629,19 +761,48 @@ public final class RuimRecords extends IccRecords {
 
         // Further records that can be inserted are Operator/OEM dependent
 
-        String operator = getRUIMOperatorNumeric();
-        log("RuimRecords: onAllRecordsLoaded set 'gsm.sim.operator.numeric' to operator='" +
-                operator + "'");
-        SystemProperties.set(PROPERTY_ICC_OPERATOR_NUMERIC, operator);
+        // FIXME: CSIM IMSI may not contain the MNC.
+        if (false) {
+            String operator = getRUIMOperatorNumeric();
+            if (!TextUtils.isEmpty(operator)) {
+                log("onAllRecordsLoaded set 'gsm.sim.operator.numeric' to operator='" +
+                        operator + "'");
+                log("update icc_operator_numeric=" + operator);
+                mTelephonyManager.setSimOperatorNumericForPhone(
+                        mParentApp.getPhoneId(), operator);
+            } else {
+                log("onAllRecordsLoaded empty 'gsm.sim.operator.numeric' skipping");
+            }
 
-        if (mImsi != null) {
-            SystemProperties.set(PROPERTY_ICC_OPERATOR_ISO_COUNTRY,
-                    MccTable.countryCodeForMcc(Integer.parseInt(mImsi.substring(0,3))));
+            if (!TextUtils.isEmpty(mImsi)) {
+                log("onAllRecordsLoaded set mcc imsi=" + (VDBG ? ("=" + mImsi) : ""));
+                mTelephonyManager.setSimCountryIsoForPhone(
+                        mParentApp.getPhoneId(),
+                        MccTable.countryCodeForMcc(
+                        Integer.parseInt(mImsi.substring(0,3))));
+            } else {
+                log("onAllRecordsLoaded empty imsi skipping setting mcc");
+            }
         }
 
-        setLocaleFromCsim();
+        Resources resource = Resources.getSystem();
+        if (resource.getBoolean(com.android.internal.R.bool.config_use_sim_language_file)) {
+            setSimLanguage(mEFli, mEFpl);
+        }
+
         mRecordsLoadedRegistrants.notifyRegistrants(
             new AsyncResult(null, null, null));
+
+        // TODO: The below is hacky since the SubscriptionController may not be ready at this time.
+        if (!TextUtils.isEmpty(mMdn)) {
+            int phoneId = mParentApp.getUiccCard().getPhoneId();
+            int[] subIds = SubscriptionController.getInstance().getSubId(phoneId);
+            if (subIds != null) {
+                SubscriptionManager.from(mContext).setDisplayNumber(mMdn, subIds[0]);
+            } else {
+                log("Cannot call setDisplayNumber: invalid subId");
+            }
+        }
     }
 
     @Override
@@ -694,6 +855,10 @@ public final class RuimRecords extends IccRecords {
                 obtainMessage(EVENT_GET_ICC_RECORD_DONE, new EfCsimEprlLoaded()));
         mRecordsToLoad++;
 
+        mFh.loadEFTransparent(EF_CSIM_MIPUPP,
+                obtainMessage(EVENT_GET_ICC_RECORD_DONE, new EfCsimMipUppLoaded()));
+        mRecordsToLoad++;
+
         if (DBG) log("fetchRuimRecords " + mRecordsToLoad + " requested: " + mRecordsRequested);
         // Further records that can be inserted are Operator/OEM dependent
     }
@@ -734,22 +899,17 @@ public final class RuimRecords extends IccRecords {
 
     @Override
     public void setVoiceMessageWaiting(int line, int countWaiting) {
-        if (line != 1) {
-            // only profile 1 is supported
-            return;
-        }
+        // Will be used in future to store voice mail count in UIM
+        // C.S0023-D_v1.0 does not have a file id in UIM for MWI
+        log("RuimRecords:setVoiceMessageWaiting - NOP for CDMA");
+    }
 
-        // range check
-        if (countWaiting < 0) {
-            countWaiting = -1;
-        } else if (countWaiting > 0xff) {
-            // C.S0015-B v2, 4.5.12
-            // range: 0-99
-            countWaiting = 0xff;
-        }
-        mCountVoiceMessages = countWaiting;
-
-        mRecordsEventsRegistrants.notifyResult(EVENT_MWI);
+    @Override
+    public int getVoiceMessageCount() {
+        // Will be used in future to retrieve voice mail count for UIM
+        // C.S0023-D_v1.0 does not have a file id in UIM for MWI
+        log("RuimRecords:getVoiceMessageCount - NOP for CDMA");
+        return 0;
     }
 
     private void handleRuimRefresh(IccRefreshResponse refreshResponse) {
@@ -776,15 +936,8 @@ public final class RuimRecords extends IccRecords {
                 onIccRefreshInit();
                 break;
             case IccRefreshResponse.REFRESH_RESULT_RESET:
+                // Refresh reset is handled by the UiccCard object.
                 if (DBG) log("handleRuimRefresh with SIM_REFRESH_RESET");
-                mCi.setRadioPower(false, null);
-                /* Note: no need to call setRadioPower(true).  Assuming the desired
-                * radio power state is still ON (as tracked by ServiceStateTracker),
-                * ServiceStateTracker will call setRadioPower when it receives the
-                * RADIO_STATE_CHANGED notification for the power off.  And if the
-                * desired power state has changed in the interim, we don't want to
-                * override it with an unconditional power on.
-                */
                 break;
             default:
                 // unknown refresh operation

@@ -16,6 +16,9 @@
 
 package android.util;
 
+import android.annotation.AnyRes;
+import android.content.pm.ActivityInfo.Config;
+
 /**
  * Container for a dynamically typed data value.  Primarily used with
  * {@link android.content.res.Resources} for holding resource values.
@@ -139,6 +142,17 @@ public class TypedValue {
     /* ------------------------------------------------------------ */
 
     /**
+     * {@link #TYPE_NULL} data indicating the value was not specified.
+     */
+    public static final int DATA_NULL_UNDEFINED = 0;
+    /**
+     * {@link #TYPE_NULL} data indicating the value was explicitly set to null.
+     */
+    public static final int DATA_NULL_EMPTY = 1;
+
+    /* ------------------------------------------------------------ */
+
+    /**
      * If {@link #density} is equal to this value, then the density should be
      * treated as the system's default density value: {@link DisplayMetrics#DENSITY_DEFAULT}.
      */
@@ -167,11 +181,14 @@ public class TypedValue {
     public int assetCookie;
 
     /** If Value came from a resource, this holds the corresponding resource id. */
+    @AnyRes
     public int resourceId;
 
-    /** If Value came from a resource, these are the configurations for which
-     *  its contents can change. */
-    public int changingConfigurations = -1;
+    /**
+     * If the value came from a resource, these are the configurations for
+     * which its contents can change.
+     */
+    public @Config int changingConfigurations = -1;
 
     /**
      * If the Value came from a resource, this holds the corresponding pixel density.
@@ -290,19 +307,27 @@ public class TypedValue {
         return -1;
     }
 
+    /**
+     * @hide Was accidentally exposed in API level 1 for debugging purposes.
+     * Kept for compatibility just in case although the debugging code has been removed.
+     */
+    @Deprecated
     public static float complexToDimensionNoisy(int data, DisplayMetrics metrics)
     {
-        float res = complexToDimension(data, metrics);
-        System.out.println(
-            "Dimension (0x" + ((data>>TypedValue.COMPLEX_MANTISSA_SHIFT)
-                               & TypedValue.COMPLEX_MANTISSA_MASK)
-            + "*" + (RADIX_MULTS[(data>>TypedValue.COMPLEX_RADIX_SHIFT)
-                                & TypedValue.COMPLEX_RADIX_MASK] / MANTISSA_MULT)
-            + ")" + DIMENSION_UNIT_STRS[(data>>COMPLEX_UNIT_SHIFT)
-                                & COMPLEX_UNIT_MASK]
-            + " = " + res);
-        return res;
+        return complexToDimension(data, metrics);
     }
+
+    /**
+     * Return the complex unit type for this value. For example, a dimen type
+     * with value 12sp will return {@link #COMPLEX_UNIT_SP}. Only use for values
+     * whose type is {@link #TYPE_DIMENSION}.
+     *
+     * @return The complex unit type.
+     */
+     public int getComplexUnit()
+     {
+         return COMPLEX_UNIT_MASK & (data>>TypedValue.COMPLEX_UNIT_SHIFT);
+     }
 
     /**
      * Converts an unpacked complex data value holding a dimension to its final floating 

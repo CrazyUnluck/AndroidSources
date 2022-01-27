@@ -17,8 +17,8 @@
 package com.android.sharedstoragebackup;
 
 import android.app.Service;
-import android.app.backup.BackupDataOutput;
 import android.app.backup.FullBackup;
+import android.app.backup.FullBackupDataOutput;
 import android.app.backup.IBackupManager;
 import android.content.Intent;
 import android.os.Environment;
@@ -57,7 +57,7 @@ public class ObbBackupService extends Service {
                 int token, IBackupManager callbackBinder) {
             final FileDescriptor outFd = data.getFileDescriptor();
             try {
-                File obbDir = Environment.getExternalStorageAppObbDirectory(packageName);
+                File obbDir = Environment.buildExternalStorageAppObbDirs(packageName)[0];
                 if (obbDir != null) {
                     if (obbDir.exists()) {
                         ArrayList<File> obbList = allFileContents(obbDir);
@@ -67,7 +67,7 @@ public class ObbBackupService extends Service {
                                 Log.i(TAG, obbList.size() + " files to back up");
                             }
                             final String rootPath = obbDir.getCanonicalPath();
-                            final BackupDataOutput out = new BackupDataOutput(outFd);
+                            final FullBackupDataOutput out = new FullBackupDataOutput(data);
                             for (File f : obbList) {
                                 final String filePath = f.getCanonicalPath();
                                 if (DEBUG) {
@@ -92,7 +92,7 @@ public class ObbBackupService extends Service {
                 }
 
                 try {
-                    callbackBinder.opComplete(token);
+                    callbackBinder.opComplete(token, 0);
                 } catch (RemoteException e) {
                 }
             }
@@ -106,7 +106,7 @@ public class ObbBackupService extends Service {
                 long fileSize, int type, String path, long mode, long mtime,
                 int token, IBackupManager callbackBinder) {
             try {
-                File outFile = Environment.getExternalStorageAppObbDirectory(packageName);
+                File outFile = Environment.buildExternalStorageAppObbDirs(packageName)[0];
                 if (outFile != null) {
                     outFile = new File(outFile, path);
                 }
@@ -119,7 +119,7 @@ public class ObbBackupService extends Service {
                 Log.i(TAG, "Exception restoring OBB " + path, e);
             } finally {
                 try {
-                    callbackBinder.opComplete(token);
+                    callbackBinder.opComplete(token, 0);
                 } catch (RemoteException e) {
                 }
             }

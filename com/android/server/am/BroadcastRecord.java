@@ -17,6 +17,7 @@
 package com.android.server.am;
 
 import android.app.AppOpsManager;
+import android.app.BroadcastOptions;
 import android.content.IIntentReceiver;
 import android.content.ComponentName;
 import android.content.Intent;
@@ -26,17 +27,21 @@ import android.os.Binder;
 import android.os.Bundle;
 import android.os.IBinder;
 import android.os.SystemClock;
+import android.os.UserHandle;
 import android.util.PrintWriterPrinter;
 import android.util.TimeUtils;
 
 import java.io.PrintWriter;
+import java.text.SimpleDateFormat;
+import java.util.Arrays;
 import java.util.Date;
 import java.util.List;
+import java.util.Set;
 
 /**
  * An active intent broadcast.
  */
-class BroadcastRecord extends Binder {
+final class BroadcastRecord extends Binder {
     final Intent intent;    // the original intent that generated us
     final ComponentName targetComp; // original component name set on the intent
     final ProcessRecord callerApp; // process that sent this
@@ -47,10 +52,14 @@ class BroadcastRecord extends Binder {
     final boolean sticky;   // originated from existing sticky data?
     final boolean initialSticky; // initial broadcast from register to sticky?
     final int userId;       // user id this broadcast was for
-    final String requiredPermission; // a permission the caller has required
+    final String resolvedType; // the resolved data type
+    final String[] requiredPermissions; // permissions the caller has required
     final int appOp;        // an app op that is associated with this broadcast
+    final BroadcastOptions options; // BroadcastOptions supplied by caller
     final List receivers;   // contains BroadcastFilter and ResolveInfo
+    final int[] delivery;   // delivery state of each receiver
     IIntentReceiver resultTo; // who receives final result if non-null
+    long enqueueClockTime;  // the clock time the broadcast was enqueued
     long dispatchTime;      // when dispatch started on this set of receivers
     long dispatchClockTime; // the clock time the dispatch started
     long receiverTime;      // when current receiver started for timeouts.
@@ -63,12 +72,20 @@ class BroadcastRecord extends Binder {
     IBinder receiver;       // who is currently running, null if none.
     int state;
     int anrCount;           // has this broadcast record hit any ANRs?
+    int manifestCount;      // number of manifest receivers dispatched.
+    int manifestSkipCount;  // number of manifest receivers skipped.
     BroadcastQueue queue;   // the outbound queue handling this broadcast
 
     static final int IDLE = 0;
     static final int APP_RECEIVE = 1;
     static final int CALL_IN_RECEIVE = 2;
     static final int CALL_DONE_RECEIVE = 3;
+    static final int WAITING_SERVICES = 4;
+
+    static final int DELIVERY_PENDING = 0;
+    static final int DELIVERY_DELIVERED = 1;
+    static final int DELIVERY_SKIPPED = 2;
+    static final int DELIVERY_TIMEOUT = 3;
 
     // The following are set when we are calling a receiver (one that
     // was found in our list of registered receivers).
@@ -80,7 +97,7 @@ class BroadcastRecord extends Binder {
     ComponentName curComponent; // the receiver class that is currently running.
     ActivityInfo curReceiver;   // info about the receiver that is currently running.
 
-    void dump(PrintWriter pw, String prefix) {
+    void dump(PrintWriter pw, String prefix, SimpleDateFormat sdf) {
         final long now = SystemClock.uptimeMillis();
 
         pw.print(prefix); pw.print(this); pw.print(" to user "); pw.println(userId);
@@ -96,16 +113,29 @@ class BroadcastRecord extends Binder {
                 pw.print(callerApp != null ? callerApp.toShortString() : "null");
                 pw.print(" pid="); pw.print(callingPid);
                 pw.print(" uid="); pw.println(callingUid);
-        if (requiredPermission != null || appOp != AppOpsManager.OP_NONE) {
-            pw.print(prefix); pw.print("requiredPermission="); pw.print(requiredPermission);
-                    pw.print("  appOp="); pw.println(appOp);
+        if ((requiredPermissions != null && requiredPermissions.length > 0)
+                || appOp != AppOpsManager.OP_NONE) {
+            pw.print(prefix); pw.print("requiredPermissions=");
+            pw.print(Arrays.toString(requiredPermissions));
+            pw.print("  appOp="); pw.println(appOp);
         }
-        pw.print(prefix); pw.print("dispatchClockTime=");
-                pw.println(new Date(dispatchClockTime));
+        if (options != null) {
+            pw.print(prefix); pw.print("options="); pw.println(options.toBundle());
+        }
+        pw.print(prefix); pw.print("enqueueClockTime=");
+                pw.print(sdf.format(new Date(enqueueClockTime)));
+                pw.print(" dispatchClockTime=");
+                pw.println(sdf.format(new Date(dispatchClockTime)));
         pw.print(prefix); pw.print("dispatchTime=");
                 TimeUtils.formatDuration(dispatchTime, now, pw);
+                pw.print(" (");
+                TimeUtils.formatDuration(dispatchClockTime-enqueueClockTime, pw);
+                pw.print(" since enq)");
         if (finishTime != 0) {
             pw.print(" finishTime="); TimeUtils.formatDuration(finishTime, now, pw);
+            pw.print(" (");
+            TimeUtils.formatDuration(finishTime-dispatchTime, pw);
+            pw.print(" since disp)");
         } else {
             pw.print(" receiverTime="); TimeUtils.formatDuration(receiverTime, now, pw);
         }
@@ -152,28 +182,41 @@ class BroadcastRecord extends Binder {
                 case APP_RECEIVE:       stateStr=" (APP_RECEIVE)"; break;
                 case CALL_IN_RECEIVE:   stateStr=" (CALL_IN_RECEIVE)"; break;
                 case CALL_DONE_RECEIVE: stateStr=" (CALL_DONE_RECEIVE)"; break;
+                case WAITING_SERVICES:  stateStr=" (WAITING_SERVICES)"; break;
             }
             pw.print(prefix); pw.print("state="); pw.print(state); pw.println(stateStr);
         }
         final int N = receivers != null ? receivers.size() : 0;
         String p2 = prefix + "  ";
         PrintWriterPrinter printer = new PrintWriterPrinter(pw);
-        for (int i=0; i<N; i++) {
+        for (int i = 0; i < N; i++) {
             Object o = receivers.get(i);
-            pw.print(prefix); pw.print("Receiver #"); pw.print(i);
-                    pw.print(": "); pw.println(o);
-            if (o instanceof BroadcastFilter)
-                ((BroadcastFilter)o).dumpBrief(pw, p2);
-            else if (o instanceof ResolveInfo)
-                ((ResolveInfo)o).dump(printer, p2);
+            pw.print(prefix);
+            switch (delivery[i]) {
+                case DELIVERY_PENDING:   pw.print("Pending"); break;
+                case DELIVERY_DELIVERED: pw.print("Deliver"); break;
+                case DELIVERY_SKIPPED:   pw.print("Skipped"); break;
+                case DELIVERY_TIMEOUT:   pw.print("Timeout"); break;
+                default:                 pw.print("???????"); break;
+            }
+            pw.print(" #"); pw.print(i); pw.print(": ");
+            if (o instanceof BroadcastFilter) {
+                pw.println(o);
+                ((BroadcastFilter) o).dumpBrief(pw, p2);
+            } else if (o instanceof ResolveInfo) {
+                pw.println("(manifest)");
+                ((ResolveInfo) o).dump(printer, p2, 0);
+            } else {
+                pw.println(o);
+            }
         }
     }
 
     BroadcastRecord(BroadcastQueue _queue,
             Intent _intent, ProcessRecord _callerApp, String _callerPackage,
-            int _callingPid, int _callingUid, String _requiredPermission, int _appOp,
-            List _receivers, IIntentReceiver _resultTo, int _resultCode,
-            String _resultData, Bundle _resultExtras, boolean _serialized,
+            int _callingPid, int _callingUid, String _resolvedType, String[] _requiredPermissions,
+            int _appOp, BroadcastOptions _options, List _receivers, IIntentReceiver _resultTo,
+            int _resultCode, String _resultData, Bundle _resultExtras, boolean _serialized,
             boolean _sticky, boolean _initialSticky,
             int _userId) {
         queue = _queue;
@@ -183,9 +226,12 @@ class BroadcastRecord extends Binder {
         callerPackage = _callerPackage;
         callingPid = _callingPid;
         callingUid = _callingUid;
-        requiredPermission = _requiredPermission;
+        resolvedType = _resolvedType;
+        requiredPermissions = _requiredPermissions;
         appOp = _appOp;
+        options = _options;
         receivers = _receivers;
+        delivery = new int[_receivers != null ? _receivers.size() : 0];
         resultTo = _resultTo;
         resultCode = _resultCode;
         resultData = _resultData;
@@ -196,6 +242,40 @@ class BroadcastRecord extends Binder {
         userId = _userId;
         nextReceiver = 0;
         state = IDLE;
+    }
+
+    boolean cleanupDisabledPackageReceiversLocked(
+            String packageName, Set<String> filterByClasses, int userId, boolean doit) {
+        if ((userId != UserHandle.USER_ALL && this.userId != userId) || receivers == null) {
+            return false;
+        }
+
+        boolean didSomething = false;
+        Object o;
+        for (int i = receivers.size() - 1; i >= 0; i--) {
+            o = receivers.get(i);
+            if (!(o instanceof ResolveInfo)) {
+                continue;
+            }
+            ActivityInfo info = ((ResolveInfo)o).activityInfo;
+
+            final boolean sameComponent = packageName == null
+                    || (info.applicationInfo.packageName.equals(packageName)
+                    && (filterByClasses == null || filterByClasses.contains(info.name)));
+            if (sameComponent) {
+                if (!doit) {
+                    return true;
+                }
+                didSomething = true;
+                receivers.remove(i);
+                if (i < nextReceiver) {
+                    nextReceiver--;
+                }
+            }
+        }
+        nextReceiver = Math.min(nextReceiver, receivers.size());
+
+        return didSomething;
     }
 
     public String toString() {

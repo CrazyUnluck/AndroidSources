@@ -18,11 +18,11 @@ package android.graphics;
 
 import android.content.res.AssetManager;
 import android.content.res.Resources;
+import android.os.Trace;
 import android.util.DisplayMetrics;
 import android.util.Log;
 import android.util.TypedValue;
 
-import java.io.BufferedInputStream;
 import java.io.FileDescriptor;
 import java.io.FileInputStream;
 import java.io.IOException;
@@ -43,28 +43,59 @@ public class BitmapFactory {
         public Options() {
             inDither = false;
             inScaled = true;
+            inPremultiplied = true;
         }
 
         /**
          * If set, decode methods that take the Options object will attempt to
-         * reuse this bitmap when loading content. If the decode operation cannot
-         * use this bitmap, the decode method will return <code>null</code> and
-         * will throw an IllegalArgumentException. The current implementation
-         * necessitates that the reused bitmap be mutable and of the same size as the
-         * source content. The source content must be in jpeg or png format (whether as
-         * a resource or as a stream). The {@link android.graphics.Bitmap.Config
-         * configuration} of the reused bitmap will override the setting of
-         * {@link #inPreferredConfig}, if set. The reused bitmap will continue to
-         * remain mutable even when decoding a resource which would normally result
-         * in an immutable bitmap.
+         * reuse this bitmap when loading content. If the decode operation
+         * cannot use this bitmap, the decode method will return
+         * <code>null</code> and will throw an IllegalArgumentException. The
+         * current implementation necessitates that the reused bitmap be
+         * mutable, and the resulting reused bitmap will continue to remain
+         * mutable even when decoding a resource which would normally result in
+         * an immutable bitmap.</p>
          *
          * <p>You should still always use the returned Bitmap of the decode
          * method and not assume that reusing the bitmap worked, due to the
          * constraints outlined above and failure situations that can occur.
          * Checking whether the return value matches the value of the inBitmap
-         * set in the Options structure is a way to see if the bitmap was reused,
-         * but in all cases you should use the returned Bitmap to make sure
-         * that you are using the bitmap that was used as the decode destination.</p>
+         * set in the Options structure will indicate if the bitmap was reused,
+         * but in all cases you should use the Bitmap returned by the decoding
+         * function to ensure that you are using the bitmap that was used as the
+         * decode destination.</p>
+         *
+         * <h3>Usage with BitmapFactory</h3>
+         *
+         * <p>As of {@link android.os.Build.VERSION_CODES#KITKAT}, any
+         * mutable bitmap can be reused by {@link BitmapFactory} to decode any
+         * other bitmaps as long as the resulting {@link Bitmap#getByteCount()
+         * byte count} of the decoded bitmap is less than or equal to the {@link
+         * Bitmap#getAllocationByteCount() allocated byte count} of the reused
+         * bitmap. This can be because the intrinsic size is smaller, or its
+         * size post scaling (for density / sample size) is smaller.</p>
+         *
+         * <p class="note">Prior to {@link android.os.Build.VERSION_CODES#KITKAT}
+         * additional constraints apply: The image being decoded (whether as a
+         * resource or as a stream) must be in jpeg or png format. Only equal
+         * sized bitmaps are supported, with {@link #inSampleSize} set to 1.
+         * Additionally, the {@link android.graphics.Bitmap.Config
+         * configuration} of the reused bitmap will override the setting of
+         * {@link #inPreferredConfig}, if set.</p>
+         *
+         * <h3>Usage with BitmapRegionDecoder</h3>
+         *
+         * <p>BitmapRegionDecoder will draw its requested content into the Bitmap
+         * provided, clipping if the output content size (post scaling) is larger
+         * than the provided Bitmap. The provided Bitmap's width, height, and
+         * {@link Bitmap.Config} will not be changed.
+         *
+         * <p class="note">BitmapRegionDecoder support for {@link #inBitmap} was
+         * introduced in {@link android.os.Build.VERSION_CODES#JELLY_BEAN}. All
+         * formats supported by BitmapRegionDecoder support Bitmap reuse via
+         * {@link #inBitmap}.</p>
+         *
+         * @see Bitmap#reconfigure(int,int, android.graphics.Bitmap.Config)
          */
         public Bitmap inBitmap;
 
@@ -108,8 +139,35 @@ public class BitmapFactory {
         public Bitmap.Config inPreferredConfig = Bitmap.Config.ARGB_8888;
 
         /**
-         * If dither is true, the decoder will attempt to dither the decoded
-         * image.
+         * If true (which is the default), the resulting bitmap will have its
+         * color channels pre-multipled by the alpha channel.
+         *
+         * <p>This should NOT be set to false for images to be directly drawn by
+         * the view system or through a {@link Canvas}. The view system and
+         * {@link Canvas} assume all drawn images are pre-multiplied to simplify
+         * draw-time blending, and will throw a RuntimeException when
+         * un-premultiplied are drawn.</p>
+         *
+         * <p>This is likely only useful if you want to manipulate raw encoded
+         * image data, e.g. with RenderScript or custom OpenGL.</p>
+         *
+         * <p>This does not affect bitmaps without an alpha channel.</p>
+         *
+         * <p>Setting this flag to false while setting {@link #inScaled} to true
+         * may result in incorrect colors.</p>
+         *
+         * @see Bitmap#hasAlpha()
+         * @see Bitmap#isPremultiplied()
+         * @see #inScaled
+         */
+        public boolean inPremultiplied;
+
+        /**
+         * @deprecated As of {@link android.os.Build.VERSION_CODES#N}, this is
+         * ignored.
+         *
+         * In {@link android.os.Build.VERSION_CODES#M} and below, if dither is
+         * true, the decoder will attempt to dither the decoded image.
          */
         public boolean inDither;
 
@@ -192,40 +250,72 @@ public class BitmapFactory {
          * rather than relying on the graphics system scaling it each time it
          * is drawn to a Canvas.
          *
+         * <p>BitmapRegionDecoder ignores this flag, and will not scale output
+         * based on density. (though {@link #inSampleSize} is supported)</p>
+         *
          * <p>This flag is turned on by default and should be turned off if you need
          * a non-scaled version of the bitmap.  Nine-patch bitmaps ignore this
          * flag and are always scaled.
+         *
+         * <p>If {@link #inPremultiplied} is set to false, and the image has alpha,
+         * setting this flag to true may result in incorrect colors.
          */
         public boolean inScaled;
 
         /**
-         * If this is set to true, then the resulting bitmap will allocate its
+         * @deprecated As of {@link android.os.Build.VERSION_CODES#LOLLIPOP}, this is
+         * ignored.
+         *
+         * In {@link android.os.Build.VERSION_CODES#KITKAT} and below, if this
+         * is set to true, then the resulting bitmap will allocate its
          * pixels such that they can be purged if the system needs to reclaim
          * memory. In that instance, when the pixels need to be accessed again
          * (e.g. the bitmap is drawn, getPixels() is called), they will be
          * automatically re-decoded.
          *
-         * For the re-decode to happen, the bitmap must have access to the
+         * <p>For the re-decode to happen, the bitmap must have access to the
          * encoded data, either by sharing a reference to the input
          * or by making a copy of it. This distinction is controlled by
          * inInputShareable. If this is true, then the bitmap may keep a shallow
          * reference to the input. If this is false, then the bitmap will
          * explicitly make a copy of the input data, and keep that. Even if
          * sharing is allowed, the implementation may still decide to make a
-         * deep copy of the input data.
+         * deep copy of the input data.</p>
+         *
+         * <p>While inPurgeable can help avoid big Dalvik heap allocations (from
+         * API level 11 onward), it sacrifices performance predictability since any
+         * image that the view system tries to draw may incur a decode delay which
+         * can lead to dropped frames. Therefore, most apps should avoid using
+         * inPurgeable to allow for a fast and fluid UI. To minimize Dalvik heap
+         * allocations use the {@link #inBitmap} flag instead.</p>
+         *
+         * <p class="note"><strong>Note:</strong> This flag is ignored when used
+         * with {@link #decodeResource(Resources, int,
+         * android.graphics.BitmapFactory.Options)} or {@link #decodeFile(String,
+         * android.graphics.BitmapFactory.Options)}.</p>
          */
+        @Deprecated
         public boolean inPurgeable;
 
         /**
-         * This field works in conjuction with inPurgeable. If inPurgeable is
-         * false, then this field is ignored. If inPurgeable is true, then this
-         * field determines whether the bitmap can share a reference to the
-         * input data (inputstream, array, etc.) or if it must make a deep copy.
+         * @deprecated As of {@link android.os.Build.VERSION_CODES#LOLLIPOP}, this is
+         * ignored.
+         *
+         * In {@link android.os.Build.VERSION_CODES#KITKAT} and below, this
+         * field works in conjuction with inPurgeable. If inPurgeable is false,
+         * then this field is ignored. If inPurgeable is true, then this field
+         * determines whether the bitmap can share a reference to the input
+         * data (inputstream, array, etc.) or if it must make a deep copy.
          */
+        @Deprecated
         public boolean inInputShareable;
 
         /**
-         * If inPreferQualityOverSpeed is set to true, the decoder will try to
+         * @deprecated As of {@link android.os.Build.VERSION_CODES#N}, this is
+         * ignored.  The output will always be high quality.
+         *
+         * In {@link android.os.Build.VERSION_CODES#M} and below, if
+         * inPreferQualityOverSpeed is set to true, the decoder will try to
          * decode the reconstructed image to a higher quality even at the
          * expense of the decoding speed. Currently the field only affects JPEG
          * decode, in the case of which a more accurate, but slightly slower,
@@ -234,17 +324,22 @@ public class BitmapFactory {
         public boolean inPreferQualityOverSpeed;
 
         /**
-         * The resulting width of the bitmap, set independent of the state of
-         * inJustDecodeBounds. However, if there is an error trying to decode,
-         * outWidth will be set to -1.
+         * The resulting width of the bitmap. If {@link #inJustDecodeBounds} is
+         * set to false, this will be width of the output bitmap after any
+         * scaling is applied. If true, it will be the width of the input image
+         * without any accounting for scaling.
+         *
+         * <p>outWidth will be set to -1 if there is an error trying to decode.</p>
          */
-
         public int outWidth;
 
         /**
-         * The resulting height of the bitmap, set independent of the state of
-         * inJustDecodeBounds. However, if there is an error trying to decode,
-         * outHeight will be set to -1. 
+         * The resulting height of the bitmap. If {@link #inJustDecodeBounds} is
+         * set to false, this will be height of the output bitmap after any
+         * scaling is applied. If true, it will be the height of the input image
+         * without any accounting for scaling.
+         *
+         * <p>outHeight will be set to -1 if there is an error trying to decode.</p>
          */
         public int outHeight;
 
@@ -259,9 +354,10 @@ public class BitmapFactory {
          */
         public byte[] inTempStorage;
 
-        private native void requestCancel();
-
         /**
+         * @deprecated As of {@link android.os.Build.VERSION_CODES#N}, see
+         * comments on {@link #requestCancelDecode()}.
+         *
          * Flag to indicate that cancel has been called on this object.  This
          * is useful if there's an intermediary that wants to first decode the
          * bounds and then decode the image.  In that case the intermediary
@@ -271,16 +367,19 @@ public class BitmapFactory {
         public boolean mCancel;
 
         /**
-         *  This can be called from another thread while this options object is
-         *  inside a decode... call. Calling this will notify the decoder that
-         *  it should cancel its operation. This is not guaranteed to cancel
-         *  the decode, but if it does, the decoder... operation will return
-         *  null, or if inJustDecodeBounds is true, will set outWidth/outHeight
+         *  @deprecated As of {@link android.os.Build.VERSION_CODES#N}, this
+         *  will not affect the decode, though it will still set mCancel.
+         *
+         *  In {@link android.os.Build.VERSION_CODES#M} and below, if this can
+         *  be called from another thread while this options object is inside
+         *  a decode... call. Calling this will notify the decoder that it
+         *  should cancel its operation. This is not guaranteed to cancel the
+         *  decode, but if it does, the decoder... operation will return null,
+         *  or if inJustDecodeBounds is true, will set outWidth/outHeight
          *  to -1
          */
         public void requestCancelDecode() {
             mCancel = true;
-            requestCancel();
         }
     }
 
@@ -399,11 +498,11 @@ public class BitmapFactory {
 
     /**
      * Synonym for {@link #decodeResource(Resources, int, android.graphics.BitmapFactory.Options)}
-     * will null Options.
+     * with null Options.
      *
      * @param res The resources object containing the image data
      * @param id The resource id of the image data
-     * @return The decoded bitmap, or null if the image could not be decode.
+     * @return The decoded bitmap, or null if the image could not be decoded.
      */
     public static Bitmap decodeResource(Resources res, int id) {
         return decodeResource(res, id, null);
@@ -426,11 +525,21 @@ public class BitmapFactory {
         if ((offset | length) < 0 || data.length < offset + length) {
             throw new ArrayIndexOutOfBoundsException();
         }
-        Bitmap bm = nativeDecodeByteArray(data, offset, length, opts);
 
-        if (bm == null && opts != null && opts.inBitmap != null) {
-            throw new IllegalArgumentException("Problem decoding into existing bitmap");
+        Bitmap bm;
+
+        Trace.traceBegin(Trace.TRACE_TAG_GRAPHICS, "decodeBitmap");
+        try {
+            bm = nativeDecodeByteArray(data, offset, length, opts);
+
+            if (bm == null && opts != null && opts.inBitmap != null) {
+                throw new IllegalArgumentException("Problem decoding into existing bitmap");
+            }
+            setDensityFromOptions(bm, opts);
+        } finally {
+            Trace.traceEnd(Trace.TRACE_TAG_GRAPHICS);
         }
+
         return bm;
     }
 
@@ -441,10 +550,35 @@ public class BitmapFactory {
      * @param offset offset into imageData for where the decoder should begin
      *               parsing.
      * @param length the number of bytes, beginning at offset, to parse
-     * @return The decoded bitmap, or null if the image could not be decode.
+     * @return The decoded bitmap, or null if the image could not be decoded.
      */
     public static Bitmap decodeByteArray(byte[] data, int offset, int length) {
         return decodeByteArray(data, offset, length, null);
+    }
+
+    /**
+     * Set the newly decoded bitmap's density based on the Options.
+     */
+    private static void setDensityFromOptions(Bitmap outputBitmap, Options opts) {
+        if (outputBitmap == null || opts == null) return;
+
+        final int density = opts.inDensity;
+        if (density != 0) {
+            outputBitmap.setDensity(density);
+            final int targetDensity = opts.inTargetDensity;
+            if (targetDensity == 0 || density == targetDensity || density == opts.inScreenDensity) {
+                return;
+            }
+
+            byte[] np = outputBitmap.getNinePatchChunk();
+            final boolean isNinePatch = np != null && NinePatch.isNinePatchChunk(np);
+            if (opts.inScaled || isNinePatch) {
+                outputBitmap.setDensity(targetDensity);
+            }
+        } else if (opts.inBitmap != null) {
+            // bitmap was reused, ensure density is reset
+            outputBitmap.setDensity(Bitmap.getDefaultDensity());
+        }
     }
 
     /**
@@ -464,6 +598,11 @@ public class BitmapFactory {
      * @return The decoded bitmap, or null if the image data could not be
      *         decoded, or, if opts is non-null, if opts requested only the
      *         size be returned (in opts.outWidth and opts.outHeight)
+     *
+     * <p class="note">Prior to {@link android.os.Build.VERSION_CODES#KITKAT},
+     * if {@link InputStream#markSupported is.markSupported()} returns true,
+     * <code>is.mark(1024)</code> would be called. As of
+     * {@link android.os.Build.VERSION_CODES#KITKAT}, this is no longer the case.</p>
      */
     public static Bitmap decodeStream(InputStream is, Rect outPadding, Options opts) {
         // we don't throw in this case, thus allowing the caller to only check
@@ -472,123 +611,41 @@ public class BitmapFactory {
             return null;
         }
 
-        // we need mark/reset to work properly
+        Bitmap bm = null;
 
-        if (!is.markSupported()) {
-            is = new BufferedInputStream(is, DECODE_BUFFER_SIZE);
-        }
-
-        // so we can call reset() if a given codec gives up after reading up to
-        // this many bytes. FIXME: need to find out from the codecs what this
-        // value should be.
-        is.mark(1024);
-
-        Bitmap bm;
-        boolean finish = true;
-
-        if (is instanceof AssetManager.AssetInputStream) {
-            final int asset = ((AssetManager.AssetInputStream) is).getAssetInt();
-
-            if (opts == null || (opts.inScaled && opts.inBitmap == null)) {
-                float scale = 1.0f;
-                int targetDensity = 0;
-                if (opts != null) {
-                    final int density = opts.inDensity;
-                    targetDensity = opts.inTargetDensity;
-                    if (density != 0 && targetDensity != 0) {
-                        scale = targetDensity / (float) density;
-                    }
-                }
-
-                bm = nativeDecodeAsset(asset, outPadding, opts, true, scale);
-                if (bm != null && targetDensity != 0) bm.setDensity(targetDensity);
-
-                finish = false;
-            } else {
+        Trace.traceBegin(Trace.TRACE_TAG_GRAPHICS, "decodeBitmap");
+        try {
+            if (is instanceof AssetManager.AssetInputStream) {
+                final long asset = ((AssetManager.AssetInputStream) is).getNativeAsset();
                 bm = nativeDecodeAsset(asset, outPadding, opts);
-            }
-        } else {
-            // pass some temp storage down to the native code. 1024 is made up,
-            // but should be large enough to avoid too many small calls back
-            // into is.read(...) This number is not related to the value passed
-            // to mark(...) above.
-            byte [] tempStorage = null;
-            if (opts != null) tempStorage = opts.inTempStorage;
-            if (tempStorage == null) tempStorage = new byte[16 * 1024];
-
-            if (opts == null || (opts.inScaled && opts.inBitmap == null)) {
-                float scale = 1.0f;
-                int targetDensity = 0;
-                if (opts != null) {
-                    final int density = opts.inDensity;
-                    targetDensity = opts.inTargetDensity;
-                    if (density != 0 && targetDensity != 0) {
-                        scale = targetDensity / (float) density;
-                    }
-                }
-
-                bm = nativeDecodeStream(is, tempStorage, outPadding, opts, true, scale);
-                if (bm != null && targetDensity != 0) bm.setDensity(targetDensity);
-
-                finish = false;
             } else {
-                bm = nativeDecodeStream(is, tempStorage, outPadding, opts);
-            }
-        }
-
-        if (bm == null && opts != null && opts.inBitmap != null) {
-            throw new IllegalArgumentException("Problem decoding into existing bitmap");
-        }
-
-        return finish ? finishDecode(bm, outPadding, opts) : bm;
-    }
-
-    private static Bitmap finishDecode(Bitmap bm, Rect outPadding, Options opts) {
-        if (bm == null || opts == null) {
-            return bm;
-        }
-        
-        final int density = opts.inDensity;
-        if (density == 0) {
-            return bm;
-        }
-        
-        bm.setDensity(density);
-        final int targetDensity = opts.inTargetDensity;
-        if (targetDensity == 0 || density == targetDensity || density == opts.inScreenDensity) {
-            return bm;
-        }
-        byte[] np = bm.getNinePatchChunk();
-        int[] lb = bm.getLayoutBounds();
-        final boolean isNinePatch = np != null && NinePatch.isNinePatchChunk(np);
-        if (opts.inScaled || isNinePatch) {
-            float scale = targetDensity / (float) density;
-            if (scale != 1.0f) {
-                final Bitmap oldBitmap = bm;
-                bm = Bitmap.createScaledBitmap(oldBitmap,
-                        Math.max(1, (int) (bm.getWidth() * scale + 0.5f)),
-                        Math.max(1, (int) (bm.getHeight() * scale + 0.5f)), true);
-                if (bm != oldBitmap) oldBitmap.recycle();
-
-                if (isNinePatch) {
-                    np = nativeScaleNinePatch(np, scale, outPadding);
-                    bm.setNinePatchChunk(np);
-                }
-                if (lb != null) {
-                    int[] newLb = new int[lb.length];
-                    for (int i=0; i<lb.length; i++) {
-                        newLb[i] = (int)((lb[i]*scale)+.5f);
-                    }
-                    bm.setLayoutBounds(newLb);
-                }
+                bm = decodeStreamInternal(is, outPadding, opts);
             }
 
-            bm.setDensity(targetDensity);
+            if (bm == null && opts != null && opts.inBitmap != null) {
+                throw new IllegalArgumentException("Problem decoding into existing bitmap");
+            }
+
+            setDensityFromOptions(bm, opts);
+        } finally {
+            Trace.traceEnd(Trace.TRACE_TAG_GRAPHICS);
         }
 
         return bm;
     }
-    
+
+    /**
+     * Private helper function for decoding an InputStream natively. Buffers the input enough to
+     * do a rewind as needed, and supplies temporary storage if necessary. is MUST NOT be null.
+     */
+    private static Bitmap decodeStreamInternal(InputStream is, Rect outPadding, Options opts) {
+        // ASSERT(is != null);
+        byte [] tempStorage = null;
+        if (opts != null) tempStorage = opts.inTempStorage;
+        if (tempStorage == null) tempStorage = new byte[DECODE_BUFFER_SIZE];
+        return nativeDecodeStream(is, tempStorage, outPadding, opts);
+    }
+
     /**
      * Decode an input stream into a bitmap. If the input stream is null, or
      * cannot be used to decode a bitmap, the function returns null.
@@ -614,26 +671,36 @@ public class BitmapFactory {
      *                   no bitmap is returned (null) then padding is
      *                   unchanged.
      * @param opts null-ok; Options that control downsampling and whether the
-     *             image should be completely decoded, or just is size returned.
+     *             image should be completely decoded, or just its size returned.
      * @return the decoded bitmap, or null
      */
     public static Bitmap decodeFileDescriptor(FileDescriptor fd, Rect outPadding, Options opts) {
-        if (nativeIsSeekable(fd)) {
-            Bitmap bm = nativeDecodeFileDescriptor(fd, outPadding, opts);
+        Bitmap bm;
+
+        Trace.traceBegin(Trace.TRACE_TAG_GRAPHICS, "decodeFileDescriptor");
+        try {
+            if (nativeIsSeekable(fd)) {
+                bm = nativeDecodeFileDescriptor(fd, outPadding, opts);
+            } else {
+                FileInputStream fis = new FileInputStream(fd);
+                try {
+                    bm = decodeStreamInternal(fis, outPadding, opts);
+                } finally {
+                    try {
+                        fis.close();
+                    } catch (Throwable t) {/* ignore */}
+                }
+            }
+
             if (bm == null && opts != null && opts.inBitmap != null) {
                 throw new IllegalArgumentException("Problem decoding into existing bitmap");
             }
-            return finishDecode(bm, outPadding, opts);
-        } else {
-            FileInputStream fis = new FileInputStream(fd);
-            try {
-                return decodeStream(fis, outPadding, opts);
-            } finally {
-                try {
-                    fis.close();
-                } catch (Throwable t) {/* ignore */}
-            }
+
+            setDensityFromOptions(bm, opts);
+        } finally {
+            Trace.traceEnd(Trace.TRACE_TAG_GRAPHICS);
         }
+        return bm;
     }
 
     /**
@@ -650,15 +717,10 @@ public class BitmapFactory {
 
     private static native Bitmap nativeDecodeStream(InputStream is, byte[] storage,
             Rect padding, Options opts);
-    private static native Bitmap nativeDecodeStream(InputStream is, byte[] storage,
-            Rect padding, Options opts, boolean applyScale, float scale);
     private static native Bitmap nativeDecodeFileDescriptor(FileDescriptor fd,
             Rect padding, Options opts);
-    private static native Bitmap nativeDecodeAsset(int asset, Rect padding, Options opts);
-    private static native Bitmap nativeDecodeAsset(int asset, Rect padding, Options opts,
-            boolean applyScale, float scale);
+    private static native Bitmap nativeDecodeAsset(long nativeAsset, Rect padding, Options opts);
     private static native Bitmap nativeDecodeByteArray(byte[] data, int offset,
             int length, Options opts);
-    private static native byte[] nativeScaleNinePatch(byte[] chunk, float scale, Rect pad);
     private static native boolean nativeIsSeekable(FileDescriptor fd);
 }

@@ -19,16 +19,41 @@ package android.support.v8.renderscript;
 import android.util.SparseArray;
 
 /**
- *
+ * The parent class for all executable scripts. This should not be used by
+ * applications.
  **/
 public class Script extends BaseObj {
-    ScriptCThunker mT;
-
-    android.renderscript.Script getNObj() {
-        return mT;
+    /**
+     * Determine if Incremental Intrinsic Support is needed
+     *
+     */
+    private boolean mUseIncSupp;
+    protected void setIncSupp(boolean useInc) {
+        mUseIncSupp = useInc;
     }
+    protected boolean isIncSupp() {
+        return mUseIncSupp;
+    }
+    /**
+     * An allocation for the compat context will be created when needed
+     * e.g. foreach(ain, aout), setVar(ain);
+     *
+     */
+    long getDummyAlloc(Allocation ain) {
+        long dInElement = 0;
+        long dInType = 0;
+        long dummyAlloc = 0;
+        if (ain != null) {
+            Type inType = ain.getType();
+            dInElement = inType.getElement().getDummyElement(mRS);
+            dInType = inType.getDummyType(mRS, dInElement);
+            int xBytesSize = inType.getX() * inType.getElement().getBytesSize();
+            dummyAlloc = mRS.nIncAllocationCreateTyped(ain.getID(mRS), dInType, xBytesSize);
+            ain.setIncAllocID(dummyAlloc);
+        }
 
-
+        return dummyAlloc;
+    }
     /**
      * KernelID is an identifier for a Script + root function pair. It is used
      * as an identifier for ScriptGroup creation.
@@ -42,7 +67,7 @@ public class Script extends BaseObj {
         Script mScript;
         int mSlot;
         int mSig;
-        KernelID(int id, RenderScript rs, Script s, int slot, int sig) {
+        KernelID(long id, RenderScript rs, Script s, int slot, int sig) {
             super(id, rs);
             mScript = s;
             mSlot = slot;
@@ -68,19 +93,7 @@ public class Script extends BaseObj {
             return k;
         }
 
-        // Any native callers to createKernelID must initialize their own native IDs
-        // excpet ScriptCThunker
-        if (mRS.isNative == true) {
-            k = new KernelID(0, mRS, this, slot, sig);
-            if (mT != null) {
-                k.mN = mT.thunkCreateKernelID(slot, sig, ein, eout);
-            }
-            mKIDs.put(slot, k);
-            return k;
-        }
-
-
-        int id = mRS.nScriptKernelIDCreate(getID(mRS), slot, sig);
+        long id = mRS.nScriptKernelIDCreate(getID(mRS), slot, sig, mUseIncSupp);
         if (id == 0) {
             throw new RSDriverException("Failed to create KernelID");
         }
@@ -89,6 +102,44 @@ public class Script extends BaseObj {
 
         mKIDs.put(slot, k);
         return k;
+    }
+
+    /**
+     * InvokeID is an identifier for a invoke function. It is used
+     * as an identifier for ScriptGroup creation.
+     *
+     * This class should not be directly created. Instead use the method in the
+     * reflected or intrinsic code "getInvokeID_funcname()".
+     *
+     */
+    public static final class InvokeID extends BaseObj {
+        Script mScript;
+        int mSlot;
+        InvokeID(long id, RenderScript rs, Script s, int slot) {
+            super(id, rs);
+            mScript = s;
+            mSlot = slot;
+        }
+    }
+
+    private final SparseArray<InvokeID> mIIDs = new SparseArray<InvokeID>();
+    /**
+     * Only to be used by generated reflected classes.
+     */
+    protected InvokeID createInvokeID(int slot) {
+        InvokeID i = mIIDs.get(slot);
+        if (i != null) {
+            return i;
+        }
+
+        long id = mRS.nScriptInvokeIDCreate(getID(mRS), slot);
+        if (id == 0) {
+            throw new RSDriverException("Failed to create KernelID");
+        }
+
+        i = new InvokeID(id, mRS, this, slot);
+        mIIDs.put(slot, i);
+        return i;
     }
 
     /**
@@ -103,7 +154,7 @@ public class Script extends BaseObj {
         android.renderscript.Script.FieldID mN;
         Script mScript;
         int mSlot;
-        FieldID(int id, RenderScript rs, Script s, int slot) {
+        FieldID(long id, RenderScript rs, Script s, int slot) {
             super(id, rs);
             mScript = s;
             mSlot = slot;
@@ -120,23 +171,12 @@ public class Script extends BaseObj {
      * @return FieldID
      */
     protected FieldID createFieldID(int slot, Element e) {
-
-        // Any thunking caller to createFieldID must create its own native IDs
-        // except ScriptC
-        if (mRS.isNative == true) {
-            FieldID f = new FieldID(0, mRS, this, slot);
-            if (mT != null) {
-                f.mN = mT.thunkCreateFieldID(slot, e);
-            }
-            mFIDs.put(slot, f);
-            return f;
-        }
         FieldID f = mFIDs.get(slot);
         if (f != null) {
             return f;
         }
 
-        int id = mRS.nScriptFieldIDCreate(getID(mRS), slot);
+        long id = mRS.nScriptFieldIDCreate(getID(mRS), slot, mUseIncSupp);
         if (id == 0) {
             throw new RSDriverException("Failed to create FieldID");
         }
@@ -146,19 +186,13 @@ public class Script extends BaseObj {
         return f;
     }
 
-
     /**
      * Only intended for use by generated reflected code.
      *
      * @param slot
      */
     protected void invoke(int slot) {
-        if (mT != null) {
-            mT.thunkInvoke(slot);
-            return;
-        }
-
-        mRS.nScriptInvoke(getID(mRS), slot);
+        mRS.nScriptInvoke(getID(mRS), slot, mUseIncSupp);
     }
 
     /**
@@ -168,15 +202,10 @@ public class Script extends BaseObj {
      * @param v
      */
     protected void invoke(int slot, FieldPacker v) {
-        if (mT != null) {
-            mT.thunkInvoke(slot, v);
-            return;
-        }
-
         if (v != null) {
-            mRS.nScriptInvokeV(getID(mRS), slot, v.getData());
+            mRS.nScriptInvokeV(getID(mRS), slot, v.getData(), mUseIncSupp);
         } else {
-            mRS.nScriptInvoke(getID(mRS), slot);
+            mRS.nScriptInvoke(getID(mRS), slot, mUseIncSupp);
         }
     }
 
@@ -187,28 +216,18 @@ public class Script extends BaseObj {
      * @param slot
      */
     public void bindAllocation(Allocation va, int slot) {
-        if (mT != null) {
-            mT.thunkBindAllocation(va, slot);
-            return;
-        }
-
         mRS.validate();
         if (va != null) {
-            mRS.nScriptBindAllocation(getID(mRS), va.getID(mRS), slot);
+            mRS.nScriptBindAllocation(getID(mRS), va.getID(mRS), slot, mUseIncSupp);
         } else {
-            mRS.nScriptBindAllocation(getID(mRS), 0, slot);
+            mRS.nScriptBindAllocation(getID(mRS), 0, slot, mUseIncSupp);
         }
     }
 
     public void setTimeZone(String timeZone) {
-        if (mT != null) {
-            mT.thunkSetTimeZone(timeZone);
-            return;
-        }
-
         mRS.validate();
         try {
-            mRS.nScriptSetTimeZone(getID(mRS), timeZone.getBytes("UTF-8"));
+            mRS.nScriptSetTimeZone(getID(mRS), timeZone.getBytes("UTF-8"), mUseIncSupp);
         } catch (java.io.UnsupportedEncodingException e) {
             throw new RuntimeException(e);
         }
@@ -224,36 +243,43 @@ public class Script extends BaseObj {
      * @param v
      */
     protected void forEach(int slot, Allocation ain, Allocation aout, FieldPacker v) {
-        if (mT != null) {
-            mT.thunkForEach(slot, ain, aout, v);
-            return;
-        }
-
         if (ain == null && aout == null) {
             throw new RSIllegalArgumentException(
                 "At least one of ain or aout is required to be non-null.");
         }
-        int in_id = 0;
+        long in_id = 0;
+        long out_id = 0;
         if (ain != null) {
             in_id = ain.getID(mRS);
         }
-        int out_id = 0;
         if (aout != null) {
             out_id = aout.getID(mRS);
         }
+
         byte[] params = null;
         if (v != null) {
             params = v.getData();
         }
-        mRS.nScriptForEach(getID(mRS), slot, in_id, out_id, params);
+
+        if (mUseIncSupp) {
+            long ainInc = getDummyAlloc(ain);
+            long aoutInc = getDummyAlloc(aout);
+            mRS.nScriptForEach(getID(mRS), slot, ainInc, aoutInc, params, mUseIncSupp);
+        } else {
+            mRS.nScriptForEach(getID(mRS), slot, in_id, out_id, params, mUseIncSupp);
+        }
     }
 
+    /**
+     * Only intended for use by generated reflected code.
+     *
+     * @param slot
+     * @param ain
+     * @param aout
+     * @param v
+     * @param sc
+     */
     protected void forEach(int slot, Allocation ain, Allocation aout, FieldPacker v, LaunchOptions sc) {
-        if (mT != null) {
-            mT.thunkForEach(slot, ain, aout, v, sc);
-            return;
-        }
-
         if (ain == null && aout == null) {
             throw new RSIllegalArgumentException(
                 "At least one of ain or aout is required to be non-null.");
@@ -263,23 +289,137 @@ public class Script extends BaseObj {
             forEach(slot, ain, aout, v);
             return;
         }
-        int in_id = 0;
+        long in_id = 0;
+        long out_id = 0;
         if (ain != null) {
             in_id = ain.getID(mRS);
         }
-        int out_id = 0;
         if (aout != null) {
             out_id = aout.getID(mRS);
         }
+
         byte[] params = null;
         if (v != null) {
             params = v.getData();
         }
-        mRS.nScriptForEachClipped(getID(mRS), slot, in_id, out_id, params, sc.xstart, sc.xend, sc.ystart, sc.yend, sc.zstart, sc.zend);
+        if (mUseIncSupp) {
+            long ainInc = getDummyAlloc(ain);
+            long aoutInc = getDummyAlloc(aout);
+            mRS.nScriptForEachClipped(getID(mRS), slot, ainInc, aoutInc, params, sc.xstart, sc.xend, sc.ystart, sc.yend, sc.zstart, sc.zend, mUseIncSupp);        
+        } else {
+            mRS.nScriptForEachClipped(getID(mRS), slot, in_id, out_id, params, sc.xstart, sc.xend, sc.ystart, sc.yend, sc.zstart, sc.zend, mUseIncSupp);
+        }
     }
 
-    Script(int id, RenderScript rs) {
+    Script(long id, RenderScript rs) {
         super(id, rs);
+        mUseIncSupp = false;
+    }
+
+    /**
+     * Only intended for use by generated reflected code.
+     *
+     * @hide
+     */
+    protected void forEach(int slot, Allocation[] ains, Allocation aout,
+                           FieldPacker v) {
+        forEach(slot, ains, aout, v, null);
+    }
+
+    /**
+     * Only intended for use by generated reflected code.
+     *
+     * @hide
+     */
+    protected void forEach(int slot, Allocation[] ains, Allocation aout,
+                           FieldPacker v, LaunchOptions sc) {
+        // TODO: Is this necessary if nScriptForEach calls validate as well?
+        mRS.validate();
+        if (ains != null) {
+            for (Allocation ain : ains) {
+                mRS.validateObject(ain);
+            }
+        }
+        mRS.validateObject(aout);
+
+        if (ains == null && aout == null) {
+            throw new RSIllegalArgumentException(
+                "At least one of ain or aout is required to be non-null.");
+        }
+
+        long[] in_ids;
+        if (ains != null) {
+            in_ids = new long[ains.length];
+            for (int index = 0; index < ains.length; ++index) {
+                in_ids[index] = ains[index].getID(mRS);
+            }
+        } else {
+            in_ids = null;
+        }
+
+        long out_id = 0;
+        if (aout != null) {
+            out_id = aout.getID(mRS);
+        }
+
+        byte[] params = null;
+        if (v != null) {
+            params = v.getData();
+        }
+
+        int[] limits = null;
+        if (sc != null) {
+            limits = new int[6];
+
+            limits[0] = sc.xstart;
+            limits[1] = sc.xend;
+            limits[2] = sc.ystart;
+            limits[3] = sc.yend;
+            limits[4] = sc.zstart;
+            limits[5] = sc.zend;
+        }
+
+        mRS.nScriptForEach(getID(mRS), slot, in_ids, out_id, params, limits);
+    }
+
+    /**
+     * Only intended for use by generated reflected code.  (General reduction)
+     *
+     * @hide
+     */
+    protected void reduce(int slot, Allocation[] ains, Allocation aout, LaunchOptions sc) {
+        mRS.validate();
+        if (ains == null || ains.length < 1) {
+            throw new RSIllegalArgumentException(
+                "At least one input is required.");
+        }
+        if (aout == null) {
+            throw new RSIllegalArgumentException(
+                "aout is required to be non-null.");
+        }
+        for (Allocation ain : ains) {
+            mRS.validateObject(ain);
+        }
+
+        long[] in_ids = new long[ains.length];
+        for (int index = 0; index < ains.length; ++index) {
+            in_ids[index] = ains[index].getID(mRS);
+        }
+        long out_id = aout.getID(mRS);
+
+        int[] limits = null;
+        if (sc != null) {
+            limits = new int[6];
+
+            limits[0] = sc.xstart;
+            limits[1] = sc.xend;
+            limits[2] = sc.ystart;
+            limits[3] = sc.yend;
+            limits[4] = sc.zstart;
+            limits[5] = sc.zend;
+        }
+
+        mRS.nScriptReduce(getID(mRS), slot, in_ids, out_id, limits);
     }
 
     /**
@@ -289,12 +429,7 @@ public class Script extends BaseObj {
      * @param v
      */
     public void setVar(int index, float v) {
-        if (mT != null) {
-            mT.thunkSetVar(index, v);
-            return;
-        }
-
-        mRS.nScriptSetVarF(getID(mRS), index, v);
+        mRS.nScriptSetVarF(getID(mRS), index, v, mUseIncSupp);
     }
 
     /**
@@ -304,12 +439,7 @@ public class Script extends BaseObj {
      * @param v
      */
     public void setVar(int index, double v) {
-        if (mT != null) {
-            mT.thunkSetVar(index, v);
-            return;
-        }
-
-        mRS.nScriptSetVarD(getID(mRS), index, v);
+        mRS.nScriptSetVarD(getID(mRS), index, v, mUseIncSupp);
     }
 
     /**
@@ -319,12 +449,7 @@ public class Script extends BaseObj {
      * @param v
      */
     public void setVar(int index, int v) {
-        if (mT != null) {
-            mT.thunkSetVar(index, v);
-            return;
-        }
-
-        mRS.nScriptSetVarI(getID(mRS), index, v);
+        mRS.nScriptSetVarI(getID(mRS), index, v, mUseIncSupp);
     }
 
     /**
@@ -334,12 +459,7 @@ public class Script extends BaseObj {
      * @param v
      */
     public void setVar(int index, long v) {
-        if (mT != null) {
-            mT.thunkSetVar(index, v);
-            return;
-        }
-
-        mRS.nScriptSetVarJ(getID(mRS), index, v);
+        mRS.nScriptSetVarJ(getID(mRS), index, v, mUseIncSupp);
     }
 
     /**
@@ -349,12 +469,7 @@ public class Script extends BaseObj {
      * @param v
      */
     public void setVar(int index, boolean v) {
-        if (mT != null) {
-            mT.thunkSetVar(index, v);
-            return;
-        }
-
-        mRS.nScriptSetVarI(getID(mRS), index, v ? 1 : 0);
+        mRS.nScriptSetVarI(getID(mRS), index, v ? 1 : 0, mUseIncSupp);
     }
 
     /**
@@ -364,12 +479,12 @@ public class Script extends BaseObj {
      * @param o
      */
     public void setVar(int index, BaseObj o) {
-        if (mT != null) {
-            mT.thunkSetVar(index, o);
-            return;
+        if (mUseIncSupp) {
+            long oInc = getDummyAlloc((Allocation)o);
+            mRS.nScriptSetVarObj(getID(mRS), index, (o == null) ? 0 : oInc, mUseIncSupp);            
+        } else {
+            mRS.nScriptSetVarObj(getID(mRS), index, (o == null) ? 0 : o.getID(mRS), mUseIncSupp);
         }
-
-        mRS.nScriptSetVarObj(getID(mRS), index, (o == null) ? 0 : o.getID(mRS));
     }
 
     /**
@@ -379,12 +494,7 @@ public class Script extends BaseObj {
      * @param v
      */
     public void setVar(int index, FieldPacker v) {
-        if (mT != null) {
-            mT.thunkSetVar(index, v);
-            return;
-        }
-
-        mRS.nScriptSetVarV(getID(mRS), index, v.getData());
+        mRS.nScriptSetVarV(getID(mRS), index, v.getData(), mUseIncSupp);
     }
 
     /**
@@ -396,14 +506,18 @@ public class Script extends BaseObj {
      * @param dims
      */
     public void setVar(int index, FieldPacker v, Element e, int[] dims) {
-        if (mT != null) {
-            mT.thunkSetVar(index, v, e, dims);
-            return;
+        if (mUseIncSupp) {
+            long dElement = e.getDummyElement(mRS);
+            mRS.nScriptSetVarVE(getID(mRS), index, v.getData(), dElement, dims, mUseIncSupp);
+        } else {
+            mRS.nScriptSetVarVE(getID(mRS), index, v.getData(), e.getID(mRS), dims, mUseIncSupp);
         }
-
-        mRS.nScriptSetVarVE(getID(mRS), index, v.getData(), e.getID(mRS), dims);
     }
 
+    /**
+     * Only intended for use by generated reflected code.
+     *
+     */
     public static class Builder {
         RenderScript mRS;
 
@@ -413,6 +527,10 @@ public class Script extends BaseObj {
     }
 
 
+    /**
+     * Only intended for use by generated reflected code.
+     *
+     */
     public static class FieldBase {
         protected Element mElement;
         protected Allocation mAllocation;
@@ -445,16 +563,45 @@ public class Script extends BaseObj {
         }
     }
 
+
+    /**
+     * Class for specifying the specifics about how a kernel will be
+     * launched.
+     *
+     * This class can specify a potential range of cells on which to
+     * run a kernel.  If no set is called for a dimension then this
+     * class will have no impact on that dimension when the kernel
+     * is executed.
+     *
+     * The forEach kernel launch will operate over the intersection of
+     * the dimensions.
+     *
+     * Example:
+     * LaunchOptions with setX(5, 15)
+     * Allocation with dimension X=10, Y=10
+     * The resulting forEach run would execute over:
+     * x = 5 to 9 (inclusive) and
+     * y = 0 to 9 (inclusive).
+     *
+     */
     public static final class LaunchOptions {
-        protected int xstart = 0;
-        protected int ystart = 0;
-        protected int xend = 0;
-        protected int yend = 0;
-        protected int zstart = 0;
-        protected int zend = 0;
+        private int xstart = 0;
+        private int ystart = 0;
+        private int xend = 0;
+        private int yend = 0;
+        private int zstart = 0;
+        private int zend = 0;
+        private int strategy;
 
-        protected int strategy;
-
+        /**
+         * Set the X range. xstartArg is the lowest coordinate of the range,
+         * and xendArg-1 is the highest coordinate of the range.
+         *
+         * @param xstartArg Must be >= 0
+         * @param xendArg Must be > xstartArg
+         *
+         * @return LaunchOptions
+         */
         public LaunchOptions setX(int xstartArg, int xendArg) {
             if (xstartArg < 0 || xendArg <= xstartArg) {
                 throw new RSIllegalArgumentException("Invalid dimensions");
@@ -464,6 +611,15 @@ public class Script extends BaseObj {
             return this;
         }
 
+        /**
+         * Set the Y range. ystartArg is the lowest coordinate of the range,
+         * and yendArg-1 is the highest coordinate of the range.
+         *
+         * @param ystartArg Must be >= 0
+         * @param yendArg Must be > ystartArg
+         *
+         * @return LaunchOptions
+         */
         public LaunchOptions setY(int ystartArg, int yendArg) {
             if (ystartArg < 0 || yendArg <= ystartArg) {
                 throw new RSIllegalArgumentException("Invalid dimensions");
@@ -473,6 +629,15 @@ public class Script extends BaseObj {
             return this;
         }
 
+        /**
+         * Set the Z range. zstartArg is the lowest coordinate of the range,
+         * and zendArg-1 is the highest coordinate of the range.
+         *
+         * @param zstartArg Must be >= 0
+         * @param zendArg Must be > zstartArg
+         *
+         * @return LaunchOptions
+         */
         public LaunchOptions setZ(int zstartArg, int zendArg) {
             if (zstartArg < 0 || zendArg <= zstartArg) {
                 throw new RSIllegalArgumentException("Invalid dimensions");
@@ -483,25 +648,54 @@ public class Script extends BaseObj {
         }
 
 
+        /**
+         * Returns the current X start
+         *
+         * @return int current value
+         */
         public int getXStart() {
             return xstart;
         }
+        /**
+         * Returns the current X end
+         *
+         * @return int current value
+         */
         public int getXEnd() {
             return xend;
         }
+        /**
+         * Returns the current Y start
+         *
+         * @return int current value
+         */
         public int getYStart() {
             return ystart;
         }
+        /**
+         * Returns the current Y end
+         *
+         * @return int current value
+         */
         public int getYEnd() {
             return yend;
         }
+        /**
+         * Returns the current Z start
+         *
+         * @return int current value
+         */
         public int getZStart() {
             return zstart;
         }
+        /**
+         * Returns the current Z end
+         *
+         * @return int current value
+         */
         public int getZEnd() {
             return zend;
         }
 
     }
 }
-

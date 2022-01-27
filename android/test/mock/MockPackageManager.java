@@ -16,35 +16,42 @@
 
 package android.test.mock;
 
+import android.annotation.NonNull;
+import android.annotation.Nullable;
+import android.app.PackageInstallObserver;
 import android.content.ComponentName;
 import android.content.Intent;
 import android.content.IntentFilter;
 import android.content.IntentSender;
 import android.content.pm.ActivityInfo;
 import android.content.pm.ApplicationInfo;
-import android.content.pm.ContainerEncryptionParams;
+import android.content.pm.EphemeralApplicationInfo;
 import android.content.pm.FeatureInfo;
 import android.content.pm.IPackageDataObserver;
 import android.content.pm.IPackageDeleteObserver;
 import android.content.pm.IPackageInstallObserver;
-import android.content.pm.IPackageMoveObserver;
 import android.content.pm.IPackageStatsObserver;
 import android.content.pm.InstrumentationInfo;
-import android.content.pm.ManifestDigest;
+import android.content.pm.IntentFilterVerificationInfo;
+import android.content.pm.KeySet;
 import android.content.pm.PackageInfo;
+import android.content.pm.PackageInstaller;
+import android.content.pm.PackageItemInfo;
 import android.content.pm.PackageManager;
 import android.content.pm.PermissionGroupInfo;
 import android.content.pm.PermissionInfo;
 import android.content.pm.ProviderInfo;
 import android.content.pm.ResolveInfo;
 import android.content.pm.ServiceInfo;
-import android.content.pm.VerificationParams;
 import android.content.pm.VerifierDeviceIdentity;
-import android.content.pm.PackageManager.NameNotFoundException;
 import android.content.res.Resources;
 import android.content.res.XmlResourceParser;
+import android.graphics.Rect;
 import android.graphics.drawable.Drawable;
 import android.net.Uri;
+import android.os.Handler;
+import android.os.UserHandle;
+import android.os.storage.VolumeInfo;
 
 import java.util.List;
 
@@ -52,12 +59,23 @@ import java.util.List;
  * A mock {@link android.content.pm.PackageManager} class.  All methods are non-functional and throw
  * {@link java.lang.UnsupportedOperationException}. Override it to provide the operations that you
  * need.
+ *
+ * @deprecated Use a mocking framework like <a href="https://github.com/mockito/mockito">Mockito</a>.
+ * New tests should be written using the
+ * <a href="{@docRoot}tools/testing-support-library/index.html">Android Testing Support Library</a>.
  */
+@Deprecated
 public class MockPackageManager extends PackageManager {
 
     @Override
-    public PackageInfo getPackageInfo(String packageName, int flags)
-    throws NameNotFoundException {
+    public PackageInfo getPackageInfo(String packageName, int flags) throws NameNotFoundException {
+        throw new UnsupportedOperationException();
+    }
+
+    /** @hide */
+    @Override
+    public PackageInfo getPackageInfoAsUser(String packageName, int flags, int userId)
+            throws NameNotFoundException {
         throw new UnsupportedOperationException();
     }
 
@@ -77,13 +95,35 @@ public class MockPackageManager extends PackageManager {
     }
 
     @Override
+    public Intent getLeanbackLaunchIntentForPackage(String packageName) {
+        throw new UnsupportedOperationException();
+    }
+
+    @Override
     public int[] getPackageGids(String packageName) throws NameNotFoundException {
+        throw new UnsupportedOperationException();
+    }
+
+    @Override
+    public int[] getPackageGids(String packageName, int flags) throws NameNotFoundException {
+        throw new UnsupportedOperationException();
+    }
+
+    @Override
+    public int getPackageUid(String packageName, int flags) throws NameNotFoundException {
         throw new UnsupportedOperationException();
     }
 
     /** @hide */
     @Override
-    public int getPackageUid(String packageName, int userHandle)
+    public int getPackageUidAsUser(String packageName, int flags, int userHandle)
+            throws NameNotFoundException {
+        throw new UnsupportedOperationException();
+    }
+
+    /** @hide */
+    @Override
+    public int getPackageUidAsUser(String packageName, int userHandle)
             throws NameNotFoundException {
         throw new UnsupportedOperationException();
     }
@@ -113,7 +153,14 @@ public class MockPackageManager extends PackageManager {
 
     @Override
     public ApplicationInfo getApplicationInfo(String packageName, int flags)
-    throws NameNotFoundException {
+            throws NameNotFoundException {
+        throw new UnsupportedOperationException();
+    }
+
+    /** @hide */
+    @Override
+    public ApplicationInfo getApplicationInfoAsUser(String packageName, int flags, int userId)
+            throws NameNotFoundException {
         throw new UnsupportedOperationException();
     }
 
@@ -154,12 +201,23 @@ public class MockPackageManager extends PackageManager {
 
     /** @hide */
     @Override
-    public List<PackageInfo> getInstalledPackages(int flags, int userId) {
+    public List<PackageInfo> getInstalledPackagesAsUser(int flags, int userId) {
         throw new UnsupportedOperationException();
     }
 
     @Override
     public int checkPermission(String permName, String pkgName) {
+        throw new UnsupportedOperationException();
+    }
+
+    @Override
+    public boolean isPermissionRevokedByPolicy(String permName, String pkgName) {
+        throw new UnsupportedOperationException();
+    }
+
+    /** @hide */
+    @Override
+    public String getPermissionControllerPackageName() {
         throw new UnsupportedOperationException();
     }
 
@@ -180,13 +238,46 @@ public class MockPackageManager extends PackageManager {
 
     /** @hide */
     @Override
-    public void grantPermission(String packageName, String permissionName) {
+    public void grantRuntimePermission(String packageName, String permissionName,
+            UserHandle user) {
         throw new UnsupportedOperationException();
     }
 
     /** @hide */
     @Override
-    public void revokePermission(String packageName, String permissionName) {
+    public void revokeRuntimePermission(String packageName, String permissionName,
+            UserHandle user) {
+        throw new UnsupportedOperationException();
+    }
+
+    /** @hide */
+    @Override
+    public int getPermissionFlags(String permissionName, String packageName, UserHandle user) {
+        throw new UnsupportedOperationException();
+    }
+
+    /** @hide */
+    @Override
+    public void updatePermissionFlags(String permissionName, String packageName,
+            int flagMask, int flagValues, UserHandle user) {
+        throw new UnsupportedOperationException();
+    }
+
+    /** @hide */
+    @Override
+    public boolean shouldShowRequestPermissionRationale(String permission) {
+        throw new UnsupportedOperationException();
+    }
+
+    /** @hide */
+    @Override
+    public void addOnPermissionsChangeListener(OnPermissionsChangedListener listener) {
+        throw new UnsupportedOperationException();
+    }
+
+    /** @hide */
+    @Override
+    public void removeOnPermissionsChangeListener(OnPermissionsChangedListener listener) {
         throw new UnsupportedOperationException();
     }
 
@@ -221,6 +312,42 @@ public class MockPackageManager extends PackageManager {
     @Override
     public List<ApplicationInfo> getInstalledApplications(int flags) {
         throw new UnsupportedOperationException();
+    }
+
+    /** @hide */
+    @Override
+    public List<EphemeralApplicationInfo> getEphemeralApplications() {
+        throw new UnsupportedOperationException();
+    }
+
+    /** @hide */
+    @Override
+    public Drawable getEphemeralApplicationIcon(String packageName) {
+        throw new UnsupportedOperationException();
+    }
+
+    /** @hide */
+    @Override
+    public byte[] getEphemeralCookie() {
+        return new byte[0];
+    }
+
+    /** @hide */
+    @Override
+    public boolean isEphemeralApplication() {
+        return false;
+    }
+
+    /** @hide */
+    @Override
+    public int getEphemeralCookieMaxSizeBytes() {
+        return 0;
+    }
+
+    /** @hide */
+    @Override
+    public boolean setEphemeralCookie(@NonNull byte[] cookie) {
+        return false;
     }
 
     @Override
@@ -259,7 +386,7 @@ public class MockPackageManager extends PackageManager {
 
     /** @hide */
     @Override
-    public List<ResolveInfo> queryBroadcastReceivers(Intent intent, int flags, int userId) {
+    public List<ResolveInfo> queryBroadcastReceiversAsUser(Intent intent, int flags, int userId) {
         throw new UnsupportedOperationException();
     }
 
@@ -279,8 +406,26 @@ public class MockPackageManager extends PackageManager {
         throw new UnsupportedOperationException();
     }
 
+    /** @hide */
+    @Override
+    public List<ResolveInfo> queryIntentContentProvidersAsUser(
+            Intent intent, int flags, int userId) {
+        throw new UnsupportedOperationException();
+    }
+
+    @Override
+    public List<ResolveInfo> queryIntentContentProviders(Intent intent, int flags) {
+        throw new UnsupportedOperationException();
+    }
+
     @Override
     public ProviderInfo resolveContentProvider(String name, int flags) {
+        throw new UnsupportedOperationException();
+    }
+
+    /** @hide */
+    @Override
+    public ProviderInfo resolveContentProviderAsUser(String name, int flags, int userId) {
         throw new UnsupportedOperationException();
     }
 
@@ -323,6 +468,27 @@ public class MockPackageManager extends PackageManager {
     }
 
     @Override
+    public Drawable getActivityBanner(ComponentName activityName)
+            throws NameNotFoundException {
+        throw new UnsupportedOperationException();
+    }
+
+    @Override
+    public Drawable getActivityBanner(Intent intent) throws NameNotFoundException {
+        throw new UnsupportedOperationException();
+    }
+
+    @Override
+    public Drawable getApplicationBanner(ApplicationInfo info) {
+        throw new UnsupportedOperationException();
+    }
+
+    @Override
+    public Drawable getApplicationBanner(String packageName) throws NameNotFoundException {
+        throw new UnsupportedOperationException();
+    }
+
+    @Override
     public Drawable getApplicationIcon(ApplicationInfo info) {
         throw new UnsupportedOperationException();
     }
@@ -349,6 +515,43 @@ public class MockPackageManager extends PackageManager {
 
     @Override
     public Drawable getApplicationLogo(String packageName) throws NameNotFoundException {
+        throw new UnsupportedOperationException();
+    }
+
+    /** @hide */
+    @Override
+    public Drawable getManagedUserBadgedDrawable(Drawable drawable, Rect badgeLocation,
+            int badgeDensity) {
+        throw new UnsupportedOperationException();
+    }
+
+
+    @Override
+    public Drawable getUserBadgedIcon(Drawable icon, UserHandle user) {
+        throw new UnsupportedOperationException();
+    }
+
+    @Override
+    public Drawable getUserBadgedDrawableForDensity(Drawable drawable, UserHandle user,
+            Rect badgeLocation,
+            int badgeDensity) {
+        throw new UnsupportedOperationException();
+    }
+
+    /** @hide */
+    @Override
+    public Drawable getUserBadgeForDensity(UserHandle user, int density) {
+        throw new UnsupportedOperationException();
+    }
+
+    /** @hide */
+    @Override
+    public Drawable getUserBadgeForDensityNoBackground(UserHandle user, int density) {
+        throw new UnsupportedOperationException();
+    }
+
+    @Override
+    public CharSequence getUserBadgedLabel(CharSequence label, UserHandle user) {
         throw new UnsupportedOperationException();
     }
 
@@ -411,16 +614,62 @@ public class MockPackageManager extends PackageManager {
         throw new UnsupportedOperationException();
     }
 
-    /**
-     * @hide - to match hiding in superclass
-     */
     @Override
-    public void movePackage(String packageName, IPackageMoveObserver observer, int flags) {
+    public String getInstallerPackageName(String packageName) {
         throw new UnsupportedOperationException();
     }
 
+    /** {@hide} */
     @Override
-    public String getInstallerPackageName(String packageName) {
+    public int getMoveStatus(int moveId) {
+        throw new UnsupportedOperationException();
+    }
+
+    /** {@hide} */
+    @Override
+    public void registerMoveCallback(MoveCallback callback, Handler handler) {
+        throw new UnsupportedOperationException();
+    }
+
+    /** {@hide} */
+    @Override
+    public void unregisterMoveCallback(MoveCallback callback) {
+        throw new UnsupportedOperationException();
+    }
+
+    /** {@hide} */
+    @Override
+    public int movePackage(String packageName, VolumeInfo vol) {
+        throw new UnsupportedOperationException();
+    }
+
+    /** {@hide} */
+    @Override
+    public VolumeInfo getPackageCurrentVolume(ApplicationInfo app) {
+        throw new UnsupportedOperationException();
+    }
+
+    /** {@hide} */
+    @Override
+    public List<VolumeInfo> getPackageCandidateVolumes(ApplicationInfo app) {
+        throw new UnsupportedOperationException();
+    }
+
+    /** {@hide} */
+    @Override
+    public int movePrimaryStorage(VolumeInfo vol) {
+        throw new UnsupportedOperationException();
+    }
+
+    /** {@hide} */
+    @Override
+    public VolumeInfo getPrimaryStorageCurrentVolume() {
+        throw new UnsupportedOperationException();
+    }
+
+    /** {@hide} */
+    @Override
+    public List<VolumeInfo> getPrimaryStorageCandidateVolumes() {
         throw new UnsupportedOperationException();
     }
 
@@ -446,17 +695,21 @@ public class MockPackageManager extends PackageManager {
      * @hide - to match hiding in superclass
      */
     @Override
-    public void freeStorageAndNotify(
-            long idealStorageSize, IPackageDataObserver observer) {
+    public void deleteApplicationCacheFilesAsUser(String packageName, int userId,
+            IPackageDataObserver observer) {
         throw new UnsupportedOperationException();
     }
 
-    /**
-     * @hide - to match hiding in superclass
-     */
+    /** {@hide} */
     @Override
-    public void freeStorage(
-            long idealStorageSize, IntentSender pi) {
+    public void freeStorageAndNotify(String volumeUuid, long idealStorageSize,
+            IPackageDataObserver observer) {
+        throw new UnsupportedOperationException();
+    }
+
+    /** {@hide} */
+    @Override
+    public void freeStorage(String volumeUuid, long idealStorageSize, IntentSender pi) {
         throw new UnsupportedOperationException();
     }
 
@@ -466,6 +719,15 @@ public class MockPackageManager extends PackageManager {
     @Override
     public void deletePackage(
             String packageName, IPackageDeleteObserver observer, int flags) {
+        throw new UnsupportedOperationException();
+    }
+
+    /**
+     * @hide - to match hiding in superclass
+     */
+    @Override
+    public void deletePackageAsUser(
+            String packageName, IPackageDeleteObserver observer, int flags, int userId) {
         throw new UnsupportedOperationException();
     }
 
@@ -505,6 +767,12 @@ public class MockPackageManager extends PackageManager {
         throw new UnsupportedOperationException();
     }
 
+    /** @hide */
+    @Override
+    public void flushPackageRestrictionsAsUser(int userId) {
+        throw new UnsupportedOperationException();
+    }
+
     @Override
     public void addPreferredActivity(IntentFilter filter,
             int match, ComponentName[] set, ComponentName activity) {
@@ -530,7 +798,7 @@ public class MockPackageManager extends PackageManager {
      * @hide - to match hiding in superclass
      */
     @Override
-    public void getPackageSizeInfo(String packageName, int userHandle,
+    public void getPackageSizeInfoAsUser(String packageName, int userHandle,
             IPackageStatsObserver observer) {
         throw new UnsupportedOperationException();
     }
@@ -541,8 +809,26 @@ public class MockPackageManager extends PackageManager {
         throw new UnsupportedOperationException();
     }
 
+    /** @hide - hidden in superclass */
+    @Override
+    public ComponentName getHomeActivities(List<ResolveInfo> outActivities) {
+        throw new UnsupportedOperationException();
+    }
+
     @Override
     public String[] getSystemSharedLibraryNames() {
+        throw new UnsupportedOperationException();
+    }
+
+    /** @hide */
+    @Override
+    public @NonNull String getServicesSystemSharedLibraryPackageName() {
+        throw new UnsupportedOperationException();
+    }
+
+    /** @hide */
+    @Override
+    public @NonNull String getSharedSystemSharedLibraryPackageName() {
         throw new UnsupportedOperationException();
     }
 
@@ -557,17 +843,48 @@ public class MockPackageManager extends PackageManager {
     }
 
     @Override
+    public boolean hasSystemFeature(String name, int version) {
+        throw new UnsupportedOperationException();
+    }
+
+    @Override
     public boolean isSafeMode() {
         throw new UnsupportedOperationException();
     }
 
-    /**
-     * @hide
-     */
+    /** @hide */
     @Override
-    public void installPackageWithVerification(Uri packageURI, IPackageInstallObserver observer,
-            int flags, String installerPackageName, Uri verificationURI,
-            ManifestDigest manifestDigest, ContainerEncryptionParams encryptionParams) {
+    public KeySet getKeySetByAlias(String packageName, String alias) {
+        throw new UnsupportedOperationException();
+    }
+
+    /** @hide */
+    @Override
+    public KeySet getSigningKeySet(String packageName) {
+        throw new UnsupportedOperationException();
+    }
+
+    /** @hide */
+    @Override
+    public boolean isSignedBy(String packageName, KeySet ks) {
+        throw new UnsupportedOperationException();
+    }
+
+    /** @hide */
+    @Override
+    public boolean isSignedByExactly(String packageName, KeySet ks) {
+        throw new UnsupportedOperationException();
+    }
+
+    /** @hide */
+    @Override
+    public String[] setPackagesSuspendedAsUser(String[] packageNames, boolean hidden, int userId) {
+        throw new UnsupportedOperationException();
+    }
+
+    /** @hide */
+    @Override
+    public boolean isPackageSuspendedForUser(String packageName, int userId) {
         throw new UnsupportedOperationException();
     }
 
@@ -575,9 +892,24 @@ public class MockPackageManager extends PackageManager {
      * @hide
      */
     @Override
-    public void installPackageWithVerificationAndEncryption(Uri packageURI,
-            IPackageInstallObserver observer, int flags, String installerPackageName,
-            VerificationParams verificationParams, ContainerEncryptionParams encryptionParams) {
+    public boolean setApplicationHiddenSettingAsUser(String packageName, boolean hidden,
+            UserHandle user) {
+        return false;
+    }
+
+    /**
+     * @hide
+     */
+    @Override
+    public boolean getApplicationHiddenSettingAsUser(String packageName, UserHandle user) {
+        return false;
+    }
+
+    /**
+     * @hide
+     */
+    @Override
+    public int installExistingPackage(String packageName) throws NameNotFoundException {
         throw new UnsupportedOperationException();
     }
 
@@ -585,7 +917,7 @@ public class MockPackageManager extends PackageManager {
      * @hide
      */
     @Override
-    public int installExistingPackage(String packageName)
+    public int installExistingPackageAsUser(String packageName, int userId)
             throws NameNotFoundException {
         throw new UnsupportedOperationException();
     }
@@ -605,7 +937,127 @@ public class MockPackageManager extends PackageManager {
      * @hide
      */
     @Override
+    public void verifyIntentFilter(int id, int verificationCode, List<String> outFailedDomains) {
+        throw new UnsupportedOperationException();
+    }
+
+    /**
+     * @hide
+     */
+    @Override
+    public int getIntentVerificationStatusAsUser(String packageName, int userId) {
+        throw new UnsupportedOperationException();
+    }
+
+    /**
+     * @hide
+     */
+    @Override
+    public boolean updateIntentVerificationStatusAsUser(String packageName, int status, int userId) {
+        throw new UnsupportedOperationException();
+    }
+
+    /**
+     * @hide
+     */
+    @Override
+    public List<IntentFilterVerificationInfo> getIntentFilterVerifications(String packageName) {
+        throw new UnsupportedOperationException();
+    }
+
+    @Override
+    public List<IntentFilter> getAllIntentFilters(String packageName) {
+        throw new UnsupportedOperationException();
+    }
+
+    /** {@removed} */
+    @Deprecated
+    public String getDefaultBrowserPackageName(int userId) {
+        throw new UnsupportedOperationException();
+    }
+
+    /** {@hide} */
+    @Override
+    public String getDefaultBrowserPackageNameAsUser(int userId) {
+        throw new UnsupportedOperationException();
+    }
+
+    /** {@removed} */
+    @Deprecated
+    public boolean setDefaultBrowserPackageName(String packageName, int userId) {
+        throw new UnsupportedOperationException();
+    }
+
+    /** {@hide} */
+    @Override
+    public boolean setDefaultBrowserPackageNameAsUser(String packageName, int userId) {
+        throw new UnsupportedOperationException();
+    }
+
+    /**
+     * @hide
+     */
+    @Override
     public VerifierDeviceIdentity getVerifierDeviceIdentity() {
+        throw new UnsupportedOperationException();
+    }
+
+    /**
+     * @hide
+     */
+    @Override
+    public boolean isUpgrade() {
+        throw new UnsupportedOperationException();
+    }
+
+    /**
+     * @hide
+     */
+    @Override
+    public void installPackage(Uri packageURI, PackageInstallObserver observer,
+            int flags, String installerPackageName) {
+        throw new UnsupportedOperationException();
+    }
+
+    /**
+     * @hide
+     */
+    @Override
+    public void addCrossProfileIntentFilter(IntentFilter filter, int sourceUserId, int targetUserId,
+            int flags) {
+        throw new UnsupportedOperationException();
+    }
+
+    /**
+     * @hide
+     */
+    @Override
+    public void clearCrossProfileIntentFilters(int sourceUserId) {
+        throw new UnsupportedOperationException();
+    }
+
+    /** {@hide} */
+    public PackageInstaller getPackageInstaller() {
+        throw new UnsupportedOperationException();
+    }
+
+    /** {@hide} */
+    @Override
+    public boolean isPackageAvailable(String packageName) {
+        throw new UnsupportedOperationException();
+    }
+
+    /**
+     * @hide
+     */
+    public Drawable loadItemIcon(PackageItemInfo itemInfo, ApplicationInfo appInfo) {
+        throw new UnsupportedOperationException();
+    }
+
+    /**
+     * @hide
+     */
+    public Drawable loadUnbadgedItemIcon(PackageItemInfo itemInfo, ApplicationInfo appInfo) {
         throw new UnsupportedOperationException();
     }
 }

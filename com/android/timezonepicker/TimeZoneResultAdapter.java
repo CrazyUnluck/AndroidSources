@@ -308,8 +308,10 @@ public class TimeZoneResultAdapter extends BaseAdapter implements OnItemClickLis
     public void onItemClick(AdapterView<?> parent, View v, int position, long id) {
         if (mTimeZoneSetListener != null) {
             TimeZoneInfo tzi = (TimeZoneInfo) v.getTag(VIEW_TAG_TIME_ZONE);
-            mTimeZoneSetListener.onTimeZoneSet(tzi);
-            saveRecentTimezone(tzi.mTzId);
+            if (tzi != null) {
+              mTimeZoneSetListener.onTimeZoneSet(tzi);
+              saveRecentTimezone(tzi.mTzId);
+            }
         }
     }
 }

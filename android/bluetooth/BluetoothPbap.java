@@ -22,7 +22,6 @@ import android.content.Intent;
 import android.content.ServiceConnection;
 import android.os.RemoteException;
 import android.os.IBinder;
-import android.os.ServiceManager;
 import android.util.Log;
 
 /**
@@ -129,11 +128,7 @@ public class BluetoothPbap {
                             try {
                                 if (mService == null) {
                                     if (VDBG) Log.d(TAG,"Binding service...");
-                                    if (!mContext.bindService(
-                                                        new Intent(IBluetoothPbap.class.getName()),
-                                                        mConnection, 0)) {
-                                        Log.e(TAG, "Could not bind to Bluetooth PBAP Service");
-                                    }
+                                    doBind();
                                 }
                             } catch (Exception re) {
                                 Log.e(TAG,"",re);
@@ -158,9 +153,19 @@ public class BluetoothPbap {
                 Log.e(TAG,"",e);
             }
         }
-        if (!context.bindService(new Intent(IBluetoothPbap.class.getName()), mConnection, 0)) {
-            Log.e(TAG, "Could not bind to Bluetooth Pbap Service");
+        doBind();
+    }
+
+    boolean doBind() {
+        Intent intent = new Intent(IBluetoothPbap.class.getName());
+        ComponentName comp = intent.resolveSystemService(mContext.getPackageManager(), 0);
+        intent.setComponent(comp);
+        if (comp == null || !mContext.bindServiceAsUser(intent, mConnection, 0,
+                android.os.Process.myUserHandle())) {
+            Log.e(TAG, "Could not bind to Bluetooth Pbap Service with " + intent);
+            return false;
         }
+        return true;
     }
 
     protected void finalize() throws Throwable {
@@ -192,7 +197,6 @@ public class BluetoothPbap {
                 try {
                     mService = null;
                     mContext.unbindService(mConnection);
-                    mConnection = null;
                 } catch (Exception re) {
                     Log.e(TAG,"",re);
                 }
@@ -295,7 +299,7 @@ public class BluetoothPbap {
         }
     }
 
-    private ServiceConnection mConnection = new ServiceConnection() {
+    private final ServiceConnection mConnection = new ServiceConnection() {
         public void onServiceConnected(ComponentName className, IBinder service) {
             if (DBG) log("Proxy object connected");
             mService = IBluetoothPbap.Stub.asInterface(service);

@@ -450,7 +450,7 @@ import java.util.Set;
             } else if (paramName.equals("VALUE")) {
                 handleValue(propertyData, paramValue);
             } else if (paramName.equals("ENCODING")) {
-                handleEncoding(propertyData, paramValue);
+                handleEncoding(propertyData, paramValue.toUpperCase());
             } else if (paramName.equals("CHARSET")) {
                 handleCharset(propertyData, paramValue);
             } else if (paramName.equals("LANGUAGE")) {
@@ -685,8 +685,8 @@ import java.util.Set;
             }
 
             ArrayList<String> propertyValueList = new ArrayList<String>();
-            String value = VCardUtils.convertStringCharset(
-                    maybeUnescapeText(propertyRawValue), sourceCharset, targetCharset);
+            String value = maybeUnescapeText(VCardUtils.convertStringCharset(
+                    propertyRawValue, sourceCharset, targetCharset));
             propertyValueList.add(value);
             property.setValues(propertyValueList);
             for (VCardInterpreter interpreter : mInterpreterList) {
@@ -720,12 +720,12 @@ import java.util.Set;
                 encodedValueList.add(encoded);
             }
         } else {
-            final String propertyValue = getPotentialMultiline(propertyRawValue);
-            final List<String> rawValueList =
+            final String propertyValue = VCardUtils.convertStringCharset(
+                    getPotentialMultiline(propertyRawValue), sourceCharset, targetCharset);
+            final List<String> valueList =
                     VCardUtils.constructListFromValue(propertyValue, getVersion());
-            for (String rawValue : rawValueList) {
-                encodedValueList.add(VCardUtils.convertStringCharset(
-                        rawValue, sourceCharset, targetCharset));
+            for (String value : valueList) {
+                encodedValueList.add(value);
             }
         }
 
@@ -847,7 +847,8 @@ import java.util.Set;
             // or
             //      END:VCARD
             String propertyName = getPropertyNameUpperCase(line);
-            if (getKnownPropertyNameSet().contains(propertyName)) {
+            if (getKnownPropertyNameSet().contains(propertyName) ||
+                    VCardConstants.PROPERTY_X_ANDROID_CUSTOM.equals(propertyName)) {
                 Log.w(LOG_TAG, "Found a next property during parsing a BASE64 string, " +
                         "which must not contain semi-colon or colon. Treat the line as next "
                         + "property.");
@@ -861,7 +862,10 @@ import java.util.Set;
             if (line.length() == 0) {
                 break;
             }
-            builder.append(line);
+            // Trim off any extraneous whitespace to handle 2.1 implementations
+            // that use 3.0 style line continuations. This is safe because space
+            // isn't a Base64 encoding value.
+            builder.append(line.trim());
         }
 
         return builder.toString();

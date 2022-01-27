@@ -20,6 +20,7 @@ import android.net.Uri;
 import android.os.Parcel;
 import android.os.Parcelable;
 import android.os.PatternMatcher;
+import android.text.TextUtils;
 import android.util.AndroidException;
 import android.util.Log;
 import android.util.Printer;
@@ -50,8 +51,8 @@ import java.util.Set;
  * <em>action</em>, <em>data</em>, and <em>categories</em>.  For each of these
  * characteristics you can provide
  * multiple possible matching values (via {@link #addAction},
- * {@link #addDataType}, {@link #addDataScheme} {@link #addDataAuthority},
- * {@link #addDataPath}, and {@link #addCategory}, respectively).
+ * {@link #addDataType}, {@link #addDataScheme}, {@link #addDataSchemeSpecificPart},
+ * {@link #addDataAuthority}, {@link #addDataPath}, and {@link #addCategory}, respectively).
  * For actions, the field
  * will not be tested if no values have been given (treating it as a wildcard);
  * if no data characteristics are specified, however, then the filter will
@@ -83,7 +84,9 @@ import java.util.Set;
  * for an IntentFilter to match an Intent, three conditions must hold:
  * the <strong>action</strong> and <strong>category</strong> must match, and
  * the data (both the <strong>data type</strong> and
- * <strong>data scheme+authority+path</strong> if specified) must match.
+ * <strong>data scheme+authority+path</strong> if specified) must match
+ * (see {@link #match(ContentResolver, Intent, boolean, String)} for more details
+ * on how the data fields match).
  *
  * <p><strong>Action</strong> matches if any of the given values match the
  * Intent action; if the filter specifies no actions, then it will only match
@@ -106,8 +109,15 @@ import java.util.Set;
  * formal RFC schemes!</em>  You should thus always use lower case letters
  * for your schemes.
  *
+ * <p><strong>Data Scheme Specific Part</strong> matches if any of the given values match
+ * the Intent's data scheme specific part <em>and</em> one of the data schemes in the filter
+ * has matched the Intent, <em>or</em> no scheme specific parts were supplied in the filter.
+ * The Intent scheme specific part is determined by calling
+ * {@link Intent#getData} and {@link android.net.Uri#getSchemeSpecificPart} on that URI.
+ * <em>Note that scheme specific part matching is <b>case sensitive</b>.</em>
+ *
  * <p><strong>Data Authority</strong> matches if any of the given values match
- * the Intent's data authority <em>and</em> one of the data scheme's in the filter
+ * the Intent's data authority <em>and</em> one of the data schemes in the filter
  * has matched the Intent, <em>or</em> no authories were supplied in the filter.
  * The Intent authority is determined by calling
  * {@link Intent#getData} and {@link android.net.Uri#getAuthority} on that URI.
@@ -135,11 +145,13 @@ public class IntentFilter implements Parcelable {
     private static final String PORT_STR = "port";
     private static final String HOST_STR = "host";
     private static final String AUTH_STR = "auth";
+    private static final String SSP_STR = "ssp";
     private static final String SCHEME_STR = "scheme";
     private static final String TYPE_STR = "type";
     private static final String CAT_STR = "cat";
     private static final String NAME_STR = "name";
     private static final String ACTION_STR = "action";
+    private static final String AUTO_VERIFY_STR = "autoVerify";
 
     /**
      * The filter {@link #setPriority} value at which system high-priority
@@ -164,8 +176,8 @@ public class IntentFilter implements Parcelable {
     /**
      * The part of a match constant that describes the category of match
      * that occurred.  May be either {@link #MATCH_CATEGORY_EMPTY},
-     * {@link #MATCH_CATEGORY_SCHEME}, {@link #MATCH_CATEGORY_HOST},
-     * {@link #MATCH_CATEGORY_PORT},
+     * {@link #MATCH_CATEGORY_SCHEME}, {@link #MATCH_CATEGORY_SCHEME_SPECIFIC_PART},
+     * {@link #MATCH_CATEGORY_HOST}, {@link #MATCH_CATEGORY_PORT},
      * {@link #MATCH_CATEGORY_PATH}, or {@link #MATCH_CATEGORY_TYPE}.  Higher
      * values indicate a better match.
      */
@@ -210,6 +222,11 @@ public class IntentFilter implements Parcelable {
      */
     public static final int MATCH_CATEGORY_PATH = 0x0500000;
     /**
+     * The filter matched an intent with the same data URI scheme and
+     * scheme specific part.
+     */
+    public static final int MATCH_CATEGORY_SCHEME_SPECIFIC_PART = 0x0580000;
+    /**
      * The filter matched an intent with the same data MIME type.
      */
     public static final int MATCH_CATEGORY_TYPE = 0x0600000;
@@ -232,14 +249,37 @@ public class IntentFilter implements Parcelable {
      */
     public static final int NO_MATCH_CATEGORY = -4;
 
+    /**
+     * HTTP scheme.
+     *
+     * @see #addDataScheme(String)
+     * @hide
+     */
+    public static final String SCHEME_HTTP = "http";
+    /**
+     * HTTPS scheme.
+     *
+     * @see #addDataScheme(String)
+     * @hide
+     */
+    public static final String SCHEME_HTTPS = "https";
+
     private int mPriority;
     private final ArrayList<String> mActions;
     private ArrayList<String> mCategories = null;
     private ArrayList<String> mDataSchemes = null;
+    private ArrayList<PatternMatcher> mDataSchemeSpecificParts = null;
     private ArrayList<AuthorityEntry> mDataAuthorities = null;
     private ArrayList<PatternMatcher> mDataPaths = null;
     private ArrayList<String> mDataTypes = null;
     private boolean mHasPartialTypes = false;
+
+    private static final int STATE_VERIFY_AUTO         = 0x00000001;
+    private static final int STATE_NEED_VERIFY         = 0x00000010;
+    private static final int STATE_NEED_VERIFY_CHECKED = 0x00000100;
+    private static final int STATE_VERIFIED            = 0x00001000;
+
+    private int mVerifyState;
 
     // These functions are the start of more optimized code for managing
     // the string sets...  not yet implemented.
@@ -310,7 +350,7 @@ public class IntentFilter implements Parcelable {
         public MalformedMimeTypeException(String name) {
             super(name);
         }
-    };
+    }
 
     /**
      * Create a new IntentFilter instance with a specified action and MIME
@@ -395,6 +435,9 @@ public class IntentFilter implements Parcelable {
         if (o.mDataSchemes != null) {
             mDataSchemes = new ArrayList<String>(o.mDataSchemes);
         }
+        if (o.mDataSchemeSpecificParts != null) {
+            mDataSchemeSpecificParts = new ArrayList<PatternMatcher>(o.mDataSchemeSpecificParts);
+        }
         if (o.mDataAuthorities != null) {
             mDataAuthorities = new ArrayList<AuthorityEntry>(o.mDataAuthorities);
         }
@@ -402,14 +445,16 @@ public class IntentFilter implements Parcelable {
             mDataPaths = new ArrayList<PatternMatcher>(o.mDataPaths);
         }
         mHasPartialTypes = o.mHasPartialTypes;
+        mVerifyState = o.mVerifyState;
     }
 
     /**
-     * Modify priority of this filter.  The default priority is 0. Positive
-     * values will be before the default, lower values will be after it.
-     * Applications must use a value that is larger than
-     * {@link #SYSTEM_LOW_PRIORITY} and smaller than
-     * {@link #SYSTEM_HIGH_PRIORITY} .
+     * Modify priority of this filter.  This only affects receiver filters.
+     * The priority of activity filters are set in XML and cannot be changed
+     * programatically. The default priority is 0. Positive values will be
+     * before the default, lower values will be after it. Applications should
+     * use a value that is larger than {@link #SYSTEM_LOW_PRIORITY} and
+     * smaller than {@link #SYSTEM_HIGH_PRIORITY} .
      *
      * @param priority The new priority value.
      *
@@ -430,6 +475,164 @@ public class IntentFilter implements Parcelable {
      */
     public final int getPriority() {
         return mPriority;
+    }
+
+    /**
+     * Set whether this filter will needs to be automatically verified against its data URIs or not.
+     * The default is false.
+     *
+     * The verification would need to happen only and only if the Intent action is
+     * {@link android.content.Intent#ACTION_VIEW} and the Intent category is
+     * {@link android.content.Intent#CATEGORY_BROWSABLE} and the Intent data scheme
+     * is "http" or "https".
+     *
+     * True means that the filter will need to use its data URIs to be verified.
+     *
+     * @param autoVerify The new autoVerify value.
+     *
+     * @see #getAutoVerify()
+     * @see #addAction(String)
+     * @see #getAction(int)
+     * @see #addCategory(String)
+     * @see #getCategory(int)
+     * @see #addDataScheme(String)
+     * @see #getDataScheme(int)
+     *
+     * @hide
+     */
+    public final void setAutoVerify(boolean autoVerify) {
+        mVerifyState &= ~STATE_VERIFY_AUTO;
+        if (autoVerify) mVerifyState |= STATE_VERIFY_AUTO;
+    }
+
+    /**
+     * Return if this filter will needs to be automatically verified again its data URIs or not.
+     *
+     * @return True if the filter will needs to be automatically verified. False otherwise.
+     *
+     * @see #setAutoVerify(boolean)
+     *
+     * @hide
+     */
+    public final boolean getAutoVerify() {
+        return ((mVerifyState & STATE_VERIFY_AUTO) == 1);
+    }
+
+    /**
+     * Return if this filter handle all HTTP or HTTPS data URI or not.  This is the
+     * core check for whether a given activity qualifies as a "browser".
+     *
+     * @return True if the filter handle all HTTP or HTTPS data URI. False otherwise.
+     *
+     * This will check if:
+     *
+     * - either the Intent category is {@link android.content.Intent#CATEGORY_APP_BROWSER}
+     * - either the Intent action is {@link android.content.Intent#ACTION_VIEW} and
+     * the Intent category is {@link android.content.Intent#CATEGORY_BROWSABLE} and the Intent
+     * data scheme is "http" or "https" and that there is no specific host defined.
+     *
+     * @hide
+     */
+    public final boolean handleAllWebDataURI() {
+        return hasCategory(Intent.CATEGORY_APP_BROWSER) ||
+                (handlesWebUris(false) && countDataAuthorities() == 0);
+    }
+
+    /**
+     * Return if this filter handles HTTP or HTTPS data URIs.
+     *
+     * @return True if the filter handles ACTION_VIEW/CATEGORY_BROWSABLE,
+     * has at least one HTTP or HTTPS data URI pattern defined, and optionally
+     * does not define any non-http/https data URI patterns.
+     *
+     * This will check if if the Intent action is {@link android.content.Intent#ACTION_VIEW} and
+     * the Intent category is {@link android.content.Intent#CATEGORY_BROWSABLE} and the Intent
+     * data scheme is "http" or "https".
+     *
+     * @param onlyWebSchemes When true, requires that the intent filter declare
+     *     that it handles *only* http: or https: schemes.  This is a requirement for
+     *     the intent filter's domain linkage being verifiable.
+     * @hide
+     */
+    public final boolean handlesWebUris(boolean onlyWebSchemes) {
+        // Require ACTION_VIEW, CATEGORY_BROWSEABLE, and at least one scheme
+        if (!hasAction(Intent.ACTION_VIEW)
+            || !hasCategory(Intent.CATEGORY_BROWSABLE)
+            || mDataSchemes == null
+            || mDataSchemes.size() == 0) {
+            return false;
+        }
+
+        // Now allow only the schemes "http" and "https"
+        final int N = mDataSchemes.size();
+        for (int i = 0; i < N; i++) {
+            final String scheme = mDataSchemes.get(i);
+            final boolean isWebScheme =
+                    SCHEME_HTTP.equals(scheme) || SCHEME_HTTPS.equals(scheme);
+            if (onlyWebSchemes) {
+                // If we're specifically trying to ensure that there are no non-web schemes
+                // declared in this filter, then if we ever see a non-http/https scheme then
+                // we know it's a failure.
+                if (!isWebScheme) {
+                    return false;
+                }
+            } else {
+                // If we see any http/https scheme declaration in this case then the
+                // filter matches what we're looking for.
+                if (isWebScheme) {
+                    return true;
+                }
+            }
+        }
+
+        // We get here if:
+        //   1) onlyWebSchemes and no non-web schemes were found, i.e success; or
+        //   2) !onlyWebSchemes and no http/https schemes were found, i.e. failure.
+        return onlyWebSchemes;
+    }
+
+    /**
+     * Return if this filter needs to be automatically verified again its data URIs or not.
+     *
+     * @return True if the filter needs to be automatically verified. False otherwise.
+     *
+     * This will check if if the Intent action is {@link android.content.Intent#ACTION_VIEW} and
+     * the Intent category is {@link android.content.Intent#CATEGORY_BROWSABLE} and the Intent
+     * data scheme is "http" or "https".
+     *
+     * @see #setAutoVerify(boolean)
+     *
+     * @hide
+     */
+    public final boolean needsVerification() {
+        return getAutoVerify() && handlesWebUris(true);
+    }
+
+    /**
+     * Return if this filter has been verified
+     *
+     * @return true if the filter has been verified or if autoVerify is false.
+     *
+     * @hide
+     */
+    public final boolean isVerified() {
+        if ((mVerifyState & STATE_NEED_VERIFY_CHECKED) == STATE_NEED_VERIFY_CHECKED) {
+            return ((mVerifyState & STATE_NEED_VERIFY) == STATE_NEED_VERIFY);
+        }
+        return false;
+    }
+
+    /**
+     * Set if this filter has been verified
+     *
+     * @param verified true if this filter has been verified. False otherwise.
+     *
+     * @hide
+     */
+    public void setVerified(boolean verified) {
+        mVerifyState |= STATE_NEED_VERIFY_CHECKED;
+        mVerifyState &= ~STATE_VERIFIED;
+        if (verified) mVerifyState |= STATE_VERIFIED;
     }
 
     /**
@@ -543,6 +746,11 @@ public class IntentFilter implements Parcelable {
      */
     public final boolean hasDataType(String type) {
         return mDataTypes != null && findMimeType(type);
+    }
+
+    /** @hide */
+    public final boolean hasExactDataType(String type) {
+        return mDataTypes != null && mDataTypes.contains(type);
     }
 
     /**
@@ -662,6 +870,29 @@ public class IntentFilter implements Parcelable {
             return mPort;
         }
 
+        /** @hide */
+        public boolean match(AuthorityEntry other) {
+            if (mWild != other.mWild) {
+                return false;
+            }
+            if (!mHost.equals(other.mHost)) {
+                return false;
+            }
+            if (mPort != other.mPort) {
+                return false;
+            }
+            return true;
+        }
+
+        @Override
+        public boolean equals(Object obj) {
+            if (obj instanceof AuthorityEntry) {
+                final AuthorityEntry other = (AuthorityEntry)obj;
+                return match(other);
+            }
+            return false;
+        }
+
         /**
          * Determine whether this AuthorityEntry matches the given data Uri.
          * <em>Note that this comparison is case-sensitive, unlike formal
@@ -696,7 +927,104 @@ public class IntentFilter implements Parcelable {
             }
             return MATCH_CATEGORY_HOST;
         }
-    };
+    }
+
+    /**
+     * Add a new Intent data "scheme specific part" to match against.  The filter must
+     * include one or more schemes (via {@link #addDataScheme}) for the
+     * scheme specific part to be considered.  If any scheme specific parts are
+     * included in the filter, then an Intent's data must match one of
+     * them.  If no scheme specific parts are included, then only the scheme must match.
+     *
+     * <p>The "scheme specific part" that this matches against is the string returned
+     * by {@link android.net.Uri#getSchemeSpecificPart() Uri.getSchemeSpecificPart}.
+     * For Uris that contain a path, this kind of matching is not generally of interest,
+     * since {@link #addDataAuthority(String, String)} and
+     * {@link #addDataPath(String, int)} can provide a better mechanism for matching
+     * them.  However, for Uris that do not contain a path, the authority and path
+     * are empty, so this is the only way to match against the non-scheme part.</p>
+     *
+     * @param ssp Either a raw string that must exactly match the scheme specific part
+     * path, or a simple pattern, depending on <var>type</var>.
+     * @param type Determines how <var>ssp</var> will be compared to
+     * determine a match: either {@link PatternMatcher#PATTERN_LITERAL},
+     * {@link PatternMatcher#PATTERN_PREFIX}, or
+     * {@link PatternMatcher#PATTERN_SIMPLE_GLOB}.
+     *
+     * @see #matchData
+     * @see #addDataScheme
+     */
+    public final void addDataSchemeSpecificPart(String ssp, int type) {
+        addDataSchemeSpecificPart(new PatternMatcher(ssp, type));
+    }
+
+    /** @hide */
+    public final void addDataSchemeSpecificPart(PatternMatcher ssp) {
+        if (mDataSchemeSpecificParts == null) {
+            mDataSchemeSpecificParts = new ArrayList<PatternMatcher>();
+        }
+        mDataSchemeSpecificParts.add(ssp);
+    }
+
+    /**
+     * Return the number of data scheme specific parts in the filter.
+     */
+    public final int countDataSchemeSpecificParts() {
+        return mDataSchemeSpecificParts != null ? mDataSchemeSpecificParts.size() : 0;
+    }
+
+    /**
+     * Return a data scheme specific part in the filter.
+     */
+    public final PatternMatcher getDataSchemeSpecificPart(int index) {
+        return mDataSchemeSpecificParts.get(index);
+    }
+
+    /**
+     * Is the given data scheme specific part included in the filter?  Note that if the
+     * filter does not include any scheme specific parts, false will <em>always</em> be
+     * returned.
+     *
+     * @param data The scheme specific part that is being looked for.
+     *
+     * @return Returns true if the data string matches a scheme specific part listed in the
+     *         filter.
+     */
+    public final boolean hasDataSchemeSpecificPart(String data) {
+        if (mDataSchemeSpecificParts == null) {
+            return false;
+        }
+        final int numDataSchemeSpecificParts = mDataSchemeSpecificParts.size();
+        for (int i = 0; i < numDataSchemeSpecificParts; i++) {
+            final PatternMatcher pe = mDataSchemeSpecificParts.get(i);
+            if (pe.match(data)) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    /** @hide */
+    public final boolean hasDataSchemeSpecificPart(PatternMatcher ssp) {
+        if (mDataSchemeSpecificParts == null) {
+            return false;
+        }
+        final int numDataSchemeSpecificParts = mDataSchemeSpecificParts.size();
+        for (int i = 0; i < numDataSchemeSpecificParts; i++) {
+            final PatternMatcher pe = mDataSchemeSpecificParts.get(i);
+            if (pe.getType() == ssp.getType() && pe.getPath().equals(ssp.getPath())) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    /**
+     * Return an iterator over the filter's data scheme specific parts.
+     */
+    public final Iterator<PatternMatcher> schemeSpecificPartsIterator() {
+        return mDataSchemeSpecificParts != null ? mDataSchemeSpecificParts.iterator() : null;
+    }
 
     /**
      * Add a new Intent data authority to match against.  The filter must
@@ -720,10 +1048,15 @@ public class IntentFilter implements Parcelable {
      * @see #addDataScheme
      */
     public final void addDataAuthority(String host, String port) {
+        if (port != null) port = port.intern();
+        addDataAuthority(new AuthorityEntry(host.intern(), port));
+    }
+
+    /** @hide */
+    public final void addDataAuthority(AuthorityEntry ent) {
         if (mDataAuthorities == null) mDataAuthorities =
                 new ArrayList<AuthorityEntry>();
-        if (port != null) port = port.intern();
-        mDataAuthorities.add(new AuthorityEntry(host.intern(), port));
+        mDataAuthorities.add(ent);
     }
 
     /**
@@ -752,6 +1085,20 @@ public class IntentFilter implements Parcelable {
      */
     public final boolean hasDataAuthority(Uri data) {
         return matchDataAuthority(data) >= 0;
+    }
+
+    /** @hide */
+    public final boolean hasDataAuthority(AuthorityEntry auth) {
+        if (mDataAuthorities == null) {
+            return false;
+        }
+        final int numDataAuthorities = mDataAuthorities.size();
+        for (int i = 0; i < numDataAuthorities; i++) {
+            if (mDataAuthorities.get(i).match(auth)) {
+                return true;
+            }
+        }
+        return false;
     }
 
     /**
@@ -788,8 +1135,13 @@ public class IntentFilter implements Parcelable {
      * @see #addDataAuthority
      */
     public final void addDataPath(String path, int type) {
+        addDataPath(new PatternMatcher(path.intern(), type));
+    }
+
+    /** @hide */
+    public final void addDataPath(PatternMatcher path) {
         if (mDataPaths == null) mDataPaths = new ArrayList<PatternMatcher>();
-        mDataPaths.add(new PatternMatcher(path.intern(), type));
+        mDataPaths.add(path);
     }
 
     /**
@@ -831,6 +1183,21 @@ public class IntentFilter implements Parcelable {
         return false;
     }
 
+    /** @hide */
+    public final boolean hasDataPath(PatternMatcher path) {
+        if (mDataPaths == null) {
+            return false;
+        }
+        final int numDataPaths = mDataPaths.size();
+        for (int i = 0; i < numDataPaths; i++) {
+            final PatternMatcher pe = mDataPaths.get(i);
+            if (pe.getType() == path.getType() && pe.getPath().equals(path.getPath())) {
+                return true;
+            }
+        }
+        return false;
+    }
+
     /**
      * Return an iterator over the filter's data paths.
      */
@@ -849,7 +1216,7 @@ public class IntentFilter implements Parcelable {
      * {@link #MATCH_CATEGORY_PORT}, {@link #NO_MATCH_DATA}.
      */
     public final int matchDataAuthority(Uri data) {
-        if (mDataAuthorities == null) {
+        if (mDataAuthorities == null || data == null) {
             return NO_MATCH_DATA;
         }
         final int numDataAuthorities = mDataAuthorities.size();
@@ -867,7 +1234,11 @@ public class IntentFilter implements Parcelable {
      * Match this filter against an Intent's data (type, scheme and path). If
      * the filter does not specify any types and does not specify any
      * schemes/paths, the match will only succeed if the intent does not
-     * also specify a type or data.
+     * also specify a type or data.  If the filter does not specify any schemes,
+     * it will implicitly match intents with no scheme, or the schemes "content:"
+     * or "file:" (basically performing a MIME-type only match).  If the filter
+     * does not specify any MIME types, the Intent also must not specify a MIME
+     * type.
      *
      * <p>Be aware that to match against an authority, you must also specify a base
      * scheme the authority is in.  To match against a data path, both a scheme
@@ -900,8 +1271,6 @@ public class IntentFilter implements Parcelable {
     public final int matchData(String type, String scheme, Uri data) {
         final ArrayList<String> types = mDataTypes;
         final ArrayList<String> schemes = mDataSchemes;
-        final ArrayList<AuthorityEntry> authorities = mDataAuthorities;
-        final ArrayList<PatternMatcher> paths = mDataPaths;
 
         int match = MATCH_CATEGORY_EMPTY;
 
@@ -917,19 +1286,33 @@ public class IntentFilter implements Parcelable {
                 return NO_MATCH_DATA;
             }
 
-            if (authorities != null) {
-                int authMatch = matchDataAuthority(data);
-                if (authMatch >= 0) {
-                    if (paths == null) {
-                        match = authMatch;
-                    } else if (hasDataPath(data.getPath())) {
-                        match = MATCH_CATEGORY_PATH;
+            final ArrayList<PatternMatcher> schemeSpecificParts = mDataSchemeSpecificParts;
+            if (schemeSpecificParts != null && data != null) {
+                match = hasDataSchemeSpecificPart(data.getSchemeSpecificPart())
+                        ? MATCH_CATEGORY_SCHEME_SPECIFIC_PART : NO_MATCH_DATA;
+            }
+            if (match != MATCH_CATEGORY_SCHEME_SPECIFIC_PART) {
+                // If there isn't any matching ssp, we need to match an authority.
+                final ArrayList<AuthorityEntry> authorities = mDataAuthorities;
+                if (authorities != null) {
+                    int authMatch = matchDataAuthority(data);
+                    if (authMatch >= 0) {
+                        final ArrayList<PatternMatcher> paths = mDataPaths;
+                        if (paths == null) {
+                            match = authMatch;
+                        } else if (hasDataPath(data.getPath())) {
+                            match = MATCH_CATEGORY_PATH;
+                        } else {
+                            return NO_MATCH_DATA;
+                        }
                     } else {
                         return NO_MATCH_DATA;
                     }
-                } else {
-                    return NO_MATCH_DATA;
                 }
+            }
+            // If neither an ssp nor an authority matched, we're done.
+            if (match == NO_MATCH_DATA) {
+                return NO_MATCH_DATA;
             }
         } else {
             // Special case: match either an Intent with no data URI,
@@ -1057,12 +1440,8 @@ public class IntentFilter implements Parcelable {
      * {@link #MATCH_CATEGORY_MASK} and {@link #MATCH_ADJUSTMENT_MASK}),
      * or one of the error codes {@link #NO_MATCH_TYPE} if the type didn't match,
      * {@link #NO_MATCH_DATA} if the scheme/path didn't match,
-     * {@link #NO_MATCH_ACTION if the action didn't match, or
+     * {@link #NO_MATCH_ACTION} if the action didn't match, or
      * {@link #NO_MATCH_CATEGORY} if one or more categories didn't match.
-     *
-     * @return How well the filter matches.  Negative if it doesn't match,
-     *         zero or positive positive value if it does with a higher
-     *         value representing a better match.
      *
      * @see #match(String, String, String, android.net.Uri , Set, String)
      */
@@ -1091,7 +1470,7 @@ public class IntentFilter implements Parcelable {
      * {@link #MATCH_CATEGORY_MASK} and {@link #MATCH_ADJUSTMENT_MASK}),
      * or one of the error codes {@link #NO_MATCH_TYPE} if the type didn't match,
      * {@link #NO_MATCH_DATA} if the scheme/path didn't match,
-     * {@link #NO_MATCH_ACTION if the action didn't match, or
+     * {@link #NO_MATCH_ACTION} if the action didn't match, or
      * {@link #NO_MATCH_CATEGORY} if one or more categories didn't match.
      *
      * @see #matchData
@@ -1147,6 +1526,11 @@ public class IntentFilter implements Parcelable {
      * Write the contents of the IntentFilter as an XML stream.
      */
     public void writeToXml(XmlSerializer serializer) throws IOException {
+
+        if (getAutoVerify()) {
+            serializer.attribute(null, AUTO_VERIFY_STR, Boolean.toString(true));
+        }
+
         int N = countActions();
         for (int i=0; i<N; i++) {
             serializer.startTag(null, ACTION_STR);
@@ -1172,6 +1556,23 @@ public class IntentFilter implements Parcelable {
             serializer.startTag(null, SCHEME_STR);
             serializer.attribute(null, NAME_STR, mDataSchemes.get(i));
             serializer.endTag(null, SCHEME_STR);
+        }
+        N = countDataSchemeSpecificParts();
+        for (int i=0; i<N; i++) {
+            serializer.startTag(null, SSP_STR);
+            PatternMatcher pe = mDataSchemeSpecificParts.get(i);
+            switch (pe.getType()) {
+                case PatternMatcher.PATTERN_LITERAL:
+                    serializer.attribute(null, LITERAL_STR, pe.getPath());
+                    break;
+                case PatternMatcher.PATTERN_PREFIX:
+                    serializer.attribute(null, PREFIX_STR, pe.getPath());
+                    break;
+                case PatternMatcher.PATTERN_SIMPLE_GLOB:
+                    serializer.attribute(null, SGLOB_STR, pe.getPath());
+                    break;
+            }
+            serializer.endTag(null, SSP_STR);
         }
         N = countDataAuthorities();
         for (int i=0; i<N; i++) {
@@ -1204,6 +1605,9 @@ public class IntentFilter implements Parcelable {
 
     public void readFromXml(XmlPullParser parser) throws XmlPullParserException,
             IOException {
+        String autoVerify = parser.getAttributeValue(null, AUTO_VERIFY_STR);
+        setAutoVerify(TextUtils.isEmpty(autoVerify) ? false : Boolean.getBoolean(autoVerify));
+
         int outerDepth = parser.getDepth();
         int type;
         while ((type=parser.next()) != XmlPullParser.END_DOCUMENT
@@ -1237,6 +1641,15 @@ public class IntentFilter implements Parcelable {
                 String name = parser.getAttributeValue(null, NAME_STR);
                 if (name != null) {
                     addDataScheme(name);
+                }
+            } else if (tagName.equals(SSP_STR)) {
+                String ssp = parser.getAttributeValue(null, LITERAL_STR);
+                if (ssp != null) {
+                    addDataSchemeSpecificPart(ssp, PatternMatcher.PATTERN_LITERAL);
+                } else if ((ssp=parser.getAttributeValue(null, PREFIX_STR)) != null) {
+                    addDataSchemeSpecificPart(ssp, PatternMatcher.PATTERN_PREFIX);
+                } else if ((ssp=parser.getAttributeValue(null, SGLOB_STR)) != null) {
+                    addDataSchemeSpecificPart(ssp, PatternMatcher.PATTERN_SIMPLE_GLOB);
                 }
             } else if (tagName.equals(AUTH_STR)) {
                 String host = parser.getAttributeValue(null, HOST_STR);
@@ -1289,6 +1702,16 @@ public class IntentFilter implements Parcelable {
                 du.println(sb.toString());
             }
         }
+        if (mDataSchemeSpecificParts != null) {
+            Iterator<PatternMatcher> it = mDataSchemeSpecificParts.iterator();
+            while (it.hasNext()) {
+                PatternMatcher pe = it.next();
+                sb.setLength(0);
+                sb.append(prefix); sb.append("Ssp: \"");
+                        sb.append(pe); sb.append("\"");
+                du.println(sb.toString());
+            }
+        }
         if (mDataAuthorities != null) {
             Iterator<AuthorityEntry> it = mDataAuthorities.iterator();
             while (it.hasNext()) {
@@ -1324,6 +1747,11 @@ public class IntentFilter implements Parcelable {
             sb.setLength(0);
             sb.append(prefix); sb.append("mPriority="); sb.append(mPriority);
                     sb.append(", mHasPartialTypes="); sb.append(mHasPartialTypes);
+            du.println(sb.toString());
+        }
+        {
+            sb.setLength(0);
+            sb.append(prefix); sb.append("AutoVerify="); sb.append(getAutoVerify());
             du.println(sb.toString());
         }
     }
@@ -1363,6 +1791,15 @@ public class IntentFilter implements Parcelable {
         } else {
             dest.writeInt(0);
         }
+        if (mDataSchemeSpecificParts != null) {
+            final int N = mDataSchemeSpecificParts.size();
+            dest.writeInt(N);
+            for (int i=0; i<N; i++) {
+                mDataSchemeSpecificParts.get(i).writeToParcel(dest, flags);
+            }
+        } else {
+            dest.writeInt(0);
+        }
         if (mDataAuthorities != null) {
             final int N = mDataAuthorities.size();
             dest.writeInt(N);
@@ -1376,13 +1813,14 @@ public class IntentFilter implements Parcelable {
             final int N = mDataPaths.size();
             dest.writeInt(N);
             for (int i=0; i<N; i++) {
-                mDataPaths.get(i).writeToParcel(dest, 0);
+                mDataPaths.get(i).writeToParcel(dest, flags);
             }
         } else {
             dest.writeInt(0);
         }
         dest.writeInt(mPriority);
         dest.writeInt(mHasPartialTypes ? 1 : 0);
+        dest.writeInt(getAutoVerify() ? 1 : 0);
     }
 
     /**
@@ -1428,20 +1866,28 @@ public class IntentFilter implements Parcelable {
         }
         int N = source.readInt();
         if (N > 0) {
-            mDataAuthorities = new ArrayList<AuthorityEntry>();
+            mDataSchemeSpecificParts = new ArrayList<PatternMatcher>(N);
+            for (int i=0; i<N; i++) {
+                mDataSchemeSpecificParts.add(new PatternMatcher(source));
+            }
+        }
+        N = source.readInt();
+        if (N > 0) {
+            mDataAuthorities = new ArrayList<AuthorityEntry>(N);
             for (int i=0; i<N; i++) {
                 mDataAuthorities.add(new AuthorityEntry(source));
             }
         }
         N = source.readInt();
         if (N > 0) {
-            mDataPaths = new ArrayList<PatternMatcher>();
+            mDataPaths = new ArrayList<PatternMatcher>(N);
             for (int i=0; i<N; i++) {
                 mDataPaths.add(new PatternMatcher(source));
             }
         }
         mPriority = source.readInt();
         mHasPartialTypes = source.readInt() > 0;
+        setAutoVerify(source.readInt() > 0);
     }
 
     private final boolean findMimeType(String type) {
@@ -1485,5 +1931,28 @@ public class IntentFilter implements Parcelable {
         }
 
         return false;
+    }
+
+    /**
+     * @hide
+     */
+    public ArrayList<String> getHostsList() {
+        ArrayList<String> result = new ArrayList<>();
+        Iterator<IntentFilter.AuthorityEntry> it = authoritiesIterator();
+        if (it != null) {
+            while (it.hasNext()) {
+                IntentFilter.AuthorityEntry entry = it.next();
+                result.add(entry.getHost());
+            }
+        }
+        return result;
+    }
+
+    /**
+     * @hide
+     */
+    public String[] getHosts() {
+        ArrayList<String> list = getHostsList();
+        return list.toArray(new String[list.size()]);
     }
 }

@@ -26,9 +26,7 @@ import static android.content.Intent.ACTION_UID_REMOVED;
 import static android.content.Intent.ACTION_USER_REMOVED;
 import static android.content.Intent.EXTRA_UID;
 import static android.net.ConnectivityManager.ACTION_TETHER_STATE_CHANGED;
-import static android.net.ConnectivityManager.CONNECTIVITY_ACTION_IMMEDIATE;
 import static android.net.ConnectivityManager.isNetworkTypeMobile;
-import static android.net.NetworkIdentity.COMBINE_SUBTYPE_ENABLED;
 import static android.net.NetworkStats.IFACE_ALL;
 import static android.net.NetworkStats.SET_ALL;
 import static android.net.NetworkStats.SET_DEFAULT;
@@ -45,7 +43,6 @@ import static android.provider.Settings.Global.NETSTATS_DEV_PERSIST_BYTES;
 import static android.provider.Settings.Global.NETSTATS_DEV_ROTATE_AGE;
 import static android.provider.Settings.Global.NETSTATS_GLOBAL_ALERT_BYTES;
 import static android.provider.Settings.Global.NETSTATS_POLL_INTERVAL;
-import static android.provider.Settings.Global.NETSTATS_REPORT_XT_OVER_DEV;
 import static android.provider.Settings.Global.NETSTATS_SAMPLE_ENABLED;
 import static android.provider.Settings.Global.NETSTATS_TIME_CACHE_MAX_AGE;
 import static android.provider.Settings.Global.NETSTATS_UID_BUCKET_DURATION;
@@ -56,14 +53,11 @@ import static android.provider.Settings.Global.NETSTATS_UID_TAG_BUCKET_DURATION;
 import static android.provider.Settings.Global.NETSTATS_UID_TAG_DELETE_AGE;
 import static android.provider.Settings.Global.NETSTATS_UID_TAG_PERSIST_BYTES;
 import static android.provider.Settings.Global.NETSTATS_UID_TAG_ROTATE_AGE;
-import static android.telephony.PhoneStateListener.LISTEN_DATA_CONNECTION_STATE;
-import static android.telephony.PhoneStateListener.LISTEN_NONE;
 import static android.text.format.DateUtils.DAY_IN_MILLIS;
 import static android.text.format.DateUtils.HOUR_IN_MILLIS;
 import static android.text.format.DateUtils.MINUTE_IN_MILLIS;
 import static android.text.format.DateUtils.SECOND_IN_MILLIS;
-import static com.android.internal.util.ArrayUtils.appendElement;
-import static com.android.internal.util.ArrayUtils.contains;
+import static com.android.internal.util.Preconditions.checkArgument;
 import static com.android.internal.util.Preconditions.checkNotNull;
 import static com.android.server.NetworkManagementService.LIMIT_GLOBAL_ALERT;
 import static com.android.server.NetworkManagementSocketTagger.resetKernelUidStats;
@@ -79,6 +73,7 @@ import android.content.Intent;
 import android.content.IntentFilter;
 import android.content.pm.ApplicationInfo;
 import android.content.pm.PackageManager;
+import android.net.DataUsageRequest;
 import android.net.IConnectivityManager;
 import android.net.INetworkManagementEventObserver;
 import android.net.INetworkStatsService;
@@ -97,16 +92,20 @@ import android.os.DropBoxManager;
 import android.os.Environment;
 import android.os.Handler;
 import android.os.HandlerThread;
+import android.os.IBinder;
 import android.os.INetworkManagementService;
 import android.os.Message;
+import android.os.Messenger;
 import android.os.PowerManager;
 import android.os.RemoteException;
 import android.os.SystemClock;
 import android.os.UserHandle;
 import android.provider.Settings;
 import android.provider.Settings.Global;
-import android.telephony.PhoneStateListener;
 import android.telephony.TelephonyManager;
+import android.text.format.DateUtils;
+import android.util.ArrayMap;
+import android.util.ArraySet;
 import android.util.EventLog;
 import android.util.Log;
 import android.util.MathUtils;
@@ -116,19 +115,18 @@ import android.util.SparseIntArray;
 import android.util.TrustedTime;
 
 import com.android.internal.annotations.VisibleForTesting;
+import com.android.internal.net.VpnInfo;
 import com.android.internal.util.ArrayUtils;
 import com.android.internal.util.FileRotator;
 import com.android.internal.util.IndentingPrintWriter;
 import com.android.server.EventLogTags;
 import com.android.server.connectivity.Tethering;
-import com.google.android.collect.Maps;
 
 import java.io.File;
 import java.io.FileDescriptor;
 import java.io.IOException;
 import java.io.PrintWriter;
 import java.util.Arrays;
-import java.util.HashMap;
 import java.util.HashSet;
 import java.util.List;
 
@@ -154,10 +152,11 @@ public class NetworkStatsService extends INetworkStatsService.Stub {
 
     private final Context mContext;
     private final INetworkManagementService mNetworkManager;
-    private final IAlarmManager mAlarmManager;
+    private final AlarmManager mAlarmManager;
     private final TrustedTime mTime;
     private final TelephonyManager mTeleManager;
     private final NetworkStatsSettings mSettings;
+    private final NetworkStatsObservers mStatsObservers;
 
     private final File mSystemDir;
     private final File mBaseDir;
@@ -186,7 +185,6 @@ public class NetworkStatsService extends INetworkStatsService.Stub {
         public long getPollInterval();
         public long getTimeCacheMaxAge();
         public boolean getSampleEnabled();
-        public boolean getReportXtOverDev();
 
         public static class Config {
             public final long bucketDuration;
@@ -215,7 +213,9 @@ public class NetworkStatsService extends INetworkStatsService.Stub {
     private final Object mStatsLock = new Object();
 
     /** Set of currently active ifaces. */
-    private HashMap<String, NetworkIdentitySet> mActiveIfaces = Maps.newHashMap();
+    private final ArrayMap<String, NetworkIdentitySet> mActiveIfaces = new ArrayMap<>();
+    /** Set of currently active ifaces for UID stats. */
+    private final ArrayMap<String, NetworkIdentitySet> mActiveUidIfaces = new ArrayMap<>();
     /** Current default active iface. */
     private String mActiveIface;
     /** Set of any ifaces associated with mobile networks since boot. */
@@ -229,8 +229,6 @@ public class NetworkStatsService extends INetworkStatsService.Stub {
     private NetworkStatsRecorder mUidRecorder;
     private NetworkStatsRecorder mUidTagRecorder;
 
-    /** Cached {@link #mDevRecorder} stats. */
-    private NetworkStatsCollection mDevStatsCached;
     /** Cached {@link #mXtRecorder} stats. */
     private NetworkStatsCollection mXtStatsCached;
 
@@ -240,44 +238,65 @@ public class NetworkStatsService extends INetworkStatsService.Stub {
     /** Data layer operation counters for splicing into other structures. */
     private NetworkStats mUidOperations = new NetworkStats(0L, 10);
 
-    private final HandlerThread mHandlerThread;
-    private final Handler mHandler;
+    /** Must be set in factory by calling #setHandler. */
+    private Handler mHandler;
+    private Handler.Callback mHandlerCallback;
 
     private boolean mSystemReady;
     private long mPersistThreshold = 2 * MB_IN_BYTES;
     private long mGlobalAlertBytes;
 
-    public NetworkStatsService(
-            Context context, INetworkManagementService networkManager, IAlarmManager alarmManager) {
-        this(context, networkManager, alarmManager, NtpTrustedTime.getInstance(context),
-                getDefaultSystemDir(), new DefaultNetworkStatsSettings(context));
-    }
-
     private static File getDefaultSystemDir() {
         return new File(Environment.getDataDirectory(), "system");
     }
 
-    public NetworkStatsService(Context context, INetworkManagementService networkManager,
-            IAlarmManager alarmManager, TrustedTime time, File systemDir,
-            NetworkStatsSettings settings) {
+    private static File getDefaultBaseDir() {
+        File baseDir = new File(getDefaultSystemDir(), "netstats");
+        baseDir.mkdirs();
+        return baseDir;
+    }
+
+    public static NetworkStatsService create(Context context,
+                INetworkManagementService networkManager) {
+        AlarmManager alarmManager = (AlarmManager) context.getSystemService(Context.ALARM_SERVICE);
+        PowerManager powerManager = (PowerManager) context.getSystemService(Context.POWER_SERVICE);
+        PowerManager.WakeLock wakeLock =
+                powerManager.newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, TAG);
+
+        NetworkStatsService service = new NetworkStatsService(context, networkManager, alarmManager,
+                wakeLock, NtpTrustedTime.getInstance(context), TelephonyManager.getDefault(),
+                new DefaultNetworkStatsSettings(context), new NetworkStatsObservers(),
+                getDefaultSystemDir(), getDefaultBaseDir());
+
+        HandlerThread handlerThread = new HandlerThread(TAG);
+        Handler.Callback callback = new HandlerCallback(service);
+        handlerThread.start();
+        Handler handler = new Handler(handlerThread.getLooper(), callback);
+        service.setHandler(handler, callback);
+        return service;
+    }
+
+    @VisibleForTesting
+    NetworkStatsService(Context context, INetworkManagementService networkManager,
+            AlarmManager alarmManager, PowerManager.WakeLock wakeLock, TrustedTime time,
+            TelephonyManager teleManager, NetworkStatsSettings settings,
+            NetworkStatsObservers statsObservers, File systemDir, File baseDir) {
         mContext = checkNotNull(context, "missing Context");
         mNetworkManager = checkNotNull(networkManager, "missing INetworkManagementService");
-        mAlarmManager = checkNotNull(alarmManager, "missing IAlarmManager");
+        mAlarmManager = checkNotNull(alarmManager, "missing AlarmManager");
         mTime = checkNotNull(time, "missing TrustedTime");
-        mTeleManager = checkNotNull(TelephonyManager.getDefault(), "missing TelephonyManager");
         mSettings = checkNotNull(settings, "missing NetworkStatsSettings");
+        mTeleManager = checkNotNull(teleManager, "missing TelephonyManager");
+        mWakeLock = checkNotNull(wakeLock, "missing WakeLock");
+        mStatsObservers = checkNotNull(statsObservers, "missing NetworkStatsObservers");
+        mSystemDir = checkNotNull(systemDir, "missing systemDir");
+        mBaseDir = checkNotNull(baseDir, "missing baseDir");
+    }
 
-        final PowerManager powerManager = (PowerManager) context.getSystemService(
-                Context.POWER_SERVICE);
-        mWakeLock = powerManager.newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, TAG);
-
-        mHandlerThread = new HandlerThread(TAG);
-        mHandlerThread.start();
-        mHandler = new Handler(mHandlerThread.getLooper(), mHandlerCallback);
-
-        mSystemDir = checkNotNull(systemDir);
-        mBaseDir = new File(systemDir, "netstats");
-        mBaseDir.mkdirs();
+    @VisibleForTesting
+    void setHandler(Handler handler, Handler.Callback callback) {
+        mHandler = handler;
+        mHandlerCallback = callback;
     }
 
     public void bindConnectivityManager(IConnectivityManager connManager) {
@@ -306,20 +325,15 @@ public class NetworkStatsService extends INetworkStatsService.Stub {
 
             // read historical network stats from disk, since policy service
             // might need them right away.
-            mDevStatsCached = mDevRecorder.getOrLoadCompleteLocked();
             mXtStatsCached = mXtRecorder.getOrLoadCompleteLocked();
 
             // bootstrap initial stats to prevent double-counting later
             bootstrapStatsLocked();
         }
 
-        // watch for network interfaces to be claimed
-        final IntentFilter connFilter = new IntentFilter(CONNECTIVITY_ACTION_IMMEDIATE);
-        mContext.registerReceiver(mConnReceiver, connFilter, CONNECTIVITY_INTERNAL, mHandler);
-
         // watch for tethering changes
         final IntentFilter tetherFilter = new IntentFilter(ACTION_TETHER_STATE_CHANGED);
-        mContext.registerReceiver(mTetherReceiver, tetherFilter, CONNECTIVITY_INTERNAL, mHandler);
+        mContext.registerReceiver(mTetherReceiver, tetherFilter, null, mHandler);
 
         // listen for periodic polling events
         final IntentFilter pollFilter = new IntentFilter(ACTION_NETWORK_STATS_POLL);
@@ -343,12 +357,6 @@ public class NetworkStatsService extends INetworkStatsService.Stub {
             // ignored; service lives in system_server
         }
 
-        // watch for networkType changes that aren't broadcast through
-        // CONNECTIVITY_ACTION_IMMEDIATE above.
-        if (!COMBINE_SUBTYPE_ENABLED) {
-            mTeleManager.listen(mPhoneListener, LISTEN_DATA_CONNECTION_STATE);
-        }
-
         registerPollAlarmLocked();
         registerGlobalAlert();
     }
@@ -363,15 +371,10 @@ public class NetworkStatsService extends INetworkStatsService.Stub {
     }
 
     private void shutdownLocked() {
-        mContext.unregisterReceiver(mConnReceiver);
         mContext.unregisterReceiver(mTetherReceiver);
         mContext.unregisterReceiver(mPollReceiver);
         mContext.unregisterReceiver(mRemovedReceiver);
         mContext.unregisterReceiver(mShutdownReceiver);
-
-        if (!COMBINE_SUBTYPE_ENABLED) {
-            mTeleManager.listen(mPhoneListener, LISTEN_NONE);
-        }
 
         final long currentTime = mTime.hasCache() ? mTime.currentTimeMillis()
                 : System.currentTimeMillis();
@@ -387,7 +390,6 @@ public class NetworkStatsService extends INetworkStatsService.Stub {
         mUidRecorder = null;
         mUidTagRecorder = null;
 
-        mDevStatsCached = null;
         mXtStatsCached = null;
 
         mSystemReady = false;
@@ -415,6 +417,8 @@ public class NetworkStatsService extends INetworkStatsService.Stub {
             }
         } catch (IOException e) {
             Log.wtf(TAG, "problem during legacy upgrade", e);
+        } catch (OutOfMemoryError e) {
+            Log.wtf(TAG, "problem during legacy upgrade", e);
         }
     }
 
@@ -423,20 +427,16 @@ public class NetworkStatsService extends INetworkStatsService.Stub {
      * reschedule based on current {@link NetworkStatsSettings#getPollInterval()}.
      */
     private void registerPollAlarmLocked() {
-        try {
-            if (mPollIntent != null) {
-                mAlarmManager.remove(mPollIntent);
-            }
-
-            mPollIntent = PendingIntent.getBroadcast(
-                    mContext, 0, new Intent(ACTION_NETWORK_STATS_POLL), 0);
-
-            final long currentRealtime = SystemClock.elapsedRealtime();
-            mAlarmManager.setInexactRepeating(AlarmManager.ELAPSED_REALTIME, currentRealtime,
-                    mSettings.getPollInterval(), mPollIntent);
-        } catch (RemoteException e) {
-            // ignored; service lives in system_server
+        if (mPollIntent != null) {
+            mAlarmManager.cancel(mPollIntent);
         }
+
+        mPollIntent = PendingIntent.getBroadcast(
+                mContext, 0, new Intent(ACTION_NETWORK_STATS_POLL), 0);
+
+        final long currentRealtime = SystemClock.elapsedRealtime();
+        mAlarmManager.setInexactRepeating(AlarmManager.ELAPSED_REALTIME, currentRealtime,
+                mSettings.getPollInterval(), mPollIntent);
     }
 
     /**
@@ -456,8 +456,25 @@ public class NetworkStatsService extends INetworkStatsService.Stub {
 
     @Override
     public INetworkStatsSession openSession() {
-        mContext.enforceCallingOrSelfPermission(READ_NETWORK_USAGE_HISTORY, TAG);
+        return createSession(null, /* poll on create */ false);
+    }
+
+    @Override
+    public INetworkStatsSession openSessionForUsageStats(final String callingPackage) {
+        return createSession(callingPackage, /* poll on create */ true);
+    }
+
+    private INetworkStatsSession createSession(final String callingPackage, boolean pollOnCreate) {
         assertBandwidthControlEnabled();
+
+        if (pollOnCreate) {
+            final long ident = Binder.clearCallingIdentity();
+            try {
+                performPoll(FLAG_PERSIST_ALL);
+            } finally {
+                Binder.restoreCallingIdentity(ident);
+            }
+        }
 
         // return an IBinder which holds strong references to any loaded stats
         // for its lifetime; when caller closes only weak references remain.
@@ -465,43 +482,76 @@ public class NetworkStatsService extends INetworkStatsService.Stub {
         return new INetworkStatsSession.Stub() {
             private NetworkStatsCollection mUidComplete;
             private NetworkStatsCollection mUidTagComplete;
+            private String mCallingPackage = callingPackage;
 
             private NetworkStatsCollection getUidComplete() {
-                if (mUidComplete == null) {
-                    synchronized (mStatsLock) {
+                synchronized (mStatsLock) {
+                    if (mUidComplete == null) {
                         mUidComplete = mUidRecorder.getOrLoadCompleteLocked();
                     }
+                    return mUidComplete;
                 }
-                return mUidComplete;
             }
 
             private NetworkStatsCollection getUidTagComplete() {
-                if (mUidTagComplete == null) {
-                    synchronized (mStatsLock) {
+                synchronized (mStatsLock) {
+                    if (mUidTagComplete == null) {
                         mUidTagComplete = mUidTagRecorder.getOrLoadCompleteLocked();
                     }
+                    return mUidTagComplete;
                 }
-                return mUidTagComplete;
+            }
+
+            @Override
+            public int[] getRelevantUids() {
+                return getUidComplete().getRelevantUids(checkAccessLevel(mCallingPackage));
+            }
+
+            @Override
+            public NetworkStats getDeviceSummaryForNetwork(NetworkTemplate template, long start,
+                    long end) {
+                @NetworkStatsAccess.Level int accessLevel = checkAccessLevel(mCallingPackage);
+                if (accessLevel < NetworkStatsAccess.Level.DEVICESUMMARY) {
+                    throw new SecurityException("Calling package " + mCallingPackage
+                            + " cannot access device summary network stats");
+                }
+                NetworkStats result = new NetworkStats(end - start, 1);
+                final long ident = Binder.clearCallingIdentity();
+                try {
+                    // Using access level higher than the one we checked for above.
+                    // Reason is that we are combining usage data in a way that is not PII
+                    // anymore.
+                    result.combineAllValues(
+                            internalGetSummaryForNetwork(template, start, end,
+                                    NetworkStatsAccess.Level.DEVICE));
+                } finally {
+                    Binder.restoreCallingIdentity(ident);
+                }
+                return result;
             }
 
             @Override
             public NetworkStats getSummaryForNetwork(
                     NetworkTemplate template, long start, long end) {
-                return internalGetSummaryForNetwork(template, start, end);
+                @NetworkStatsAccess.Level int accessLevel = checkAccessLevel(mCallingPackage);
+                return internalGetSummaryForNetwork(template, start, end, accessLevel);
             }
 
             @Override
             public NetworkStatsHistory getHistoryForNetwork(NetworkTemplate template, int fields) {
-                return internalGetHistoryForNetwork(template, fields);
+                @NetworkStatsAccess.Level int accessLevel = checkAccessLevel(mCallingPackage);
+                return internalGetHistoryForNetwork(template, fields, accessLevel);
             }
 
             @Override
             public NetworkStats getSummaryForAllUid(
                     NetworkTemplate template, long start, long end, boolean includeTags) {
-                final NetworkStats stats = getUidComplete().getSummary(template, start, end);
+                @NetworkStatsAccess.Level int accessLevel = checkAccessLevel(mCallingPackage);
+                final NetworkStats stats =
+                        getUidComplete().getSummary(template, start, end, accessLevel);
                 if (includeTags) {
                     final NetworkStats tagStats = getUidTagComplete()
-                            .getSummary(template, start, end);
+                            .getSummary(template, start, end, accessLevel);
                     stats.combineAllValues(tagStats);
                 }
                 return stats;
@@ -510,10 +560,30 @@ public class NetworkStatsService extends INetworkStatsService.Stub {
             @Override
             public NetworkStatsHistory getHistoryForUid(
                     NetworkTemplate template, int uid, int set, int tag, int fields) {
+                @NetworkStatsAccess.Level int accessLevel = checkAccessLevel(mCallingPackage);
                 if (tag == TAG_NONE) {
-                    return getUidComplete().getHistory(template, uid, set, tag, fields);
+                    return getUidComplete().getHistory(template, uid, set, tag, fields,
+                            accessLevel);
                 } else {
-                    return getUidTagComplete().getHistory(template, uid, set, tag, fields);
+                    return getUidTagComplete().getHistory(template, uid, set, tag, fields,
+                            accessLevel);
+                }
+            }
+
+            @Override
+            public NetworkStatsHistory getHistoryIntervalForUid(
+                    NetworkTemplate template, int uid, int set, int tag, int fields,
+                    long start, long end) {
+                @NetworkStatsAccess.Level int accessLevel = checkAccessLevel(mCallingPackage);
+                if (tag == TAG_NONE) {
+                    return getUidComplete().getHistory(template, uid, set, tag, fields, start, end,
+                            accessLevel);
+                } else if (uid == Binder.getCallingUid()) {
+                    return getUidTagComplete().getHistory(template, uid, set, tag, fields,
+                            start, end, accessLevel);
+                } else {
+                    throw new SecurityException("Calling package " + mCallingPackage
+                            + " cannot access tag information from a different uid");
                 }
             }
 
@@ -525,56 +595,42 @@ public class NetworkStatsService extends INetworkStatsService.Stub {
         };
     }
 
-    /**
-     * Return network summary, splicing between {@link #mDevStatsCached}
-     * and {@link #mXtStatsCached} when appropriate.
-     */
-    private NetworkStats internalGetSummaryForNetwork(
-            NetworkTemplate template, long start, long end) {
-        if (!mSettings.getReportXtOverDev()) {
-            // shortcut when XT reporting disabled
-            return mDevStatsCached.getSummary(template, start, end);
-        }
-
-        // splice stats between DEV and XT, switching over from DEV to XT at
-        // first atomic bucket.
-        final long firstAtomicBucket = mXtStatsCached.getFirstAtomicBucketMillis();
-        final NetworkStats dev = mDevStatsCached.getSummary(
-                template, Math.min(start, firstAtomicBucket), Math.min(end, firstAtomicBucket));
-        final NetworkStats xt = mXtStatsCached.getSummary(
-                template, Math.max(start, firstAtomicBucket), Math.max(end, firstAtomicBucket));
-
-        xt.combineAllValues(dev);
-        return xt;
+    private @NetworkStatsAccess.Level int checkAccessLevel(String callingPackage) {
+        return NetworkStatsAccess.checkAccessLevel(
+                mContext, Binder.getCallingUid(), callingPackage);
     }
 
     /**
-     * Return network history, splicing between {@link #mDevStatsCached}
-     * and {@link #mXtStatsCached} when appropriate.
+     * Return network summary, splicing between DEV and XT stats when
+     * appropriate.
      */
-    private NetworkStatsHistory internalGetHistoryForNetwork(NetworkTemplate template, int fields) {
-        if (!mSettings.getReportXtOverDev()) {
-            // shortcut when XT reporting disabled
-            return mDevStatsCached.getHistory(template, UID_ALL, SET_ALL, TAG_NONE, fields);
-        }
+    private NetworkStats internalGetSummaryForNetwork(
+            NetworkTemplate template, long start, long end,
+            @NetworkStatsAccess.Level int accessLevel) {
+        // We've been using pure XT stats long enough that we no longer need to
+        // splice DEV and XT together.
+        return mXtStatsCached.getSummary(template, start, end, accessLevel);
+    }
 
-        // splice stats between DEV and XT, switching over from DEV to XT at
-        // first atomic bucket.
-        final long firstAtomicBucket = mXtStatsCached.getFirstAtomicBucketMillis();
-        final NetworkStatsHistory dev = mDevStatsCached.getHistory(
-                template, UID_ALL, SET_ALL, TAG_NONE, fields, Long.MIN_VALUE, firstAtomicBucket);
-        final NetworkStatsHistory xt = mXtStatsCached.getHistory(
-                template, UID_ALL, SET_ALL, TAG_NONE, fields, firstAtomicBucket, Long.MAX_VALUE);
-
-        xt.recordEntireHistory(dev);
-        return xt;
+    /**
+     * Return network history, splicing between DEV and XT stats when
+     * appropriate.
+     */
+    private NetworkStatsHistory internalGetHistoryForNetwork(NetworkTemplate template, int fields,
+            @NetworkStatsAccess.Level int accessLevel) {
+        // We've been using pure XT stats long enough that we no longer need to
+        // splice DEV and XT together.
+        return mXtStatsCached.getHistory(template, UID_ALL, SET_ALL, TAG_NONE, fields, accessLevel);
     }
 
     @Override
     public long getNetworkTotalBytes(NetworkTemplate template, long start, long end) {
+        // Special case - since this is for internal use only, don't worry about a full access level
+        // check and just require the signature/privileged permission.
         mContext.enforceCallingOrSelfPermission(READ_NETWORK_USAGE_HISTORY, TAG);
         assertBandwidthControlEnabled();
-        return internalGetSummaryForNetwork(template, start, end).getTotalBytes();
+        return internalGetSummaryForNetwork(template, start, end, NetworkStatsAccess.Level.DEVICE)
+                .getTotalBytes();
     }
 
     @Override
@@ -652,6 +708,19 @@ public class NetworkStatsService extends INetworkStatsService.Stub {
     }
 
     @Override
+    public void forceUpdateIfaces() {
+        mContext.enforceCallingOrSelfPermission(READ_NETWORK_USAGE_HISTORY, TAG);
+        assertBandwidthControlEnabled();
+
+        final long token = Binder.clearCallingIdentity();
+        try {
+            updateIfaces();
+        } finally {
+            Binder.restoreCallingIdentity(token);
+        }
+    }
+
+    @Override
     public void forceUpdate() {
         mContext.enforceCallingOrSelfPermission(READ_NETWORK_USAGE_HISTORY, TAG);
         assertBandwidthControlEnabled();
@@ -694,6 +763,45 @@ public class NetworkStatsService extends INetworkStatsService.Stub {
         registerGlobalAlert();
     }
 
+    @Override
+    public DataUsageRequest registerUsageCallback(String callingPackage,
+                DataUsageRequest request, Messenger messenger, IBinder binder) {
+        checkNotNull(callingPackage, "calling package is null");
+        checkNotNull(request, "DataUsageRequest is null");
+        checkNotNull(request.template, "NetworkTemplate is null");
+        checkNotNull(messenger, "messenger is null");
+        checkNotNull(binder, "binder is null");
+
+        int callingUid = Binder.getCallingUid();
+        @NetworkStatsAccess.Level int accessLevel = checkAccessLevel(callingPackage);
+        DataUsageRequest normalizedRequest;
+        final long token = Binder.clearCallingIdentity();
+        try {
+            normalizedRequest = mStatsObservers.register(request, messenger, binder,
+                    callingUid, accessLevel);
+        } finally {
+            Binder.restoreCallingIdentity(token);
+        }
+
+        // Create baseline stats
+        mHandler.sendMessage(mHandler.obtainMessage(MSG_PERFORM_POLL, FLAG_PERSIST_ALL));
+
+        return normalizedRequest;
+   }
+
+    @Override
+    public void unregisterUsageRequest(DataUsageRequest request) {
+        checkNotNull(request, "DataUsageRequest is null");
+
+        int callingUid = Binder.getCallingUid();
+        final long token = Binder.clearCallingIdentity();
+        try {
+            mStatsObservers.unregister(request, callingUid);
+        } finally {
+            Binder.restoreCallingIdentity(token);
+        }
+    }
+
     /**
      * Update {@link NetworkStatsRecorder} and {@link #mGlobalAlertBytes} to
      * reflect current {@link #mPersistThreshold} value. Always defers to
@@ -706,20 +814,6 @@ public class NetworkStatsService extends INetworkStatsService.Stub {
         mUidTagRecorder.setPersistThreshold(mSettings.getUidTagPersistBytes(mPersistThreshold));
         mGlobalAlertBytes = mSettings.getGlobalAlertBytes(mPersistThreshold);
     }
-
-    /**
-     * Receiver that watches for {@link IConnectivityManager} to claim network
-     * interfaces. Used to associate {@link TelephonyManager#getSubscriberId()}
-     * with mobile interfaces.
-     */
-    private BroadcastReceiver mConnReceiver = new BroadcastReceiver() {
-        @Override
-        public void onReceive(Context context, Intent intent) {
-            // on background handler thread, and verified CONNECTIVITY_INTERNAL
-            // permission above.
-            updateIfaces();
-        }
-    };
 
     /**
      * Receiver that watches for {@link Tethering} to claim interface pairs.
@@ -816,35 +910,6 @@ public class NetworkStatsService extends INetworkStatsService.Stub {
         }
     };
 
-    private int mLastPhoneState = TelephonyManager.DATA_UNKNOWN;
-    private int mLastPhoneNetworkType = TelephonyManager.NETWORK_TYPE_UNKNOWN;
-
-    /**
-     * Receiver that watches for {@link TelephonyManager} changes, such as
-     * transitioning between network types.
-     */
-    private PhoneStateListener mPhoneListener = new PhoneStateListener() {
-        @Override
-        public void onDataConnectionStateChanged(int state, int networkType) {
-            final boolean stateChanged = state != mLastPhoneState;
-            final boolean networkTypeChanged = networkType != mLastPhoneNetworkType;
-
-            if (networkTypeChanged && !stateChanged) {
-                // networkType changed without a state change, which means we
-                // need to roll our own update. delay long enough for
-                // ConnectivityManager to process.
-                // TODO: add direct event to ConnectivityService instead of
-                // relying on this delay.
-                if (LOGV) Slog.v(TAG, "triggering delayed updateIfaces()");
-                mHandler.sendMessageDelayed(
-                        mHandler.obtainMessage(MSG_UPDATE_IFACES), SECOND_IN_MILLIS);
-            }
-
-            mLastPhoneState = state;
-            mLastPhoneNetworkType = networkType;
-        }
-    };
-
     private void updateIfaces() {
         synchronized (mStatsLock) {
             mWakeLock.acquire();
@@ -886,30 +951,81 @@ public class NetworkStatsService extends INetworkStatsService.Stub {
 
         mActiveIface = activeLink != null ? activeLink.getInterfaceName() : null;
 
-        // rebuild active interfaces based on connected networks
+        // Rebuild active interfaces based on connected networks
         mActiveIfaces.clear();
+        mActiveUidIfaces.clear();
 
+        final ArraySet<String> mobileIfaces = new ArraySet<>();
         for (NetworkState state : states) {
             if (state.networkInfo.isConnected()) {
-                // collect networks under their parent interfaces
-                final String iface = state.linkProperties.getInterfaceName();
+                final boolean isMobile = isNetworkTypeMobile(state.networkInfo.getType());
+                final NetworkIdentity ident = NetworkIdentity.buildNetworkIdentity(mContext, state);
 
-                NetworkIdentitySet ident = mActiveIfaces.get(iface);
-                if (ident == null) {
-                    ident = new NetworkIdentitySet();
-                    mActiveIfaces.put(iface, ident);
+                // Traffic occurring on the base interface is always counted for
+                // both total usage and UID details.
+                final String baseIface = state.linkProperties.getInterfaceName();
+                if (baseIface != null) {
+                    findOrCreateNetworkIdentitySet(mActiveIfaces, baseIface).add(ident);
+                    findOrCreateNetworkIdentitySet(mActiveUidIfaces, baseIface).add(ident);
+                    if (isMobile) {
+                        mobileIfaces.add(baseIface);
+                    }
                 }
 
-                ident.add(NetworkIdentity.buildNetworkIdentity(mContext, state));
-
-                // remember any ifaces associated with mobile networks
-                if (isNetworkTypeMobile(state.networkInfo.getType()) && iface != null) {
-                    if (!contains(mMobileIfaces, iface)) {
-                        mMobileIfaces = appendElement(String.class, mMobileIfaces, iface);
+                // Traffic occurring on stacked interfaces is usually clatd,
+                // which is already accounted against its final egress interface
+                // by the kernel. Thus, we only need to collect stacked
+                // interface stats at the UID level.
+                final List<LinkProperties> stackedLinks = state.linkProperties.getStackedLinks();
+                for (LinkProperties stackedLink : stackedLinks) {
+                    final String stackedIface = stackedLink.getInterfaceName();
+                    if (stackedIface != null) {
+                        findOrCreateNetworkIdentitySet(mActiveUidIfaces, stackedIface).add(ident);
+                        if (isMobile) {
+                            mobileIfaces.add(stackedIface);
+                        }
                     }
                 }
             }
         }
+
+        mMobileIfaces = mobileIfaces.toArray(new String[mobileIfaces.size()]);
+    }
+
+    private static <K> NetworkIdentitySet findOrCreateNetworkIdentitySet(
+            ArrayMap<K, NetworkIdentitySet> map, K key) {
+        NetworkIdentitySet ident = map.get(key);
+        if (ident == null) {
+            ident = new NetworkIdentitySet();
+            map.put(key, ident);
+        }
+        return ident;
+    }
+
+    private void recordSnapshotLocked(long currentTime) throws RemoteException {
+        // snapshot and record current counters; read UID stats first to
+        // avoid overcounting dev stats.
+        final NetworkStats uidSnapshot = getNetworkStatsUidDetail();
+        final NetworkStats xtSnapshot = mNetworkManager.getNetworkStatsSummaryXt();
+        final NetworkStats devSnapshot = mNetworkManager.getNetworkStatsSummaryDev();
+
+
+        // For xt/dev, we pass a null VPN array because usage is aggregated by UID, so VPN traffic
+        // can't be reattributed to responsible apps.
+        mDevRecorder.recordSnapshotLocked(
+                devSnapshot, mActiveIfaces, null /* vpnArray */, currentTime);
+        mXtRecorder.recordSnapshotLocked(
+                xtSnapshot, mActiveIfaces, null /* vpnArray */, currentTime);
+
+        // For per-UID stats, pass the VPN info so VPN traffic is reattributed to responsible apps.
+        VpnInfo[] vpnArray = mConnManager.getAllVpnInfo();
+        mUidRecorder.recordSnapshotLocked(uidSnapshot, mActiveUidIfaces, vpnArray, currentTime);
+        mUidTagRecorder.recordSnapshotLocked(uidSnapshot, mActiveUidIfaces, vpnArray, currentTime);
+
+        // We need to make copies of member fields that are sent to the observer to avoid
+        // a race condition between the service handler thread and the observer's
+        mStatsObservers.updateStats(xtSnapshot, uidSnapshot, new ArrayMap<>(mActiveIfaces),
+                new ArrayMap<>(mActiveUidIfaces), vpnArray, currentTime);
     }
 
     /**
@@ -921,17 +1037,7 @@ public class NetworkStatsService extends INetworkStatsService.Stub {
                 : System.currentTimeMillis();
 
         try {
-            // snapshot and record current counters; read UID stats first to
-            // avoid overcounting dev stats.
-            final NetworkStats uidSnapshot = getNetworkStatsUidDetail();
-            final NetworkStats xtSnapshot = mNetworkManager.getNetworkStatsSummaryXt();
-            final NetworkStats devSnapshot = mNetworkManager.getNetworkStatsSummaryDev();
-
-            mDevRecorder.recordSnapshotLocked(devSnapshot, mActiveIfaces, currentTime);
-            mXtRecorder.recordSnapshotLocked(xtSnapshot, mActiveIfaces, currentTime);
-            mUidRecorder.recordSnapshotLocked(uidSnapshot, mActiveIfaces, currentTime);
-            mUidTagRecorder.recordSnapshotLocked(uidSnapshot, mActiveIfaces, currentTime);
-
+            recordSnapshotLocked(currentTime);
         } catch (IllegalStateException e) {
             Slog.w(TAG, "problem reading network stats: " + e);
         } catch (RemoteException e) {
@@ -975,17 +1081,7 @@ public class NetworkStatsService extends INetworkStatsService.Stub {
                 : System.currentTimeMillis();
 
         try {
-            // snapshot and record current counters; read UID stats first to
-            // avoid overcounting dev stats.
-            final NetworkStats uidSnapshot = getNetworkStatsUidDetail();
-            final NetworkStats xtSnapshot = mNetworkManager.getNetworkStatsSummaryXt();
-            final NetworkStats devSnapshot = mNetworkManager.getNetworkStatsSummaryDev();
-
-            mDevRecorder.recordSnapshotLocked(devSnapshot, mActiveIfaces, currentTime);
-            mXtRecorder.recordSnapshotLocked(xtSnapshot, mActiveIfaces, currentTime);
-            mUidRecorder.recordSnapshotLocked(uidSnapshot, mActiveIfaces, currentTime);
-            mUidTagRecorder.recordSnapshotLocked(uidSnapshot, mActiveIfaces, currentTime);
-
+            recordSnapshotLocked(currentTime);
         } catch (IllegalStateException e) {
             Log.wtf(TAG, "problem reading network stats", e);
             return;
@@ -1102,12 +1198,20 @@ public class NetworkStatsService extends INetworkStatsService.Stub {
     }
 
     @Override
-    protected void dump(FileDescriptor fd, PrintWriter writer, String[] args) {
+    protected void dump(FileDescriptor fd, PrintWriter rawWriter, String[] args) {
         mContext.enforceCallingOrSelfPermission(DUMP, TAG);
 
+        long duration = DateUtils.DAY_IN_MILLIS;
         final HashSet<String> argSet = new HashSet<String>();
         for (String arg : args) {
             argSet.add(arg);
+
+            if (arg.startsWith("--duration=")) {
+                try {
+                    duration = Long.parseLong(arg.substring(11));
+                } catch (NumberFormatException ignored) {
+                }
+            }
         }
 
         // usage: dumpsys netstats --full --uid --tag --poll --checkin
@@ -1117,7 +1221,7 @@ public class NetworkStatsService extends INetworkStatsService.Stub {
         final boolean includeUid = argSet.contains("--uid") || argSet.contains("detail");
         final boolean includeTag = argSet.contains("--tag") || argSet.contains("detail");
 
-        final IndentingPrintWriter pw = new IndentingPrintWriter(writer, "  ");
+        final IndentingPrintWriter pw = new IndentingPrintWriter(rawWriter, "  ");
 
         synchronized (mStatsLock) {
             if (poll) {
@@ -1127,22 +1231,42 @@ public class NetworkStatsService extends INetworkStatsService.Stub {
             }
 
             if (checkin) {
-                // list current stats files to verify rotation
-                pw.println("Current files:");
-                pw.increaseIndent();
-                for (String file : mBaseDir.list()) {
-                    pw.println(file);
+                final long end = System.currentTimeMillis();
+                final long start = end - duration;
+
+                pw.print("v1,");
+                pw.print(start / SECOND_IN_MILLIS); pw.print(',');
+                pw.print(end / SECOND_IN_MILLIS); pw.println();
+
+                pw.println("xt");
+                mXtRecorder.dumpCheckin(rawWriter, start, end);
+
+                if (includeUid) {
+                    pw.println("uid");
+                    mUidRecorder.dumpCheckin(rawWriter, start, end);
                 }
-                pw.decreaseIndent();
+                if (includeTag) {
+                    pw.println("tag");
+                    mUidTagRecorder.dumpCheckin(rawWriter, start, end);
+                }
                 return;
             }
 
             pw.println("Active interfaces:");
             pw.increaseIndent();
-            for (String iface : mActiveIfaces.keySet()) {
-                final NetworkIdentitySet ident = mActiveIfaces.get(iface);
-                pw.print("iface="); pw.print(iface);
-                pw.print(" ident="); pw.println(ident.toString());
+            for (int i = 0; i < mActiveIfaces.size(); i++) {
+                pw.printPair("iface", mActiveIfaces.keyAt(i));
+                pw.printPair("ident", mActiveIfaces.valueAt(i));
+                pw.println();
+            }
+            pw.decreaseIndent();
+
+            pw.println("Active UID interfaces:");
+            pw.increaseIndent();
+            for (int i = 0; i < mActiveUidIfaces.size(); i++) {
+                pw.printPair("iface", mActiveUidIfaces.keyAt(i));
+                pw.printPair("ident", mActiveUidIfaces.valueAt(i));
+                pw.println();
             }
             pw.decreaseIndent();
 
@@ -1193,29 +1317,35 @@ public class NetworkStatsService extends INetworkStatsService.Stub {
      */
     private NetworkStats getNetworkStatsTethering() throws RemoteException {
         try {
-            final String[] tetheredIfacePairs = mConnManager.getTetheredIfacePairs();
-            return mNetworkManager.getNetworkStatsTethering(tetheredIfacePairs);
+            return mNetworkManager.getNetworkStatsTethering();
         } catch (IllegalStateException e) {
             Log.wtf(TAG, "problem reading network stats", e);
             return new NetworkStats(0L, 10);
         }
     }
 
-    private Handler.Callback mHandlerCallback = new Handler.Callback() {
+    @VisibleForTesting
+    static class HandlerCallback implements Handler.Callback {
+        private final NetworkStatsService mService;
+
+        HandlerCallback(NetworkStatsService service) {
+            this.mService = service;
+        }
+
         @Override
         public boolean handleMessage(Message msg) {
             switch (msg.what) {
                 case MSG_PERFORM_POLL: {
                     final int flags = msg.arg1;
-                    performPoll(flags);
+                    mService.performPoll(flags);
                     return true;
                 }
                 case MSG_UPDATE_IFACES: {
-                    updateIfaces();
+                    mService.updateIfaces();
                     return true;
                 }
                 case MSG_REGISTER_GLOBAL_ALERT: {
-                    registerGlobalAlert();
+                    mService.registerGlobalAlert();
                     return true;
                 }
                 default: {
@@ -1223,7 +1353,7 @@ public class NetworkStatsService extends INetworkStatsService.Stub {
                 }
             }
         }
-    };
+    }
 
     private void assertBandwidthControlEnabled() {
         if (!isBandwidthControlEnabled()) {
@@ -1297,10 +1427,6 @@ public class NetworkStatsService extends INetworkStatsService.Stub {
         @Override
         public boolean getSampleEnabled() {
             return getGlobalBoolean(NETSTATS_SAMPLE_ENABLED, true);
-        }
-        @Override
-        public boolean getReportXtOverDev() {
-            return getGlobalBoolean(NETSTATS_REPORT_XT_OVER_DEV, true);
         }
         @Override
         public Config getDevConfig() {

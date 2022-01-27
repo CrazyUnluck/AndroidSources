@@ -18,11 +18,11 @@ package android.media.audiofx;
 
 import android.annotation.SdkConstant;
 import android.annotation.SdkConstant.SdkConstantType;
+import android.app.ActivityThread;
 import android.os.Handler;
 import android.os.Looper;
 import android.os.Message;
 import android.util.Log;
-import java.io.IOException;
 import java.lang.ref.WeakReference;
 import java.nio.ByteOrder;
 import java.nio.ByteBuffer;
@@ -120,6 +120,12 @@ public class AudioEffect {
             .fromString("58b4b260-8e06-11e0-aa8e-0002a5d5c51b");
 
     /**
+     * UUID for Loudness Enhancer
+     */
+    public static final UUID EFFECT_TYPE_LOUDNESS_ENHANCER = UUID
+              .fromString("fe3199be-aed0-413f-87bb-11260eb63cf1");
+
+    /**
      * Null effect UUID. Used when the UUID for effect type of
      * @hide
      */
@@ -193,10 +199,14 @@ public class AudioEffect {
      * The effect descriptor contains information on a particular effect implemented in the
      * audio framework:<br>
      * <ul>
-     *  <li>type: UUID identifying the effect type</li>
+     *  <li>type: UUID identifying the effect type. May be one of:
+     * {@link AudioEffect#EFFECT_TYPE_AEC}, {@link AudioEffect#EFFECT_TYPE_AGC},
+     * {@link AudioEffect#EFFECT_TYPE_BASS_BOOST}, {@link AudioEffect#EFFECT_TYPE_ENV_REVERB},
+     * {@link AudioEffect#EFFECT_TYPE_EQUALIZER}, {@link AudioEffect#EFFECT_TYPE_NS},
+     * {@link AudioEffect#EFFECT_TYPE_PRESET_REVERB}, {@link AudioEffect#EFFECT_TYPE_VIRTUALIZER}.
+     *  </li>
      *  <li>uuid: UUID for this particular implementation</li>
-     *  <li>connectMode: {@link #EFFECT_INSERT}, {@link #EFFECT_AUXILIARY} or
-     *  {at_link #EFFECT_PRE_PROCESSING}</li>
+     *  <li>connectMode: {@link #EFFECT_INSERT} or {@link #EFFECT_AUXILIARY}</li>
      *  <li>name: human readable effect name</li>
      *  <li>implementor: human readable effect implementor name</li>
      * </ul>
@@ -208,6 +218,19 @@ public class AudioEffect {
         public Descriptor() {
         }
 
+        /**
+         * @param type          UUID identifying the effect type. May be one of:
+         * {@link AudioEffect#EFFECT_TYPE_AEC}, {@link AudioEffect#EFFECT_TYPE_AGC},
+         * {@link AudioEffect#EFFECT_TYPE_BASS_BOOST}, {@link AudioEffect#EFFECT_TYPE_ENV_REVERB},
+         * {@link AudioEffect#EFFECT_TYPE_EQUALIZER}, {@link AudioEffect#EFFECT_TYPE_NS},
+         * {@link AudioEffect#EFFECT_TYPE_PRESET_REVERB},
+         * {@link AudioEffect#EFFECT_TYPE_VIRTUALIZER}.
+         * @param uuid         UUID for this particular implementation
+         * @param connectMode  {@link #EFFECT_INSERT} or {@link #EFFECT_AUXILIARY}
+         * @param name         human readable effect name
+         * @param implementor  human readable effect implementor name
+        *
+        */
         public Descriptor(String type, String uuid, String connectMode,
                 String name, String implementor) {
             this.type = UUID.fromString(type);
@@ -234,13 +257,14 @@ public class AudioEffect {
          */
         public UUID uuid;
         /**
-         *  Indicates if the effect is of insert category {@link #EFFECT_INSERT}, auxiliary
-         *  category {@link #EFFECT_AUXILIARY} or pre processing category
-         *  {at_link #EFFECT_PRE_PROCESSING}. Insert effects (Typically an Equalizer) are applied
+         *  Indicates if the effect is of insert category {@link #EFFECT_INSERT} or auxiliary
+         *  category {@link #EFFECT_AUXILIARY}.
+         *  Insert effects (typically an {@link Equalizer}) are applied
          *  to the entire audio source and usually not shared by several sources. Auxiliary effects
          *  (typically a reverberator) are applied to part of the signal (wet) and the effect output
          *  is added to the original signal (dry).
-         *  Audio pre processing are applied to audio captured on a particular AudioRecord.
+         *  Audio pre processing are applied to audio captured on a particular
+         * {@link android.media.AudioRecord}.
          */
         public String connectMode;
         /**
@@ -291,8 +315,8 @@ public class AudioEffect {
     private int mId;
 
     // accessed by native methods
-    private int mNativeAudioEffect;
-    private int mJniData;
+    private long mNativeAudioEffect;
+    private long mJniData;
 
     /**
      * Effect descriptor
@@ -372,7 +396,7 @@ public class AudioEffect {
         // native initialization
         int initResult = native_setup(new WeakReference<AudioEffect>(this),
                 type.toString(), uuid.toString(), priority, audioSession, id,
-                desc);
+                desc, ActivityThread.currentOpPackageName());
         if (initResult != SUCCESS && initResult != ALREADY_EXISTS) {
             Log.e(TAG, "Error code " + initResult
                     + " when initializing AudioEffect.");
@@ -460,6 +484,10 @@ public class AudioEffect {
      */
     public static boolean isEffectTypeAvailable(UUID type) {
         AudioEffect.Descriptor[] desc = AudioEffect.queryEffects();
+        if (desc == null) {
+            return false;
+        }
+
         for (int i = 0; i < desc.length; i++) {
             if (desc[i].type.equals(type)) {
                 return true;
@@ -1190,7 +1218,8 @@ public class AudioEffect {
     private static native final void native_init();
 
     private native final int native_setup(Object audioeffect_this, String type,
-            String uuid, int priority, int audioSession, int[] id, Object[] desc);
+            String uuid, int priority, int audioSession, int[] id, Object[] desc,
+            String opPackageName);
 
     private native final void native_finalize();
 
@@ -1259,7 +1288,7 @@ public class AudioEffect {
     /**
      * @hide
      */
-    public int byteArrayToInt(byte[] valueBuf) {
+    public static int byteArrayToInt(byte[] valueBuf) {
         return byteArrayToInt(valueBuf, 0);
 
     }
@@ -1267,7 +1296,7 @@ public class AudioEffect {
     /**
      * @hide
      */
-    public int byteArrayToInt(byte[] valueBuf, int offset) {
+    public static int byteArrayToInt(byte[] valueBuf, int offset) {
         ByteBuffer converter = ByteBuffer.wrap(valueBuf);
         converter.order(ByteOrder.nativeOrder());
         return converter.getInt(offset);
@@ -1277,7 +1306,7 @@ public class AudioEffect {
     /**
      * @hide
      */
-    public byte[] intToByteArray(int value) {
+    public static byte[] intToByteArray(int value) {
         ByteBuffer converter = ByteBuffer.allocate(4);
         converter.order(ByteOrder.nativeOrder());
         converter.putInt(value);
@@ -1287,14 +1316,14 @@ public class AudioEffect {
     /**
      * @hide
      */
-    public short byteArrayToShort(byte[] valueBuf) {
+    public static short byteArrayToShort(byte[] valueBuf) {
         return byteArrayToShort(valueBuf, 0);
     }
 
     /**
      * @hide
      */
-    public short byteArrayToShort(byte[] valueBuf, int offset) {
+    public static short byteArrayToShort(byte[] valueBuf, int offset) {
         ByteBuffer converter = ByteBuffer.wrap(valueBuf);
         converter.order(ByteOrder.nativeOrder());
         return converter.getShort(offset);
@@ -1304,7 +1333,7 @@ public class AudioEffect {
     /**
      * @hide
      */
-    public byte[] shortToByteArray(short value) {
+    public static byte[] shortToByteArray(short value) {
         ByteBuffer converter = ByteBuffer.allocate(2);
         converter.order(ByteOrder.nativeOrder());
         short sValue = (short) value;
@@ -1315,7 +1344,7 @@ public class AudioEffect {
     /**
      * @hide
      */
-    public byte[] concatArrays(byte[]... arrays) {
+    public static byte[] concatArrays(byte[]... arrays) {
         int len = 0;
         for (byte[] a : arrays) {
             len += a.length;

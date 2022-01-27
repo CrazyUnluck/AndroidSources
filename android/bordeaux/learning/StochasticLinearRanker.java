@@ -159,35 +159,35 @@ public class StochasticLinearRanker {
         System.loadLibrary("bordeaux");
     }
 
-    private int mNativeClassifier;
+    private long mNativeClassifier;
 
     /*
      * The following methods are the java stubs for the jni implementations.
      */
-    private native int initNativeClassifier();
+    private native long initNativeClassifier();
 
-    private native void deleteNativeClassifier(int classifierPtr);
+    private native void deleteNativeClassifier(long classifierPtr);
 
     private native boolean nativeUpdateClassifier(
             String[] keys_positive,
             float[] values_positive,
             String[] keys_negative,
             float[] values_negative,
-            int classifierPtr);
+            long classifierPtr);
 
-    private native float nativeScoreSample(String[] keys, float[] values, int classifierPtr);
+    private native float nativeScoreSample(String[] keys, float[] values, long classifierPtr);
 
     private native void nativeGetWeightClassifier(String [] keys, float[] values, float normalizer,
-                                                  int classifierPtr);
+                                                  long classifierPtr);
 
     private native void nativeGetParameterClassifier(String [] keys, String[] values,
-                                                  int classifierPtr);
+                                                  long classifierPtr);
 
-    private native int nativeGetLengthClassifier(int classifierPtr);
+    private native int nativeGetLengthClassifier(long classifierPtr);
 
     private native boolean nativeSetWeightClassifier(String [] keys, float[] values,
-                                                     float normalizer, int classifierPtr);
+                                                     float normalizer, long classifierPtr);
 
     private native boolean nativeSetParameterClassifier(String key, String value,
-                                                        int classifierPtr);
+                                                        long classifierPtr);
 }

@@ -21,14 +21,14 @@ import android.os.Parcelable;
 import android.support.v4.app.Fragment;
 import android.support.v4.app.FragmentManager;
 import android.support.v4.app.FragmentTransaction;
+import android.support.v4.util.LruCache;
 import android.support.v4.view.PagerAdapter;
 import android.util.Log;
-import android.util.LruCache;
 import android.view.View;
 
 /**
- * NOTE: This is a direct copy of {@link FragmentPagerAdapter} with four very important
- * modifications.
+ * NOTE: This is a direct copy of {@link android.support.v4.app.FragmentPagerAdapter}
+ * with four very important modifications.
  * <p>
  * <ol>
  * <li>The method {@link #makeFragmentName(int, int)} is declared "protected"
@@ -138,7 +138,7 @@ public abstract class BaseFragmentPagerAdapter extends PagerAdapter {
 
     @Override
     public void finishUpdate(View container) {
-        if (mCurTransaction != null) {
+        if (mCurTransaction != null && !mFragmentManager.isDestroyed()) {
             mCurTransaction.commitAllowingStateLoss();
             mCurTransaction = null;
             mFragmentManager.executePendingTransactions();

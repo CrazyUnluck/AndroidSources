@@ -16,6 +16,9 @@
 
 package android.os;
 
+import android.annotation.MainThread;
+import android.annotation.WorkerThread;
+
 import java.util.ArrayDeque;
 import java.util.concurrent.BlockingQueue;
 import java.util.concurrent.Callable;
@@ -40,7 +43,7 @@ import java.util.concurrent.atomic.AtomicInteger;
  * and does not constitute a generic threading framework. AsyncTasks should ideally be
  * used for short operations (a few seconds at the most.) If you need to keep threads
  * running for long periods of time, it is highly recommended you use the various APIs
- * provided by the <code>java.util.concurrent</code> pacakge such as {@link Executor},
+ * provided by the <code>java.util.concurrent</code> package such as {@link Executor},
  * {@link ThreadPoolExecutor} and {@link FutureTask}.</p>
  *
  * <p>An asynchronous task is defined by a computation that runs on a background thread and
@@ -177,9 +180,13 @@ import java.util.concurrent.atomic.AtomicInteger;
 public abstract class AsyncTask<Params, Progress, Result> {
     private static final String LOG_TAG = "AsyncTask";
 
-    private static final int CORE_POOL_SIZE = 5;
-    private static final int MAXIMUM_POOL_SIZE = 128;
-    private static final int KEEP_ALIVE = 1;
+    private static final int CPU_COUNT = Runtime.getRuntime().availableProcessors();
+    // We want at least 2 threads and at most 4 threads in the core pool,
+    // preferring to have 1 less than the CPU count to avoid saturating
+    // the CPU with background work
+    private static final int CORE_POOL_SIZE = Math.max(2, Math.min(CPU_COUNT - 1, 4));
+    private static final int MAXIMUM_POOL_SIZE = CPU_COUNT * 2 + 1;
+    private static final int KEEP_ALIVE_SECONDS = 30;
 
     private static final ThreadFactory sThreadFactory = new ThreadFactory() {
         private final AtomicInteger mCount = new AtomicInteger(1);
@@ -190,14 +197,20 @@ public abstract class AsyncTask<Params, Progress, Result> {
     };
 
     private static final BlockingQueue<Runnable> sPoolWorkQueue =
-            new LinkedBlockingQueue<Runnable>(10);
+            new LinkedBlockingQueue<Runnable>(128);
 
     /**
      * An {@link Executor} that can be used to execute tasks in parallel.
      */
-    public static final Executor THREAD_POOL_EXECUTOR
-            = new ThreadPoolExecutor(CORE_POOL_SIZE, MAXIMUM_POOL_SIZE, KEEP_ALIVE,
-                    TimeUnit.SECONDS, sPoolWorkQueue, sThreadFactory);
+    public static final Executor THREAD_POOL_EXECUTOR;
+
+    static {
+        ThreadPoolExecutor threadPoolExecutor = new ThreadPoolExecutor(
+                CORE_POOL_SIZE, MAXIMUM_POOL_SIZE, KEEP_ALIVE_SECONDS, TimeUnit.SECONDS,
+                sPoolWorkQueue, sThreadFactory);
+        threadPoolExecutor.allowCoreThreadTimeOut(true);
+        THREAD_POOL_EXECUTOR = threadPoolExecutor;
+    }
 
     /**
      * An {@link Executor} that executes tasks one at a time in serial
@@ -208,9 +221,9 @@ public abstract class AsyncTask<Params, Progress, Result> {
     private static final int MESSAGE_POST_RESULT = 0x1;
     private static final int MESSAGE_POST_PROGRESS = 0x2;
 
-    private static final InternalHandler sHandler = new InternalHandler();
-
     private static volatile Executor sDefaultExecutor = SERIAL_EXECUTOR;
+    private static InternalHandler sHandler;
+
     private final WorkerRunnable<Params, Result> mWorker;
     private final FutureTask<Result> mFuture;
 
@@ -264,9 +277,13 @@ public abstract class AsyncTask<Params, Progress, Result> {
         FINISHED,
     }
 
-    /** @hide Used to force static handler to be created. */
-    public static void init() {
-        sHandler.getLooper();
+    private static Handler getHandler() {
+        synchronized (AsyncTask.class) {
+            if (sHandler == null) {
+                sHandler = new InternalHandler();
+            }
+            return sHandler;
+        }
     }
 
     /** @hide */
@@ -284,7 +301,9 @@ public abstract class AsyncTask<Params, Progress, Result> {
 
                 Process.setThreadPriority(Process.THREAD_PRIORITY_BACKGROUND);
                 //noinspection unchecked
-                return postResult(doInBackground(mParams));
+                Result result = doInBackground(mParams);
+                Binder.flushPendingCommands();
+                return postResult(result);
             }
         };
 
@@ -296,7 +315,7 @@ public abstract class AsyncTask<Params, Progress, Result> {
                 } catch (InterruptedException e) {
                     android.util.Log.w(LOG_TAG, e);
                 } catch (ExecutionException e) {
-                    throw new RuntimeException("An error occured while executing doInBackground()",
+                    throw new RuntimeException("An error occurred while executing doInBackground()",
                             e.getCause());
                 } catch (CancellationException e) {
                     postResultIfNotInvoked(null);
@@ -314,7 +333,7 @@ public abstract class AsyncTask<Params, Progress, Result> {
 
     private Result postResult(Result result) {
         @SuppressWarnings("unchecked")
-        Message message = sHandler.obtainMessage(MESSAGE_POST_RESULT,
+        Message message = getHandler().obtainMessage(MESSAGE_POST_RESULT,
                 new AsyncTaskResult<Result>(this, result));
         message.sendToTarget();
         return result;
@@ -345,6 +364,7 @@ public abstract class AsyncTask<Params, Progress, Result> {
      * @see #onPostExecute
      * @see #publishProgress
      */
+    @WorkerThread
     protected abstract Result doInBackground(Params... params);
 
     /**
@@ -353,6 +373,7 @@ public abstract class AsyncTask<Params, Progress, Result> {
      * @see #onPostExecute
      * @see #doInBackground
      */
+    @MainThread
     protected void onPreExecute() {
     }
 
@@ -369,6 +390,7 @@ public abstract class AsyncTask<Params, Progress, Result> {
      * @see #onCancelled(Object) 
      */
     @SuppressWarnings({"UnusedDeclaration"})
+    @MainThread
     protected void onPostExecute(Result result) {
     }
 
@@ -382,6 +404,7 @@ public abstract class AsyncTask<Params, Progress, Result> {
      * @see #doInBackground
      */
     @SuppressWarnings({"UnusedDeclaration"})
+    @MainThread
     protected void onProgressUpdate(Progress... values) {
     }
 
@@ -400,6 +423,7 @@ public abstract class AsyncTask<Params, Progress, Result> {
      * @see #isCancelled()
      */
     @SuppressWarnings({"UnusedParameters"})
+    @MainThread
     protected void onCancelled(Result result) {
         onCancelled();
     }    
@@ -416,6 +440,7 @@ public abstract class AsyncTask<Params, Progress, Result> {
      * @see #cancel(boolean)
      * @see #isCancelled()
      */
+    @MainThread
     protected void onCancelled() {
     }
 
@@ -530,6 +555,7 @@ public abstract class AsyncTask<Params, Progress, Result> {
      * @see #executeOnExecutor(java.util.concurrent.Executor, Object[])
      * @see #execute(Runnable)
      */
+    @MainThread
     public final AsyncTask<Params, Progress, Result> execute(Params... params) {
         return executeOnExecutor(sDefaultExecutor, params);
     }
@@ -567,6 +593,7 @@ public abstract class AsyncTask<Params, Progress, Result> {
      *
      * @see #execute(Object[])
      */
+    @MainThread
     public final AsyncTask<Params, Progress, Result> executeOnExecutor(Executor exec,
             Params... params) {
         if (mStatus != Status.PENDING) {
@@ -599,6 +626,7 @@ public abstract class AsyncTask<Params, Progress, Result> {
      * @see #execute(Object[])
      * @see #executeOnExecutor(java.util.concurrent.Executor, Object[])
      */
+    @MainThread
     public static void execute(Runnable runnable) {
         sDefaultExecutor.execute(runnable);
     }
@@ -609,7 +637,7 @@ public abstract class AsyncTask<Params, Progress, Result> {
      * still running. Each call to this method will trigger the execution of
      * {@link #onProgressUpdate} on the UI thread.
      *
-     * {@link #onProgressUpdate} will note be called if the task has been
+     * {@link #onProgressUpdate} will not be called if the task has been
      * canceled.
      *
      * @param values The progress values to update the UI with.
@@ -617,9 +645,10 @@ public abstract class AsyncTask<Params, Progress, Result> {
      * @see #onProgressUpdate
      * @see #doInBackground
      */
+    @WorkerThread
     protected final void publishProgress(Progress... values) {
         if (!isCancelled()) {
-            sHandler.obtainMessage(MESSAGE_POST_PROGRESS,
+            getHandler().obtainMessage(MESSAGE_POST_PROGRESS,
                     new AsyncTaskResult<Progress>(this, values)).sendToTarget();
         }
     }
@@ -634,10 +663,14 @@ public abstract class AsyncTask<Params, Progress, Result> {
     }
 
     private static class InternalHandler extends Handler {
+        public InternalHandler() {
+            super(Looper.getMainLooper());
+        }
+
         @SuppressWarnings({"unchecked", "RawUseOfParameterizedType"})
         @Override
         public void handleMessage(Message msg) {
-            AsyncTaskResult result = (AsyncTaskResult) msg.obj;
+            AsyncTaskResult<?> result = (AsyncTaskResult<?>) msg.obj;
             switch (msg.what) {
                 case MESSAGE_POST_RESULT:
                     // There is only one result

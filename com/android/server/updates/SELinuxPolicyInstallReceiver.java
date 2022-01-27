@@ -18,10 +18,9 @@ package com.android.server.updates;
 
 import android.content.Context;
 import android.content.Intent;
-import android.os.FileUtils;
-import android.os.SELinux;
 import android.os.SystemProperties;
-import android.provider.Settings;
+import android.system.ErrnoException;
+import android.system.Os;
 import android.util.Base64;
 import android.util.Slog;
 
@@ -30,42 +29,22 @@ import java.io.File;
 import java.io.FileInputStream;
 import java.io.IOException;
 
-import libcore.io.ErrnoException;
 import libcore.io.IoUtils;
-import libcore.io.Libcore;
 
 public class SELinuxPolicyInstallReceiver extends ConfigUpdateInstallReceiver {
 
     private static final String TAG = "SELinuxPolicyInstallReceiver";
 
     private static final String sepolicyPath = "sepolicy";
-    private static final String fileContextsPath = "file_contexts";
+    private static final String fileContextsPath = "file_contexts.bin";
     private static final String propertyContextsPath = "property_contexts";
     private static final String seappContextsPath = "seapp_contexts";
+    private static final String versionPath = "selinux_version";
+    private static final String macPermissionsPath = "mac_permissions.xml";
+    private static final String serviceContextsPath = "service_contexts";
 
     public SELinuxPolicyInstallReceiver() {
         super("/data/security/bundle", "sepolicy_bundle", "metadata/", "version");
-    }
-
-    private void backupContexts(File contexts) {
-        new File(contexts, seappContextsPath).renameTo(
-                new File(contexts, seappContextsPath + "_backup"));
-
-        new File(contexts, propertyContextsPath).renameTo(
-                new File(contexts, propertyContextsPath + "_backup"));
-
-        new File(contexts, fileContextsPath).renameTo(
-                new File(contexts, fileContextsPath + "_backup"));
-
-        new File(contexts, sepolicyPath).renameTo(
-                new File(contexts, sepolicyPath + "_backup"));
-    }
-
-    private void copyUpdate(File contexts) {
-        new File(updateDir, seappContextsPath).renameTo(new File(contexts, seappContextsPath));
-        new File(updateDir, propertyContextsPath).renameTo(new File(contexts, propertyContextsPath));
-        new File(updateDir, fileContextsPath).renameTo(new File(contexts, fileContextsPath));
-        new File(updateDir, sepolicyPath).renameTo(new File(contexts, sepolicyPath));
     }
 
     private int readInt(BufferedInputStream reader) throws IOException {
@@ -77,11 +56,14 @@ public class SELinuxPolicyInstallReceiver extends ConfigUpdateInstallReceiver {
     }
 
     private int[] readChunkLengths(BufferedInputStream bundle) throws IOException {
-        int[] chunks = new int[4];
+        int[] chunks = new int[7];
         chunks[0] = readInt(bundle);
         chunks[1] = readInt(bundle);
         chunks[2] = readInt(bundle);
         chunks[3] = readInt(bundle);
+        chunks[4] = readInt(bundle);
+        chunks[5] = readInt(bundle);
+        chunks[6] = readInt(bundle);
         return chunks;
     }
 
@@ -92,14 +74,27 @@ public class SELinuxPolicyInstallReceiver extends ConfigUpdateInstallReceiver {
         writeUpdate(updateDir, destination, Base64.decode(chunk, Base64.DEFAULT));
     }
 
+    private void deleteRecursive(File fileOrDirectory) {
+        if (fileOrDirectory.isDirectory())
+            for (File child : fileOrDirectory.listFiles())
+                deleteRecursive(child);
+        fileOrDirectory.delete();
+    }
+
     private void unpackBundle() throws IOException {
         BufferedInputStream stream = new BufferedInputStream(new FileInputStream(updateContent));
+        File tmp = new File(updateDir.getParentFile(), "tmp");
         try {
             int[] chunkLengths = readChunkLengths(stream);
-            installFile(new File(updateDir, seappContextsPath), stream, chunkLengths[0]);
-            installFile(new File(updateDir, propertyContextsPath), stream, chunkLengths[1]);
-            installFile(new File(updateDir, fileContextsPath), stream, chunkLengths[2]);
-            installFile(new File(updateDir, sepolicyPath), stream, chunkLengths[3]);
+            deleteRecursive(tmp);
+            tmp.mkdirs();
+            installFile(new File(tmp, versionPath), stream, chunkLengths[0]);
+            installFile(new File(tmp, macPermissionsPath), stream, chunkLengths[1]);
+            installFile(new File(tmp, seappContextsPath), stream, chunkLengths[2]);
+            installFile(new File(tmp, propertyContextsPath), stream, chunkLengths[3]);
+            installFile(new File(tmp, fileContextsPath), stream, chunkLengths[4]);
+            installFile(new File(tmp, sepolicyPath), stream, chunkLengths[5]);
+            installFile(new File(tmp, serviceContextsPath), stream, chunkLengths[6]);
         } finally {
             IoUtils.closeQuietly(stream);
         }
@@ -107,34 +102,21 @@ public class SELinuxPolicyInstallReceiver extends ConfigUpdateInstallReceiver {
 
     private void applyUpdate() throws IOException, ErrnoException {
         Slog.i(TAG, "Applying SELinux policy");
-        File contexts = new File(updateDir.getParentFile(), "contexts");
+        File backup = new File(updateDir.getParentFile(), "backup");
         File current = new File(updateDir.getParentFile(), "current");
-        File update = new File(updateDir.getParentFile(), "update");
         File tmp = new File(updateDir.getParentFile(), "tmp");
         if (current.exists()) {
-            Libcore.os.symlink(updateDir.getPath(), update.getPath());
-            Libcore.os.rename(update.getPath(), current.getPath());
-        } else {
-            Libcore.os.symlink(updateDir.getPath(), current.getPath());
+            deleteRecursive(backup);
+            Os.rename(current.getPath(), backup.getPath());
         }
-        contexts.mkdirs();
-        backupContexts(contexts);
-        copyUpdate(contexts);
-        Libcore.os.symlink(contexts.getPath(), tmp.getPath());
-        Libcore.os.rename(tmp.getPath(), current.getPath());
-        SystemProperties.set("selinux.reload_policy", "1");
-    }
-
-    private void setEnforcingMode(Context context) {
-        String mode = Settings.Global.getString(context.getContentResolver(),
-            Settings.Global.SELINUX_STATUS);
-        if ("1".equals(mode)) {
-            Slog.i(TAG, "Setting enforcing mode");
-            SystemProperties.set("persist.selinux.enforcing", mode);
-        } else if ("0".equals(mode)) {
-            Slog.i(TAG, "Tried to set permissive mode, ignoring");
-        } else {
-            Slog.e(TAG, "Got invalid enforcing mode: " + mode);
+        try {
+            Os.rename(tmp.getPath(), current.getPath());
+            SystemProperties.set("selinux.reload_policy", "1");
+        } catch (ErrnoException e) {
+            Slog.e(TAG, "Could not update selinux policy: ", e);
+            if (backup.exists()) {
+                Os.rename(backup.getPath(), current.getPath());
+            }
         }
     }
 
@@ -143,7 +125,6 @@ public class SELinuxPolicyInstallReceiver extends ConfigUpdateInstallReceiver {
         try {
             unpackBundle();
             applyUpdate();
-            setEnforcingMode(context);
         } catch (IllegalArgumentException e) {
             Slog.e(TAG, "SELinux policy update malformed: ", e);
         } catch (IOException e) {

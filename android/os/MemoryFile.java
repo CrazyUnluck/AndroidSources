@@ -43,19 +43,19 @@ public class MemoryFile
 
     private static native FileDescriptor native_open(String name, int length) throws IOException;
     // returns memory address for ashmem region
-    private static native int native_mmap(FileDescriptor fd, int length, int mode)
+    private static native long native_mmap(FileDescriptor fd, int length, int mode)
             throws IOException;
-    private static native void native_munmap(int addr, int length) throws IOException;
+    private static native void native_munmap(long addr, int length) throws IOException;
     private static native void native_close(FileDescriptor fd);
-    private static native int native_read(FileDescriptor fd, int address, byte[] buffer,
+    private static native int native_read(FileDescriptor fd, long address, byte[] buffer,
             int srcOffset, int destOffset, int count, boolean isUnpinned) throws IOException;
-    private static native void native_write(FileDescriptor fd, int address, byte[] buffer,
+    private static native void native_write(FileDescriptor fd, long address, byte[] buffer,
             int srcOffset, int destOffset, int count, boolean isUnpinned) throws IOException;
     private static native void native_pin(FileDescriptor fd, boolean pin) throws IOException;
     private static native int native_get_size(FileDescriptor fd) throws IOException;
 
     private FileDescriptor mFD;        // ashmem file descriptor
-    private int mAddress;   // address of ashmem memory
+    private long mAddress;   // address of ashmem memory
     private int mLength;    // total length of our ashmem region
     private boolean mAllowPurging = false;  // true if our ashmem region is unpinned
 
@@ -63,12 +63,17 @@ public class MemoryFile
      * Allocates a new ashmem region. The region is initially not purgable.
      *
      * @param name optional name for the file (can be null).
-     * @param length of the memory file in bytes.
+     * @param length of the memory file in bytes, must be non-negative.
      * @throws IOException if the memory file could not be created.
      */
     public MemoryFile(String name, int length) throws IOException {
         mLength = length;
-        mFD = native_open(name, length);
+        if (length >= 0) {
+            mFD = native_open(name, length);
+        } else {
+            throw new IOException("Invalid length: " + length);
+        }
+
         if (length > 0) {
             mAddress = native_mmap(mFD, length, PROT_READ | PROT_WRITE);
         } else {

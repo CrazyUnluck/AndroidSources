@@ -34,8 +34,9 @@ import android.net.Uri;
  * to as describing "types" or "kinds" of routes.
  * </p><p>
  * For example, if a route supports the {@link #CATEGORY_REMOTE_PLAYBACK remote playback category},
- * then an application can ask it to play media remotely by sending a {@link #ACTION_PLAY play}
- * intent with the Uri of the media content to play.  Such a route may then be referred to as
+ * then an application can ask it to play media remotely by sending a
+ * {@link #ACTION_PLAY play} or {@link #ACTION_ENQUEUE enqueue} intent with the Uri of the
+ * media content to play.  Such a route may then be referred to as
  * a "remote playback route" because it supports remote playback requests.  It is common
  * for a route to support multiple categories of requests at the same time, such as
  * live audio and live video.
@@ -77,8 +78,8 @@ import android.net.Uri;
  * or send broadcasts.  The difference is that media control intents are directed to
  * routes rather than activity or broadcast receiver components.
  * </p><p>
- * Each media route control intent specifies an action, a category and some number of parameters.
- * Applications send media control requests to routes using the
+ * Each media route control intent specifies an action, a category and some number of parameters
+ * that are supplied as extras.  Applications send media control requests to routes using the
  * {@link MediaRouter.RouteInfo#sendControlRequest MediaRouter.RouteInfo.sendControlRequest}
  * method and receive results via a callback.
  * </p><p>
@@ -104,72 +105,171 @@ import android.net.Uri;
  *
  * <h3>Remote playback routes</h3>
  * <p>
- * Remote playback routes present media remotely by playing content from a Uri.
+ * {@link #CATEGORY_REMOTE_PLAYBACK Remote playback} routes present media remotely
+ * by playing content from a Uri.
  * These routes destinations take responsibility for fetching and rendering content
  * on their own.  Applications do not render the content themselves; instead, applications
- * send control requests to initiate playback, pause, resume, or manipulate queues of
- * media items and receive status updates when the state of each item changes.
- * This allows applications to queue several items to play one after another and
- * provide feedback to the user as playback progresses.
+ * send control requests to initiate play, pause, resume, or stop media items and receive
+ * status updates as they change state.
  * </p>
  *
- * <h4>Actions</h4>
+ * <h4>Sessions</h4>
  * <p>
- * The following actions are defined:
- * </p><ul>
- * <li>{@link #ACTION_PLAY Play}: Starts playing or enqueues content specified by a given Uri
- * and returns a new media item id to describe the request.  Implicitly creates a new
- * queue of media items if none was specified.
- * <li>{@link #ACTION_CANCEL Cancel}: Cancels playback of a media item and removes it
- * from the queue of items to be played.
- * <li>{@link #ACTION_SEEK Seek}: Sets the content playback position of a media item.
- * <li>{@link #ACTION_GET_STATUS Get status}: Gets the status of a media item including
- * the item's current playback position and progress.
- * <li>{@link #ACTION_PAUSE_QUEUE Pause queue}: Pauses a queue of media items.
- * <li>{@link #ACTION_RESUME_QUEUE Resume queue}: Resumes a queue of media items.
- * <li>{@link #ACTION_CLEAR_QUEUE Clear queue}: Cancels and removes all items from a
- * media queue.
- * </ul>
+ * Each remote media playback action is conducted within the scope of a session.
+ * Sessions are used to prevent applications from accidentally interfering with one
+ * another because at most one session can be valid at a time.
+ * </p><p>
+ * A session can be created using the {@link #ACTION_START_SESSION start session action}
+ * and terminated using the {@link #ACTION_END_SESSION end session action} when the
+ * route provides explicit session management features.
+ * </p><p>
+ * Explicit session management was added in a later revision of the protocol so not
+ * all routes support it.  If the route does not support explicit session management
+ * then implicit session management may still be used.  Implicit session management
+ * relies on the use of the {@link #ACTION_PLAY play} and {@link #ACTION_ENQUEUE enqueue}
+ * actions which have the side-effect of creating a new session if none is provided
+ * as argument.
+ * </p><p>
+ * When a new session is created, the previous session is invalidated and any ongoing
+ * media playback is stopped before the requested action is performed.  Any attempt
+ * to use an invalidated session will result in an error.  (Protocol implementations
+ * are encouraged to aggressively discard information associated with invalidated sessions
+ * since it is no longer of use.)
+ * </p><p>
+ * Each session is identified by a unique session id that may be used to control
+ * the session using actions such as pause, resume, stop and end session.
+ * </p>
  *
  * <h4>Media items</h4>
  * <p>
- * Each successful {@link #ACTION_PLAY play action} returns a unique media item id that
- * an application can use to monitor and control playback.  The media item id may be passed
- * to other actions such as {@link #ACTION_CANCEL cancel}, {@link #ACTION_SEEK seek}
- * or {@link #ACTION_GET_STATUS get status}.  It will also appear as a parameter in
- * status update broadcasts to identify the associated playback request.
+ * Each successful {@link #ACTION_PLAY play} or {@link #ACTION_ENQUEUE enqueue} action
+ * returns a unique media item id that an application can use to monitor and control
+ * playback.  The media item id may be passed to other actions such as
+ * {@link #ACTION_SEEK seek} or {@link #ACTION_GET_STATUS get status}.  It will also appear
+ * as a parameter in status update broadcasts to identify the associated playback request.
+ * </p><p>
+ * Each media item is scoped to the session in which it was created.  Therefore media item
+ * ids are only ever used together with session ids.  Media item ids are meaningless
+ * on their own.  When the session is invalidated, all of its media items are also
+ * invalidated.
  * </p>
- * 
- * <h4>Queues</h4>
+ *
+ * <h4>The playback queue</h4>
  * <p>
- * Each successful {@link #ACTION_PLAY play action} has the effect of adding a new media
- * item to a queue of media items to be played.  Queues are created implicitly as part
- * of issuing playback requests and are identified by unique queue ids.
+ * Each session has its own playback queue that consists of the media items that
+ * are pending, playing, buffering or paused.  Items are added to the queue when
+ * a playback request is issued.  Items are removed from the queue when they are no
+ * longer eligible for playback (enter terminal states).
  * </p><p>
- * There is at most one valid queue in existence at any given time for a given route.
- * If an application sends a request that has the effect of creating a new queue then
- * the previously valid queue is cleared and all of its items are canceled before the
- * new queue is created.  In this way, one application can determine when another
- * application has taken control of a route because its own items will all be canceled
- * as soon as the other application begins playing something else.
+ * As described in the {@link MediaItemStatus} class, media items initially
+ * start in a pending state, transition to the playing (or buffering or paused) state
+ * during playback, and end in a finished, canceled, invalidated or error state.
+ * Once the current item enters a terminal state, playback proceeds on to the
+ * next item.
  * </p><p>
- * Queues are intended to hold a small number of items to help media routes optimize
- * the playback experience.  As each item in the queue completes playback, the next item
- * in the queue should begin playing immediately without delay.
+ * The application should determine whether the route supports queuing by checking
+ * whether the {@link #ACTION_ENQUEUE} action is declared in the route's control filter
+ * using {@link MediaRouter.RouteInfo#supportsControlRequest RouteInfo.supportsControlRequest}.
  * </p><p>
- * It is usually sufficient for an application to enqueue no more than a few items at a time
- * to ensure continuous playback.  Typically the application will start by enqueuing two
- * media items at once: one item to play now and one item to play next.  When the first
- * item finishes, the second item will begin playing immediately.  The application will
- * receive one status update broadcast indicating that the first item finished playing
- * and another status update broadcast indicating that the second item has started playing.
- * Upon receipt of such broadcasts, the application may choose to enqueue another media
- * item to play once the second one finishes.
+ * If the {@link #ACTION_ENQUEUE} action is supported by the route, then the route promises
+ * to allow at least two items (possibly more) to be enqueued at a time.  Enqueued items play
+ * back to back one after the other as the previous item completes.  Ideally there should
+ * be no audible pause between items for standard audio content types.
  * </p><p>
- * Media route providers are required to support queues of at least 3 items.
+ * If the {@link #ACTION_ENQUEUE} action is not supported by the route, then the queue
+ * effectively contains at most one item at a time.  Each play action has the effect of
+ * clearing the queue and resetting its state before the next item is played.
+ * </p>
+ *
+ * <h4>Impact of pause, resume, stop and play actions on the playback queue</h4>
+ * <p>
+ * The pause, resume and stop actions affect the session's whole queue.  Pause causes
+ * the playback queue to be suspended no matter which item is currently playing.
+ * Resume reverses the effects of pause.  Stop clears the queue and also resets
+ * the pause flag just like resume.
+ * </p><p>
+ * As described earlier, the play action has the effect of clearing the queue
+ * and completely resetting its state (like the stop action) then enqueuing a
+ * new media item to be played immediately.  Play is therefore equivalent
+ * to stop followed by an action to enqueue an item.
+ * </p><p>
+ * The play action is also special in that it can be used to create new sessions.
+ * An application with simple needs may find that it only needs to use play
+ * (and occasionally stop) to control playback.
+ * </p>
+ *
+ * <h4>Resolving conflicts between applications</h4>
+ * <p>
+ * When an application has a valid session, it is essentially in control of remote playback
+ * on the route.  No other application can view or modify the remote playback state
+ * of that applicaton's session without knowing its id.
+ * </p><p>
+ * However, other applications can perform actions that have the effect of stopping
+ * playback and invalidating the current session.  When this occurs, the former application
+ * will be informed that it has lost control by way of individual media item status
+ * update broadcasts that indicate that its queued media items have become
+ * {@link MediaItemStatus#PLAYBACK_STATE_INVALIDATED invalidated}.  This broadcast
+ * implies that playback was terminated abnormally by an external cause.
+ * </p><p>
+ * Applications should handle conflicts conservatively to allow other applications to
+ * smoothly assume control over the route.  When a conflict occurs, the currently playing
+ * application should release its session and allow the new application to use the
+ * route until such time as the user intervenes to take over the route again and begin
+ * a new playback session.
+ * </p>
+ *
+ * <h4>Basic actions</h4>
+ * <p>
+ * The following basic actions must be supported (all or nothing) by all remote
+ * playback routes.  These actions form the basis of the remote playback protocol
+ * and are required in all implementations.
+ * </p><ul>
+ * <li>{@link #ACTION_PLAY Play}: Starts playing content specified by a given Uri
+ * and returns a new media item id to describe the request.  Implicitly creates a new
+ * session if no session id was specified as a parameter.
+ * <li>{@link #ACTION_SEEK Seek}: Sets the content playback position of a specific media item.
+ * <li>{@link #ACTION_GET_STATUS Get status}: Gets the status of a media item
+ * including the item's current playback position and progress.
+ * <li>{@link #ACTION_PAUSE Pause}: Pauses playback of the queue.
+ * <li>{@link #ACTION_RESUME Resume}: Resumes playback of the queue.
+ * <li>{@link #ACTION_STOP Stop}: Stops playback, clears the queue, and resets the
+ * pause state.
+ * </ul>
+ *
+ * <h4>Queue actions</h4>
+ * <p>
+ * The following queue actions must be supported (all or nothing) by remote
+ * playback routes that offer optional queuing capabilities.
+ * </p><ul>
+ * <li>{@link #ACTION_ENQUEUE Enqueue}: Enqueues content specified by a given Uri
+ * and returns a new media item id to describe the request.  Implicitly creates a new
+ * session if no session id was specified as a parameter.
+ * <li>{@link #ACTION_REMOVE Remove}: Removes a specified media item from the queue.
+ * </ul>
+ *
+ * <h4>Session actions</h4>
+ * <p>
+ * The following session actions must be supported (all or nothing) by remote
+ * playback routes that offer optional session management capabilities.
+ * </p><ul>
+ * <li>{@link #ACTION_START_SESSION Start session}: Starts a new session explicitly.
+ * <li>{@link #ACTION_GET_SESSION_STATUS Get session status}: Gets the status of a session.
+ * <li>{@link #ACTION_END_SESSION End session}: Ends a session explicitly.
+ * </ul>
+ *
+ * <h4>Implementation note</h4>
+ * <p>
+ * Implementations of the remote playback protocol must implement <em>all</em> of the
+ * documented actions, parameters and results.  Note that the documentation is written from
+ * the perspective of a client of the protocol.  In particular, whenever a parameter
+ * is described as being "optional", it is only from the perspective of the client.
+ * Compliant media route provider implementations of this protocol must support all
+ * of the features described herein.
  * </p>
  */
 public final class MediaControlIntent {
+    /* Route categories. */
+
     /**
      * Media control category: Live audio.
      * <p>
@@ -179,6 +279,8 @@ public final class MediaControlIntent {
      * </p><p>
      * When a live audio route is selected, audio routing is transparent to the application.
      * All audio played on the media stream will be routed to the selected destination.
+     * </p><p>
+     * Refer to the class documentation for details about live audio routes.
      * </p>
      */
     public static final String CATEGORY_LIVE_AUDIO = "android.media.intent.category.LIVE_AUDIO";
@@ -196,6 +298,8 @@ public final class MediaControlIntent {
      * destination.  For certain live video routes, the application may also use a
      * {@link android.app.Presentation Presentation} to replace the mirrored view
      * on the external display with different content.
+     * </p><p>
+     * Refer to the class documentation for details about live video routes.
      * </p>
      *
      * @see MediaRouter.RouteInfo#getPresentationDisplay()
@@ -214,6 +318,8 @@ public final class MediaControlIntent {
      * playing on the destination by sending media control actions to the route.
      * The application may also receive status updates from the route regarding
      * remote playback.
+     * </p><p>
+     * Refer to the class documentation for details about remote playback routes.
      * </p>
      *
      * @see MediaRouter.RouteInfo#sendControlRequest
@@ -221,79 +327,96 @@ public final class MediaControlIntent {
     public static final String CATEGORY_REMOTE_PLAYBACK =
             "android.media.intent.category.REMOTE_PLAYBACK";
 
+    /* Remote playback actions that affect individual items. */
+
     /**
-     * Media control action: Play media item.
+     * Remote playback media control action: Play media item.
      * <p>
      * Used with routes that support {@link #CATEGORY_REMOTE_PLAYBACK remote playback}
      * media control.
      * </p><p>
      * This action causes a remote playback route to start playing content with
      * the {@link Uri} specified in the {@link Intent}'s {@link Intent#getData() data uri}.
-     * The action returns a media item id which can be used to control playback
-     * using other remote playback actions.
+     * The action returns a media session id and media item id which can be used
+     * to control playback using other remote playback actions.
      * </p><p>
-     * Once initiated, playback of the specified content will be queued and managed
-     * independently by the destination.  The application will receive status updates
-     * as the content is played.
+     * Once initiated, playback of the specified content will be managed independently
+     * by the destination.  The application will receive status updates as the state
+     * of the media item changes.
      * </p><p>
      * If the data uri specifies an HTTP or HTTPS scheme, then the destination is
      * responsible for following HTTP redirects to a reasonable depth of at least 3
      * levels as might typically be handled by a web browser.  If an HTTP error
      * occurs, then the destination should send a {@link MediaItemStatus status update}
      * back to the client indicating the {@link MediaItemStatus#PLAYBACK_STATE_ERROR error}
-     * {@link MediaItemStatus#getPlaybackState() playback state}
-     * and include the {@link MediaItemStatus#getHttpStatusCode() HTTP status code}.
+     * {@link MediaItemStatus#getPlaybackState() playback state}.
      * </p>
      *
-     * <h3>Queuing</h3>
+     * <h3>One item at a time</h3>
      * <p>
-     * This request has the effect of implicitly creating a media queue whenever the
-     * application does not specify the {@link #EXTRA_QUEUE_ID} parameter.  Because there
-     * can only be one valid queue at a time, creating a new queue has the side-effect
-     * of invalidating any existing queues and canceling all of their items before
-     * enqueuing the new playback request media item onto the newly created queue.
+     * Each successful play action <em>replaces</em> the previous play action.
+     * If an item is already playing, then it is canceled, the session's playback queue
+     * is cleared and the new item begins playing immediately (regardless of
+     * whether the previously playing item had been paused).
      * </p><p>
-     * If the application specifies an invalid queue id, then the request has no effect
-     * and an error is returned.  The application may then ask that a new queue be
-     * created (and the current one invalidated) by issuing a new playback request without
-     * a queue id parameter.  However, it should only do this at the user's request
-     * (say, by the user explicitly clicking a play button) since another application may
-     * be trying to take control of the route.
+     * Play is therefore equivalent to {@link #ACTION_STOP stop} followed by an action
+     * to enqueue a new media item to be played immediately.
+     * </p>
+     *
+     * <h3>Sessions</h3>
+     * <p>
+     * This request has the effect of implicitly creating a media session whenever the
+     * application does not specify the {@link #EXTRA_SESSION_ID session id} parameter.
+     * Because there can only be at most one valid session at a time, creating a new session
+     * has the side-effect of invalidating any existing sessions and their media items,
+     * then handling the playback request with a new session.
      * </p><p>
-     * For more information on queuing, please refer to the class documentation.
+     * If the application specifies an invalid session id, then an error is returned.
+     * When this happens, the application should assume that its session
+     * is no longer valid.  To obtain a new session, the application may try again
+     * and omit the session id parameter.  However, the application should
+     * only retry requests due to an explicit action performed by the user,
+     * such as the user clicking on a "play" button in the UI, since another
+     * application may be trying to take control of the route and the former
+     * application should try to stay out of its way.
+     * </p><p>
+     * For more information on sessions, queues and media items, please refer to the
+     * class documentation.
      * </p>
      *
      * <h3>Request parameters</h3>
      * <ul>
-     * <li>{@link #EXTRA_QUEUE_ID} <i>(optional)</i>: specifies the queue id of the queue
-     * to which the new playback request should be appended.  If omitted, a new queue
-     * is created.
-     * <li>{@link #EXTRA_ITEM_CONTENT_POSITION} <i>(optional)</i>: specifies the initial
+     * <li>{@link #EXTRA_SESSION_ID} <em>(optional)</em>: Specifies the session id of the
+     * session to which the playback request belongs.  If omitted, a new session
+     * is created implicitly.
+     * <li>{@link #EXTRA_ITEM_CONTENT_POSITION} <em>(optional)</em>: Specifies the initial
      * content playback position as a long integer number of milliseconds from
      * the beginning of the content.
-     * <li>{@link #EXTRA_ITEM_METADATA} <i>(optional)</i>: specifies metadata associated
+     * <li>{@link #EXTRA_ITEM_METADATA} <em>(optional)</em>: Specifies metadata associated
      * with the content such as the title of a song.
-     * <li>{@link #EXTRA_ITEM_HTTP_HEADERS} <i>(optional)</i>: specifies HTTP headers to
-     * supply to the server when fetching the content.
-     * <li>{@link #EXTRA_ITEM_STATUS_UPDATE_RECEIVER} <i>(optional)</i>: specifies a
+     * <li>{@link #EXTRA_ITEM_STATUS_UPDATE_RECEIVER} <em>(optional)</em>: Specifies a
      * {@link PendingIntent} for a broadcast receiver that will receive status updates
      * about the media item.
      * </ul>
      *
      * <h3>Result data</h3>
      * <ul>
-     * <li>{@link #EXTRA_QUEUE_ID} <i>(required)</i>: specifies the queue id of the queue
-     * to which the new media item was appended.  This will be a new queue in
-     * the case where no queue id was supplied as a parameter.
-     * <li>{@link #EXTRA_ITEM_ID} <i>(required)</i>: specifies an opaque string identifier
-     * to use to refer to the media item in subsequent requests such as {@link #ACTION_CANCEL}.
-     * <li>{@link #EXTRA_ITEM_STATUS} <i>(required)</i>: specifies the initial status of
-     * the item that has been enqueued.
+     * <li>{@link #EXTRA_SESSION_ID} <em>(always returned)</em>: Specifies the session id of the
+     * session that was affected by the request.  This will be a new session in
+     * the case where no session id was supplied as a parameter.
+     * <li>{@link #EXTRA_SESSION_STATUS} <em>(optional, old implementations may
+     * omit this key)</em>: Specifies the status of the media session.
+     * <li>{@link #EXTRA_ITEM_ID} <em>(always returned)</em>: Specifies an opaque string identifier
+     * to use to refer to the media item in subsequent requests such as
+     * {@link #ACTION_GET_STATUS}.
+     * <li>{@link #EXTRA_ITEM_STATUS} <em>(always returned)</em>: Specifies the initial status of
+     * the new media item.
      * </ul>
      *
      * <h3>Status updates</h3>
      * <p>
-     * If the client supplies a {@link #EXTRA_ITEM_STATUS_UPDATE_RECEIVER status update receiver}
+     * If the client supplies an
+     * {@link #EXTRA_ITEM_STATUS_UPDATE_RECEIVER item status update receiver}
      * then the media route provider is responsible for sending status updates to the receiver
      * when significant media item state changes occur such as when playback starts or
      * stops.  The receiver will not be invoked for content playback position changes.
@@ -302,6 +425,15 @@ public final class MediaControlIntent {
      * </p><p>
      * Refer to {@link MediaItemStatus} for details.
      * </p>
+     *
+     * <h3>Errors</h3>
+     * <p>
+     * This action returns an error if a session id was provided but is unknown or
+     * no longer valid, if the item Uri or content type is not supported, or if
+     * any other arguments are invalid.
+     * </p><ul>
+     * <li>{@link #EXTRA_ERROR_CODE} <em>(optional)</em>: Specifies the cause of the error.
+     * </ul>
      *
      * <h3>Example</h3>
      * <pre>
@@ -314,8 +446,8 @@ public final class MediaControlIntent {
      *     MediaRouter.ControlRequestCallback callback = new MediaRouter.ControlRequestCallback() {
      *         public void onResult(Bundle data) {
      *             // The request succeeded.
-     *             // Playback may be controlled using the returned queue and item id.
-     *             String queueId = data.getString(MediaControlIntent.EXTRA_QUEUE_ID);
+     *             // Playback may be controlled using the returned session and item id.
+     *             String sessionId = data.getString(MediaControlIntent.EXTRA_SESSION_ID);
      *             String itemId = data.getString(MediaControlIntent.EXTRA_ITEM_ID);
      *             MediaItemStatus status = MediaItemStatus.fromBundle(data.getBundle(
      *                     MediaControlIntent.EXTRA_ITEM_STATUS));
@@ -331,81 +463,83 @@ public final class MediaControlIntent {
      *
      * @see MediaRouter.RouteInfo#sendControlRequest
      * @see #CATEGORY_REMOTE_PLAYBACK
-     * @see #ACTION_CANCEL
      * @see #ACTION_SEEK
      * @see #ACTION_GET_STATUS
+     * @see #ACTION_PAUSE
+     * @see #ACTION_RESUME
+     * @see #ACTION_STOP
      */
     public static final String ACTION_PLAY = "android.media.intent.action.PLAY";
 
     /**
-     * Media control action: Cancel media item playback.
+     * Remote playback media control action: Enqueue media item.
      * <p>
      * Used with routes that support {@link #CATEGORY_REMOTE_PLAYBACK remote playback}
      * media control.
      * </p><p>
-     * This action causes a remote playback route to cancel playback of the
-     * specified media item and remove it from the queue.
+     * This action works just like {@link #ACTION_PLAY play} except that it does
+     * not clear the queue or reset the pause state when it enqueues the
+     * new media item into the session's playback queue.  This action only
+     * enqueues a media item with no other side-effects on the queue.
      * </p><p>
-     * This action has no effect if the media item's status is
-     * {@link MediaItemStatus#PLAYBACK_STATE_CANCELED} or
-     * {@link MediaItemStatus#PLAYBACK_STATE_ERROR}.
-     * Otherwise the media item's status is set to
-     * {@link MediaItemStatus#PLAYBACK_STATE_CANCELED}, playback of this media item is
-     * stopped if it had been playing and the item is removed from the queue (skipped).
+     * If the queue is currently empty and then the item will play immediately
+     * (assuming the queue is not paused).  Otherwise, the item will play
+     * after all earlier items in the queue have finished or been removed.
      * </p><p>
-     * A status update is sent to the status update receiver indicating the new status
-     * of the item.
+     * The enqueue action can be used to create new sessions just like play.
+     * Its parameters and results are also the same.  Only the queuing behavior
+     * is different.
      * </p>
      *
-     * <h3>Request parameters</h3>
-     * <ul>
-     * <li>{@link #EXTRA_QUEUE_ID} <i>(required)</i>: specifies the queue id of the queue
-     * to which the media item belongs.
-     * <li>{@link #EXTRA_ITEM_ID} (required): specifies the media item id of media item
-     * to cancel.
-     * </ul>
-     *
-     * <h3>Result data</h3>
-     * <ul>
-     * <li>{@link #EXTRA_ITEM_STATUS} <i>(required)</i>: specifies the new status of the item.
-     * </ul>
-     *
-     * @see MediaRouter.RouteInfo#sendControlRequest
-     * @see #CATEGORY_REMOTE_PLAYBACK
+     * @see #ACTION_PLAY
      */
-    public static final String ACTION_CANCEL = "android.media.intent.action.CANCEL";
+    public static final String ACTION_ENQUEUE = "android.media.intent.action.ENQUEUE";
 
     /**
-     * Media control action: Seek media item to a new playback position.
+     * Remote playback media control action: Seek media item to a new playback position.
      * <p>
      * Used with routes that support {@link #CATEGORY_REMOTE_PLAYBACK remote playback}
      * media control.
      * </p><p>
-     * This action causes a remote playback route to modify the current playback
-     * position of the specified media item.
+     * This action causes a remote playback route to modify the current playback position
+     * of the specified media item.
      * </p><p>
      * This action only affects the playback position of the media item; not its playback state.
-     * If the item is paused, then seeking sets the position but the item remains paused.
-     * Likewise if the item is playing, then seeking will cause playback to jump to the
-     * new position and continue playing from that point.  If the item has not yet started
-     * playing, then the new playback position is be remembered and used as the item's
-     * initial content position when playback eventually begins.
+     * If the playback queue is paused, then seeking sets the position but the item
+     * remains paused.  Likewise if the item is playing, then seeking will cause playback
+     * to jump to the new position and continue playing from that point.  If the item has
+     * not yet started playing, then the new playback position is remembered by the
+     * queue and used as the item's initial content position when playback eventually begins.
+     * </p><p>
+     * If successful, the media item's playback position is changed.
      * </p>
      *
      * <h3>Request parameters</h3>
      * <ul>
-     * <li>{@link #EXTRA_QUEUE_ID} <i>(required)</i>: specifies the queue id of the queue
+     * <li>{@link #EXTRA_SESSION_ID} <em>(required)</em>: Specifies the session id of the session
      * to which the media item belongs.
-     * <li>{@link #EXTRA_ITEM_ID} <i>(required)</i>: specifies the media item id of
+     * <li>{@link #EXTRA_ITEM_ID} <em>(required)</em>: Specifies the media item id of
      * the media item to seek.
-     * <li>{@link #EXTRA_ITEM_CONTENT_POSITION} <i>(required)</i>: specifies the new
+     * <li>{@link #EXTRA_ITEM_CONTENT_POSITION} <em>(required)</em>: Specifies the new
      * content position for playback as a long integer number of milliseconds from
      * the beginning of the content.
      * </ul>
      *
      * <h3>Result data</h3>
      * <ul>
-     * <li>{@link #EXTRA_ITEM_STATUS} <i>(required)</i>: specifies the new status of the item.
+     * <li>{@link #EXTRA_SESSION_STATUS} <em>(optional, old implementations may
+     * omit this key)</em>: Specifies the status of the media session.
+     * <li>{@link #EXTRA_ITEM_STATUS} <em>(always returned)</em>: Specifies the new status of
+     * the media item.
+     * </ul>
+     *
+     * <h3>Errors</h3>
+     * <p>
+     * This action returns an error if the session id or media item id are unknown
+     * or no longer valid, if the content position is invalid, or if the media item
+     * is in a terminal state.
+     * </p><ul>
+     * <li>{@link #EXTRA_ERROR_CODE} <em>(optional)</em>: Specifies the cause of the error.
      * </ul>
      *
      * @see MediaRouter.RouteInfo#sendControlRequest
@@ -414,7 +548,8 @@ public final class MediaControlIntent {
     public static final String ACTION_SEEK = "android.media.intent.action.SEEK";
 
     /**
-     * Media control action: Get media item playback status and progress information.
+     * Remote playback media control action: Get media item playback status
+     * and progress information.
      * <p>
      * Used with routes that support {@link #CATEGORY_REMOTE_PLAYBACK remote playback}
      * media control.
@@ -425,15 +560,26 @@ public final class MediaControlIntent {
      *
      * <h3>Request parameters</h3>
      * <ul>
-     * <li>{@link #EXTRA_QUEUE_ID} <i>(required)</i>: specifies the queue id of the queue
+     * <li>{@link #EXTRA_SESSION_ID} <em>(required)</em>: Specifies the session id of the session
      * to which the media item belongs.
-     * <li>{@link #EXTRA_ITEM_ID} <i>(required)</i>: specifies the media item id of
+     * <li>{@link #EXTRA_ITEM_ID} <em>(required)</em>: Specifies the media item id of
      * the media item to query.
      * </ul>
      *
      * <h3>Result data</h3>
      * <ul>
-     * <li>{@link #EXTRA_ITEM_STATUS} <i>(required)</i>: specifies the current status of the item.
+     * <li>{@link #EXTRA_SESSION_STATUS} <em>(optional, old implementations may
+     * omit this key)</em>: Specifies the status of the media session.
+     * <li>{@link #EXTRA_ITEM_STATUS} <em>(always returned)</em>: Specifies the current status of
+     * the media item.
+     * </ul>
+     *
+     * <h3>Errors</h3>
+     * <p>
+     * This action returns an error if the session id or media item id are unknown
+     * or no longer valid.
+     * </p><ul>
+     * <li>{@link #EXTRA_ERROR_CODE} <em>(optional)</em>: Specifies the cause of the error.
      * </ul>
      *
      * @see MediaRouter.RouteInfo#sendControlRequest
@@ -443,118 +589,453 @@ public final class MediaControlIntent {
     public static final String ACTION_GET_STATUS = "android.media.intent.action.GET_STATUS";
 
     /**
-     * Media control action: Pause media queue playback.
+     * Remote playback media control action: Remove media item from session's queue.
      * <p>
      * Used with routes that support {@link #CATEGORY_REMOTE_PLAYBACK remote playback}
      * media control.
      * </p><p>
-     * This action causes playback on the specified media queue to be paused.
-     * </p>
-     *
-     * <h3>Request parameters</h3>
-     * <ul>
-     * <li>{@link #EXTRA_QUEUE_ID} <i>(required)</i>: specifies the queue id of the queue
-     * to be paused.
-     * </ul>
-     *
-     * <h3>Result data</h3>
-     * <ul>
-     * <li><i>None</i>
-     * </ul>
-     *
-     * @see MediaRouter.RouteInfo#sendControlRequest
-     * @see #CATEGORY_REMOTE_PLAYBACK
-     * @see #ACTION_RESUME_QUEUE
-     */
-    public static final String ACTION_PAUSE_QUEUE = "android.media.intent.action.PAUSE_QUEUE";
-
-    /**
-     * Media control action: Resume media queue playback (unpause).
-     * <p>
-     * Used with routes that support {@link #CATEGORY_REMOTE_PLAYBACK remote playback}
-     * media control.
+     * This action asks a remote playback route to remove the specified media item
+     * from the session's playback queue.  If the current item is removed, then
+     * playback will proceed to the next media item (assuming the queue has not been
+     * paused).
      * </p><p>
-     * This action causes playback on the specified media queue to be resumed.
-     * Reverses the effects of {@link #ACTION_PAUSE_QUEUE}.
+     * This action does not affect the pause state of the queue.  If the queue was paused
+     * then it remains paused (even if it is now empty) until a resume, stop or play
+     * action is issued that causes the pause state to be cleared.
      * </p>
      *
      * <h3>Request parameters</h3>
      * <ul>
-     * <li>{@link #EXTRA_QUEUE_ID} <i>(required)</i>: specifies the queue id of the queue
-     * to be resumed.
+     * <li>{@link #EXTRA_SESSION_ID} <em>(required)</em>: Specifies the session id of the session
+     * to which the media item belongs.
+     * <li>{@link #EXTRA_ITEM_ID} <em>(required)</em>: Specifies the media item id of
+     * the media item to remove.
      * </ul>
      *
      * <h3>Result data</h3>
      * <ul>
-     * <li><i>None</i>
+     * <li>{@link #EXTRA_SESSION_STATUS} <em>(optional, old implementations may
+     * omit this key)</em>: Specifies the status of the media session.
+     * <li>{@link #EXTRA_ITEM_STATUS} <em>(always returned)</em>: Specifies the new status of
+     * the media item.
      * </ul>
      *
-     * @see MediaRouter.RouteInfo#sendControlRequest
-     * @see #CATEGORY_REMOTE_PLAYBACK
-     * @see #ACTION_PAUSE_QUEUE
-     */
-    public static final String ACTION_RESUME_QUEUE = "android.media.intent.action.RESUME_QUEUE";
-
-    /**
-     * Media control action: Clear media queue.
+     * <h3>Errors</h3>
      * <p>
-     * Used with routes that support {@link #CATEGORY_REMOTE_PLAYBACK remote playback}
-     * media control.
-     * </p><p>
-     * This action causes all media items in the specified media queue to be canceled
-     * and removed.  The queue is left in an empty state.
-     * </p>
-     *
-     * <h3>Request parameters</h3>
-     * <ul>
-     * <li>{@link #EXTRA_QUEUE_ID} <i>(required)</i>: specifies the queue id of the queue
-     * to be cleared.
-     * </ul>
-     *
-     * <h3>Result data</h3>
-     * <ul>
-     * <li><i>None</i>
+     * This action returns an error if the session id or media item id are unknown
+     * or no longer valid, or if the media item is in a terminal state (and therefore
+     * no longer in the queue).
+     * </p><ul>
+     * <li>{@link #EXTRA_ERROR_CODE} <em>(optional)</em>: Specifies the cause of the error.
      * </ul>
      *
      * @see MediaRouter.RouteInfo#sendControlRequest
      * @see #CATEGORY_REMOTE_PLAYBACK
      */
-    public static final String ACTION_CLEAR_QUEUE = "android.media.intent.action.CLEAR_QUEUE";
+    public static final String ACTION_REMOVE = "android.media.intent.action.REMOVE";
+
+    /* Remote playback actions that affect the whole playback queue. */
 
     /**
-     * Bundle extra: Media queue id.
+     * Remote playback media control action: Pause media playback.
      * <p>
-     * An opaque unique identifier returned as a result from {@link #ACTION_PLAY} that
-     * represents the queue of media items to which an item was appended.  Subsequent
-     * playback requests may specify the same queue id to enqueue addition items onto
-     * the same queue.
+     * Used with routes that support {@link #CATEGORY_REMOTE_PLAYBACK remote playback}
+     * media control.
      * </p><p>
-     * Used with various actions to specify the id of the media queue to be controlled.
+     * This action causes the playback queue of the specified session to be paused.
+     * </p>
+     *
+     * <h3>Request parameters</h3>
+     * <ul>
+     * <li>{@link #EXTRA_SESSION_ID} <em>(required)</em>: Specifies the session id of the session
+     * whose playback queue is to be paused.
+     * </ul>
+     *
+     * <h3>Result data</h3>
+     * <ul>
+     * <li>{@link #EXTRA_SESSION_STATUS} <em>(optional, old implementations may
+     * omit this key)</em>: Specifies the status of the media session.
+     * </ul>
+     *
+     * <h3>Errors</h3>
+     * <p>
+     * This action returns an error if the session id is unknown or no longer valid.
+     * </p><ul>
+     * <li>{@link #EXTRA_ERROR_CODE} <em>(optional)</em>: Specifies the cause of the error.
+     * </ul>
+     *
+     * @see MediaRouter.RouteInfo#sendControlRequest
+     * @see #CATEGORY_REMOTE_PLAYBACK
+     * @see #ACTION_RESUME
+     */
+    public static final String ACTION_PAUSE = "android.media.intent.action.PAUSE";
+
+    /**
+     * Remote playback media control action: Resume media playback (unpause).
+     * <p>
+     * Used with routes that support {@link #CATEGORY_REMOTE_PLAYBACK remote playback}
+     * media control.
+     * </p><p>
+     * This action causes the playback queue of the specified session to be resumed.
+     * Reverses the effects of {@link #ACTION_PAUSE}.
+     * </p>
+     *
+     * <h3>Request parameters</h3>
+     * <ul>
+     * <li>{@link #EXTRA_SESSION_ID} <em>(required)</em>: Specifies the session id of the session
+     * whose playback queue is to be resumed.
+     * </ul>
+     *
+     * <h3>Result data</h3>
+     * <ul>
+     * <li>{@link #EXTRA_SESSION_STATUS} <em>(optional, old implementations may
+     * omit this key)</em>: Specifies the status of the media session.
+     * </ul>
+     *
+     * <h3>Errors</h3>
+     * <p>
+     * This action returns an error if the session id is unknown or no longer valid.
+     * </p><ul>
+     * <li>{@link #EXTRA_ERROR_CODE} <em>(optional)</em>: Specifies the cause of the error.
+     * </ul>
+     *
+     * @see MediaRouter.RouteInfo#sendControlRequest
+     * @see #CATEGORY_REMOTE_PLAYBACK
+     * @see #ACTION_PAUSE
+     */
+    public static final String ACTION_RESUME = "android.media.intent.action.RESUME";
+
+    /**
+     * Remote playback media control action: Stop media playback (clear queue and unpause).
+     * <p>
+     * Used with routes that support {@link #CATEGORY_REMOTE_PLAYBACK remote playback}
+     * media control.
+     * </p><p>
+     * This action causes a remote playback route to stop playback, cancel and remove
+     * all media items from the session's media item queue and, reset the queue's
+     * pause state.
+     * </p><p>
+     * If successful, the status of all media items in the queue is set to
+     * {@link MediaItemStatus#PLAYBACK_STATE_CANCELED canceled} and a status update is sent
+     * to the appropriate status update receivers indicating the new status of each item.
+     * </p>
+     *
+     * <h3>Request parameters</h3>
+     * <ul>
+     * <li>{@link #EXTRA_SESSION_ID} <em>(required)</em>: Specifies the session id of
+     * the session whose playback queue is to be stopped (cleared and unpaused).
+     * </ul>
+     *
+     * <h3>Result data</h3>
+     * <ul>
+     * <li>{@link #EXTRA_SESSION_STATUS} <em>(optional, old implementations may
+     * omit this key)</em>: Specifies the status of the media session.
+     * </ul>
+     *
+     * <h3>Errors</h3>
+     * <p>
+     * This action returns an error if the session id is unknown or no longer valid.
+     * </p><ul>
+     * <li>{@link #EXTRA_ERROR_CODE} <em>(optional)</em>: Specifies the cause of the error.
+     * </ul>
+     *
+     * @see MediaRouter.RouteInfo#sendControlRequest
+     * @see #CATEGORY_REMOTE_PLAYBACK
+     */
+    public static final String ACTION_STOP = "android.media.intent.action.STOP";
+
+    /**
+     * Remote playback media control action: Start session.
+     * <p>
+     * Used with routes that support {@link #CATEGORY_REMOTE_PLAYBACK remote playback}
+     * media control.
+     * </p><p>
+     * This action causes a remote playback route to invalidate the current session
+     * and start a new session.  The new session initially has an empty queue.
+     * </p><p>
+     * If successful, the status of all media items in the previous session's queue is set to
+     * {@link MediaItemStatus#PLAYBACK_STATE_INVALIDATED invalidated} and a status update
+     * is sent to the appropriate status update receivers indicating the new status
+     * of each item.  The previous session becomes no longer valid and the new session
+     * takes control of the route.
+     * </p>
+     *
+     * <h3>Request parameters</h3>
+     * <ul>
+     * <li>{@link #EXTRA_SESSION_STATUS_UPDATE_RECEIVER} <em>(optional)</em>: Specifies a
+     * {@link PendingIntent} for a broadcast receiver that will receive status updates
+     * about the media session.
+     * <li>{@link #EXTRA_MESSAGE_RECEIVER} <em>(optional)</em>: Specifies a
+     * {@link PendingIntent} for a broadcast receiver that will receive messages from
+     * the media session.
+     * </ul>
+     *
+     * <h3>Result data</h3>
+     * <ul>
+     * <li>{@link #EXTRA_SESSION_ID} <em>(always returned)</em>: Specifies the session id of the
+     * session that was started by the request.  This will always be a brand new session
+     * distinct from any other previously created sessions.
+     * <li>{@link #EXTRA_SESSION_STATUS} <em>(always returned)</em>: Specifies the
+     * status of the media session.
+     * </ul>
+     *
+     * <h3>Status updates</h3>
+     * <p>
+     * If the client supplies a
+     * {@link #EXTRA_SESSION_STATUS_UPDATE_RECEIVER status update receiver}
+     * then the media route provider is responsible for sending status updates to the receiver
+     * when significant media session state changes occur such as when the session's
+     * queue is paused or resumed or when the session is terminated or invalidated.
+     * </p><p>
+     * Refer to {@link MediaSessionStatus} for details.
+     * </p>
+     *
+     * <h3>Custom messages</h3>
+     * <p>
+     * If the client supplies a {@link #EXTRA_MESSAGE_RECEIVER message receiver}
+     * then the media route provider is responsible for sending messages to the receiver
+     * when the session has any messages to send.
+     * </p><p>
+     * Refer to {@link #EXTRA_MESSAGE} for details.
+     * </p>
+     *
+     * <h3>Errors</h3>
+     * <p>
+     * This action returns an error if the session could not be created.
+     * </p><ul>
+     * <li>{@link #EXTRA_ERROR_CODE} <em>(optional)</em>: Specifies the cause of the error.
+     * </ul>
+     *
+     * @see MediaRouter.RouteInfo#sendControlRequest
+     * @see #CATEGORY_REMOTE_PLAYBACK
+     */
+    public static final String ACTION_START_SESSION = "android.media.intent.action.START_SESSION";
+
+    /**
+     * Remote playback media control action: Get media session status information.
+     * <p>
+     * Used with routes that support {@link #CATEGORY_REMOTE_PLAYBACK remote playback}
+     * media control.
+     * </p><p>
+     * This action asks a remote playback route to provide updated status information
+     * about the specified media session.
+     * </p>
+     *
+     * <h3>Request parameters</h3>
+     * <ul>
+     * <li>{@link #EXTRA_SESSION_ID} <em>(required)</em>: Specifies the session id of the
+     * session whose status is to be retrieved.
+     * </ul>
+     *
+     * <h3>Result data</h3>
+     * <ul>
+     * <li>{@link #EXTRA_SESSION_STATUS} <em>(always returned)</em>: Specifies the
+     * current status of the media session.
+     * </ul>
+     *
+     * <h3>Errors</h3>
+     * <p>
+     * This action returns an error if the session id is unknown or no longer valid.
+     * </p><ul>
+     * <li>{@link #EXTRA_ERROR_CODE} <em>(optional)</em>: Specifies the cause of the error.
+     * </ul>
+     *
+     * @see MediaRouter.RouteInfo#sendControlRequest
+     * @see #CATEGORY_REMOTE_PLAYBACK
+     * @see #EXTRA_SESSION_STATUS_UPDATE_RECEIVER
+     */
+    public static final String ACTION_GET_SESSION_STATUS =
+            "android.media.intent.action.GET_SESSION_STATUS";
+
+    /**
+     * Remote playback media control action: End session.
+     * <p>
+     * Used with routes that support {@link #CATEGORY_REMOTE_PLAYBACK remote playback}
+     * media control.
+     * </p><p>
+     * This action causes a remote playback route to end the specified session.
+     * The session becomes no longer valid and the route ceases to be under control
+     * of the session.
+     * </p><p>
+     * If successful, the status of the session is set to
+     * {@link MediaSessionStatus#SESSION_STATE_ENDED} and a status update is sent to
+     * the session's status update receiver.
+     * </p><p>
+     * Additionally, the status of all media items in the queue is set to
+     * {@link MediaItemStatus#PLAYBACK_STATE_CANCELED canceled} and a status update is sent
+     * to the appropriate status update receivers indicating the new status of each item.
+     * </p>
+     *
+     * <h3>Request parameters</h3>
+     * <ul>
+     * <li>{@link #EXTRA_SESSION_ID} <em>(required)</em>: Specifies the session id of
+     * the session to end.
+     * </ul>
+     *
+     * <h3>Result data</h3>
+     * <ul>
+     * <li>{@link #EXTRA_SESSION_STATUS} <em>(always returned)</em>: Specifies the
+     * status of the media session.
+     * </ul>
+     *
+     * <h3>Errors</h3>
+     * <p>
+     * This action returns an error if the session id is unknown or no longer valid.
+     * In other words, it is an error to attempt to end a session other than the
+     * current session.
+     * </p><ul>
+     * <li>{@link #EXTRA_ERROR_CODE} <em>(optional)</em>: Specifies the cause of the error.
+     * </ul>
+     *
+     * @see MediaRouter.RouteInfo#sendControlRequest
+     * @see #CATEGORY_REMOTE_PLAYBACK
+     */
+    public static final String ACTION_END_SESSION = "android.media.intent.action.END_SESSION";
+
+    /**
+     * Custom media control action: Send {@link #EXTRA_MESSAGE}.
+     * <p>
+     * This action asks a route to handle a message described by EXTRA_MESSAGE.
+     * </p>
+     *
+     * <h3>Request parameters</h3>
+     * <ul>
+     * <li>{@link #EXTRA_SESSION_ID} <em>(required)</em>: Specifies the session id of the session
+     * to which will handle this message.
+     * <li>{@link #EXTRA_MESSAGE} <em>(required)</em>: Specifies the message to send.
+     * </ul>
+     *
+     * <h3>Result data</h3>
+     * Any messages defined by each media route provider.
+     *
+     * <h3>Errors</h3>
+     * Any error messages defined by each media route provider.
+     *
+     * @see MediaRouter.RouteInfo#sendControlRequest
+     */
+    public static final String ACTION_SEND_MESSAGE = "android.media.intent.action.SEND_MESSAGE";
+
+    /* Extras and related constants. */
+
+    /**
+     * Bundle extra: Media session id.
+     * <p>
+     * An opaque unique identifier that identifies the remote playback media session.
+     * </p><p>
+     * Used with various actions to specify the id of the media session to be controlled.
      * </p><p>
      * Included in broadcast intents sent to
-     * {@link #EXTRA_ITEM_STATUS_UPDATE_RECEIVER status update receivers} to identify
-     * the queue to which the item in question belongs.
+     * {@link #EXTRA_ITEM_STATUS_UPDATE_RECEIVER item status update receivers} to identify
+     * the session to which the item in question belongs.
+     * </p><p>
+     * Included in broadcast intents sent to
+     * {@link #EXTRA_SESSION_STATUS_UPDATE_RECEIVER session status update receivers} to identify
+     * the session.
      * </p><p>
      * The value is a unique string value generated by the media route provider
-     * to represent one particular media queue.
+     * to represent one particular media session.
      * </p>
      *
      * @see #ACTION_PLAY
-     * @see #ACTION_CANCEL
      * @see #ACTION_SEEK
      * @see #ACTION_GET_STATUS
-     * @see #ACTION_PAUSE_QUEUE
-     * @see #ACTION_RESUME_QUEUE
-     * @see #ACTION_CLEAR_QUEUE
+     * @see #ACTION_PAUSE
+     * @see #ACTION_RESUME
+     * @see #ACTION_STOP
+     * @see #ACTION_START_SESSION
+     * @see #ACTION_GET_SESSION_STATUS
+     * @see #ACTION_END_SESSION
      */
-    public static final String EXTRA_QUEUE_ID =
-            "android.media.intent.extra.QUEUE_ID";
+    public static final String EXTRA_SESSION_ID =
+            "android.media.intent.extra.SESSION_ID";
+
+    /**
+     * Bundle extra: Media session status.
+     * <p>
+     * Returned as a result from media session actions such as {@link #ACTION_START_SESSION},
+     * {@link #ACTION_PAUSE}, and {@link #ACTION_GET_SESSION_STATUS}
+     * to describe the status of the specified media session.
+     * </p><p>
+     * Included in broadcast intents sent to
+     * {@link #EXTRA_SESSION_STATUS_UPDATE_RECEIVER session status update receivers} to provide
+     * updated status information.
+     * </p><p>
+     * The value is a {@link android.os.Bundle} of data that can be converted into
+     * a {@link MediaSessionStatus} object using
+     * {@link MediaSessionStatus#fromBundle MediaSessionStatus.fromBundle}.
+     * </p>
+     *
+     * @see #ACTION_PLAY
+     * @see #ACTION_SEEK
+     * @see #ACTION_GET_STATUS
+     * @see #ACTION_PAUSE
+     * @see #ACTION_RESUME
+     * @see #ACTION_STOP
+     * @see #ACTION_START_SESSION
+     * @see #ACTION_GET_SESSION_STATUS
+     * @see #ACTION_END_SESSION
+     */
+    public static final String EXTRA_SESSION_STATUS =
+            "android.media.intent.extra.SESSION_STATUS";
+
+    /**
+     * Bundle extra: Media session status update receiver.
+     * <p>
+     * Used with {@link #ACTION_START_SESSION} to specify a {@link PendingIntent} for a
+     * broadcast receiver that will receive status updates about the media session.
+     * </p><p>
+     * Whenever the status of the media session changes, the media route provider will
+     * send a broadcast to the pending intent with extras that identify the session
+     * id and its updated status.
+     * </p><p>
+     * The value is a {@link PendingIntent}.
+     * </p>
+     *
+     * <h3>Broadcast extras</h3>
+     * <ul>
+     * <li>{@link #EXTRA_SESSION_ID} <em>(required)</em>: Specifies the session id of
+     * the session.
+     * <li>{@link #EXTRA_SESSION_STATUS} <em>(required)</em>: Specifies the status of the
+     * session as a bundle that can be decoded into a {@link MediaSessionStatus} object.
+     * </ul>
+     *
+     * @see #ACTION_START_SESSION
+     */
+    public static final String EXTRA_SESSION_STATUS_UPDATE_RECEIVER =
+            "android.media.intent.extra.SESSION_STATUS_UPDATE_RECEIVER";
+
+    /**
+     * Bundle extra: Media message receiver.
+     * <p>
+     * Used with {@link #ACTION_START_SESSION} to specify a {@link PendingIntent} for a
+     * broadcast receiver that will receive messages from the media session.
+     * </p><p>
+     * When the media session has a message to send, the media route provider will
+     * send a broadcast to the pending intent with extras that identify the session
+     * id and its message.
+     * </p><p>
+     * The value is a {@link PendingIntent}.
+     * </p>
+     *
+     * <h3>Broadcast extras</h3>
+     * <ul>
+     * <li>{@link #EXTRA_SESSION_ID} <em>(required)</em>: Specifies the session id of
+     * the session.
+     * <li>{@link #EXTRA_MESSAGE} <em>(required)</em>: Specifies the message from
+     * the session as a bundle object.
+     * </ul>
+     *
+     * @see #ACTION_START_SESSION
+     */
+    public static final String EXTRA_MESSAGE_RECEIVER =
+            "android.media.intent.extra.MESSAGE_RECEIVER";
 
     /**
      * Bundle extra: Media item id.
      * <p>
-     * An opaque unique identifier returned as a result from {@link #ACTION_PLAY} that
-     * represents the media item that was created by the playback request.
+     * An opaque unique identifier returned as a result from {@link #ACTION_PLAY} or
+     * {@link #ACTION_ENQUEUE} that represents the media item that was created by the
+     * playback request.
      * </p><p>
      * Used with various actions to specify the id of the media item to be controlled.
      * </p><p>
@@ -567,7 +1048,7 @@ public final class MediaControlIntent {
      * </p>
      *
      * @see #ACTION_PLAY
-     * @see #ACTION_CANCEL
+     * @see #ACTION_ENQUEUE
      * @see #ACTION_SEEK
      * @see #ACTION_GET_STATUS
      */
@@ -578,11 +1059,11 @@ public final class MediaControlIntent {
      * Bundle extra: Media item status.
      * <p>
      * Returned as a result from media item actions such as {@link #ACTION_PLAY},
-     * {@link #ACTION_SEEK}, {@link #ACTION_CANCEL} and {@link #ACTION_GET_STATUS}
-     * to describe the status of the relevant media item.
+     * {@link #ACTION_ENQUEUE}, {@link #ACTION_SEEK}, and {@link #ACTION_GET_STATUS}
+     * to describe the status of the specified media item.
      * </p><p>
      * Included in broadcast intents sent to
-     * {@link #EXTRA_ITEM_STATUS_UPDATE_RECEIVER status update receivers} to provide
+     * {@link #EXTRA_ITEM_STATUS_UPDATE_RECEIVER item status update receivers} to provide
      * updated status information.
      * </p><p>
      * The value is a {@link android.os.Bundle} of data that can be converted into
@@ -591,7 +1072,7 @@ public final class MediaControlIntent {
      * </p>
      *
      * @see #ACTION_PLAY
-     * @see #ACTION_CANCEL
+     * @see #ACTION_ENQUEUE
      * @see #ACTION_SEEK
      * @see #ACTION_GET_STATUS
      */
@@ -601,7 +1082,8 @@ public final class MediaControlIntent {
     /**
      * Long extra: Media item content position.
      * <p>
-     * Used with {@link #ACTION_PLAY} to specify the starting playback position.
+     * Used with {@link #ACTION_PLAY} or {@link #ACTION_ENQUEUE} to specify the
+     * starting playback position.
      * </p><p>
      * Used with {@link #ACTION_SEEK} to set a new playback position.
      * </p><p>
@@ -609,6 +1091,7 @@ public final class MediaControlIntent {
      * <p>
      *
      * @see #ACTION_PLAY
+     * @see #ACTION_ENQUEUE
      * @see #ACTION_SEEK
      */
     public static final String EXTRA_ITEM_CONTENT_POSITION =
@@ -617,32 +1100,35 @@ public final class MediaControlIntent {
     /**
      * Bundle extra: Media item metadata.
      * <p>
-     * Used with {@link #ACTION_PLAY} to specify metadata associated with the content
-     * of a media item.
+     * Used with {@link #ACTION_PLAY} or {@link #ACTION_ENQUEUE} to specify metadata
+     * associated with the content of a media item.
      * </p><p>
      * The value is a {@link android.os.Bundle} of metadata key-value pairs as defined
      * in {@link MediaItemMetadata}.
      * </p>
      *
      * @see #ACTION_PLAY
+     * @see #ACTION_ENQUEUE
      */
     public static final String EXTRA_ITEM_METADATA =
             "android.media.intent.extra.ITEM_METADATA";
 
     /**
-     * Bundle extra: HTTP headers.
+     * Bundle extra: HTTP request headers.
      * <p>
-     * Used with {@link #ACTION_PLAY} to specify HTTP headers to be included when
-     * fetching to the content indicated by the media item's data Uri.
+     * Used with {@link #ACTION_PLAY} or {@link #ACTION_ENQUEUE} to specify HTTP request
+     * headers to be included when fetching to the content indicated by the media
+     * item's data Uri.
      * </p><p>
      * This extra may be used to provide authentication tokens and other
      * parameters to the server separately from the media item's data Uri.
      * </p><p>
      * The value is a {@link android.os.Bundle} of string based key-value pairs
-     * that describe the HTTP headers.
+     * that describe the HTTP request headers.
      * </p>
      *
      * @see #ACTION_PLAY
+     * @see #ACTION_ENQUEUE
      */
     public static final String EXTRA_ITEM_HTTP_HEADERS =
             "android.media.intent.extra.HTTP_HEADERS";
@@ -650,34 +1136,92 @@ public final class MediaControlIntent {
     /**
      * Bundle extra: Media item status update receiver.
      * <p>
-     * Used with {@link #ACTION_PLAY} to specify a {@link PendingIntent} for a
+     * Used with {@link #ACTION_PLAY} or {@link #ACTION_ENQUEUE} to specify
+     * a {@link PendingIntent} for a
      * broadcast receiver that will receive status updates about a particular
      * media item.
      * </p><p>
      * Whenever the status of the media item changes, the media route provider will
-     * send a broadcast to the pending intent with extras that identify the queue
-     * to which the item belongs, the item itself and the item's updated status.
+     * send a broadcast to the pending intent with extras that identify the session
+     * to which the item belongs, the session status, the item's id
+     * and the item's updated status.
      * </p><p>
      * The same pending intent and broadcast receiver may be shared by any number of
-     * media items since the broadcast intent includes the media queue id and media item id.
+     * media items since the broadcast intent includes the media session id
+     * and media item id.
      * </p><p>
      * The value is a {@link PendingIntent}.
      * </p>
      *
      * <h3>Broadcast extras</h3>
      * <ul>
-     * <li>{@link #EXTRA_QUEUE_ID} <i>(required)</i>: specifies the media queue id of the
-     * queue to which the item in question belongs.
-     * <li>{@link #EXTRA_ITEM_ID} <i>(required)</i>: specifies the media item id of the
+     * <li>{@link #EXTRA_SESSION_ID} <em>(required)</em>: Specifies the session id of
+     * the session to which the item in question belongs.
+     * <li>{@link #EXTRA_SESSION_STATUS} <em>(optional, old implementations may
+     * omit this key)</em>: Specifies the status of the media session.
+     * <li>{@link #EXTRA_ITEM_ID} <em>(required)</em>: Specifies the media item id of the
      * media item in question.
-     * <li>{@link #EXTRA_ITEM_STATUS} <i>(required)</i>: specifies the status of the
+     * <li>{@link #EXTRA_ITEM_STATUS} <em>(required)</em>: Specifies the status of the
      * item as a bundle that can be decoded into a {@link MediaItemStatus} object.
      * </ul>
      *
      * @see #ACTION_PLAY
+     * @see #ACTION_ENQUEUE
      */
     public static final String EXTRA_ITEM_STATUS_UPDATE_RECEIVER =
             "android.media.intent.extra.ITEM_STATUS_UPDATE_RECEIVER";
+
+    /**
+     * Bundle extra: Message.
+     * <p>
+     * Used with {@link #ACTION_SEND_MESSAGE}, and included in broadcast intents sent to
+     * {@link #EXTRA_MESSAGE_RECEIVER message receivers} to describe a message between a
+     * session and a media route provider.
+     * </p><p>
+     * The value is a {@link android.os.Bundle}.
+     * </p>
+     */
+    public static final String EXTRA_MESSAGE = "android.media.intent.extra.MESSAGE";
+
+    /**
+     * Integer extra: Error code.
+     * <p>
+     * Used with all media control requests to describe the cause of an error.
+     * This extra may be omitted when the error is unknown.
+     * </p><p>
+     * The value is one of: {@link #ERROR_UNKNOWN}, {@link #ERROR_UNSUPPORTED_OPERATION},
+     * {@link #ERROR_INVALID_SESSION_ID}, {@link #ERROR_INVALID_ITEM_ID}.
+     * </p>
+     */
+    public static final String EXTRA_ERROR_CODE = "android.media.intent.extra.ERROR_CODE";
+
+    /**
+     * Error code: An unknown error occurred.
+     *
+     * @see #EXTRA_ERROR_CODE
+     */
+    public static final int ERROR_UNKNOWN = 0;
+
+    /**
+     * Error code: The operation is not supported.
+     *
+     * @see #EXTRA_ERROR_CODE
+     */
+    public static final int ERROR_UNSUPPORTED_OPERATION = 1;
+
+    /**
+     * Error code: The session id specified in the request was invalid.
+     *
+     * @see #EXTRA_ERROR_CODE
+     */
+    public static final int ERROR_INVALID_SESSION_ID = 2;
+
+    /**
+     * Error code: The item id specified in the request was invalid.
+     *
+     * @see #EXTRA_ERROR_CODE
+     */
+    public static final int ERROR_INVALID_ITEM_ID = 3;
 
     private MediaControlIntent() {
     }

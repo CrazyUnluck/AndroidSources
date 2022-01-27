@@ -16,32 +16,38 @@
 
 package android.graphics.drawable;
 
+import com.android.internal.R;
+
 import java.io.IOException;
 
 import org.xmlpull.v1.XmlPullParser;
 import org.xmlpull.v1.XmlPullParserException;
 
+import android.annotation.NonNull;
 import android.content.res.Resources;
 import android.content.res.TypedArray;
+import android.content.res.Resources.Theme;
 import android.os.SystemClock;
 import android.util.AttributeSet;
 
 /**
- * 
- * An object used to create frame-by-frame animations, defined by a series of Drawable objects,
- * which can be used as a View object's background.
+ * An object used to create frame-by-frame animations, defined by a series of
+ * Drawable objects, which can be used as a View object's background.
  * <p>
- * The simplest way to create a frame-by-frame animation is to define the animation in an XML
- * file, placed in the res/drawable/ folder, and set it as the background to a View object. Then, call
- * {@link #start()} to run the animation.
+ * The simplest way to create a frame-by-frame animation is to define the
+ * animation in an XML file, placed in the res/drawable/ folder, and set it as
+ * the background to a View object. Then, call {@link #start()} to run the
+ * animation.
  * <p>
- * An AnimationDrawable defined in XML consists of a single <code>&lt;animation-list></code> element,
- * and a series of nested <code>&lt;item></code> tags. Each item defines a frame of the animation.
- * See the example below.
- * </p>
- * <p>spin_animation.xml file in res/drawable/ folder:</p>
- * <pre>&lt;!-- Animation frames are wheel0.png -- wheel5.png files inside the
- * res/drawable/ folder --&gt;
+ * An AnimationDrawable defined in XML consists of a single
+ * {@code <animation-list>} element and a series of nested
+ * {@code <item>} tags. Each item defines a frame of the animation. See
+ * the example below.
+ * <p>
+ * spin_animation.xml file in res/drawable/ folder:
+ * <pre>
+ * &lt;!-- Animation frames are wheel0.png through wheel5.png
+ *     files inside the res/drawable/ folder --&gt;
  * &lt;animation-list android:id=&quot;@+id/selected&quot; android:oneshot=&quot;false&quot;&gt;
  *    &lt;item android:drawable=&quot;@drawable/wheel0&quot; android:duration=&quot;50&quot; /&gt;
  *    &lt;item android:drawable=&quot;@drawable/wheel1&quot; android:duration=&quot;50&quot; /&gt;
@@ -50,8 +56,8 @@ import android.util.AttributeSet;
  *    &lt;item android:drawable=&quot;@drawable/wheel4&quot; android:duration=&quot;50&quot; /&gt;
  *    &lt;item android:drawable=&quot;@drawable/wheel5&quot; android:duration=&quot;50&quot; /&gt;
  * &lt;/animation-list&gt;</pre>
- *
- * <p>Here is the code to load and play this animation.</p>
+ * <p>
+ * Here is the code to load and play this animation.
  * <pre>
  * // Load the ImageView that will host the animation and
  * // set its background to our AnimationDrawable XML resource.
@@ -79,20 +85,46 @@ import android.util.AttributeSet;
  * @attr ref android.R.styleable#AnimationDrawableItem_drawable
  */
 public class AnimationDrawable extends DrawableContainer implements Runnable, Animatable {
-    private final AnimationState mAnimationState;
-    private int mCurFrame = -1;
+    private AnimationState mAnimationState;
+
+    /** The current frame, ranging from 0 to {@link #mAnimationState#getChildCount() - 1} */
+    private int mCurFrame = 0;
+
+    /** Whether the drawable has an animation callback posted. */
+    private boolean mRunning;
+
+    /** Whether the drawable should animate when visible. */
+    private boolean mAnimating;
+
     private boolean mMutated;
 
     public AnimationDrawable() {
         this(null, null);
     }
 
+    /**
+     * Sets whether this AnimationDrawable is visible.
+     * <p>
+     * When the drawable becomes invisible, it will pause its animation. A subsequent change to
+     * visible with <code>restart</code> set to true will restart the animation from the
+     * first frame. If <code>restart</code> is false, the drawable will resume from the most recent
+     * frame. If the drawable has already reached the last frame, it will then loop back to the
+     * first frame, unless it's a one shot drawable (set through {@link #setOneShot(boolean)}),
+     * in which case, it will stay on the last frame.
+     *
+     * @param visible true if visible, false otherwise
+     * @param restart when visible, true to force the animation to restart
+     *                from the first frame
+     * @return true if the new visibility is different than its previous state
+     */
     @Override
     public boolean setVisible(boolean visible, boolean restart) {
-        boolean changed = super.setVisible(visible, restart);
+        final boolean changed = super.setVisible(visible, restart);
         if (visible) {
-            if (changed || restart) {
-                setFrame(0, true, true);
+            if (restart || changed) {
+                boolean startFromZero = restart || (!mRunning && !mAnimationState.mOneShot) ||
+                        mCurFrame >= mAnimationState.getChildCount();
+                setFrame(startFromZero ? 0 : mCurFrame, true, mAnimating);
             }
         } else {
             unscheduleSelf(this);
@@ -101,58 +133,73 @@ public class AnimationDrawable extends DrawableContainer implements Runnable, An
     }
 
     /**
-     * <p>Starts the animation, looping if necessary. This method has no effect
-     * if the animation is running. Do not call this in the {@link android.app.Activity#onCreate}
-     * method of your activity, because the {@link android.graphics.drawable.AnimationDrawable} is
-     * not yet fully attached to the window. If you want to play
-     * the animation immediately, without requiring interaction, then you might want to call it
-     * from the {@link android.app.Activity#onWindowFocusChanged} method in your activity,
-     * which will get called when Android brings your window into focus.</p>
+     * Starts the animation from the first frame, looping if necessary. This method has no effect
+     * if the animation is running.
+     * <p>
+     * <strong>Note:</strong> Do not call this in the
+     * {@link android.app.Activity#onCreate} method of your activity, because
+     * the {@link AnimationDrawable} is not yet fully attached to the window.
+     * If you want to play the animation immediately without requiring
+     * interaction, then you might want to call it from the
+     * {@link android.app.Activity#onWindowFocusChanged} method in your
+     * activity, which will get called when Android brings your window into
+     * focus.
      *
      * @see #isRunning()
      * @see #stop()
      */
+    @Override
     public void start() {
+        mAnimating = true;
+
         if (!isRunning()) {
-            run();
+            // Start from 0th frame.
+            setFrame(0, false, mAnimationState.getChildCount() > 1
+                    || !mAnimationState.mOneShot);
         }
     }
 
     /**
-     * <p>Stops the animation. This method has no effect if the animation is
-     * not running.</p>
+     * Stops the animation at the current frame. This method has no effect if the animation is not
+     * running.
      *
      * @see #isRunning()
      * @see #start()
      */
+    @Override
     public void stop() {
+        mAnimating = false;
+
         if (isRunning()) {
+            mCurFrame = 0;
             unscheduleSelf(this);
         }
     }
 
     /**
-     * <p>Indicates whether the animation is currently running or not.</p>
+     * Indicates whether the animation is currently running or not.
      *
      * @return true if the animation is running, false otherwise
      */
+    @Override
     public boolean isRunning() {
-        return mCurFrame > -1;
+        return mRunning;
     }
 
     /**
-     * <p>This method exists for implementation purpose only and should not be
-     * called directly. Invoke {@link #start()} instead.</p>
+     * This method exists for implementation purpose only and should not be
+     * called directly. Invoke {@link #start()} instead.
      *
      * @see #start()
      */
+    @Override
     public void run() {
         nextFrame(false);
     }
 
     @Override
     public void unscheduleSelf(Runnable what) {
-        mCurFrame = -1;
+        mRunning = false;
         super.unscheduleSelf(what);
     }
 
@@ -162,100 +209,104 @@ public class AnimationDrawable extends DrawableContainer implements Runnable, An
     public int getNumberOfFrames() {
         return mAnimationState.getChildCount();
     }
-    
+
     /**
      * @return The Drawable at the specified frame index
      */
     public Drawable getFrame(int index) {
-        return mAnimationState.getChildren()[index];
+        return mAnimationState.getChild(index);
     }
-    
+
     /**
-     * @return The duration in milliseconds of the frame at the 
-     * specified index
+     * @return The duration in milliseconds of the frame at the
+     *         specified index
      */
     public int getDuration(int i) {
         return mAnimationState.mDurations[i];
     }
-    
+
     /**
      * @return True of the animation will play once, false otherwise
      */
     public boolean isOneShot() {
         return mAnimationState.mOneShot;
     }
-    
+
     /**
      * Sets whether the animation should play once or repeat.
-     * 
+     *
      * @param oneShot Pass true if the animation should only play once
      */
     public void setOneShot(boolean oneShot) {
         mAnimationState.mOneShot = oneShot;
     }
-    
+
     /**
-     * Add a frame to the animation
-     * 
+     * Adds a frame to the animation
+     *
      * @param frame The frame to add
      * @param duration How long in milliseconds the frame should appear
      */
-    public void addFrame(Drawable frame, int duration) {
+    public void addFrame(@NonNull Drawable frame, int duration) {
         mAnimationState.addFrame(frame, duration);
-        if (mCurFrame < 0) {
+        if (!mRunning) {
             setFrame(0, true, false);
         }
     }
-    
+
     private void nextFrame(boolean unschedule) {
-        int next = mCurFrame+1;
-        final int N = mAnimationState.getChildCount();
-        if (next >= N) {
-            next = 0;
+        int nextFrame = mCurFrame + 1;
+        final int numFrames = mAnimationState.getChildCount();
+        final boolean isLastFrame = mAnimationState.mOneShot && nextFrame >= (numFrames - 1);
+
+        // Loop if necessary. One-shot animations should never hit this case.
+        if (!mAnimationState.mOneShot && nextFrame >= numFrames) {
+            nextFrame = 0;
         }
-        setFrame(next, unschedule, !mAnimationState.mOneShot || next < (N - 1));
+
+        setFrame(nextFrame, unschedule, !isLastFrame);
     }
 
     private void setFrame(int frame, boolean unschedule, boolean animate) {
         if (frame >= mAnimationState.getChildCount()) {
             return;
         }
+        mAnimating = animate;
         mCurFrame = frame;
         selectDrawable(frame);
-        if (unschedule) {
+        if (unschedule || animate) {
             unscheduleSelf(this);
         }
         if (animate) {
-            // Unscheduling may have clobbered this value; restore it to record that we're animating
+            // Unscheduling may have clobbered these values; restore them
             mCurFrame = frame;
+            mRunning = true;
             scheduleSelf(this, SystemClock.uptimeMillis() + mAnimationState.mDurations[frame]);
         }
     }
 
     @Override
-    public void inflate(Resources r, XmlPullParser parser, AttributeSet attrs)
+    public void inflate(Resources r, XmlPullParser parser, AttributeSet attrs, Theme theme)
             throws XmlPullParserException, IOException {
-        
-        TypedArray a = r.obtainAttributes(attrs,
-                com.android.internal.R.styleable.AnimationDrawable);
-
-        super.inflateWithAttributes(r, parser, a,
-                com.android.internal.R.styleable.AnimationDrawable_visible);
-        
-        mAnimationState.setVariablePadding(a.getBoolean(
-                com.android.internal.R.styleable.AnimationDrawable_variablePadding, false));
-            
-        mAnimationState.mOneShot = a.getBoolean(
-                com.android.internal.R.styleable.AnimationDrawable_oneshot, false);
-        
+        final TypedArray a = obtainAttributes(r, theme, attrs, R.styleable.AnimationDrawable);
+        super.inflateWithAttributes(r, parser, a, R.styleable.AnimationDrawable_visible);
+        updateStateFromTypedArray(a);
+        updateDensity(r);
         a.recycle();
-        
+
+        inflateChildElements(r, parser, attrs, theme);
+
+        setFrame(0, true, false);
+    }
+
+    private void inflateChildElements(Resources r, XmlPullParser parser, AttributeSet attrs,
+            Theme theme) throws XmlPullParserException, IOException {
         int type;
 
         final int innerDepth = parser.getDepth()+1;
         int depth;
-        while ((type=parser.next()) != XmlPullParser.END_DOCUMENT &&
-                ((depth = parser.getDepth()) >= innerDepth || type != XmlPullParser.END_TAG)) {
+        while ((type=parser.next()) != XmlPullParser.END_DOCUMENT
+                && ((depth = parser.getDepth()) >= innerDepth || type != XmlPullParser.END_TAG)) {
             if (type != XmlPullParser.START_TAG) {
                 continue;
             }
@@ -263,68 +314,88 @@ public class AnimationDrawable extends DrawableContainer implements Runnable, An
             if (depth > innerDepth || !parser.getName().equals("item")) {
                 continue;
             }
-            
-            a = r.obtainAttributes(attrs, com.android.internal.R.styleable.AnimationDrawableItem);
-            int duration = a.getInt(
-                    com.android.internal.R.styleable.AnimationDrawableItem_duration, -1);
+
+            final TypedArray a = obtainAttributes(r, theme, attrs,
+                    R.styleable.AnimationDrawableItem);
+
+            final int duration = a.getInt(R.styleable.AnimationDrawableItem_duration, -1);
             if (duration < 0) {
-                throw new XmlPullParserException(
-                        parser.getPositionDescription()
+                throw new XmlPullParserException(parser.getPositionDescription()
                         + ": <item> tag requires a 'duration' attribute");
             }
-            int drawableRes = a.getResourceId(
-                    com.android.internal.R.styleable.AnimationDrawableItem_drawable, 0);
-            
+
+            Drawable dr = a.getDrawable(R.styleable.AnimationDrawableItem_drawable);
+
             a.recycle();
-            
-            Drawable dr;
-            if (drawableRes != 0) {
-                dr = r.getDrawable(drawableRes);
-            } else {
+
+            if (dr == null) {
                 while ((type=parser.next()) == XmlPullParser.TEXT) {
                     // Empty
                 }
                 if (type != XmlPullParser.START_TAG) {
-                    throw new XmlPullParserException(parser.getPositionDescription() +
-                            ": <item> tag requires a 'drawable' attribute or child tag" +
-                            " defining a drawable");
+                    throw new XmlPullParserException(parser.getPositionDescription()
+                            + ": <item> tag requires a 'drawable' attribute or child tag"
+                            + " defining a drawable");
                 }
-                dr = Drawable.createFromXmlInner(r, parser, attrs);
+                dr = Drawable.createFromXmlInner(r, parser, attrs, theme);
             }
-            
+
             mAnimationState.addFrame(dr, duration);
             if (dr != null) {
                 dr.setCallback(this);
             }
         }
+    }
 
-        setFrame(0, true, false);
+    private void updateStateFromTypedArray(TypedArray a) {
+        mAnimationState.mVariablePadding = a.getBoolean(
+                R.styleable.AnimationDrawable_variablePadding, mAnimationState.mVariablePadding);
+
+        mAnimationState.mOneShot = a.getBoolean(
+                R.styleable.AnimationDrawable_oneshot, mAnimationState.mOneShot);
     }
 
     @Override
+    @NonNull
     public Drawable mutate() {
         if (!mMutated && super.mutate() == this) {
-            mAnimationState.mDurations = mAnimationState.mDurations.clone();
+            mAnimationState.mutate();
             mMutated = true;
         }
         return this;
     }
 
+    @Override
+    AnimationState cloneConstantState() {
+        return new AnimationState(mAnimationState, this, null);
+    }
+
+    /**
+     * @hide
+     */
+    public void clearMutated() {
+        super.clearMutated();
+        mMutated = false;
+    }
+
     private final static class AnimationState extends DrawableContainerState {
         private int[] mDurations;
-        private boolean mOneShot;
+        private boolean mOneShot = false;
 
-        AnimationState(AnimationState orig, AnimationDrawable owner,
-                Resources res) {
+        AnimationState(AnimationState orig, AnimationDrawable owner, Resources res) {
             super(orig, owner, res);
 
             if (orig != null) {
                 mDurations = orig.mDurations;
                 mOneShot = orig.mOneShot;
             } else {
-                mDurations = new int[getChildren().length];
-                mOneShot = true;
+                mDurations = new int[getCapacity()];
+                mOneShot = false;
             }
+        }
+
+        private void mutate() {
+            mDurations = mDurations.clone();
         }
 
         @Override
@@ -338,7 +409,7 @@ public class AnimationDrawable extends DrawableContainer implements Runnable, An
         }
 
         public void addFrame(Drawable dr, int dur) {
-            // Do not combine the following. The array index must be evaluated before 
+            // Do not combine the following. The array index must be evaluated before
             // the array is accessed because super.addChild(dr) has a side effect on mDurations.
             int pos = super.addChild(dr);
             mDurations[pos] = dur;
@@ -353,9 +424,17 @@ public class AnimationDrawable extends DrawableContainer implements Runnable, An
         }
     }
 
+    @Override
+    protected void setConstantState(@NonNull DrawableContainerState state) {
+        super.setConstantState(state);
+
+        if (state instanceof AnimationState) {
+            mAnimationState = (AnimationState) state;
+        }
+    }
+
     private AnimationDrawable(AnimationState state, Resources res) {
-        AnimationState as = new AnimationState(state, this, res);
-        mAnimationState = as;
+        final AnimationState as = new AnimationState(state, this, res);
         setConstantState(as);
         if (state != null) {
             setFrame(0, true, false);

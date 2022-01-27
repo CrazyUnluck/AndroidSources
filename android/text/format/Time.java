@@ -16,20 +16,43 @@
 
 package android.text.format;
 
-import android.content.res.Resources;
+import android.util.TimeFormatException;
 
+import java.io.IOException;
 import java.util.Locale;
 import java.util.TimeZone;
 
-import libcore.icu.LocaleData;
+import libcore.util.ZoneInfo;
+import libcore.util.ZoneInfoDB;
 
 /**
  * An alternative to the {@link java.util.Calendar} and
  * {@link java.util.GregorianCalendar} classes. An instance of the Time class represents
  * a moment in time, specified with second precision. It is modelled after
- * struct tm, and in fact, uses struct tm to implement most of the
- * functionality.
+ * struct tm. This class is not thread-safe and does not consider leap seconds.
+ *
+ * <p>This class has a number of issues and it is recommended that
+ * {@link java.util.GregorianCalendar} is used instead.
+ *
+ * <p>Known issues:
+ * <ul>
+ *     <li>For historical reasons when performing time calculations all arithmetic currently takes
+ *     place using 32-bit integers. This limits the reliable time range representable from 1902
+ *     until 2037.See the wikipedia article on the
+ *     <a href="http://en.wikipedia.org/wiki/Year_2038_problem">Year 2038 problem</a> for details.
+ *     Do not rely on this behavior; it may change in the future.
+ *     </li>
+ *     <li>Calling {@link #switchTimezone(String)} on a date that cannot exist, such as a wall time
+ *     that was skipped due to a DST transition, will result in a date in 1969 (i.e. -1, or 1 second
+ *     before 1st Jan 1970 UTC).</li>
+ *     <li>Much of the formatting / parsing assumes ASCII text and is therefore not suitable for
+ *     use with non-ASCII scripts.</li>
+ *     <li>No support for pseudo-zones like "GMT-07:00".</li>
+ * </ul>
+ *
+ * @deprecated Use {@link java.util.GregorianCalendar} instead.
  */
+@Deprecated
 public class Time {
     private static final String Y_M_D_T_H_M_S_000 = "%Y-%m-%dT%H:%M:%S.000";
     private static final String Y_M_D_T_H_M_S_000_Z = "%Y-%m-%dT%H:%M:%S.000Z";
@@ -106,7 +129,7 @@ public class Time {
     public int isDst;
 
     /**
-     * Offset from UTC (in seconds).
+     * Offset in seconds from UTC including any DST offset.
      */
     public long gmtoff;
 
@@ -137,41 +160,20 @@ public class Time {
     public static final int FRIDAY = 5;
     public static final int SATURDAY = 6;
 
-    /*
-     * The Locale for which date formatting strings have been loaded.
-     */
-    private static Locale sLocale;
-    private static String[] sShortMonths;
-    private static String[] sLongMonths;
-    private static String[] sLongStandaloneMonths;
-    private static String[] sShortWeekdays;
-    private static String[] sLongWeekdays;
-    private static String sTimeOnlyFormat;
-    private static String sDateOnlyFormat;
-    private static String sDateTimeFormat;
-    private static String sAm;
-    private static String sPm;
-    private static char sZeroDigit;
-
-    // Referenced by native code.
-    private static String sDateCommand = "%a %b %e %H:%M:%S %Z %Y";
+    // An object that is reused for date calculations.
+    private TimeCalculator calculator;
 
     /**
      * Construct a Time object in the timezone named by the string
      * argument "timezone". The time is initialized to Jan 1, 1970.
-     * @param timezone string containing the timezone to use.
+     * @param timezoneId string containing the timezone to use.
      * @see TimeZone
      */
-    public Time(String timezone) {
-        if (timezone == null) {
-            throw new NullPointerException("timezone is null!");
+    public Time(String timezoneId) {
+        if (timezoneId == null) {
+            throw new NullPointerException("timezoneId is null!");
         }
-        this.timezone = timezone;
-        this.year = 1970;
-        this.monthDay = 1;
-        // Set the daylight-saving indicator to the unknown value -1 so that
-        // it will be recomputed.
-        this.isDst = -1;
+        initialize(timezoneId);
     }
 
     /**
@@ -179,7 +181,7 @@ public class Time {
      * Jan 1, 1970.
      */
     public Time() {
-        this(TimeZone.getDefault().getID());
+        initialize(TimeZone.getDefault().getID());
     }
 
     /**
@@ -189,7 +191,21 @@ public class Time {
      * @param other
      */
     public Time(Time other) {
+        initialize(other.timezone);
         set(other);
+    }
+
+    /** Initialize the Time to 00:00:00 1/1/1970 in the specified timezone. */
+    private void initialize(String timezoneId) {
+        this.timezone = timezoneId;
+        this.year = 1970;
+        this.monthDay = 1;
+        // Set the daylight-saving indicator to the unknown value -1 so that
+        // it will be recomputed.
+        this.isDst = -1;
+
+        // A reusable object that performs the date/time calculations.
+        calculator = new TimeCalculator(timezoneId);
     }
 
     /**
@@ -200,22 +216,36 @@ public class Time {
      * <p>
      * If "ignoreDst" is true, then this method sets the "isDst" field to -1
      * (the "unknown" value) before normalizing.  It then computes the
-     * correct value for "isDst".
+     * time in milliseconds and sets the correct value for "isDst" if the
+     * fields resolve to a valid date / time.
      *
      * <p>
      * See {@link #toMillis(boolean)} for more information about when to
-     * use <tt>true</tt> or <tt>false</tt> for "ignoreDst".
+     * use <tt>true</tt> or <tt>false</tt> for "ignoreDst" and when {@code -1}
+     * might be returned.
      *
-     * @return the UTC milliseconds since the epoch
+     * @return the UTC milliseconds since the epoch, or {@code -1}
      */
-    native public long normalize(boolean ignoreDst);
+    public long normalize(boolean ignoreDst) {
+        calculator.copyFieldsFromTime(this);
+        long timeInMillis = calculator.toMillis(ignoreDst);
+        calculator.copyFieldsToTime(this);
+        return timeInMillis;
+    }
 
     /**
      * Convert this time object so the time represented remains the same, but is
      * instead located in a different timezone. This method automatically calls
-     * normalize() in some cases
+     * normalize() in some cases.
+     *
+     * <p>This method can return incorrect results if the date / time cannot be normalized.
      */
-    native public void switchTimezone(String timezone);
+    public void switchTimezone(String timezone) {
+        calculator.copyFieldsFromTime(this);
+        calculator.switchTimeZone(timezone);
+        calculator.copyFieldsToTime(this);
+        this.timezone = timezone;
+    }
 
     private static final int[] DAYS_PER_MONTH = { 31, 28, 31, 30, 31, 30, 31,
             31, 30, 31, 30, 31 };
@@ -265,13 +295,13 @@ public class Time {
     /**
      * Clears all values, setting the timezone to the given timezone. Sets isDst
      * to a negative value to mean "unknown".
-     * @param timezone the timezone to use.
+     * @param timezoneId the timezone to use.
      */
-    public void clear(String timezone) {
-        if (timezone == null) {
+    public void clear(String timezoneId) {
+        if (timezoneId == null) {
             throw new NullPointerException("timezone is null!");
         }
-        this.timezone = timezone;
+        this.timezone = timezoneId;
         this.allDay = false;
         this.second = 0;
         this.minute = 0;
@@ -290,13 +320,18 @@ public class Time {
      * a} is less than {@code b}, a positive number if {@code a} is greater than
      * {@code b}, or 0 if they are equal.
      *
+     * <p>
+     * This method can return an incorrect answer when the date / time fields of
+     * either {@code Time} have been set to a local time that contradicts the
+     * available timezone information.
+     *
      * @param a first {@code Time} instance to compare
      * @param b second {@code Time} instance to compare
      * @throws NullPointerException if either argument is {@code null}
      * @throws IllegalArgumentException if {@link #allDay} is true but {@code
      *             hour}, {@code minute}, and {@code second} are not 0.
      * @return a negative result if {@code a} is earlier, a positive result if
-     *         {@code a} is earlier, or 0 if they are equal.
+     *         {@code b} is earlier, or 0 if they are equal.
      */
     public static int compare(Time a, Time b) {
         if (a == null) {
@@ -304,11 +339,11 @@ public class Time {
         } else if (b == null) {
             throw new NullPointerException("b == null");
         }
+        a.calculator.copyFieldsFromTime(a);
+        b.calculator.copyFieldsFromTime(b);
 
-        return nativeCompare(a, b);
+        return TimeCalculator.compare(a.calculator, b.calculator);
     }
-
-    private static native int nativeCompare(Time a, Time b);
 
     /**
      * Print the current value given the format string provided. See man
@@ -318,61 +353,21 @@ public class Time {
      * @return a String containing the current time expressed in the current locale.
      */
     public String format(String format) {
-        synchronized (Time.class) {
-            Locale locale = Locale.getDefault();
-
-            if (sLocale == null || locale == null || !(locale.equals(sLocale))) {
-                LocaleData localeData = LocaleData.get(locale);
-
-                sAm = localeData.amPm[0];
-                sPm = localeData.amPm[1];
-                sZeroDigit = localeData.zeroDigit;
-
-                sShortMonths = localeData.shortMonthNames;
-                sLongMonths = localeData.longMonthNames;
-                sLongStandaloneMonths = localeData.longStandAloneMonthNames;
-                sShortWeekdays = localeData.shortWeekdayNames;
-                sLongWeekdays = localeData.longWeekdayNames;
-
-                Resources r = Resources.getSystem();
-                sTimeOnlyFormat = r.getString(com.android.internal.R.string.time_of_day);
-                sDateOnlyFormat = r.getString(com.android.internal.R.string.month_day_year);
-                sDateTimeFormat = r.getString(com.android.internal.R.string.date_and_time);
-
-                sLocale = locale;
-            }
-
-            String result = format1(format);
-            if (sZeroDigit != '0') {
-                result = localizeDigits(result);
-            }
-            return result;
-        }
+        calculator.copyFieldsFromTime(this);
+        return calculator.format(format);
     }
-
-    native private String format1(String format);
-
-    // TODO: unify this with java.util.Formatter's copy.
-    private String localizeDigits(String s) {
-        int length = s.length();
-        int offsetToLocalizedDigits = sZeroDigit - '0';
-        StringBuilder result = new StringBuilder(length);
-        for (int i = 0; i < length; ++i) {
-            char ch = s.charAt(i);
-            if (ch >= '0' && ch <= '9') {
-                ch += offsetToLocalizedDigits;
-            }
-            result.append(ch);
-        }
-        return result.toString();
-    }
-
 
     /**
      * Return the current time in YYYYMMDDTHHMMSS<tz> format
      */
     @Override
-    native public String toString();
+    public String toString() {
+        // toString() uses its own TimeCalculator rather than the shared one. Otherwise crazy stuff
+        // happens during debugging when the debugger calls toString().
+        TimeCalculator calculator = new TimeCalculator(this.timezone);
+        calculator.copyFieldsFromTime(this);
+        return calculator.toStringInternal();
+    }
 
     /**
      * Parses a date-time string in either the RFC 2445 format or an abbreviated
@@ -414,7 +409,7 @@ public class Time {
         if (s == null) {
             throw new NullPointerException("time string is null");
         }
-        if (nativeParse(s)) {
+        if (parseInternal(s)) {
             timezone = TIMEZONE_UTC;
             return true;
         }
@@ -424,7 +419,94 @@ public class Time {
     /**
      * Parse a time in the current zone in YYYYMMDDTHHMMSS format.
      */
-    native private boolean nativeParse(String s);
+    private boolean parseInternal(String s) {
+        int len = s.length();
+        if (len < 8) {
+            throw new TimeFormatException("String is too short: \"" + s +
+                    "\" Expected at least 8 characters.");
+        }
+
+        boolean inUtc = false;
+
+        // year
+        int n = getChar(s, 0, 1000);
+        n += getChar(s, 1, 100);
+        n += getChar(s, 2, 10);
+        n += getChar(s, 3, 1);
+        year = n;
+
+        // month
+        n = getChar(s, 4, 10);
+        n += getChar(s, 5, 1);
+        n--;
+        month = n;
+
+        // day of month
+        n = getChar(s, 6, 10);
+        n += getChar(s, 7, 1);
+        monthDay = n;
+
+        if (len > 8) {
+            if (len < 15) {
+                throw new TimeFormatException(
+                        "String is too short: \"" + s
+                                + "\" If there are more than 8 characters there must be at least"
+                                + " 15.");
+            }
+            checkChar(s, 8, 'T');
+            allDay = false;
+
+            // hour
+            n = getChar(s, 9, 10);
+            n += getChar(s, 10, 1);
+            hour = n;
+
+            // min
+            n = getChar(s, 11, 10);
+            n += getChar(s, 12, 1);
+            minute = n;
+
+            // sec
+            n = getChar(s, 13, 10);
+            n += getChar(s, 14, 1);
+            second = n;
+
+            if (len > 15) {
+                // Z
+                checkChar(s, 15, 'Z');
+                inUtc = true;
+            }
+        } else {
+            allDay = true;
+            hour = 0;
+            minute = 0;
+            second = 0;
+        }
+
+        weekDay = 0;
+        yearDay = 0;
+        isDst = -1;
+        gmtoff = 0;
+        return inUtc;
+    }
+
+    private void checkChar(String s, int spos, char expected) {
+        char c = s.charAt(spos);
+        if (c != expected) {
+            throw new TimeFormatException(String.format(
+                    "Unexpected character 0x%02d at pos=%d.  Expected 0x%02d (\'%c\').",
+                    (int) c, spos, (int) expected, expected));
+        }
+    }
+
+    private static int getChar(String s, int spos, int mul) {
+        char c = s.charAt(spos);
+        if (Character.isDigit(c)) {
+            return Character.getNumericValue(c) * mul;
+        } else {
+            throw new TimeFormatException("Parse error at pos=" + spos);
+        }
+    }
 
     /**
      * Parse a time in RFC 3339 format.  This method also parses simple dates
@@ -461,14 +543,140 @@ public class Time {
          if (s == null) {
              throw new NullPointerException("time string is null");
          }
-         if (nativeParse3339(s)) {
+         if (parse3339Internal(s)) {
              timezone = TIMEZONE_UTC;
              return true;
          }
          return false;
      }
 
-     native private boolean nativeParse3339(String s);
+     private boolean parse3339Internal(String s) {
+         int len = s.length();
+         if (len < 10) {
+             throw new TimeFormatException("String too short --- expected at least 10 characters.");
+         }
+         boolean inUtc = false;
+
+         // year
+         int n = getChar(s, 0, 1000);
+         n += getChar(s, 1, 100);
+         n += getChar(s, 2, 10);
+         n += getChar(s, 3, 1);
+         year = n;
+
+         checkChar(s, 4, '-');
+
+         // month
+         n = getChar(s, 5, 10);
+         n += getChar(s, 6, 1);
+         --n;
+         month = n;
+
+         checkChar(s, 7, '-');
+
+         // day
+         n = getChar(s, 8, 10);
+         n += getChar(s, 9, 1);
+         monthDay = n;
+
+         if (len >= 19) {
+             // T
+             checkChar(s, 10, 'T');
+             allDay = false;
+
+             // hour
+             n = getChar(s, 11, 10);
+             n += getChar(s, 12, 1);
+
+             // Note that this.hour is not set here. It is set later.
+             int hour = n;
+
+             checkChar(s, 13, ':');
+
+             // minute
+             n = getChar(s, 14, 10);
+             n += getChar(s, 15, 1);
+             // Note that this.minute is not set here. It is set later.
+             int minute = n;
+
+             checkChar(s, 16, ':');
+
+             // second
+             n = getChar(s, 17, 10);
+             n += getChar(s, 18, 1);
+             second = n;
+
+             // skip the '.XYZ' -- we don't care about subsecond precision.
+
+             int tzIndex = 19;
+             if (tzIndex < len && s.charAt(tzIndex) == '.') {
+                 do {
+                     tzIndex++;
+                 } while (tzIndex < len && Character.isDigit(s.charAt(tzIndex)));
+             }
+
+             int offset = 0;
+             if (len > tzIndex) {
+                 char c = s.charAt(tzIndex);
+                 // NOTE: the offset is meant to be subtracted to get from local time
+                 // to UTC.  we therefore use 1 for '-' and -1 for '+'.
+                 switch (c) {
+                     case 'Z':
+                         // Zulu time -- UTC
+                         offset = 0;
+                         break;
+                     case '-':
+                         offset = 1;
+                         break;
+                     case '+':
+                         offset = -1;
+                         break;
+                     default:
+                         throw new TimeFormatException(String.format(
+                                 "Unexpected character 0x%02d at position %d.  Expected + or -",
+                                 (int) c, tzIndex));
+                 }
+                 inUtc = true;
+
+                 if (offset != 0) {
+                     if (len < tzIndex + 6) {
+                         throw new TimeFormatException(
+                                 String.format("Unexpected length; should be %d characters",
+                                         tzIndex + 6));
+                     }
+
+                     // hour
+                     n = getChar(s, tzIndex + 1, 10);
+                     n += getChar(s, tzIndex + 2, 1);
+                     n *= offset;
+                     hour += n;
+
+                     // minute
+                     n = getChar(s, tzIndex + 4, 10);
+                     n += getChar(s, tzIndex + 5, 1);
+                     n *= offset;
+                     minute += n;
+                 }
+             }
+             this.hour = hour;
+             this.minute = minute;
+
+             if (offset != 0) {
+                 normalize(false);
+             }
+         } else {
+             allDay = true;
+             this.hour = 0;
+             this.minute = 0;
+             this.second = 0;
+         }
+
+         this.weekDay = 0;
+         this.yearDay = 0;
+         this.isDst = -1;
+         this.gmtoff = 0;
+         return inUtc;
+     }
 
     /**
      * Returns the timezone string that is currently set for the device.
@@ -480,7 +688,9 @@ public class Time {
     /**
      * Sets the time of the given Time object to the current time.
      */
-    native public void setToNow();
+    public void setToNow() {
+        set(System.currentTimeMillis());
+    }
 
     /**
      * Converts this time to milliseconds. Suitable for interacting with the
@@ -512,7 +722,7 @@ public class Time {
      * <pre>
      * Time time = new Time();
      * time.set(4, 10, 2007);  // set the date to Nov 4, 2007, 12am
-     * time.normalize();       // this sets isDst = 1
+     * time.normalize(false);       // this sets isDst = 1
      * time.monthDay += 1;     // changes the date to Nov 5, 2007, 12am
      * millis = time.toMillis(false);   // millis is Nov 4, 2007, 11pm
      * millis = time.toMillis(true);    // millis is Nov 5, 2007, 12am
@@ -528,9 +738,20 @@ public class Time {
      * <p>
      * You should also use <tt>toMillis(false)</tt> if you want
      * to read back the same milliseconds that you set with {@link #set(long)}
+     *
+     * <p>
+     * This method can return {@code -1} when the date / time fields have been
+     * set to a local time that conflicts with available timezone information.
+     * For example, when daylight savings transitions cause an hour to be
+     * skipped: times within that hour will return {@code -1} if isDst =
+     * {@code -1}.
+     *
      * or {@link #set(Time)} or after parsing a date string.
      */
-    native public long toMillis(boolean ignoreDst);
+    public long toMillis(boolean ignoreDst) {
+        calculator.copyFieldsFromTime(this);
+        return calculator.toMillis(ignoreDst);
+    }
 
     /**
      * Sets the fields in this Time object given the UTC milliseconds.  After
@@ -539,15 +760,23 @@ public class Time {
      *
      * @param millis the time in UTC milliseconds since the epoch.
      */
-    native public void set(long millis);
+    public void set(long millis) {
+        allDay = false;
+        calculator.timezone = timezone;
+        calculator.setTimeInMillis(millis);
+        calculator.copyFieldsToTime(this);
+    }
 
     /**
-     * Format according to RFC 2445 DATETIME type.
+     * Format according to RFC 2445 DATE-TIME type.
      *
-     * <p>
-     * The same as format("%Y%m%dT%H%M%S").
+     * <p>The same as format("%Y%m%dT%H%M%S"), or format("%Y%m%dT%H%M%SZ") for a Time with a
+     * timezone set to "UTC".
      */
-    native public String format2445();
+    public String format2445() {
+        calculator.copyFieldsFromTime(this);
+        return calculator.format2445(!allDay);
+    }
 
     /**
      * Copy the value of that to this Time object. No normalization happens.
@@ -612,6 +841,10 @@ public class Time {
      * Returns true if the time represented by this Time object occurs before
      * the given time.
      *
+     * <p>
+     * Equivalent to {@code Time.compare(this, that) < 0}. See
+     * {@link #compare(Time, Time)} for details.
+     *
      * @param that a given Time object to compare against
      * @return true if this time is less than the given time
      */
@@ -623,6 +856,10 @@ public class Time {
     /**
      * Returns true if the time represented by this Time object occurs after
      * the given time.
+     *
+     * <p>
+     * Equivalent to {@code Time.compare(this, that) > 0}. See
+     * {@link #compare(Time, Time)} for details.
      *
      * @param that a given Time object to compare against
      * @return true if this time is greater than the given time
@@ -682,7 +919,6 @@ public class Time {
      * Otherwise, if the timezone is UTC, expresses the time as Y-M-D-T-H-M-S UTC</p>
      * <p>
      * Otherwise the time is expressed the time as Y-M-D-T-H-M-S +- GMT</p>
-     * @param allDay
      * @return string in the RFC 3339 format.
      */
     public String format3339(boolean allDay) {
@@ -693,7 +929,7 @@ public class Time {
         } else {
             String base = format(Y_M_D_T_H_M_S_000);
             String sign = (gmtoff < 0) ? "-" : "+";
-            int offset = (int)Math.abs(gmtoff);
+            int offset = (int) Math.abs(gmtoff);
             int minutes = (offset % 3600) / 60;
             int hours = offset / 3600;
 
@@ -705,6 +941,10 @@ public class Time {
      * Returns true if the day of the given time is the epoch on the Julian Calendar
      * (January 1, 1970 on the Gregorian calendar).
      *
+     * <p>
+     * This method can return an incorrect answer when the date / time fields have
+     * been set to a local time that contradicts the available timezone information.
+     *
      * @param time the time to test
      * @return true if epoch.
      */
@@ -714,16 +954,18 @@ public class Time {
     }
 
     /**
-     * Computes the Julian day number, given the UTC milliseconds
-     * and the offset (in seconds) from UTC.  The Julian day for a given
-     * date will be the same for every timezone.  For example, the Julian
-     * day for July 1, 2008 is 2454649.  This is the same value no matter
-     * what timezone is being used.  The Julian day is useful for testing
-     * if two events occur on the same day and for determining the relative
-     * time of an event from the present ("yesterday", "3 days ago", etc.).
+     * Computes the Julian day number for a point in time in a particular
+     * timezone. The Julian day for a given date is the same for every
+     * timezone. For example, the Julian day for July 1, 2008 is 2454649.
      *
-     * <p>
-     * Use {@link #toMillis(boolean)} to get the milliseconds.
+     * <p>Callers must pass the time in UTC millisecond (as can be returned
+     * by {@link #toMillis(boolean)} or {@link #normalize(boolean)})
+     * and the offset from UTC of the timezone in seconds (as might be in
+     * {@link #gmtoff}).
+     *
+     * <p>The Julian day is useful for testing if two events occur on the
+     * same calendar date and for determining the relative time of an event
+     * from the present ("yesterday", "3 days ago", etc.).
      *
      * @param millis the time in UTC milliseconds
      * @param gmtoff the offset from UTC in seconds
@@ -809,5 +1051,241 @@ public class Time {
      */
     public static int getJulianMondayFromWeeksSinceEpoch(int week) {
         return MONDAY_BEFORE_JULIAN_EPOCH + week * 7;
+    }
+
+    /**
+     * A class that handles date/time calculations.
+     *
+     * This class originated as a port of a native C++ class ("android.Time") to pure Java. It is
+     * separate from the enclosing class because some methods copy the result of calculations back
+     * to the enclosing object, but others do not: thus separate state is retained.
+     */
+    private static class TimeCalculator {
+        public final ZoneInfo.WallTime wallTime;
+        public String timezone;
+
+        // Information about the current timezone.
+        private ZoneInfo zoneInfo;
+
+        public TimeCalculator(String timezoneId) {
+            this.zoneInfo = lookupZoneInfo(timezoneId);
+            this.wallTime = new ZoneInfo.WallTime();
+        }
+
+        public long toMillis(boolean ignoreDst) {
+            if (ignoreDst) {
+                wallTime.setIsDst(-1);
+            }
+
+            int r = wallTime.mktime(zoneInfo);
+            if (r == -1) {
+                return -1;
+            }
+            return r * 1000L;
+        }
+
+        public void setTimeInMillis(long millis) {
+            // Preserve old 32-bit Android behavior.
+            int intSeconds = (int) (millis / 1000);
+
+            updateZoneInfoFromTimeZone();
+            wallTime.localtime(intSeconds, zoneInfo);
+        }
+
+        public String format(String format) {
+            if (format == null) {
+                format = "%c";
+            }
+            TimeFormatter formatter = new TimeFormatter();
+            return formatter.format(format, wallTime, zoneInfo);
+        }
+
+        private void updateZoneInfoFromTimeZone() {
+            if (!zoneInfo.getID().equals(timezone)) {
+                this.zoneInfo = lookupZoneInfo(timezone);
+            }
+        }
+
+        private static ZoneInfo lookupZoneInfo(String timezoneId) {
+            try {
+                ZoneInfo zoneInfo = ZoneInfoDB.getInstance().makeTimeZone(timezoneId);
+                if (zoneInfo == null) {
+                    zoneInfo = ZoneInfoDB.getInstance().makeTimeZone("GMT");
+                }
+                if (zoneInfo == null) {
+                    throw new AssertionError("GMT not found: \"" + timezoneId + "\"");
+                }
+                return zoneInfo;
+            } catch (IOException e) {
+                // This should not ever be thrown.
+                throw new AssertionError("Error loading timezone: \"" + timezoneId + "\"", e);
+            }
+        }
+
+        public void switchTimeZone(String timezone) {
+            int seconds = wallTime.mktime(zoneInfo);
+            this.timezone = timezone;
+            updateZoneInfoFromTimeZone();
+            wallTime.localtime(seconds, zoneInfo);
+        }
+
+        public String format2445(boolean hasTime) {
+            char[] buf = new char[hasTime ? 16 : 8];
+            int n = wallTime.getYear();
+
+            buf[0] = toChar(n / 1000);
+            n %= 1000;
+            buf[1] = toChar(n / 100);
+            n %= 100;
+            buf[2] = toChar(n / 10);
+            n %= 10;
+            buf[3] = toChar(n);
+
+            n = wallTime.getMonth() + 1;
+            buf[4] = toChar(n / 10);
+            buf[5] = toChar(n % 10);
+
+            n = wallTime.getMonthDay();
+            buf[6] = toChar(n / 10);
+            buf[7] = toChar(n % 10);
+
+            if (!hasTime) {
+                return new String(buf, 0, 8);
+            }
+
+            buf[8] = 'T';
+
+            n = wallTime.getHour();
+            buf[9] = toChar(n / 10);
+            buf[10] = toChar(n % 10);
+
+            n = wallTime.getMinute();
+            buf[11] = toChar(n / 10);
+            buf[12] = toChar(n % 10);
+
+            n = wallTime.getSecond();
+            buf[13] = toChar(n / 10);
+            buf[14] = toChar(n % 10);
+
+            if (TIMEZONE_UTC.equals(timezone)) {
+                // The letter 'Z' is appended to the end.
+                buf[15] = 'Z';
+                return new String(buf, 0, 16);
+            } else {
+                return new String(buf, 0, 15);
+            }
+        }
+
+        private char toChar(int n) {
+            return (n >= 0 && n <= 9) ? (char) (n + '0') : ' ';
+        }
+
+        /**
+         * A method that will return the state of this object in string form. Note: it has side
+         * effects and so has deliberately not been made the default {@link #toString()}.
+         */
+        public String toStringInternal() {
+            // This implementation possibly displays the un-normalized fields because that is
+            // what it has always done.
+            return String.format("%04d%02d%02dT%02d%02d%02d%s(%d,%d,%d,%d,%d)",
+                    wallTime.getYear(),
+                    wallTime.getMonth() + 1,
+                    wallTime.getMonthDay(),
+                    wallTime.getHour(),
+                    wallTime.getMinute(),
+                    wallTime.getSecond(),
+                    timezone,
+                    wallTime.getWeekDay(),
+                    wallTime.getYearDay(),
+                    wallTime.getGmtOffset(),
+                    wallTime.getIsDst(),
+                    toMillis(false /* use isDst */) / 1000
+            );
+
+        }
+
+        public static int compare(TimeCalculator aObject, TimeCalculator bObject) {
+            if (aObject.timezone.equals(bObject.timezone)) {
+                // If the timezones are the same, we can easily compare the two times.
+                int diff = aObject.wallTime.getYear() - bObject.wallTime.getYear();
+                if (diff != 0) {
+                    return diff;
+                }
+
+                diff = aObject.wallTime.getMonth() - bObject.wallTime.getMonth();
+                if (diff != 0) {
+                    return diff;
+                }
+
+                diff = aObject.wallTime.getMonthDay() - bObject.wallTime.getMonthDay();
+                if (diff != 0) {
+                    return diff;
+                }
+
+                diff = aObject.wallTime.getHour() - bObject.wallTime.getHour();
+                if (diff != 0) {
+                    return diff;
+                }
+
+                diff = aObject.wallTime.getMinute() - bObject.wallTime.getMinute();
+                if (diff != 0) {
+                    return diff;
+                }
+
+                diff = aObject.wallTime.getSecond() - bObject.wallTime.getSecond();
+                if (diff != 0) {
+                    return diff;
+                }
+
+                return 0;
+            } else {
+                // Otherwise, convert to milliseconds and compare that. This requires that object be
+                // normalized. Note: For dates that do not exist: toMillis() can return -1, which
+                // can be confused with a valid time.
+                long am = aObject.toMillis(false /* use isDst */);
+                long bm = bObject.toMillis(false /* use isDst */);
+                long diff = am - bm;
+                return (diff < 0) ? -1 : ((diff > 0) ? 1 : 0);
+            }
+
+        }
+
+        public void copyFieldsToTime(Time time) {
+            time.second = wallTime.getSecond();
+            time.minute = wallTime.getMinute();
+            time.hour = wallTime.getHour();
+            time.monthDay = wallTime.getMonthDay();
+            time.month = wallTime.getMonth();
+            time.year = wallTime.getYear();
+
+            // Read-only fields that are derived from other information above.
+            time.weekDay = wallTime.getWeekDay();
+            time.yearDay = wallTime.getYearDay();
+
+            // < 0: DST status unknown, 0: is not in DST, 1: is in DST
+            time.isDst = wallTime.getIsDst();
+            // This is in seconds and includes any DST offset too.
+            time.gmtoff = wallTime.getGmtOffset();
+        }
+
+        public void copyFieldsFromTime(Time time) {
+            wallTime.setSecond(time.second);
+            wallTime.setMinute(time.minute);
+            wallTime.setHour(time.hour);
+            wallTime.setMonthDay(time.monthDay);
+            wallTime.setMonth(time.month);
+            wallTime.setYear(time.year);
+            wallTime.setWeekDay(time.weekDay);
+            wallTime.setYearDay(time.yearDay);
+            wallTime.setIsDst(time.isDst);
+            wallTime.setGmtOffset((int) time.gmtoff);
+
+            if (time.allDay && (time.second != 0 || time.minute != 0 || time.hour != 0)) {
+                throw new IllegalArgumentException("allDay is true but sec, min, hour are not 0.");
+            }
+
+            timezone = time.timezone;
+            updateZoneInfoFromTimeZone();
+        }
     }
 }

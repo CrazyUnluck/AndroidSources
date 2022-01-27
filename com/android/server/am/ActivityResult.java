@@ -18,12 +18,11 @@ package com.android.server.am;
 
 import android.app.ResultInfo;
 import android.content.Intent;
-import android.os.Bundle;
 
 /**
  * Pending result information to send back to an activity.
  */
-class ActivityResult extends ResultInfo {
+final class ActivityResult extends ResultInfo {
     final ActivityRecord mFrom;
     
     public ActivityResult(ActivityRecord from, String resultWho,

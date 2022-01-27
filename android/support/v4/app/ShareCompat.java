@@ -24,6 +24,7 @@ import android.content.pm.PackageManager.NameNotFoundException;
 import android.graphics.drawable.Drawable;
 import android.net.Uri;
 import android.os.Build;
+import android.support.annotation.StringRes;
 import android.support.v4.content.IntentCompat;
 import android.support.v4.view.MenuItemCompat;
 import android.text.Html;
@@ -55,7 +56,7 @@ import java.util.ArrayList;
  * Social apps that enable sharing content are encouraged to use this information
  * to call out the app that the content was shared from.
  */
-public class ShareCompat {
+public final class ShareCompat {
     /**
      * Intent extra that stores the name of the calling package for an ACTION_SEND intent.
      * When an activity is started using startActivityForResult this is redundant info.
@@ -156,6 +157,8 @@ public class ShareCompat {
             IMPL = new ShareCompatImplBase();
         }
     }
+
+    private ShareCompat() {}
 
     /**
      * Retrieve the name of the package that launched calledActivity from a share intent.
@@ -403,7 +406,7 @@ public class ShareCompat {
          * @param resId Resource ID of the title string to use
          * @return This IntentBuilder for method chaining
          */
-        public IntentBuilder setChooserTitle(int resId) {
+        public IntentBuilder setChooserTitle(@StringRes int resId) {
             return setChooserTitle(mActivity.getText(resId));
         }
 
@@ -484,7 +487,7 @@ public class ShareCompat {
          */
         public IntentBuilder addStream(Uri streamUri) {
             Uri currentStream = mIntent.getParcelableExtra(Intent.EXTRA_STREAM);
-            if (currentStream == null) {
+            if (mStreams == null && currentStream == null) {
                 return setStream(streamUri);
             }
             if (mStreams == null) {
@@ -747,7 +750,7 @@ public class ShareCompat {
          */
         public String getHtmlText() {
             String result = mIntent.getStringExtra(IntentCompat.EXTRA_HTML_TEXT);
-            if (mIntent == null) {
+            if (result == null) {
                 CharSequence text = getText();
                 if (text instanceof Spanned) {
                     result = Html.toHtml((Spanned) text);

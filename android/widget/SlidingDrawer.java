@@ -32,7 +32,6 @@ import android.view.VelocityTracker;
 import android.view.View;
 import android.view.ViewGroup;
 import android.view.accessibility.AccessibilityEvent;
-import android.view.accessibility.AccessibilityNodeInfo;
 
 /**
  * SlidingDrawer hides content out of the screen and allows the user to drag a handle
@@ -94,7 +93,6 @@ public class SlidingDrawer extends ViewGroup {
     private static final float MAXIMUM_MAJOR_VELOCITY = 200.0f;
     private static final float MAXIMUM_ACCELERATION = 2000.0f;
     private static final int VELOCITY_UNITS = 1000;
-    private static final int MSG_ANIMATE = 1000;
     private static final int ANIMATION_FRAME_DURATION = 1000 / 60;
 
     private static final int EXPANDED_FULL_OPEN = -10001;
@@ -124,7 +122,6 @@ public class SlidingDrawer extends ViewGroup {
     private OnDrawerCloseListener mOnDrawerCloseListener;
     private OnDrawerScrollListener mOnDrawerScrollListener;
 
-    private final Handler mHandler = new SlidingHandler();
     private float mAnimatedAcceleration;
     private float mAnimatedVelocity;
     private float mAnimationPosition;
@@ -192,11 +189,32 @@ public class SlidingDrawer extends ViewGroup {
      *
      * @param context The application's environment.
      * @param attrs The attributes defined in XML.
-     * @param defStyle The style to apply to this widget.
+     * @param defStyleAttr An attribute in the current theme that contains a
+     *        reference to a style resource that supplies default values for
+     *        the view. Can be 0 to not look for defaults.
      */
-    public SlidingDrawer(Context context, AttributeSet attrs, int defStyle) {
-        super(context, attrs, defStyle);
-        TypedArray a = context.obtainStyledAttributes(attrs, R.styleable.SlidingDrawer, defStyle, 0);
+    public SlidingDrawer(Context context, AttributeSet attrs, int defStyleAttr) {
+        this(context, attrs, defStyleAttr, 0);
+    }
+
+    /**
+     * Creates a new SlidingDrawer from a specified set of attributes defined in XML.
+     *
+     * @param context The application's environment.
+     * @param attrs The attributes defined in XML.
+     * @param defStyleAttr An attribute in the current theme that contains a
+     *        reference to a style resource that supplies default values for
+     *        the view. Can be 0 to not look for defaults.
+     * @param defStyleRes A resource identifier of a style resource that
+     *        supplies default values for the view, used only if
+     *        defStyleAttr is 0 or can not be found in the theme. Can be 0
+     *        to not look for defaults.
+     */
+    public SlidingDrawer(Context context, AttributeSet attrs, int defStyleAttr, int defStyleRes) {
+        super(context, attrs, defStyleAttr, defStyleRes);
+
+        final TypedArray a = context.obtainStyledAttributes(
+                attrs, R.styleable.SlidingDrawer, defStyleAttr, defStyleRes);
 
         int orientation = a.getInt(R.styleable.SlidingDrawer_orientation, ORIENTATION_VERTICAL);
         mVertical = orientation == ORIENTATION_VERTICAL;
@@ -533,8 +551,8 @@ public class SlidingDrawer extends ViewGroup {
         mAnimationLastTime = now;
         mCurrentAnimationTime = now + ANIMATION_FRAME_DURATION;
         mAnimating = true;
-        mHandler.removeMessages(MSG_ANIMATE);
-        mHandler.sendMessageAtTime(mHandler.obtainMessage(MSG_ANIMATE), mCurrentAnimationTime);
+        removeCallbacks(mSlidingRunnable);
+        postDelayed(mSlidingRunnable, ANIMATION_FRAME_DURATION);
         stopTracking();
     }
 
@@ -549,7 +567,7 @@ public class SlidingDrawer extends ViewGroup {
                     (mVertical ? getHeight() - mHandleHeight : getWidth() - mHandleWidth);
             moveHandle((int) mAnimationPosition);
             mAnimating = true;
-            mHandler.removeMessages(MSG_ANIMATE);
+            removeCallbacks(mSlidingRunnable);
             long now = SystemClock.uptimeMillis();
             mAnimationLastTime = now;
             mCurrentAnimationTime = now + ANIMATION_FRAME_DURATION;
@@ -557,7 +575,7 @@ public class SlidingDrawer extends ViewGroup {
         } else {
             if (mAnimating) {
                 mAnimating = false;
-                mHandler.removeMessages(MSG_ANIMATE);
+                removeCallbacks(mSlidingRunnable);
             }
             moveHandle(position);
         }
@@ -689,8 +707,7 @@ public class SlidingDrawer extends ViewGroup {
             } else {
                 moveHandle((int) mAnimationPosition);
                 mCurrentAnimationTime += ANIMATION_FRAME_DURATION;
-                mHandler.sendMessageAtTime(mHandler.obtainMessage(MSG_ANIMATE),
-                        mCurrentAnimationTime);
+                postDelayed(mSlidingRunnable, ANIMATION_FRAME_DURATION);
             }
         }
     }
@@ -817,15 +834,8 @@ public class SlidingDrawer extends ViewGroup {
     }
 
     @Override
-    public void onInitializeAccessibilityEvent(AccessibilityEvent event) {
-        super.onInitializeAccessibilityEvent(event);
-        event.setClassName(SlidingDrawer.class.getName());
-    }
-
-    @Override
-    public void onInitializeAccessibilityNodeInfo(AccessibilityNodeInfo info) {
-        super.onInitializeAccessibilityNodeInfo(info);
-        info.setClassName(SlidingDrawer.class.getName());
+    public CharSequence getAccessibilityClassName() {
+        return SlidingDrawer.class.getName();
     }
 
     private void closeDrawer() {
@@ -961,13 +971,10 @@ public class SlidingDrawer extends ViewGroup {
         }
     }
 
-    private class SlidingHandler extends Handler {
-        public void handleMessage(Message m) {
-            switch (m.what) {
-                case MSG_ANIMATE:
-                    doAnimation();
-                    break;
-            }
+    private final Runnable mSlidingRunnable = new Runnable() {
+        @Override
+        public void run() {
+            doAnimation();
         }
-    }
+    };
 }

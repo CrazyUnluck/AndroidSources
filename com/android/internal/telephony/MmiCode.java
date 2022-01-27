@@ -45,6 +45,11 @@ public interface MmiCode
     public CharSequence getMessage();
 
     /**
+     * @return Phone associated with the MMI/USSD message
+     */
+    public Phone getPhone();
+
+    /**
      * Cancels pending MMI request.
      * State becomes CANCELLED unless already COMPLETE or FAILED
      */
@@ -59,4 +64,15 @@ public interface MmiCode
      * @return true if an outstanding request can be canceled.
      */
     public boolean isCancelable();
+
+    /**
+     * @return true if the Service Code is PIN/PIN2/PUK/PUK2-related
+     */
+    public boolean isPinPukCommand();
+
+    /**
+     * Process a MMI code or short code...anything that isn't a dialing number
+     */
+    void processCode() throws CallStateException;
+
 }

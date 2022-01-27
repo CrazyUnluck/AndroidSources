@@ -16,10 +16,16 @@
 
 package android.animation;
 
+import android.annotation.CallSuper;
+import android.annotation.NonNull;
+import android.annotation.Nullable;
+import android.graphics.Path;
+import android.graphics.PointF;
 import android.util.Log;
 import android.util.Property;
+import android.view.animation.AccelerateDecelerateInterpolator;
 
-import java.util.ArrayList;
+import java.lang.ref.WeakReference;
 
 /**
  * This subclass of {@link ValueAnimator} provides support for animating properties on target objects.
@@ -27,6 +33,30 @@ import java.util.ArrayList;
  * as well as the name of the property that will be animated. Appropriate set/get functions
  * are then determined internally and the animation will call these functions as necessary to
  * animate the property.
+ *
+ * <p>Animators can be created from either code or resource files, as shown here:</p>
+ *
+ * {@sample development/samples/ApiDemos/res/anim/object_animator.xml ObjectAnimatorResources}
+ *
+ * <p>When using resource files, it is possible to use {@link PropertyValuesHolder} and
+ * {@link Keyframe} to create more complex animations. Using PropertyValuesHolders
+ * allows animators to animate several properties in parallel, as shown in this sample:</p>
+ *
+ * {@sample development/samples/ApiDemos/res/anim/object_animator_pvh.xml
+ * PropertyValuesHolderResources}
+ *
+ * <p>Using Keyframes allows animations to follow more complex paths from the start
+ * to the end values. Note that you can specify explicit fractional values (from 0 to 1) for
+ * each keyframe to determine when, in the overall duration, the animation should arrive at that
+ * value. Alternatively, you can leave the fractions off and the keyframes will be equally
+ * distributed within the total duration. Also, a keyframe with no value will derive its value
+ * from the target object when the animator starts, just like animators with only one
+ * value specified. In addition, an optional interpolator can be specified. The interpolator will
+ * be applied on the interval between the keyframe that the interpolator is set on and the previous
+ * keyframe. When no interpolator is supplied, the default {@link AccelerateDecelerateInterpolator}
+ * will be used. </p>
+ *
+ * {@sample development/samples/ApiDemos/res/anim/object_animator_pvh_kf_interpolated.xml KeyframeResources}
  *
  * <div class="special reference">
  * <h3>Developer Guides</h3>
@@ -39,10 +69,15 @@ import java.util.ArrayList;
  *
  */
 public final class ObjectAnimator extends ValueAnimator {
+    private static final String LOG_TAG = "ObjectAnimator";
+
     private static final boolean DBG = false;
 
-    // The target object on which the property exists, set in the constructor
-    private Object mTarget;
+    /**
+     * A weak reference to the target object on which the property exists, set
+     * in the constructor. We'll cancel the animation if this goes away.
+     */
+    private WeakReference<Object> mTarget;
 
     private String mPropertyName;
 
@@ -76,7 +111,7 @@ public final class ObjectAnimator extends ValueAnimator {
      *
      * @param propertyName The name of the property being animated. Should not be null.
      */
-    public void setPropertyName(String propertyName) {
+    public void setPropertyName(@NonNull String propertyName) {
         // mValues could be null if this is being constructed piecemeal. Just record the
         // propertyName to be used later when setValues() is called if so.
         if (mValues != null) {
@@ -98,7 +133,7 @@ public final class ObjectAnimator extends ValueAnimator {
      *
      * @param property The property being animated. Should not be null.
      */
-    public void setProperty(Property property) {
+    public void setProperty(@NonNull Property property) {
         // mValues could be null if this is being constructed piecemeal. Just record the
         // propertyName to be used later when setValues() is called if so.
         if (mValues != null) {
@@ -123,9 +158,38 @@ public final class ObjectAnimator extends ValueAnimator {
      * in a call to the function <code>setFoo()</code> on the target object. If either
      * <code>valueFrom</code> or <code>valueTo</code> is null, then a getter function will
      * also be derived and called.
+     *
+     * <p>If this animator was created with a {@link Property} object instead of the
+     * string name of a property, then this method will return the {@link
+     * Property#getName() name} of that Property object instead. If this animator was
+     * created with one or more {@link PropertyValuesHolder} objects, then this method
+     * will return the {@link PropertyValuesHolder#getPropertyName() name} of that
+     * object (if there was just one) or a comma-separated list of all of the
+     * names (if there are more than one).</p>
      */
+    @Nullable
     public String getPropertyName() {
-        return mPropertyName;
+        String propertyName = null;
+        if (mPropertyName != null) {
+            propertyName = mPropertyName;
+        } else if (mProperty != null) {
+            propertyName = mProperty.getName();
+        } else if (mValues != null && mValues.length > 0) {
+            for (int i = 0; i < mValues.length; ++i) {
+                if (i == 0) {
+                    propertyName = "";
+                } else {
+                    propertyName += ",";
+                }
+                propertyName += mValues[i].getPropertyName();
+            }
+        }
+        return propertyName;
+    }
+
+    @Override
+    String getNameForTrace() {
+        return "animator:" + getPropertyName();
     }
 
     /**
@@ -146,7 +210,7 @@ public final class ObjectAnimator extends ValueAnimator {
      * @param propertyName The name of the property being animated.
      */
     private ObjectAnimator(Object target, String propertyName) {
-        mTarget = target;
+        setTarget(target);
         setPropertyName(propertyName);
     }
 
@@ -157,16 +221,17 @@ public final class ObjectAnimator extends ValueAnimator {
      * @param property The property being animated.
      */
     private <T> ObjectAnimator(T target, Property<T, ?> property) {
-        mTarget = target;
+        setTarget(target);
         setProperty(property);
     }
 
     /**
      * Constructs and returns an ObjectAnimator that animates between int values. A single
-     * value implies that that value is the one being animated to. Two values imply a starting
-     * and ending values. More than two values imply a starting value, values to animate through
-     * along the way, and an ending value (these values will be distributed evenly across
-     * the duration of the animation).
+     * value implies that that value is the one being animated to, in which case the start value
+     * will be derived from the property being animated and the target object when {@link #start()}
+     * is called for the first time. Two values imply starting and ending values. More than two
+     * values imply a starting value, values to animate through along the way, and an ending value
+     * (these values will be distributed evenly across the duration of the animation).
      *
      * @param target The object whose property is to be animated. This object should
      * have a public method on it called <code>setName()</code>, where <code>name</code> is
@@ -182,11 +247,39 @@ public final class ObjectAnimator extends ValueAnimator {
     }
 
     /**
+     * Constructs and returns an ObjectAnimator that animates coordinates along a <code>Path</code>
+     * using two properties. A <code>Path</code></> animation moves in two dimensions, animating
+     * coordinates <code>(x, y)</code> together to follow the line. In this variation, the
+     * coordinates are integers that are set to separate properties designated by
+     * <code>xPropertyName</code> and <code>yPropertyName</code>.
+     *
+     * @param target The object whose properties are to be animated. This object should
+     *               have public methods on it called <code>setNameX()</code> and
+     *               <code>setNameY</code>, where <code>nameX</code> and <code>nameY</code>
+     *               are the value of <code>xPropertyName</code> and <code>yPropertyName</code>
+     *               parameters, respectively.
+     * @param xPropertyName The name of the property for the x coordinate being animated.
+     * @param yPropertyName The name of the property for the y coordinate being animated.
+     * @param path The <code>Path</code> to animate values along.
+     * @return An ObjectAnimator object that is set up to animate along <code>path</code>.
+     */
+    public static ObjectAnimator ofInt(Object target, String xPropertyName, String yPropertyName,
+            Path path) {
+        PathKeyframes keyframes = KeyframeSet.ofPath(path);
+        PropertyValuesHolder x = PropertyValuesHolder.ofKeyframes(xPropertyName,
+                keyframes.createXIntKeyframes());
+        PropertyValuesHolder y = PropertyValuesHolder.ofKeyframes(yPropertyName,
+                keyframes.createYIntKeyframes());
+        return ofPropertyValuesHolder(target, x, y);
+    }
+
+    /**
      * Constructs and returns an ObjectAnimator that animates between int values. A single
-     * value implies that that value is the one being animated to. Two values imply a starting
-     * and ending values. More than two values imply a starting value, values to animate through
-     * along the way, and an ending value (these values will be distributed evenly across
-     * the duration of the animation).
+     * value implies that that value is the one being animated to, in which case the start value
+     * will be derived from the property being animated and the target object when {@link #start()}
+     * is called for the first time. Two values imply starting and ending values. More than two
+     * values imply a starting value, values to animate through along the way, and an ending value
+     * (these values will be distributed evenly across the duration of the animation).
      *
      * @param target The object whose property is to be animated.
      * @param property The property being animated.
@@ -200,11 +293,144 @@ public final class ObjectAnimator extends ValueAnimator {
     }
 
     /**
+     * Constructs and returns an ObjectAnimator that animates coordinates along a <code>Path</code>
+     * using two properties.  A <code>Path</code></> animation moves in two dimensions, animating
+     * coordinates <code>(x, y)</code> together to follow the line. In this variation, the
+     * coordinates are integers that are set to separate properties, <code>xProperty</code> and
+     * <code>yProperty</code>.
+     *
+     * @param target The object whose properties are to be animated.
+     * @param xProperty The property for the x coordinate being animated.
+     * @param yProperty The property for the y coordinate being animated.
+     * @param path The <code>Path</code> to animate values along.
+     * @return An ObjectAnimator object that is set up to animate along <code>path</code>.
+     */
+    public static <T> ObjectAnimator ofInt(T target, Property<T, Integer> xProperty,
+            Property<T, Integer> yProperty, Path path) {
+        PathKeyframes keyframes = KeyframeSet.ofPath(path);
+        PropertyValuesHolder x = PropertyValuesHolder.ofKeyframes(xProperty,
+                keyframes.createXIntKeyframes());
+        PropertyValuesHolder y = PropertyValuesHolder.ofKeyframes(yProperty,
+                keyframes.createYIntKeyframes());
+        return ofPropertyValuesHolder(target, x, y);
+    }
+
+    /**
+     * Constructs and returns an ObjectAnimator that animates over int values for a multiple
+     * parameters setter. Only public methods that take only int parameters are supported.
+     * Each <code>int[]</code> contains a complete set of parameters to the setter method.
+     * At least two <code>int[]</code> values must be provided, a start and end. More than two
+     * values imply a starting value, values to animate through along the way, and an ending
+     * value (these values will be distributed evenly across the duration of the animation).
+     *
+     * @param target The object whose property is to be animated. This object may
+     * have a public method on it called <code>setName()</code>, where <code>name</code> is
+     * the value of the <code>propertyName</code> parameter. <code>propertyName</code> may also
+     * be the case-sensitive complete name of the public setter method.
+     * @param propertyName The name of the property being animated or the name of the setter method.
+     * @param values A set of values that the animation will animate between over time.
+     * @return An ObjectAnimator object that is set up to animate between the given values.
+     */
+    public static ObjectAnimator ofMultiInt(Object target, String propertyName, int[][] values) {
+        PropertyValuesHolder pvh = PropertyValuesHolder.ofMultiInt(propertyName, values);
+        return ofPropertyValuesHolder(target, pvh);
+    }
+
+    /**
+     * Constructs and returns an ObjectAnimator that animates the target using a multi-int setter
+     * along the given <code>Path</code>. A <code>Path</code></> animation moves in two dimensions,
+     * animating coordinates <code>(x, y)</code> together to follow the line. In this variation, the
+     * coordinates are integer x and y coordinates used in the first and second parameter of the
+     * setter, respectively.
+     *
+     * @param target The object whose property is to be animated. This object may
+     * have a public method on it called <code>setName()</code>, where <code>name</code> is
+     * the value of the <code>propertyName</code> parameter. <code>propertyName</code> may also
+     * be the case-sensitive complete name of the public setter method.
+     * @param propertyName The name of the property being animated or the name of the setter method.
+     * @param path The <code>Path</code> to animate values along.
+     * @return An ObjectAnimator object that is set up to animate along <code>path</code>.
+     */
+    public static ObjectAnimator ofMultiInt(Object target, String propertyName, Path path) {
+        PropertyValuesHolder pvh = PropertyValuesHolder.ofMultiInt(propertyName, path);
+        return ofPropertyValuesHolder(target, pvh);
+    }
+
+    /**
+     * Constructs and returns an ObjectAnimator that animates over values for a multiple int
+     * parameters setter. Only public methods that take only int parameters are supported.
+     * <p>At least two values must be provided, a start and end. More than two
+     * values imply a starting value, values to animate through along the way, and an ending
+     * value (these values will be distributed evenly across the duration of the animation).</p>
+     *
+     * @param target The object whose property is to be animated. This object may
+     * have a public method on it called <code>setName()</code>, where <code>name</code> is
+     * the value of the <code>propertyName</code> parameter. <code>propertyName</code> may also
+     * be the case-sensitive complete name of the public setter method.
+     * @param propertyName The name of the property being animated or the name of the setter method.
+     * @param converter Converts T objects into int parameters for the multi-value setter.
+     * @param evaluator A TypeEvaluator that will be called on each animation frame to
+     * provide the necessary interpolation between the Object values to derive the animated
+     * value.
+     * @param values A set of values that the animation will animate between over time.
+     * @return An ObjectAnimator object that is set up to animate between the given values.
+     */
+    @SafeVarargs
+    public static <T> ObjectAnimator ofMultiInt(Object target, String propertyName,
+            TypeConverter<T, int[]> converter, TypeEvaluator<T> evaluator, T... values) {
+        PropertyValuesHolder pvh = PropertyValuesHolder.ofMultiInt(propertyName, converter,
+                evaluator, values);
+        return ObjectAnimator.ofPropertyValuesHolder(target, pvh);
+    }
+
+    /**
+     * Constructs and returns an ObjectAnimator that animates between color values. A single
+     * value implies that that value is the one being animated to, in which case the start value
+     * will be derived from the property being animated and the target object when {@link #start()}
+     * is called for the first time. Two values imply starting and ending values. More than two
+     * values imply a starting value, values to animate through along the way, and an ending value
+     * (these values will be distributed evenly across the duration of the animation).
+     *
+     * @param target The object whose property is to be animated. This object should
+     * have a public method on it called <code>setName()</code>, where <code>name</code> is
+     * the value of the <code>propertyName</code> parameter.
+     * @param propertyName The name of the property being animated.
+     * @param values A set of values that the animation will animate between over time.
+     * @return An ObjectAnimator object that is set up to animate between the given values.
+     */
+    public static ObjectAnimator ofArgb(Object target, String propertyName, int... values) {
+        ObjectAnimator animator = ofInt(target, propertyName, values);
+        animator.setEvaluator(ArgbEvaluator.getInstance());
+        return animator;
+    }
+
+    /**
+     * Constructs and returns an ObjectAnimator that animates between color values. A single
+     * value implies that that value is the one being animated to, in which case the start value
+     * will be derived from the property being animated and the target object when {@link #start()}
+     * is called for the first time. Two values imply starting and ending values. More than two
+     * values imply a starting value, values to animate through along the way, and an ending value
+     * (these values will be distributed evenly across the duration of the animation).
+     *
+     * @param target The object whose property is to be animated.
+     * @param property The property being animated.
+     * @param values A set of values that the animation will animate between over time.
+     * @return An ObjectAnimator object that is set up to animate between the given values.
+     */
+    public static <T> ObjectAnimator ofArgb(T target, Property<T, Integer> property,
+            int... values) {
+        ObjectAnimator animator = ofInt(target, property, values);
+        animator.setEvaluator(ArgbEvaluator.getInstance());
+        return animator;
+    }
+
+    /**
      * Constructs and returns an ObjectAnimator that animates between float values. A single
-     * value implies that that value is the one being animated to. Two values imply a starting
-     * and ending values. More than two values imply a starting value, values to animate through
-     * along the way, and an ending value (these values will be distributed evenly across
-     * the duration of the animation).
+     * value implies that that value is the one being animated to, in which case the start value
+     * will be derived from the property being animated and the target object when {@link #start()}
+     * is called for the first time. Two values imply starting and ending values. More than two
+     * values imply a starting value, values to animate through along the way, and an ending value
+     * (these values will be distributed evenly across the duration of the animation).
      *
      * @param target The object whose property is to be animated. This object should
      * have a public method on it called <code>setName()</code>, where <code>name</code> is
@@ -220,11 +446,39 @@ public final class ObjectAnimator extends ValueAnimator {
     }
 
     /**
+     * Constructs and returns an ObjectAnimator that animates coordinates along a <code>Path</code>
+     * using two properties. A <code>Path</code></> animation moves in two dimensions, animating
+     * coordinates <code>(x, y)</code> together to follow the line. In this variation, the
+     * coordinates are floats that are set to separate properties designated by
+     * <code>xPropertyName</code> and <code>yPropertyName</code>.
+     *
+     * @param target The object whose properties are to be animated. This object should
+     *               have public methods on it called <code>setNameX()</code> and
+     *               <code>setNameY</code>, where <code>nameX</code> and <code>nameY</code>
+     *               are the value of the <code>xPropertyName</code> and <code>yPropertyName</code>
+     *               parameters, respectively.
+     * @param xPropertyName The name of the property for the x coordinate being animated.
+     * @param yPropertyName The name of the property for the y coordinate being animated.
+     * @param path The <code>Path</code> to animate values along.
+     * @return An ObjectAnimator object that is set up to animate along <code>path</code>.
+     */
+    public static ObjectAnimator ofFloat(Object target, String xPropertyName, String yPropertyName,
+            Path path) {
+        PathKeyframes keyframes = KeyframeSet.ofPath(path);
+        PropertyValuesHolder x = PropertyValuesHolder.ofKeyframes(xPropertyName,
+                keyframes.createXFloatKeyframes());
+        PropertyValuesHolder y = PropertyValuesHolder.ofKeyframes(yPropertyName,
+                keyframes.createYFloatKeyframes());
+        return ofPropertyValuesHolder(target, x, y);
+    }
+
+    /**
      * Constructs and returns an ObjectAnimator that animates between float values. A single
-     * value implies that that value is the one being animated to. Two values imply a starting
-     * and ending values. More than two values imply a starting value, values to animate through
-     * along the way, and an ending value (these values will be distributed evenly across
-     * the duration of the animation).
+     * value implies that that value is the one being animated to, in which case the start value
+     * will be derived from the property being animated and the target object when {@link #start()}
+     * is called for the first time. Two values imply starting and ending values. More than two
+     * values imply a starting value, values to animate through along the way, and an ending value
+     * (these values will be distributed evenly across the duration of the animation).
      *
      * @param target The object whose property is to be animated.
      * @param property The property being animated.
@@ -239,11 +493,109 @@ public final class ObjectAnimator extends ValueAnimator {
     }
 
     /**
+     * Constructs and returns an ObjectAnimator that animates coordinates along a <code>Path</code>
+     * using two properties. A <code>Path</code></> animation moves in two dimensions, animating
+     * coordinates <code>(x, y)</code> together to follow the line. In this variation, the
+     * coordinates are floats that are set to separate properties, <code>xProperty</code> and
+     * <code>yProperty</code>.
+     *
+     * @param target The object whose properties are to be animated.
+     * @param xProperty The property for the x coordinate being animated.
+     * @param yProperty The property for the y coordinate being animated.
+     * @param path The <code>Path</code> to animate values along.
+     * @return An ObjectAnimator object that is set up to animate along <code>path</code>.
+     */
+    public static <T> ObjectAnimator ofFloat(T target, Property<T, Float> xProperty,
+            Property<T, Float> yProperty, Path path) {
+        PathKeyframes keyframes = KeyframeSet.ofPath(path);
+        PropertyValuesHolder x = PropertyValuesHolder.ofKeyframes(xProperty,
+                keyframes.createXFloatKeyframes());
+        PropertyValuesHolder y = PropertyValuesHolder.ofKeyframes(yProperty,
+                keyframes.createYFloatKeyframes());
+        return ofPropertyValuesHolder(target, x, y);
+    }
+
+    /**
+     * Constructs and returns an ObjectAnimator that animates over float values for a multiple
+     * parameters setter. Only public methods that take only float parameters are supported.
+     * Each <code>float[]</code> contains a complete set of parameters to the setter method.
+     * At least two <code>float[]</code> values must be provided, a start and end. More than two
+     * values imply a starting value, values to animate through along the way, and an ending
+     * value (these values will be distributed evenly across the duration of the animation).
+     *
+     * @param target The object whose property is to be animated. This object may
+     * have a public method on it called <code>setName()</code>, where <code>name</code> is
+     * the value of the <code>propertyName</code> parameter. <code>propertyName</code> may also
+     * be the case-sensitive complete name of the public setter method.
+     * @param propertyName The name of the property being animated or the name of the setter method.
+     * @param values A set of values that the animation will animate between over time.
+     * @return An ObjectAnimator object that is set up to animate between the given values.
+     */
+    public static ObjectAnimator ofMultiFloat(Object target, String propertyName,
+            float[][] values) {
+        PropertyValuesHolder pvh = PropertyValuesHolder.ofMultiFloat(propertyName, values);
+        return ofPropertyValuesHolder(target, pvh);
+    }
+
+    /**
+     * Constructs and returns an ObjectAnimator that animates the target using a multi-float setter
+     * along the given <code>Path</code>. A <code>Path</code></> animation moves in two dimensions,
+     * animating coordinates <code>(x, y)</code> together to follow the line. In this variation, the
+     * coordinates are float x and y coordinates used in the first and second parameter of the
+     * setter, respectively.
+     *
+     * @param target The object whose property is to be animated. This object may
+     * have a public method on it called <code>setName()</code>, where <code>name</code> is
+     * the value of the <code>propertyName</code> parameter. <code>propertyName</code> may also
+     * be the case-sensitive complete name of the public setter method.
+     * @param propertyName The name of the property being animated or the name of the setter method.
+     * @param path The <code>Path</code> to animate values along.
+     * @return An ObjectAnimator object that is set up to animate along <code>path</code>.
+     */
+    public static ObjectAnimator ofMultiFloat(Object target, String propertyName, Path path) {
+        PropertyValuesHolder pvh = PropertyValuesHolder.ofMultiFloat(propertyName, path);
+        return ofPropertyValuesHolder(target, pvh);
+    }
+
+    /**
+     * Constructs and returns an ObjectAnimator that animates over values for a multiple float
+     * parameters setter. Only public methods that take only float parameters are supported.
+     * <p>At least two values must be provided, a start and end. More than two
+     * values imply a starting value, values to animate through along the way, and an ending
+     * value (these values will be distributed evenly across the duration of the animation).</p>
+     *
+     * @param target The object whose property is to be animated. This object may
+     * have a public method on it called <code>setName()</code>, where <code>name</code> is
+     * the value of the <code>propertyName</code> parameter. <code>propertyName</code> may also
+     * be the case-sensitive complete name of the public setter method.
+     * @param propertyName The name of the property being animated or the name of the setter method.
+     * @param converter Converts T objects into float parameters for the multi-value setter.
+     * @param evaluator A TypeEvaluator that will be called on each animation frame to
+     * provide the necessary interpolation between the Object values to derive the animated
+     * value.
+     * @param values A set of values that the animation will animate between over time.
+     * @return An ObjectAnimator object that is set up to animate between the given values.
+     */
+    @SafeVarargs
+    public static <T> ObjectAnimator ofMultiFloat(Object target, String propertyName,
+            TypeConverter<T, float[]> converter, TypeEvaluator<T> evaluator, T... values) {
+        PropertyValuesHolder pvh = PropertyValuesHolder.ofMultiFloat(propertyName, converter,
+                evaluator, values);
+        return ObjectAnimator.ofPropertyValuesHolder(target, pvh);
+    }
+
+    /**
      * Constructs and returns an ObjectAnimator that animates between Object values. A single
-     * value implies that that value is the one being animated to. Two values imply a starting
-     * and ending values. More than two values imply a starting value, values to animate through
-     * along the way, and an ending value (these values will be distributed evenly across
-     * the duration of the animation).
+     * value implies that that value is the one being animated to, in which case the start value
+     * will be derived from the property being animated and the target object when {@link #start()}
+     * is called for the first time. Two values imply starting and ending values. More than two
+     * values imply a starting value, values to animate through along the way, and an ending value
+     * (these values will be distributed evenly across the duration of the animation).
+     *
+     * <p><strong>Note:</strong> The values are stored as references to the original
+     * objects, which means that changes to those objects after this method is called will
+     * affect the values on the animator. If the objects will be mutated externally after
+     * this method is called, callers should pass a copy of those objects instead.
      *
      * @param target The object whose property is to be animated. This object should
      * have a public method on it called <code>setName()</code>, where <code>name</code> is
@@ -264,11 +616,42 @@ public final class ObjectAnimator extends ValueAnimator {
     }
 
     /**
+     * Constructs and returns an ObjectAnimator that animates a property along a <code>Path</code>.
+     * A <code>Path</code></> animation moves in two dimensions, animating coordinates
+     * <code>(x, y)</code> together to follow the line. This variant animates the coordinates
+     * in a <code>PointF</code> to follow the <code>Path</code>. If the <code>Property</code>
+     * associated with <code>propertyName</code> uses a type other than <code>PointF</code>,
+     * <code>converter</code> can be used to change from <code>PointF</code> to the type
+     * associated with the <code>Property</code>.
+     *
+     * @param target The object whose property is to be animated. This object should
+     * have a public method on it called <code>setName()</code>, where <code>name</code> is
+     * the value of the <code>propertyName</code> parameter.
+     * @param propertyName The name of the property being animated.
+     * @param converter Converts a PointF to the type associated with the setter. May be
+     *                  null if conversion is unnecessary.
+     * @param path The <code>Path</code> to animate values along.
+     * @return An ObjectAnimator object that is set up to animate along <code>path</code>.
+     */
+    @NonNull
+    public static ObjectAnimator ofObject(Object target, String propertyName,
+            @Nullable TypeConverter<PointF, ?> converter, Path path) {
+        PropertyValuesHolder pvh = PropertyValuesHolder.ofObject(propertyName, converter, path);
+        return ofPropertyValuesHolder(target, pvh);
+    }
+
+    /**
      * Constructs and returns an ObjectAnimator that animates between Object values. A single
-     * value implies that that value is the one being animated to. Two values imply a starting
-     * and ending values. More than two values imply a starting value, values to animate through
-     * along the way, and an ending value (these values will be distributed evenly across
-     * the duration of the animation).
+     * value implies that that value is the one being animated to, in which case the start value
+     * will be derived from the property being animated and the target object when {@link #start()}
+     * is called for the first time. Two values imply starting and ending values. More than two
+     * values imply a starting value, values to animate through along the way, and an ending value
+     * (these values will be distributed evenly across the duration of the animation).
+     *
+     * <p><strong>Note:</strong> The values are stored as references to the original
+     * objects, which means that changes to those objects after this method is called will
+     * affect the values on the animator. If the objects will be mutated externally after
+     * this method is called, callers should pass a copy of those objects instead.
      *
      * @param target The object whose property is to be animated.
      * @param property The property being animated.
@@ -278,12 +661,74 @@ public final class ObjectAnimator extends ValueAnimator {
      * @param values A set of values that the animation will animate between over time.
      * @return An ObjectAnimator object that is set up to animate between the given values.
      */
+    @NonNull
+    @SafeVarargs
     public static <T, V> ObjectAnimator ofObject(T target, Property<T, V> property,
             TypeEvaluator<V> evaluator, V... values) {
         ObjectAnimator anim = new ObjectAnimator(target, property);
         anim.setObjectValues(values);
         anim.setEvaluator(evaluator);
         return anim;
+    }
+
+    /**
+     * Constructs and returns an ObjectAnimator that animates between Object values. A single
+     * value implies that that value is the one being animated to, in which case the start value
+     * will be derived from the property being animated and the target object when {@link #start()}
+     * is called for the first time. Two values imply starting and ending values. More than two
+     * values imply a starting value, values to animate through along the way, and an ending value
+     * (these values will be distributed evenly across the duration of the animation).
+     * This variant supplies a <code>TypeConverter</code> to convert from the animated values to the
+     * type of the property. If only one value is supplied, the <code>TypeConverter</code> must be a
+     * {@link android.animation.BidirectionalTypeConverter} to retrieve the current value.
+     *
+     * <p><strong>Note:</strong> The values are stored as references to the original
+     * objects, which means that changes to those objects after this method is called will
+     * affect the values on the animator. If the objects will be mutated externally after
+     * this method is called, callers should pass a copy of those objects instead.
+     *
+     * @param target The object whose property is to be animated.
+     * @param property The property being animated.
+     * @param converter Converts the animated object to the Property type.
+     * @param evaluator A TypeEvaluator that will be called on each animation frame to
+     * provide the necessary interpolation between the Object values to derive the animated
+     * value.
+     * @param values A set of values that the animation will animate between over time.
+     * @return An ObjectAnimator object that is set up to animate between the given values.
+     */
+    @NonNull
+    @SafeVarargs
+    public static <T, V, P> ObjectAnimator ofObject(T target, Property<T, P> property,
+            TypeConverter<V, P> converter, TypeEvaluator<V> evaluator, V... values) {
+        PropertyValuesHolder pvh = PropertyValuesHolder.ofObject(property, converter, evaluator,
+                values);
+        return ofPropertyValuesHolder(target, pvh);
+    }
+
+    /**
+     * Constructs and returns an ObjectAnimator that animates a property along a <code>Path</code>.
+     * A <code>Path</code></> animation moves in two dimensions, animating coordinates
+     * <code>(x, y)</code> together to follow the line. This variant animates the coordinates
+     * in a <code>PointF</code> to follow the <code>Path</code>. If <code>property</code>
+     * uses a type other than <code>PointF</code>, <code>converter</code> can be used to change
+     * from <code>PointF</code> to the type associated with the <code>Property</code>.
+     *
+     * <p>The PointF passed to <code>converter</code> or <code>property</code>, if
+     * <code>converter</code> is <code>null</code>, is reused on each animation frame and should
+     * not be stored by the setter or TypeConverter.</p>
+     *
+     * @param target The object whose property is to be animated.
+     * @param property The property being animated. Should not be null.
+     * @param converter Converts a PointF to the type associated with the setter. May be
+     *                  null if conversion is unnecessary.
+     * @param path The <code>Path</code> to animate values along.
+     * @return An ObjectAnimator object that is set up to animate along <code>path</code>.
+     */
+    @NonNull
+    public static <T, V> ObjectAnimator ofObject(T target, @NonNull Property<T, V> property,
+            @Nullable TypeConverter<PointF, V> converter, Path path) {
+        PropertyValuesHolder pvh = PropertyValuesHolder.ofObject(property, converter, path);
+        return ofPropertyValuesHolder(target, pvh);
     }
 
     /**
@@ -303,10 +748,11 @@ public final class ObjectAnimator extends ValueAnimator {
      * over time.
      * @return An ObjectAnimator object that is set up to animate between the given values.
      */
+    @NonNull
     public static ObjectAnimator ofPropertyValuesHolder(Object target,
             PropertyValuesHolder... values) {
         ObjectAnimator anim = new ObjectAnimator();
-        anim.mTarget = target;
+        anim.setTarget(target);
         anim.setValues(values);
         return anim;
     }
@@ -372,10 +818,10 @@ public final class ObjectAnimator extends ValueAnimator {
         mAutoCancel = cancel;
     }
 
-    private boolean hasSameTargetAndProperties(Animator anim) {
+    private boolean hasSameTargetAndProperties(@Nullable Animator anim) {
         if (anim instanceof ObjectAnimator) {
             PropertyValuesHolder[] theirValues = ((ObjectAnimator) anim).getValues();
-            if (((ObjectAnimator) anim).getTarget() == mTarget &&
+            if (((ObjectAnimator) anim).getTarget() == getTarget() &&
                     mValues.length == theirValues.length) {
                 for (int i = 0; i < mValues.length; ++i) {
                     PropertyValuesHolder pvhMine = mValues[i];
@@ -393,48 +839,31 @@ public final class ObjectAnimator extends ValueAnimator {
 
     @Override
     public void start() {
-        // See if any of the current active/pending animators need to be canceled
-        AnimationHandler handler = sAnimationHandler.get();
-        if (handler != null) {
-            int numAnims = handler.mAnimations.size();
-            for (int i = numAnims - 1; i >= 0; i--) {
-                if (handler.mAnimations.get(i) instanceof ObjectAnimator) {
-                    ObjectAnimator anim = (ObjectAnimator) handler.mAnimations.get(i);
-                    if (anim.mAutoCancel && hasSameTargetAndProperties(anim)) {
-                        anim.cancel();
-                    }
-                }
-            }
-            numAnims = handler.mPendingAnimations.size();
-            for (int i = numAnims - 1; i >= 0; i--) {
-                if (handler.mPendingAnimations.get(i) instanceof ObjectAnimator) {
-                    ObjectAnimator anim = (ObjectAnimator) handler.mPendingAnimations.get(i);
-                    if (anim.mAutoCancel && hasSameTargetAndProperties(anim)) {
-                        anim.cancel();
-                    }
-                }
-            }
-            numAnims = handler.mDelayedAnims.size();
-            for (int i = numAnims - 1; i >= 0; i--) {
-                if (handler.mDelayedAnims.get(i) instanceof ObjectAnimator) {
-                    ObjectAnimator anim = (ObjectAnimator) handler.mDelayedAnims.get(i);
-                    if (anim.mAutoCancel && hasSameTargetAndProperties(anim)) {
-                        anim.cancel();
-                    }
-                }
-            }
-        }
+        AnimationHandler.getInstance().autoCancelBasedOn(this);
         if (DBG) {
-            Log.d("ObjectAnimator", "Anim target, duration: " + mTarget + ", " + getDuration());
+            Log.d(LOG_TAG, "Anim target, duration: " + getTarget() + ", " + getDuration());
             for (int i = 0; i < mValues.length; ++i) {
                 PropertyValuesHolder pvh = mValues[i];
-                ArrayList<Keyframe> keyframes = pvh.mKeyframeSet.mKeyframes;
-                Log.d("ObjectAnimator", "   Values[" + i + "]: " +
-                    pvh.getPropertyName() + ", " + keyframes.get(0).getValue() + ", " +
-                    keyframes.get(pvh.mKeyframeSet.mNumKeyframes - 1).getValue());
+                Log.d(LOG_TAG, "   Values[" + i + "]: " +
+                    pvh.getPropertyName() + ", " + pvh.mKeyframes.getValue(0) + ", " +
+                    pvh.mKeyframes.getValue(1));
             }
         }
         super.start();
+    }
+
+    boolean shouldAutoCancel(AnimationHandler.AnimationFrameCallback anim) {
+        if (anim == null) {
+            return false;
+        }
+
+        if (anim instanceof ObjectAnimator) {
+            ObjectAnimator objAnim = (ObjectAnimator) anim;
+            if (objAnim.mAutoCancel && hasSameTargetAndProperties(objAnim)) {
+                return true;
+            }
+        }
+        return false;
     }
 
     /**
@@ -449,14 +878,18 @@ public final class ObjectAnimator extends ValueAnimator {
      *  <p>Overriders of this method should call the superclass method to cause
      *  internal mechanisms to be set up correctly.</p>
      */
+    @CallSuper
     @Override
     void initAnimation() {
         if (!mInitialized) {
             // mValueType may change due to setter/getter setup; do this before calling super.init(),
             // which uses mValueType to set up the default type evaluator.
-            int numValues = mValues.length;
-            for (int i = 0; i < numValues; ++i) {
-                mValues[i].setupSetterAndGetter(mTarget);
+            final Object target = getTarget();
+            if (target != null) {
+                final int numValues = mValues.length;
+                for (int i = 0; i < numValues; ++i) {
+                    mValues[i].setupSetterAndGetter(target);
+                }
             }
             super.initAnimation();
         }
@@ -472,6 +905,7 @@ public final class ObjectAnimator extends ValueAnimator {
      * <code>ObjectAnimator.ofInt(target, propertyName, 0, 10).setDuration(500).start()</code>.
      */
     @Override
+    @NonNull
     public ObjectAnimator setDuration(long duration) {
         super.setDuration(duration);
         return this;
@@ -483,24 +917,20 @@ public final class ObjectAnimator extends ValueAnimator {
      *
      * @return The object being animated
      */
+    @Nullable
     public Object getTarget() {
-        return mTarget;
+        return mTarget == null ? null : mTarget.get();
     }
 
-    /**
-     * Sets the target object whose property will be animated by this animation
-     *
-     * @param target The object being animated
-     */
     @Override
-    public void setTarget(Object target) {
-        if (mTarget != target) {
-            final Object oldTarget = mTarget;
-            mTarget = target;
-            if (oldTarget != null && target != null && oldTarget.getClass() == target.getClass()) {
-                return;
+    public void setTarget(@Nullable Object target) {
+        final Object oldTarget = getTarget();
+        if (oldTarget != target) {
+            if (isStarted()) {
+                cancel();
             }
-            // New target type should cause re-initialization prior to starting
+            mTarget = target == null ? null : new WeakReference<Object>(target);
+            // New target should cause re-initialization prior to starting
             mInitialized = false;
         }
     }
@@ -508,18 +938,26 @@ public final class ObjectAnimator extends ValueAnimator {
     @Override
     public void setupStartValues() {
         initAnimation();
-        int numValues = mValues.length;
-        for (int i = 0; i < numValues; ++i) {
-            mValues[i].setupStartValue(mTarget);
+
+        final Object target = getTarget();
+        if (target != null) {
+            final int numValues = mValues.length;
+            for (int i = 0; i < numValues; ++i) {
+                mValues[i].setupStartValue(target);
+            }
         }
     }
 
     @Override
     public void setupEndValues() {
         initAnimation();
-        int numValues = mValues.length;
-        for (int i = 0; i < numValues; ++i) {
-            mValues[i].setupEndValue(mTarget);
+
+        final Object target = getTarget();
+        if (target != null) {
+            final int numValues = mValues.length;
+            for (int i = 0; i < numValues; ++i) {
+                mValues[i].setupEndValue(target);
+            }
         }
     }
 
@@ -535,12 +973,20 @@ public final class ObjectAnimator extends ValueAnimator {
      *
      * @param fraction The elapsed fraction of the animation.
      */
+    @CallSuper
     @Override
     void animateValue(float fraction) {
+        final Object target = getTarget();
+        if (mTarget != null && target == null) {
+            // We lost the target reference, cancel and clean up.
+            cancel();
+            return;
+        }
+
         super.animateValue(fraction);
         int numValues = mValues.length;
         for (int i = 0; i < numValues; ++i) {
-            mValues[i].setAnimatedValue(mTarget);
+            mValues[i].setAnimatedValue(target);
         }
     }
 
@@ -551,9 +997,10 @@ public final class ObjectAnimator extends ValueAnimator {
     }
 
     @Override
+    @NonNull
     public String toString() {
         String returnVal = "ObjectAnimator@" + Integer.toHexString(hashCode()) + ", target " +
-            mTarget;
+            getTarget();
         if (mValues != null) {
             for (int i = 0; i < mValues.length; ++i) {
                 returnVal += "\n    " + mValues[i].toString();

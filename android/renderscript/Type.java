@@ -16,31 +16,31 @@
 
 package android.renderscript;
 
-
-import java.lang.reflect.Field;
-
-import android.graphics.ImageFormat;
-import android.util.Log;
-
 /**
- * <p>Type is an allocation template. It consists of an Element and one or more
- * dimensions. It describes only the layout of memory but does not allocate any
- * storage for the data that is described.</p>
+ * <p>A Type describes the {@link android.renderscript.Element} and dimensions used for an {@link
+ * android.renderscript.Allocation} or a parallel operation. Types are created through {@link
+ * android.renderscript.Type.Builder}.</p>
  *
- * <p>A Type consists of several dimensions. Those are X, Y, Z, LOD (level of
- * detail), Faces (faces of a cube map).  The X,Y,Z dimensions can be assigned
- * any positive integral value within the constraints of available memory.  A
- * single dimension allocation would have an X dimension of greater than zero
- * while the Y and Z dimensions would be zero to indicate not present.  In this
- * regard an allocation of x=10, y=1 would be considered 2 dimensionsal while
- * x=10, y=0 would be considered 1 dimensional.</p>
+ * <p>A Type always includes an {@link android.renderscript.Element} and an X
+ * dimension. A Type may be multidimensional, up to three dimensions. A nonzero
+ * value in the Y or Z dimensions indicates that the dimension is present. Note
+ * that a Type with only a given X dimension and a Type with the same X
+ * dimension but Y = 1 are not equivalent.</p>
  *
- * <p>The LOD and Faces dimensions are booleans to indicate present or not present.</p>
+ * <p>A Type also supports inclusion of level of detail (LOD) or cube map
+ * faces. LOD and cube map faces are booleans to indicate present or not
+ * present. </p>
+ *
+ * <p>A Type also supports YUV format information to support an
+ * {@link android.renderscript.Allocation} in a YUV format. The YUV formats
+ * supported are {@link android.graphics.ImageFormat#YV12},
+ * {@link android.graphics.ImageFormat#NV21}, and
+ * {@link android.graphics.ImageFormat#YUV_420_888}</p>
  *
  * <div class="special reference">
  * <h3>Developer Guides</h3>
- * <p>For more information about creating an application that uses Renderscript, read the
- * <a href="{@docRoot}guide/topics/renderscript/index.html">Renderscript</a> developer guide.</p>
+ * <p>For more information about creating an application that uses RenderScript, read the
+ * <a href="{@docRoot}guide/topics/renderscript/index.html">RenderScript</a> developer guide.</p>
  * </div>
  **/
 public class Type extends BaseObj {
@@ -52,6 +52,9 @@ public class Type extends BaseObj {
     int mDimYuv;
     int mElementCount;
     Element mElement;
+    int mArrays[];
+
+    static final int mMaxArrays = 4;
 
     public enum CubemapFace {
         POSITIVE_X (0),
@@ -146,6 +149,37 @@ public class Type extends BaseObj {
         return mElementCount;
     }
 
+    /**
+     * @hide
+      * Return the dimension of the specified array.
+      *
+      * @param arrayNum  The array dimension to query
+      * @return int
+      */
+    public int getArray(int arrayNum) {
+        if ((arrayNum < 0) || (arrayNum >= mMaxArrays)) {
+            throw new RSIllegalArgumentException("Array dimension out of range.");
+        }
+
+        if (mArrays == null || arrayNum >= mArrays.length) {
+            // Dimension in range but no array for that dimension allocated
+            return 0;
+        }
+
+        return mArrays[arrayNum];
+    }
+
+    /**
+     * @hide
+      * Return the number of array dimensions.
+      *
+      * @return int
+      */
+    public int getArrayCount() {
+        if (mArrays != null) return mArrays.length;
+        return 0;
+    }
+
     void calcElementCount() {
         boolean hasLod = hasMipmaps();
         int x = getX();
@@ -180,33 +214,116 @@ public class Type extends BaseObj {
 
             count += x * y * z * faces;
         }
+
+        if (mArrays != null) {
+            for (int ct = 0; ct < mArrays.length; ct++) {
+                count *= mArrays[ct];
+            }
+        }
+
         mElementCount = count;
     }
 
 
-    Type(int id, RenderScript rs) {
+    Type(long id, RenderScript rs) {
         super(id, rs);
+        guard.open("destroy");
     }
 
     @Override
     void updateFromNative() {
-        // We have 6 integer to obtain mDimX; mDimY; mDimZ;
+        // We have 6 integer/long to obtain mDimX; mDimY; mDimZ;
         // mDimLOD; mDimFaces; mElement;
-        int[] dataBuffer = new int[6];
+        long[] dataBuffer = new long[6];
         mRS.nTypeGetNativeData(getID(mRS), dataBuffer);
 
-        mDimX = dataBuffer[0];
-        mDimY = dataBuffer[1];
-        mDimZ = dataBuffer[2];
+        mDimX = (int)dataBuffer[0];
+        mDimY = (int)dataBuffer[1];
+        mDimZ = (int)dataBuffer[2];
         mDimMipmaps = dataBuffer[3] == 1 ? true : false;
         mDimFaces = dataBuffer[4] == 1 ? true : false;
 
-        int elementID = dataBuffer[5];
+        long elementID = dataBuffer[5];
         if(elementID != 0) {
             mElement = new Element(elementID, mRS);
             mElement.updateFromNative();
         }
         calcElementCount();
+    }
+
+    /**
+     * Utility function for creating basic 1D types. The type is
+     * created without mipmaps enabled.
+     *
+     * @param rs The RenderScript context
+     * @param e The Element for the Type
+     * @param dimX The X dimension, must be > 0
+     *
+     * @return Type
+     */
+    static public Type createX(RenderScript rs, Element e, int dimX) {
+        if (dimX < 1) {
+            throw new RSInvalidStateException("Dimension must be >= 1.");
+        }
+
+        long id = rs.nTypeCreate(e.getID(rs), dimX, 0, 0, false, false, 0);
+        Type t = new Type(id, rs);
+        t.mElement = e;
+        t.mDimX = dimX;
+        t.calcElementCount();
+        return t;
+    }
+
+    /**
+     * Utility function for creating basic 2D types. The type is
+     * created without mipmaps or cubemaps.
+     *
+     * @param rs The RenderScript context
+     * @param e The Element for the Type
+     * @param dimX The X dimension, must be > 0
+     * @param dimY The Y dimension, must be > 0
+     *
+     * @return Type
+     */
+    static public Type createXY(RenderScript rs, Element e, int dimX, int dimY) {
+        if ((dimX < 1) || (dimY < 1)) {
+            throw new RSInvalidStateException("Dimension must be >= 1.");
+        }
+
+        long id = rs.nTypeCreate(e.getID(rs), dimX, dimY, 0, false, false, 0);
+        Type t = new Type(id, rs);
+        t.mElement = e;
+        t.mDimX = dimX;
+        t.mDimY = dimY;
+        t.calcElementCount();
+        return t;
+    }
+
+    /**
+     * Utility function for creating basic 3D types. The type is
+     * created without mipmaps.
+     *
+     * @param rs The RenderScript context
+     * @param e The Element for the Type
+     * @param dimX The X dimension, must be > 0
+     * @param dimY The Y dimension, must be > 0
+     * @param dimZ The Z dimension, must be > 0
+     *
+     * @return Type
+     */
+    static public Type createXYZ(RenderScript rs, Element e, int dimX, int dimY, int dimZ) {
+        if ((dimX < 1) || (dimY < 1) || (dimZ < 1)) {
+            throw new RSInvalidStateException("Dimension must be >= 1.");
+        }
+
+        long id = rs.nTypeCreate(e.getID(rs), dimX, dimY, dimZ, false, false, 0);
+        Type t = new Type(id, rs);
+        t.mElement = e;
+        t.mDimX = dimX;
+        t.mDimY = dimY;
+        t.mDimZ = dimZ;
+        t.calcElementCount();
+        return t;
     }
 
     /**
@@ -221,6 +338,7 @@ public class Type extends BaseObj {
         boolean mDimMipmaps;
         boolean mDimFaces;
         int mYuv;
+        int[] mArray = new int[mMaxArrays];
 
         Element mElement;
 
@@ -266,6 +384,23 @@ public class Type extends BaseObj {
             return this;
         }
 
+        /**
+         * @hide
+         * Adds an array dimension to the builder
+         *
+         * @param dim
+         * @param value
+         *
+         * @return Builder
+         */
+        public Builder setArray(int dim, int value) {
+            if(dim < 0 || dim >= mMaxArrays) {
+                throw new RSIllegalArgumentException("Array dimension out of range.");
+            }
+            mArray[dim] = value;
+            return this;
+        }
+
         public Builder setMipmaps(boolean value) {
             mDimMipmaps = value;
             return this;
@@ -277,20 +412,21 @@ public class Type extends BaseObj {
         }
 
         /**
-         * Set the YUV layout for a Type.  This controls how the memory is
-         * interpreted.  Generally and application should not need to call this
-         * function and it would be set by the Camera.
+         * Set the YUV layout for a Type.
          *
-         * only NV21, YV12.  Enums from ImageFormat
+         * @param yuvFormat {@link android.graphics.ImageFormat#YV12}, {@link android.graphics.ImageFormat#NV21}, or
+         * {@link android.graphics.ImageFormat#YUV_420_888}.
          */
         public Builder setYuvFormat(int yuvFormat) {
             switch (yuvFormat) {
             case android.graphics.ImageFormat.NV21:
             case android.graphics.ImageFormat.YV12:
+            case android.graphics.ImageFormat.YUV_420_888:
                 break;
 
             default:
-                throw new RSIllegalArgumentException("Only NV21 and YV12 are supported..");
+                throw new RSIllegalArgumentException(
+                    "Only ImageFormat.NV21, .YV12, and .YUV_420_888 are supported..");
             }
 
             mYuv = yuvFormat;
@@ -299,7 +435,7 @@ public class Type extends BaseObj {
 
 
         /**
-         * Validate structure and create a new type.
+         * Validate structure and create a new Type.
          *
          * @return Type
          */
@@ -329,7 +465,17 @@ public class Type extends BaseObj {
                 }
             }
 
-            int id = mRS.nTypeCreate(mElement.getID(mRS),
+            int[] arrays = null;
+            for (int ct = mMaxArrays - 1; ct >= 0; ct--) {
+                if (mArray[ct] != 0 && arrays == null) {
+                    arrays = new int[ct];
+                }
+                if ((mArray[ct] == 0) && (arrays != null)) {
+                    throw new RSInvalidStateException("Array dimensions must be contigous from 0.");
+                }
+            }
+
+            long id = mRS.nTypeCreate(mElement.getID(mRS),
                                      mDimX, mDimY, mDimZ, mDimMipmaps, mDimFaces, mYuv);
             Type t = new Type(id, mRS);
             t.mElement = mElement;
@@ -339,6 +485,7 @@ public class Type extends BaseObj {
             t.mDimMipmaps = mDimMipmaps;
             t.mDimFaces = mDimFaces;
             t.mDimYuv = mYuv;
+            t.mArrays = arrays;
 
             t.calcElementCount();
             return t;

@@ -18,20 +18,27 @@
 package android.support.v4.app;
 
 import android.app.Activity;
+import android.content.Context;
 import android.content.res.Configuration;
 import android.graphics.Canvas;
-import android.graphics.ColorFilter;
-import android.graphics.PorterDuff;
 import android.graphics.Rect;
-import android.graphics.Region;
 import android.graphics.drawable.Drawable;
+import android.graphics.drawable.InsetDrawable;
 import android.os.Build;
+import android.support.annotation.DrawableRes;
+import android.support.annotation.Nullable;
+import android.support.annotation.StringRes;
+import android.support.v4.content.ContextCompat;
 import android.support.v4.view.GravityCompat;
+import android.support.v4.view.ViewCompat;
 import android.support.v4.widget.DrawerLayout;
 import android.view.MenuItem;
 import android.view.View;
 
 /**
+ * @deprecated Please use ActionBarDrawerToggle in support-v7-appcompat.
+ *
+ * <p>
  * This class provides a handy way to tie together the functionality of
  * {@link DrawerLayout} and the framework <code>ActionBar</code> to implement the recommended
  * design for navigation drawers.
@@ -52,7 +59,9 @@ import android.view.View;
  * <p><code>ActionBarDrawerToggle</code> can be used directly as a
  * {@link DrawerLayout.DrawerListener}, or if you are already providing your own listener,
  * call through to each of the listener methods from your own.</p>
+ *
  */
+@Deprecated
 public class ActionBarDrawerToggle implements DrawerLayout.DrawerListener {
 
     /**
@@ -65,6 +74,7 @@ public class ActionBarDrawerToggle implements DrawerLayout.DrawerListener {
          * @return Delegate to use for ActionBarDrawableToggles, or null if the Activity
          *         does not wish to override the default behavior.
          */
+        @Nullable
         Delegate getDrawerToggleDelegate();
     }
 
@@ -73,6 +83,7 @@ public class ActionBarDrawerToggle implements DrawerLayout.DrawerListener {
          * @return Up indicator drawable as defined in the Activity's theme, or null if one is not
          *         defined.
          */
+        @Nullable
         Drawable getThemeUpIndicator();
 
         /**
@@ -81,14 +92,14 @@ public class ActionBarDrawerToggle implements DrawerLayout.DrawerListener {
          * @param upDrawable     - Drawable to set as up indicator
          * @param contentDescRes - Content description to set
          */
-        void setActionBarUpIndicator(Drawable upDrawable, int contentDescRes);
+        void setActionBarUpIndicator(Drawable upDrawable, @StringRes int contentDescRes);
 
         /**
          * Set the Action Bar's up indicator content description.
          *
          * @param contentDescRes - Content description to set
          */
-        void setActionBarDescription(int contentDescRes);
+        void setActionBarDescription(@StringRes int contentDescRes);
     }
 
     private interface ActionBarDrawerToggleImpl {
@@ -138,16 +149,42 @@ public class ActionBarDrawerToggle implements DrawerLayout.DrawerListener {
         }
     }
 
+    private static class ActionBarDrawerToggleImplJellybeanMR2
+            implements ActionBarDrawerToggleImpl {
+        @Override
+        public Drawable getThemeUpIndicator(Activity activity) {
+            return ActionBarDrawerToggleJellybeanMR2.getThemeUpIndicator(activity);
+        }
+
+        @Override
+        public Object setActionBarUpIndicator(Object info, Activity activity,
+                Drawable themeImage, int contentDescRes) {
+            return ActionBarDrawerToggleJellybeanMR2.setActionBarUpIndicator(info, activity,
+                    themeImage, contentDescRes);
+        }
+
+        @Override
+        public Object setActionBarDescription(Object info, Activity activity, int contentDescRes) {
+            return ActionBarDrawerToggleJellybeanMR2.setActionBarDescription(info, activity,
+                    contentDescRes);
+        }
+    }
+
     private static final ActionBarDrawerToggleImpl IMPL;
 
     static {
         final int version = Build.VERSION.SDK_INT;
-        if (version >= 11) {
+        if (version >= 18) {
+            IMPL = new ActionBarDrawerToggleImplJellybeanMR2();
+        } else if (version >= 11) {
             IMPL = new ActionBarDrawerToggleImplHC();
         } else {
             IMPL = new ActionBarDrawerToggleImplBase();
         }
     }
+
+    /** Fraction of its total width by which to offset the toggle drawable. */
+    private static final float TOGGLE_DRAWABLE_OFFSET = 1 / 3f;
 
     // android.R.id.home as defined by public API in v11
     private static final int ID_HOME = 0x0102002c;
@@ -156,8 +193,9 @@ public class ActionBarDrawerToggle implements DrawerLayout.DrawerListener {
     private final Delegate mActivityImpl;
     private final DrawerLayout mDrawerLayout;
     private boolean mDrawerIndicatorEnabled = true;
+    private boolean mHasCustomUpIndicator;
 
-    private Drawable mThemeImage;
+    private Drawable mHomeAsUpIndicator;
     private Drawable mDrawerImage;
     private SlideDrawable mSlider;
     private final int mDrawerImageResource;
@@ -186,17 +224,42 @@ public class ActionBarDrawerToggle implements DrawerLayout.DrawerListener {
      *                                  for accessibility
      */
     public ActionBarDrawerToggle(Activity activity, DrawerLayout drawerLayout,
-            int drawerImageRes, int openDrawerContentDescRes, int closeDrawerContentDescRes) {
-        mActivity = activity;
-        mDrawerLayout = drawerLayout;
-        mDrawerImageResource = drawerImageRes;
-        mOpenDrawerContentDescRes = openDrawerContentDescRes;
-        mCloseDrawerContentDescRes = closeDrawerContentDescRes;
+            @DrawableRes int drawerImageRes, @StringRes int openDrawerContentDescRes,
+            @StringRes int closeDrawerContentDescRes) {
+        this(activity, drawerLayout, !assumeMaterial(activity), drawerImageRes,
+                openDrawerContentDescRes, closeDrawerContentDescRes);
+    }
 
-        mThemeImage = getThemeUpIndicator();
-        mDrawerImage = activity.getResources().getDrawable(drawerImageRes);
-        mSlider = new SlideDrawable(mDrawerImage);
-        mSlider.setOffsetBy(1.f / 3);
+    private static boolean assumeMaterial(Context context) {
+        return context.getApplicationInfo().targetSdkVersion >= 21 &&
+                (Build.VERSION.SDK_INT >= 21);
+    }
+
+    /**
+     * Construct a new ActionBarDrawerToggle.
+     *
+     * <p>The given {@link Activity} will be linked to the specified {@link DrawerLayout}.
+     * The provided drawer indicator drawable will animate slightly off-screen as the drawer
+     * is opened, indicating that in the open state the drawer will move off-screen when pressed
+     * and in the closed state the drawer will move on-screen when pressed.</p>
+     *
+     * <p>String resources must be provided to describe the open/close drawer actions for
+     * accessibility services.</p>
+     *
+     * @param activity The Activity hosting the drawer
+     * @param drawerLayout The DrawerLayout to link to the given Activity's ActionBar
+     * @param animate True to animate the drawer indicator along with the drawer's position.
+     *                Material apps should set this to false.
+     * @param drawerImageRes A Drawable resource to use as the drawer indicator
+     * @param openDrawerContentDescRes A String resource to describe the "open drawer" action
+     *                                 for accessibility
+     * @param closeDrawerContentDescRes A String resource to describe the "close drawer" action
+     *                                  for accessibility
+     */
+    public ActionBarDrawerToggle(Activity activity, DrawerLayout drawerLayout, boolean animate,
+            @DrawableRes int drawerImageRes, @StringRes int openDrawerContentDescRes,
+            @StringRes int closeDrawerContentDescRes) {
+        mActivity = activity;
 
         // Allow the Activity to provide an impl
         if (activity instanceof DelegateProvider) {
@@ -204,6 +267,16 @@ public class ActionBarDrawerToggle implements DrawerLayout.DrawerListener {
         } else {
             mActivityImpl = null;
         }
+
+        mDrawerLayout = drawerLayout;
+        mDrawerImageResource = drawerImageRes;
+        mOpenDrawerContentDescRes = openDrawerContentDescRes;
+        mCloseDrawerContentDescRes = closeDrawerContentDescRes;
+
+        mHomeAsUpIndicator = getThemeUpIndicator();
+        mDrawerImage = ContextCompat.getDrawable(activity, drawerImageRes);
+        mSlider = new SlideDrawable(mDrawerImage);
+        mSlider.setOffset(animate ? TOGGLE_DRAWABLE_OFFSET : 0);
     }
 
     /**
@@ -217,15 +290,60 @@ public class ActionBarDrawerToggle implements DrawerLayout.DrawerListener {
      */
     public void syncState() {
         if (mDrawerLayout.isDrawerOpen(GravityCompat.START)) {
-            mSlider.setOffset(1.f);
+            mSlider.setPosition(1);
         } else {
-            mSlider.setOffset(0.f);
+            mSlider.setPosition(0);
         }
 
         if (mDrawerIndicatorEnabled) {
             setActionBarUpIndicator(mSlider, mDrawerLayout.isDrawerOpen(GravityCompat.START) ?
-                    mOpenDrawerContentDescRes : mCloseDrawerContentDescRes);
+                    mCloseDrawerContentDescRes : mOpenDrawerContentDescRes);
         }
+    }
+
+    /**
+     * Set the up indicator to display when the drawer indicator is not
+     * enabled.
+     * <p>
+     * If you pass <code>null</code> to this method, the default drawable from
+     * the theme will be used.
+     *
+     * @param indicator A drawable to use for the up indicator, or null to use
+     *                  the theme's default
+     * @see #setDrawerIndicatorEnabled(boolean)
+     */
+    public void setHomeAsUpIndicator(Drawable indicator) {
+        if (indicator == null) {
+            mHomeAsUpIndicator = getThemeUpIndicator();
+            mHasCustomUpIndicator = false;
+        } else {
+            mHomeAsUpIndicator = indicator;
+            mHasCustomUpIndicator = true;
+        }
+
+        if (!mDrawerIndicatorEnabled) {
+            setActionBarUpIndicator(mHomeAsUpIndicator, 0);
+        }
+    }
+
+    /**
+     * Set the up indicator to display when the drawer indicator is not
+     * enabled.
+     * <p>
+     * If you pass 0 to this method, the default drawable from the theme will
+     * be used.
+     *
+     * @param resId Resource ID of a drawable to use for the up indicator, or 0
+     *              to use the theme's default
+     * @see #setDrawerIndicatorEnabled(boolean)
+     */
+    public void setHomeAsUpIndicator(int resId) {
+        Drawable indicator = null;
+        if (resId != 0) {
+            indicator = ContextCompat.getDrawable(mActivity, resId);
+        }
+
+        setHomeAsUpIndicator(indicator);
     }
 
     /**
@@ -242,9 +360,9 @@ public class ActionBarDrawerToggle implements DrawerLayout.DrawerListener {
         if (enable != mDrawerIndicatorEnabled) {
             if (enable) {
                 setActionBarUpIndicator(mSlider, mDrawerLayout.isDrawerOpen(GravityCompat.START) ?
-                                mOpenDrawerContentDescRes : mCloseDrawerContentDescRes);
+                        mCloseDrawerContentDescRes : mOpenDrawerContentDescRes);
             } else {
-                setActionBarUpIndicator(mThemeImage, 0);
+                setActionBarUpIndicator(mHomeAsUpIndicator, 0);
             }
             mDrawerIndicatorEnabled = enable;
         }
@@ -267,8 +385,10 @@ public class ActionBarDrawerToggle implements DrawerLayout.DrawerListener {
      */
     public void onConfigurationChanged(Configuration newConfig) {
         // Reload drawables that can change with configuration
-        mThemeImage = getThemeUpIndicator();
-        mDrawerImage = mActivity.getResources().getDrawable(mDrawerImageResource);
+        if (!mHasCustomUpIndicator) {
+            mHomeAsUpIndicator = getThemeUpIndicator();
+        }
+        mDrawerImage = ContextCompat.getDrawable(mActivity, mDrawerImageResource);
         syncState();
     }
 
@@ -303,13 +423,13 @@ public class ActionBarDrawerToggle implements DrawerLayout.DrawerListener {
      */
     @Override
     public void onDrawerSlide(View drawerView, float slideOffset) {
-        float glyphOffset = mSlider.getOffset();
+        float glyphOffset = mSlider.getPosition();
         if (slideOffset > 0.5f) {
             glyphOffset = Math.max(glyphOffset, Math.max(0.f, slideOffset - 0.5f) * 2);
         } else {
             glyphOffset = Math.min(glyphOffset, slideOffset * 2);
         }
-        mSlider.setOffset(glyphOffset);
+        mSlider.setPosition(glyphOffset);
     }
 
     /**
@@ -321,9 +441,9 @@ public class ActionBarDrawerToggle implements DrawerLayout.DrawerListener {
      */
     @Override
     public void onDrawerOpened(View drawerView) {
-        mSlider.setOffset(1.f);
+        mSlider.setPosition(1);
         if (mDrawerIndicatorEnabled) {
-            setActionBarDescription(mOpenDrawerContentDescRes);
+            setActionBarDescription(mCloseDrawerContentDescRes);
         }
     }
 
@@ -336,9 +456,9 @@ public class ActionBarDrawerToggle implements DrawerLayout.DrawerListener {
      */
     @Override
     public void onDrawerClosed(View drawerView) {
-        mSlider.setOffset(0.f);
+        mSlider.setPosition(0);
         if (mDrawerIndicatorEnabled) {
-            setActionBarDescription(mCloseDrawerContentDescRes);
+            setActionBarDescription(mOpenDrawerContentDescRes);
         }
     }
 
@@ -378,176 +498,63 @@ public class ActionBarDrawerToggle implements DrawerLayout.DrawerListener {
                 .setActionBarDescription(mSetIndicatorInfo, mActivity, contentDescRes);
     }
 
-    private static class SlideDrawable extends Drawable implements Drawable.Callback {
-        private Drawable mWrapped;
-        private float mOffset;
-        private float mOffsetBy;
-
+    private class SlideDrawable extends InsetDrawable implements Drawable.Callback {
+        private final boolean mHasMirroring = Build.VERSION.SDK_INT > 18;
         private final Rect mTmpRect = new Rect();
 
-        public SlideDrawable(Drawable wrapped) {
-            mWrapped = wrapped;
+        private float mPosition;
+        private float mOffset;
+
+        private SlideDrawable(Drawable wrapped) {
+            super(wrapped, 0);
         }
 
+        /**
+         * Sets the current position along the offset.
+         *
+         * @param position a value between 0 and 1
+         */
+        public void setPosition(float position) {
+            mPosition = position;
+            invalidateSelf();
+        }
+
+        public float getPosition() {
+            return mPosition;
+        }
+
+        /**
+         * Specifies the maximum offset when the position is at 1.
+         *
+         * @param offset maximum offset as a fraction of the drawable width,
+         *            positive to shift left or negative to shift right.
+         * @see #setPosition(float)
+         */
         public void setOffset(float offset) {
             mOffset = offset;
             invalidateSelf();
         }
 
-        public float getOffset() {
-            return mOffset;
-        }
-
-        public void setOffsetBy(float offsetBy) {
-            mOffsetBy = offsetBy;
-            invalidateSelf();
-        }
-
         @Override
         public void draw(Canvas canvas) {
-            mWrapped.copyBounds(mTmpRect);
+            copyBounds(mTmpRect);
             canvas.save();
-            canvas.translate(mOffsetBy * mTmpRect.width() * -mOffset, 0);
-            mWrapped.draw(canvas);
+
+            // Layout direction must be obtained from the activity.
+            final boolean isLayoutRTL = ViewCompat.getLayoutDirection(
+                    mActivity.getWindow().getDecorView()) == ViewCompat.LAYOUT_DIRECTION_RTL;
+            final int flipRtl = isLayoutRTL ? -1 : 1;
+            final int width = mTmpRect.width();
+            canvas.translate(-mOffset * width * mPosition * flipRtl, 0);
+
+            // Force auto-mirroring if it's not supported by the platform.
+            if (isLayoutRTL && !mHasMirroring) {
+                canvas.translate(width, 0);
+                canvas.scale(-1, 1);
+            }
+
+            super.draw(canvas);
             canvas.restore();
-        }
-
-        @Override
-        public void setChangingConfigurations(int configs) {
-            mWrapped.setChangingConfigurations(configs);
-        }
-
-        @Override
-        public int getChangingConfigurations() {
-            return mWrapped.getChangingConfigurations();
-        }
-
-        @Override
-        public void setDither(boolean dither) {
-            mWrapped.setDither(dither);
-        }
-
-        @Override
-        public void setFilterBitmap(boolean filter) {
-            mWrapped.setFilterBitmap(filter);
-        }
-
-        @Override
-        public void setAlpha(int alpha) {
-            mWrapped.setAlpha(alpha);
-        }
-
-        @Override
-        public void setColorFilter(ColorFilter cf) {
-            mWrapped.setColorFilter(cf);
-        }
-
-        @Override
-        public void setColorFilter(int color, PorterDuff.Mode mode) {
-            mWrapped.setColorFilter(color, mode);
-        }
-
-        @Override
-        public void clearColorFilter() {
-            mWrapped.clearColorFilter();
-        }
-
-        @Override
-        public boolean isStateful() {
-            return mWrapped.isStateful();
-        }
-
-        @Override
-        public boolean setState(int[] stateSet) {
-            return mWrapped.setState(stateSet);
-        }
-
-        @Override
-        public int[] getState() {
-            return mWrapped.getState();
-        }
-
-        @Override
-        public Drawable getCurrent() {
-            return mWrapped.getCurrent();
-        }
-
-        @Override
-        public boolean setVisible(boolean visible, boolean restart) {
-            return super.setVisible(visible, restart);
-        }
-
-        @Override
-        public int getOpacity() {
-            return mWrapped.getOpacity();
-        }
-
-        @Override
-        public Region getTransparentRegion() {
-            return mWrapped.getTransparentRegion();
-        }
-
-        @Override
-        protected boolean onStateChange(int[] state) {
-            mWrapped.setState(state);
-            return super.onStateChange(state);
-        }
-
-        @Override
-        protected void onBoundsChange(Rect bounds) {
-            super.onBoundsChange(bounds);
-            mWrapped.setBounds(bounds);
-        }
-
-        @Override
-        public int getIntrinsicWidth() {
-            return mWrapped.getIntrinsicWidth();
-        }
-
-        @Override
-        public int getIntrinsicHeight() {
-            return mWrapped.getIntrinsicHeight();
-        }
-
-        @Override
-        public int getMinimumWidth() {
-            return mWrapped.getMinimumWidth();
-        }
-
-        @Override
-        public int getMinimumHeight() {
-            return mWrapped.getMinimumHeight();
-        }
-
-        @Override
-        public boolean getPadding(Rect padding) {
-            return mWrapped.getPadding(padding);
-        }
-
-        @Override
-        public ConstantState getConstantState() {
-            return super.getConstantState();
-        }
-
-        @Override
-        public void invalidateDrawable(Drawable who) {
-            if (who == mWrapped) {
-                invalidateSelf();
-            }
-        }
-
-        @Override
-        public void scheduleDrawable(Drawable who, Runnable what, long when) {
-            if (who == mWrapped) {
-                scheduleSelf(what, when);
-            }
-        }
-
-        @Override
-        public void unscheduleDrawable(Drawable who, Runnable what) {
-            if (who == mWrapped) {
-                unscheduleSelf(what);
-            }
         }
     }
 }

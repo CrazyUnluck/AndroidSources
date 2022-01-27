@@ -17,13 +17,10 @@
 package android.renderscript;
 
 
-import android.util.Log;
-
-
 /**
  * @hide
  * @deprecated in API 16
- * <p>The Renderscript fragment program, also known as fragment shader is responsible
+ * <p>The RenderScript fragment program, also known as fragment shader is responsible
  * for manipulating pixel data in a user defined way. It's constructed from a GLSL
  * shader string containing the program body, textures inputs, and a Type object
  * that describes the constants used by the program. Similar to the vertex programs,
@@ -39,7 +36,7 @@ import android.util.Log;
  *
  **/
 public class ProgramFragment extends Program {
-    ProgramFragment(int id, RenderScript rs) {
+    ProgramFragment(long id, RenderScript rs) {
         super(id, rs);
     }
 
@@ -65,7 +62,7 @@ public class ProgramFragment extends Program {
          */
         public ProgramFragment create() {
             mRS.validate();
-            int[] tmp = new int[(mInputCount + mOutputCount + mConstantCount + mTextureCount) * 2];
+            long[] tmp = new long[(mInputCount + mOutputCount + mConstantCount + mTextureCount) * 2];
             String[] texNames = new String[mTextureCount];
             int idx = 0;
 
@@ -87,7 +84,7 @@ public class ProgramFragment extends Program {
                 texNames[i] = mTextureNames[i];
             }
 
-            int id = mRS.nProgramFragmentCreate(mShader, texNames, tmp);
+            long id = mRS.nProgramFragmentCreate(mShader, texNames, tmp);
             ProgramFragment pf = new ProgramFragment(id, mRS);
             initProgram(pf);
             return pf;

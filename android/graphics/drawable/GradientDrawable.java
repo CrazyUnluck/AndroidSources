@@ -16,31 +16,48 @@
 
 package android.graphics.drawable;
 
+import android.annotation.ColorInt;
+import android.annotation.IntDef;
+import android.annotation.NonNull;
+import android.annotation.Nullable;
+import android.content.pm.ActivityInfo.Config;
+import android.content.res.ColorStateList;
 import android.content.res.Resources;
+import android.content.res.Resources.Theme;
 import android.content.res.TypedArray;
 import android.graphics.Canvas;
+import android.graphics.Color;
 import android.graphics.ColorFilter;
 import android.graphics.DashPathEffect;
+import android.graphics.Insets;
 import android.graphics.LinearGradient;
+import android.graphics.Outline;
 import android.graphics.Paint;
+import android.graphics.Path;
 import android.graphics.PixelFormat;
+import android.graphics.PorterDuff;
+import android.graphics.PorterDuffColorFilter;
+import android.graphics.RadialGradient;
 import android.graphics.Rect;
 import android.graphics.RectF;
 import android.graphics.Shader;
-import android.graphics.Path;
-import android.graphics.RadialGradient;
 import android.graphics.SweepGradient;
 import android.util.AttributeSet;
+import android.util.DisplayMetrics;
 import android.util.Log;
 import android.util.TypedValue;
+
+import com.android.internal.R;
 
 import org.xmlpull.v1.XmlPullParser;
 import org.xmlpull.v1.XmlPullParserException;
 
 import java.io.IOException;
+import java.lang.annotation.Retention;
+import java.lang.annotation.RetentionPolicy;
 
 /**
- * A Drawable with a color gradient for buttons, backgrounds, etc. 
+ * A Drawable with a color gradient for buttons, backgrounds, etc.
  *
  * <p>It can be defined in an XML file with the <code>&lt;shape></code> element. For more
  * information, see the guide to <a
@@ -79,12 +96,12 @@ public class GradientDrawable extends Drawable {
      * Shape is a rectangle, possibly with rounded corners
      */
     public static final int RECTANGLE = 0;
-    
+
     /**
      * Shape is an ellipse
      */
-    public static final int OVAL = 1; 
-    
+    public static final int OVAL = 1;
+
     /**
      * Shape is a line
      */
@@ -94,6 +111,11 @@ public class GradientDrawable extends Drawable {
      * Shape is a ring.
      */
     public static final int RING = 3;
+
+    /** @hide */
+    @IntDef({RECTANGLE, OVAL, LINE, RING})
+    @Retention(RetentionPolicy.SOURCE)
+    public @interface Shape {}
 
     /**
      * Gradient is linear (default.)
@@ -110,23 +132,48 @@ public class GradientDrawable extends Drawable {
      */
     public static final int SWEEP_GRADIENT  = 2;
 
+    /** @hide */
+    @IntDef({LINEAR_GRADIENT, RADIAL_GRADIENT, SWEEP_GRADIENT})
+    @Retention(RetentionPolicy.SOURCE)
+    public @interface GradientType {}
+
+    /** Radius is in pixels. */
+    private static final int RADIUS_TYPE_PIXELS = 0;
+
+    /** Radius is a fraction of the base size. */
+    private static final int RADIUS_TYPE_FRACTION = 1;
+
+    /** Radius is a fraction of the bounds size. */
+    private static final int RADIUS_TYPE_FRACTION_PARENT = 2;
+
+    /** @hide */
+    @IntDef({RADIUS_TYPE_PIXELS, RADIUS_TYPE_FRACTION, RADIUS_TYPE_FRACTION_PARENT})
+    @Retention(RetentionPolicy.SOURCE)
+    public @interface RadiusType {}
+
+    private static final float DEFAULT_INNER_RADIUS_RATIO = 3.0f;
+    private static final float DEFAULT_THICKNESS_RATIO = 9.0f;
+
     private GradientState mGradientState;
-    
+
     private final Paint mFillPaint = new Paint(Paint.ANTI_ALIAS_FLAG);
     private Rect mPadding;
     private Paint mStrokePaint;   // optional, set by the caller
     private ColorFilter mColorFilter;   // optional, set by the caller
+    private PorterDuffColorFilter mTintFilter;
     private int mAlpha = 0xFF;  // modified by the caller
-    private boolean mDither;
 
     private final Path mPath = new Path();
     private final RectF mRect = new RectF();
-    
+
     private Paint mLayerPaint;    // internal, used if we use saveLayer()
-    private boolean mRectIsDirty;   // internal state
+    private boolean mGradientIsDirty;
     private boolean mMutated;
     private Path mRingPath;
     private boolean mPathIsDirty = true;
+
+    /** Current gradient radius, valid when {@link #mGradientIsDirty} is false. */
+    private float mGradientRadius;
 
     /**
      * Controls how the gradient is oriented relative to the drawable's bounds
@@ -151,17 +198,17 @@ public class GradientDrawable extends Drawable {
     }
 
     public GradientDrawable() {
-        this(new GradientState(Orientation.TOP_BOTTOM, null));
+        this(new GradientState(Orientation.TOP_BOTTOM, null), null);
     }
-    
+
     /**
      * Create a new gradient drawable given an orientation and an array
      * of colors for the gradient.
      */
-    public GradientDrawable(Orientation orientation, int[] colors) {
-        this(new GradientState(orientation, colors));
+    public GradientDrawable(Orientation orientation, @ColorInt int[] colors) {
+        this(new GradientState(orientation, colors), null);
     }
-    
+
     @Override
     public boolean getPadding(Rect padding) {
         if (mPadding != null) {
@@ -173,45 +220,78 @@ public class GradientDrawable extends Drawable {
     }
 
     /**
-     * <p>Specify radii for each of the 4 corners. For each corner, the array
-     * contains 2 values, <code>[X_radius, Y_radius]</code>. The corners are ordered
-     * top-left, top-right, bottom-right, bottom-left. This property
-     * is honored only when the shape is of type {@link #RECTANGLE}.</p>
-     * <p><strong>Note</strong>: changing this property will affect all instances
+     * Specifies radii for each of the 4 corners. For each corner, the array
+     * contains 2 values, <code>[X_radius, Y_radius]</code>. The corners are
+     * ordered top-left, top-right, bottom-right, bottom-left. This property
+     * is honored only when the shape is of type {@link #RECTANGLE}.
+     * <p>
+     * <strong>Note</strong>: changing this property will affect all instances
      * of a drawable loaded from a resource. It is recommended to invoke
-     * {@link #mutate()} before changing this property.</p>
+     * {@link #mutate()} before changing this property.
      *
-     * @param radii 4 pairs of X and Y radius for each corner, specified in pixels.
-     *              The length of this array must be >= 8
+     * @param radii an array of length >= 8 containing 4 pairs of X and Y
+     *              radius for each corner, specified in pixels
      *
      * @see #mutate()
-     * @see #setCornerRadii(float[])
      * @see #setShape(int)
+     * @see #setCornerRadius(float)
      */
-    public void setCornerRadii(float[] radii) {
+    public void setCornerRadii(@Nullable float[] radii) {
         mGradientState.setCornerRadii(radii);
         mPathIsDirty = true;
         invalidateSelf();
     }
-    
+
     /**
-     * <p>Specify radius for the corners of the gradient. If this is > 0, then the
-     * drawable is drawn in a round-rectangle, rather than a rectangle. This property
-     * is honored only when the shape is of type {@link #RECTANGLE}.</p>
-     * <p><strong>Note</strong>: changing this property will affect all instances
+     * Returns the radii for each of the 4 corners. For each corner, the array
+     * contains 2 values, <code>[X_radius, Y_radius]</code>. The corners are
+     * ordered top-left, top-right, bottom-right, bottom-left.
+     * <p>
+     * If the radius was previously set with {@link #setCornerRadius(float)},
+     * or if the corners are not rounded, this method will return {@code null}.
+     *
+     * @return an array containing the radii for each of the 4 corners, or
+     *         {@code null}
+     * @see #setCornerRadii(float[])
+     */
+    @Nullable
+    public float[] getCornerRadii() {
+        return mGradientState.mRadiusArray.clone();
+    }
+
+    /**
+     * Specifies the radius for the corners of the gradient. If this is > 0,
+     * then the drawable is drawn in a round-rectangle, rather than a
+     * rectangle. This property is honored only when the shape is of type
+     * {@link #RECTANGLE}.
+     * <p>
+     * <strong>Note</strong>: changing this property will affect all instances
      * of a drawable loaded from a resource. It is recommended to invoke
-     * {@link #mutate()} before changing this property.</p>
+     * {@link #mutate()} before changing this property.
      *
      * @param radius The radius in pixels of the corners of the rectangle shape
      *
      * @see #mutate()
      * @see #setCornerRadii(float[])
-     * @see #setShape(int) 
+     * @see #setShape(int)
      */
     public void setCornerRadius(float radius) {
         mGradientState.setCornerRadius(radius);
         mPathIsDirty = true;
         invalidateSelf();
+    }
+
+    /**
+     * Returns the radius for the corners of the gradient.
+     * <p>
+     * If the radius was previously set with {@link #setCornerRadii(float[])},
+     * or if the corners are not rounded, this method will return {@code null}.
+     *
+     * @return the radius in pixels of the corners of the rectangle shape, or 0
+     * @see #setCornerRadius
+     */
+    public float getCornerRadius() {
+        return mGradientState.mRadius;
     }
 
     /**
@@ -225,10 +305,27 @@ public class GradientDrawable extends Drawable {
      * @param color The color of the stroke
      *
      * @see #mutate()
-     * @see #setStroke(int, int, float, float) 
+     * @see #setStroke(int, int, float, float)
      */
-    public void setStroke(int width, int color) {
+    public void setStroke(int width, @ColorInt int color) {
         setStroke(width, color, 0, 0);
+    }
+
+    /**
+     * <p>Set the stroke width and color state list for the drawable. If width
+     * is zero, then no stroke is drawn.</p>
+     * <p><strong>Note</strong>: changing this property will affect all instances
+     * of a drawable loaded from a resource. It is recommended to invoke
+     * {@link #mutate()} before changing this property.</p>
+     *
+     * @param width The width in pixels of the stroke
+     * @param colorStateList The color state list of the stroke
+     *
+     * @see #mutate()
+     * @see #setStroke(int, ColorStateList, float, float)
+     */
+    public void setStroke(int width, ColorStateList colorStateList) {
+        setStroke(width, colorStateList, 0, 0);
     }
 
     /**
@@ -240,22 +337,54 @@ public class GradientDrawable extends Drawable {
      *
      * @param width The width in pixels of the stroke
      * @param color The color of the stroke
-     * @param dashWidth The length in pixels of the dashes, set to 0 to disable dashes 
+     * @param dashWidth The length in pixels of the dashes, set to 0 to disable dashes
      * @param dashGap The gap in pixels between dashes
      *
      * @see #mutate()
-     * @see #setStroke(int, int) 
+     * @see #setStroke(int, int)
      */
-    public void setStroke(int width, int color, float dashWidth, float dashGap) {
-        mGradientState.setStroke(width, color, dashWidth, dashGap);
+    public void setStroke(int width, @ColorInt int color, float dashWidth, float dashGap) {
+        mGradientState.setStroke(width, ColorStateList.valueOf(color), dashWidth, dashGap);
+        setStrokeInternal(width, color, dashWidth, dashGap);
+    }
 
+    /**
+     * <p>Set the stroke width and color state list for the drawable. If width
+     * is zero, then no stroke is drawn. This method can also be used to dash
+     * the stroke.</p>
+     * <p><strong>Note</strong>: changing this property will affect all instances
+     * of a drawable loaded from a resource. It is recommended to invoke
+     * {@link #mutate()} before changing this property.</p>
+     *
+     * @param width The width in pixels of the stroke
+     * @param colorStateList The color state list of the stroke
+     * @param dashWidth The length in pixels of the dashes, set to 0 to disable dashes
+     * @param dashGap The gap in pixels between dashes
+     *
+     * @see #mutate()
+     * @see #setStroke(int, ColorStateList)
+     */
+    public void setStroke(
+            int width, ColorStateList colorStateList, float dashWidth, float dashGap) {
+        mGradientState.setStroke(width, colorStateList, dashWidth, dashGap);
+        final int color;
+        if (colorStateList == null) {
+            color = Color.TRANSPARENT;
+        } else {
+            final int[] stateSet = getState();
+            color = colorStateList.getColorForState(stateSet, 0);
+        }
+        setStrokeInternal(width, color, dashWidth, dashGap);
+    }
+
+    private void setStrokeInternal(int width, int color, float dashWidth, float dashGap) {
         if (mStrokePaint == null)  {
             mStrokePaint = new Paint(Paint.ANTI_ALIAS_FLAG);
             mStrokePaint.setStyle(Paint.Style.STROKE);
         }
         mStrokePaint.setStrokeWidth(width);
         mStrokePaint.setColor(color);
-        
+
         DashPathEffect e = null;
         if (dashWidth > 0) {
             e = new DashPathEffect(new float[] { dashWidth, dashGap }, 0);
@@ -294,7 +423,7 @@ public class GradientDrawable extends Drawable {
      *
      * @see #mutate()
      */
-    public void setShape(int shape) {
+    public void setShape(@Shape int shape) {
         mRingPath = null;
         mPathIsDirty = true;
         mGradientState.setShape(shape);
@@ -302,78 +431,161 @@ public class GradientDrawable extends Drawable {
     }
 
     /**
-     * <p>Sets the type of gradient used by this drawable..</p>
-     * <p><strong>Note</strong>: changing this property will affect all instances
+     * Returns the type of shape used by this drawable, one of {@link #LINE},
+     * {@link #OVAL}, {@link #RECTANGLE} or {@link #RING}.
+     *
+     * @return the type of shape used by this drawable
+     * @see #setShape(int)
+     */
+    @Shape
+    public int getShape() {
+        return mGradientState.mShape;
+    }
+
+    /**
+     * Sets the type of gradient used by this drawable.
+     * <p>
+     * <strong>Note</strong>: changing this property will affect all instances
      * of a drawable loaded from a resource. It is recommended to invoke
-     * {@link #mutate()} before changing this property.</p>
+     * {@link #mutate()} before changing this property.
      *
      * @param gradient The type of the gradient: {@link #LINEAR_GRADIENT},
      *                 {@link #RADIAL_GRADIENT} or {@link #SWEEP_GRADIENT}
      *
      * @see #mutate()
+     * @see #getGradientType()
      */
-    public void setGradientType(int gradient) {
+    public void setGradientType(@GradientType int gradient) {
         mGradientState.setGradientType(gradient);
-        mRectIsDirty = true;
+        mGradientIsDirty = true;
         invalidateSelf();
     }
 
     /**
-     * <p>Sets the center location of the gradient. The radius is honored only when 
-     * the gradient type is set to {@link #RADIAL_GRADIENT} or {@link #SWEEP_GRADIENT}.</p>
-     * <p><strong>Note</strong>: changing this property will affect all instances
-     * of a drawable loaded from a resource. It is recommended to invoke
-     * {@link #mutate()} before changing this property.</p>
+     * Returns the type of gradient used by this drawable, one of
+     * {@link #LINEAR_GRADIENT}, {@link #RADIAL_GRADIENT}, or
+     * {@link #SWEEP_GRADIENT}.
      *
-     * @param x The x coordinate of the gradient's center
-     * @param y The y coordinate of the gradient's center
+     * @return the type of gradient used by this drawable
+     * @see #setGradientType(int)
+     */
+    @GradientType
+    public int getGradientType() {
+        return mGradientState.mGradient;
+    }
+
+    /**
+     * Sets the center location in pixels of the gradient. The radius is
+     * honored only when the gradient type is set to {@link #RADIAL_GRADIENT}
+     * or {@link #SWEEP_GRADIENT}.
+     * <p>
+     * <strong>Note</strong>: changing this property will affect all instances
+     * of a drawable loaded from a resource. It is recommended to invoke
+     * {@link #mutate()} before changing this property.
+     *
+     * @param x the x coordinate of the gradient's center in pixels
+     * @param y the y coordinate of the gradient's center in pixels
      *
      * @see #mutate()
      * @see #setGradientType(int)
+     * @see #getGradientCenterX()
+     * @see #getGradientCenterY()
      */
     public void setGradientCenter(float x, float y) {
         mGradientState.setGradientCenter(x, y);
-        mRectIsDirty = true;
+        mGradientIsDirty = true;
         invalidateSelf();
     }
 
     /**
-     * <p>Sets the radius of the gradient. The radius is honored only when the
-     * gradient type is set to {@link #RADIAL_GRADIENT}.</p>
-     * <p><strong>Note</strong>: changing this property will affect all instances
-     * of a drawable loaded from a resource. It is recommended to invoke
-     * {@link #mutate()} before changing this property.</p>
+     * Returns the center X location of this gradient in pixels.
      *
-     * @param gradientRadius The radius of the gradient in pixels
+     * @return the center X location of this gradient in pixels
+     * @see #setGradientCenter(float, float)
+     */
+    public float getGradientCenterX() {
+        return mGradientState.mCenterX;
+    }
+
+    /**
+     * Returns the center Y location of this gradient in pixels.
+     *
+     * @return the center Y location of this gradient in pixels
+     * @see #setGradientCenter(float, float)
+     */
+    public float getGradientCenterY() {
+        return mGradientState.mCenterY;
+    }
+
+    /**
+     * Sets the radius of the gradient. The radius is honored only when the
+     * gradient type is set to {@link #RADIAL_GRADIENT}.
+     * <p>
+     * <strong>Note</strong>: changing this property will affect all instances
+     * of a drawable loaded from a resource. It is recommended to invoke
+     * {@link #mutate()} before changing this property.
+     *
+     * @param gradientRadius the radius of the gradient in pixels
      *
      * @see #mutate()
-     * @see #setGradientType(int) 
+     * @see #setGradientType(int)
+     * @see #getGradientRadius()
      */
     public void setGradientRadius(float gradientRadius) {
-        mGradientState.setGradientRadius(gradientRadius);
-        mRectIsDirty = true;
+        mGradientState.setGradientRadius(gradientRadius, TypedValue.COMPLEX_UNIT_PX);
+        mGradientIsDirty = true;
         invalidateSelf();
     }
 
     /**
-     * <p>Sets whether or not this drawable will honor its <code>level</code>
-     * property.</p>
-     * <p><strong>Note</strong>: changing this property will affect all instances
-     * of a drawable loaded from a resource. It is recommended to invoke
-     * {@link #mutate()} before changing this property.</p>
+     * Returns the radius of the gradient in pixels. The radius is valid only
+     * when the gradient type is set to {@link #RADIAL_GRADIENT}.
      *
-     * @param useLevel True if this drawable should honor its level, false otherwise
+     * @return the radius of the gradient in pixels
+     * @see #setGradientRadius(float)
+     */
+    public float getGradientRadius() {
+        if (mGradientState.mGradient != RADIAL_GRADIENT) {
+            return 0;
+        }
+
+        ensureValidRect();
+        return mGradientRadius;
+    }
+
+    /**
+     * Sets whether or not this drawable will honor its {@code level} property.
+     * <p>
+     * <strong>Note</strong>: changing this property will affect all instances
+     * of a drawable loaded from a resource. It is recommended to invoke
+     * {@link #mutate()} before changing this property.
+     *
+     * @param useLevel {@code true} if this drawable should honor its level,
+     *                 {@code false} otherwise
      *
      * @see #mutate()
-     * @see #setLevel(int) 
-     * @see #getLevel() 
+     * @see #setLevel(int)
+     * @see #getLevel()
+     * @see #getUseLevel()
      */
     public void setUseLevel(boolean useLevel) {
         mGradientState.mUseLevel = useLevel;
-        mRectIsDirty = true;
+        mGradientIsDirty = true;
         invalidateSelf();
     }
-    
+
+    /**
+     * Returns whether or not this drawable will honor its {@code level}
+     * property.
+     *
+     * @return {@code true} if this drawable should honor its level,
+     *         {@code false} otherwise
+     * @see #setUseLevel(boolean)
+     */
+    public boolean getUseLevel() {
+        return mGradientState.mUseLevel;
+    }
+
     private int modulateAlpha(int alpha) {
         int scale = mAlpha + (mAlpha >> 7);
         return alpha * scale >> 8;
@@ -381,43 +593,63 @@ public class GradientDrawable extends Drawable {
 
     /**
      * Returns the orientation of the gradient defined in this drawable.
+     *
+     * @return the orientation of the gradient defined in this drawable
+     * @see #setOrientation(Orientation)
      */
     public Orientation getOrientation() {
         return mGradientState.mOrientation;
     }
 
     /**
-     * <p>Changes the orientation of the gradient defined in this drawable.</p>
-     * <p><strong>Note</strong>: changing orientation will affect all instances
+     * Sets the orientation of the gradient defined in this drawable.
+     * <p>
+     * <strong>Note</strong>: changing orientation will affect all instances
      * of a drawable loaded from a resource. It is recommended to invoke
-     * {@link #mutate()} before changing the orientation.</p>
-     * 
-     * @param orientation The desired orientation (angle) of the gradient
-     *                    
-     * @see #mutate() 
+     * {@link #mutate()} before changing the orientation.
+     *
+     * @param orientation the desired orientation (angle) of the gradient
+     *
+     * @see #mutate()
+     * @see #getOrientation()
      */
     public void setOrientation(Orientation orientation) {
         mGradientState.mOrientation = orientation;
-        mRectIsDirty = true;
+        mGradientIsDirty = true;
         invalidateSelf();
     }
 
     /**
-     * <p>Sets the colors used to draw the gradient. Each color is specified as an
-     * ARGB integer and the array must contain at least 2 colors.</p>
-     * <p><strong>Note</strong>: changing orientation will affect all instances
-     * of a drawable loaded from a resource. It is recommended to invoke
-     * {@link #mutate()} before changing the orientation.</p>
+     * Sets the colors used to draw the gradient.
+     * <p>
+     * Each color is specified as an ARGB integer and the array must contain at
+     * least 2 colors.
+     * <p>
+     * <strong>Note</strong>: changing colors will affect all instances of a
+     * drawable loaded from a resource. It is recommended to invoke
+     * {@link #mutate()} before changing the colors.
      *
-     * @param colors 2 or more ARGB colors
-     *
+     * @param colors an array containing 2 or more ARGB colors
      * @see #mutate()
-     * @see #setColor(int) 
+     * @see #setColor(int)
      */
-    public void setColors(int[] colors) {
-        mGradientState.setColors(colors);
-        mRectIsDirty = true;
+    public void setColors(@ColorInt int[] colors) {
+        mGradientState.setGradientColors(colors);
+        mGradientIsDirty = true;
         invalidateSelf();
+    }
+
+    /**
+     * Returns the colors used to draw the gradient, or {@code null} if the
+     * gradient is drawn using a single color or no colors.
+     *
+     * @return the colors used to draw the gradient, or {@code null}
+     * @see #setColors(int[] colors)
+     */
+    @Nullable
+    public int[] getColors() {
+        return mGradientState.mGradientColors == null ?
+                null : mGradientState.mGradientColors.clone();
     }
 
     @Override
@@ -439,13 +671,15 @@ public class GradientDrawable extends Drawable {
                 mStrokePaint.getStrokeWidth() > 0;
         final boolean haveFill = currFillAlpha > 0;
         final GradientState st = mGradientState;
+        final ColorFilter colorFilter = mColorFilter != null ? mColorFilter : mTintFilter;
+
         /*  we need a layer iff we're drawing both a fill and stroke, and the
             stroke is non-opaque, and our shapetype actually supports
             fill+stroke. Otherwise we can just draw the stroke (if any) on top
             of the fill (if any) without worrying about blending artifacts.
          */
-         final boolean useLayer = haveStroke && haveFill && st.mShape != LINE &&
-                 currStrokeAlpha < 255 && (mAlpha < 255 || mColorFilter != null);
+        final boolean useLayer = haveStroke && haveFill && st.mShape != LINE &&
+                 currStrokeAlpha < 255 && (mAlpha < 255 || colorFilter != null);
 
         /*  Drawing with a layer is slower than direct drawing, but it
             allows us to apply paint effects like alpha and colorfilter to
@@ -458,9 +692,9 @@ public class GradientDrawable extends Drawable {
             if (mLayerPaint == null) {
                 mLayerPaint = new Paint();
             }
-            mLayerPaint.setDither(mDither);
+            mLayerPaint.setDither(st.mDither);
             mLayerPaint.setAlpha(mAlpha);
-            mLayerPaint.setColorFilter(mColorFilter);
+            mLayerPaint.setColorFilter(colorFilter);
 
             float rad = mStrokePaint.getStrokeWidth();
             canvas.saveLayer(mRect.left - rad, mRect.top - rad,
@@ -476,26 +710,22 @@ public class GradientDrawable extends Drawable {
                 individual paints
             */
             mFillPaint.setAlpha(currFillAlpha);
-            mFillPaint.setDither(mDither);
-            mFillPaint.setColorFilter(mColorFilter);
-            if (mColorFilter != null && !mGradientState.mHasSolidColor) {
+            mFillPaint.setDither(st.mDither);
+            mFillPaint.setColorFilter(colorFilter);
+            if (colorFilter != null && st.mSolidColors == null) {
                 mFillPaint.setColor(mAlpha << 24);
             }
             if (haveStroke) {
                 mStrokePaint.setAlpha(currStrokeAlpha);
-                mStrokePaint.setDither(mDither);
-                mStrokePaint.setColorFilter(mColorFilter);
+                mStrokePaint.setDither(st.mDither);
+                mStrokePaint.setColorFilter(colorFilter);
             }
         }
-        
+
         switch (st.mShape) {
             case RECTANGLE:
                 if (st.mRadiusArray != null) {
-                    if (mPathIsDirty || mRectIsDirty) {
-                        mPath.reset();
-                        mPath.addRoundRect(mRect, st.mRadiusArray, Path.Direction.CW);
-                        mPathIsDirty = mRectIsDirty = false;
-                    }
+                    buildPathIfDirty();
                     canvas.drawPath(mPath, mFillPaint);
                     if (haveStroke) {
                         canvas.drawPath(mPath, mStrokePaint);
@@ -506,17 +736,14 @@ public class GradientDrawable extends Drawable {
                     // to show it. If we did nothing, Skia would clamp the rad
                     // independently along each axis, giving us a thin ellipse
                     // if the rect were very wide but not very tall
-                    float rad = st.mRadius;
-                    float r = Math.min(mRect.width(), mRect.height()) * 0.5f;
-                    if (rad > r) {
-                        rad = r;
-                    }
+                    float rad = Math.min(st.mRadius,
+                            Math.min(mRect.width(), mRect.height()) * 0.5f);
                     canvas.drawRoundRect(mRect, rad, rad, mFillPaint);
                     if (haveStroke) {
                         canvas.drawRoundRect(mRect, rad, rad, mStrokePaint);
                     }
                 } else {
-                    if (mFillPaint.getColor() != 0 || mColorFilter != null ||
+                    if (mFillPaint.getColor() != 0 || colorFilter != null ||
                             mFillPaint.getShader() != null) {
                         canvas.drawRect(mRect, mFillPaint);
                     }
@@ -534,7 +761,9 @@ public class GradientDrawable extends Drawable {
             case LINE: {
                 RectF r = mRect;
                 float y = r.centerY();
-                canvas.drawLine(r.left, y, r.right, y, mStrokePaint);
+                if (haveStroke) {
+                    canvas.drawLine(r.left, y, r.right, y, mStrokePaint);
+                }
                 break;
             }
             case RING:
@@ -545,7 +774,7 @@ public class GradientDrawable extends Drawable {
                 }
                 break;
         }
-        
+
         if (useLayer) {
             canvas.restore();
         } else {
@@ -555,13 +784,23 @@ public class GradientDrawable extends Drawable {
             }
         }
     }
-    
+
+    private void buildPathIfDirty() {
+        final GradientState st = mGradientState;
+        if (mPathIsDirty) {
+            ensureValidRect();
+            mPath.reset();
+            mPath.addRoundRect(mRect, st.mRadiusArray, Path.Direction.CW);
+            mPathIsDirty = false;
+        }
+    }
+
     private Path buildRing(GradientState st) {
         if (mRingPath != null && (!st.mUseLevelForShape || !mPathIsDirty)) return mRingPath;
         mPathIsDirty = false;
 
         float sweep = st.mUseLevelForShape ? (360.0f * getLevel() / 10000.0f) : 360f;
-        
+
         RectF bounds = new RectF(mRect);
 
         float x = bounds.width() / 2.0f;
@@ -582,7 +821,7 @@ public class GradientDrawable extends Drawable {
         if (mRingPath == null) {
             mRingPath = new Path();
         } else {
-            mRingPath.reset();            
+            mRingPath.reset();
         }
 
         final Path ringPath = mRingPath;
@@ -609,25 +848,119 @@ public class GradientDrawable extends Drawable {
     }
 
     /**
-     * <p>Changes this drawbale to use a single color instead of a gradient.</p>
-     * <p><strong>Note</strong>: changing color will affect all instances
-     * of a drawable loaded from a resource. It is recommended to invoke
-     * {@link #mutate()} before changing the color.</p>
+     * Changes this drawable to use a single color instead of a gradient.
+     * <p>
+     * <strong>Note</strong>: changing color will affect all instances of a
+     * drawable loaded from a resource. It is recommended to invoke
+     * {@link #mutate()} before changing the color.
      *
      * @param argb The color used to fill the shape
      *
      * @see #mutate()
-     * @see #setColors(int[]) 
+     * @see #setColors(int[])
+     * @see #getColor
      */
-    public void setColor(int argb) {
-        mGradientState.setSolidColor(argb);
+    public void setColor(@ColorInt int argb) {
+        mGradientState.setSolidColors(ColorStateList.valueOf(argb));
         mFillPaint.setColor(argb);
         invalidateSelf();
     }
 
+    /**
+     * Changes this drawable to use a single color state list instead of a
+     * gradient. Calling this method with a null argument will clear the color
+     * and is equivalent to calling {@link #setColor(int)} with the argument
+     * {@link Color#TRANSPARENT}.
+     * <p>
+     * <strong>Note</strong>: changing color will affect all instances of a
+     * drawable loaded from a resource. It is recommended to invoke
+     * {@link #mutate()} before changing the color.</p>
+     *
+     * @param colorStateList The color state list used to fill the shape
+     *
+     * @see #mutate()
+     * @see #getColor
+     */
+    public void setColor(@Nullable ColorStateList colorStateList) {
+        mGradientState.setSolidColors(colorStateList);
+        final int color;
+        if (colorStateList == null) {
+            color = Color.TRANSPARENT;
+        } else {
+            final int[] stateSet = getState();
+            color = colorStateList.getColorForState(stateSet, 0);
+        }
+        mFillPaint.setColor(color);
+        invalidateSelf();
+    }
+
+    /**
+     * Returns the color state list used to fill the shape, or {@code null} if
+     * the shape is filled with a gradient or has no fill color.
+     *
+     * @return the color state list used to fill this gradient, or {@code null}
+     *
+     * @see #setColor(int)
+     * @see #setColor(ColorStateList)
+     */
+    @Nullable
+    public ColorStateList getColor() {
+        return mGradientState.mSolidColors;
+    }
+
     @Override
-    public int getChangingConfigurations() {
-        return super.getChangingConfigurations() | mGradientState.mChangingConfigurations;
+    protected boolean onStateChange(int[] stateSet) {
+        boolean invalidateSelf = false;
+
+        final GradientState s = mGradientState;
+        final ColorStateList solidColors = s.mSolidColors;
+        if (solidColors != null) {
+            final int newColor = solidColors.getColorForState(stateSet, 0);
+            final int oldColor = mFillPaint.getColor();
+            if (oldColor != newColor) {
+                mFillPaint.setColor(newColor);
+                invalidateSelf = true;
+            }
+        }
+
+        final Paint strokePaint = mStrokePaint;
+        if (strokePaint != null) {
+            final ColorStateList strokeColors = s.mStrokeColors;
+            if (strokeColors != null) {
+                final int newColor = strokeColors.getColorForState(stateSet, 0);
+                final int oldColor = strokePaint.getColor();
+                if (oldColor != newColor) {
+                    strokePaint.setColor(newColor);
+                    invalidateSelf = true;
+                }
+            }
+        }
+
+        if (s.mTint != null && s.mTintMode != null) {
+            mTintFilter = updateTintFilter(mTintFilter, s.mTint, s.mTintMode);
+            invalidateSelf = true;
+        }
+
+        if (invalidateSelf) {
+            invalidateSelf();
+            return true;
+        }
+
+        return false;
+    }
+
+    @Override
+    public boolean isStateful() {
+        final GradientState s = mGradientState;
+        return super.isStateful()
+                || (s.mSolidColors != null && s.mSolidColors.isStateful())
+                || (s.mStrokeColors != null && s.mStrokeColors.isStateful())
+                || (s.mTint != null && s.mTint.isStateful());
+    }
+
+    @Override
+    public @Config int getChangingConfigurations() {
+        return super.getChangingConfigurations() | mGradientState.getChangingConfigurations();
     }
 
     @Override
@@ -639,24 +972,50 @@ public class GradientDrawable extends Drawable {
     }
 
     @Override
+    public int getAlpha() {
+        return mAlpha;
+    }
+
+    @Override
     public void setDither(boolean dither) {
-        if (dither != mDither) {
-            mDither = dither;
+        if (dither != mGradientState.mDither) {
+            mGradientState.mDither = dither;
             invalidateSelf();
         }
     }
 
     @Override
-    public void setColorFilter(ColorFilter cf) {
-        if (cf != mColorFilter) {
-            mColorFilter = cf;
+    @Nullable
+    public ColorFilter getColorFilter() {
+        return mColorFilter;
+    }
+
+    @Override
+    public void setColorFilter(@Nullable ColorFilter colorFilter) {
+        if (colorFilter != mColorFilter) {
+            mColorFilter = colorFilter;
             invalidateSelf();
         }
+    }
+
+    @Override
+    public void setTintList(@Nullable ColorStateList tint) {
+        mGradientState.mTint = tint;
+        mTintFilter = updateTintFilter(mTintFilter, tint, mGradientState.mTintMode);
+        invalidateSelf();
+    }
+
+    @Override
+    public void setTintMode(@Nullable PorterDuff.Mode tintMode) {
+        mGradientState.mTintMode = tintMode;
+        mTintFilter = updateTintFilter(mTintFilter, mGradientState.mTint, tintMode);
+        invalidateSelf();
     }
 
     @Override
     public int getOpacity() {
-        return mGradientState.mOpaque ? PixelFormat.OPAQUE : PixelFormat.TRANSLUCENT;
+        return (mAlpha == 255 && mGradientState.mOpaqueOverBounds && isOpaqueForState()) ?
+                PixelFormat.OPAQUE : PixelFormat.TRANSLUCENT;
     }
 
     @Override
@@ -664,31 +1023,31 @@ public class GradientDrawable extends Drawable {
         super.onBoundsChange(r);
         mRingPath = null;
         mPathIsDirty = true;
-        mRectIsDirty = true;
+        mGradientIsDirty = true;
     }
 
     @Override
     protected boolean onLevelChange(int level) {
         super.onLevelChange(level);
-        mRectIsDirty = true;
+        mGradientIsDirty = true;
         mPathIsDirty = true;
         invalidateSelf();
         return true;
     }
 
     /**
-     * This checks mRectIsDirty, and if it is true, recomputes both our drawing
+     * This checks mGradientIsDirty, and if it is true, recomputes both our drawing
      * rectangle (mRect) and the gradient itself, since it depends on our
      * rectangle too.
      * @return true if the resulting rectangle is not empty, false otherwise
      */
     private boolean ensureValidRect() {
-        if (mRectIsDirty) {
-            mRectIsDirty = false;
+        if (mGradientIsDirty) {
+            mGradientIsDirty = false;
 
             Rect bounds = getBounds();
             float inset = 0;
-            
+
             if (mStrokePaint != null) {
                 inset = mStrokePaint.getStrokeWidth() * 0.5f;
             }
@@ -698,13 +1057,13 @@ public class GradientDrawable extends Drawable {
             mRect.set(bounds.left + inset, bounds.top + inset,
                       bounds.right - inset, bounds.bottom - inset);
 
-            final int[] colors = st.mColors;
-            if (colors != null) {
-                RectF r = mRect;
-                float x0, x1, y0, y1;
+            final int[] gradientColors = st.mGradientColors;
+            if (gradientColors != null) {
+                final RectF r = mRect;
+                final float x0, x1, y0, y1;
 
                 if (st.mGradient == LINEAR_GRADIENT) {
-                    final float level = st.mUseLevel ? (float) getLevel() / 10000.0f : 1.0f;                    
+                    final float level = st.mUseLevel ? getLevel() / 10000.0f : 1.0f;
                     switch (st.mOrientation) {
                     case TOP_BOTTOM:
                         x0 = r.left;            y0 = r.top;
@@ -741,45 +1100,59 @@ public class GradientDrawable extends Drawable {
                     }
 
                     mFillPaint.setShader(new LinearGradient(x0, y0, x1, y1,
-                            colors, st.mPositions, Shader.TileMode.CLAMP));
-                    if (!mGradientState.mHasSolidColor) {
-                        mFillPaint.setColor(mAlpha << 24);
-                    }
+                            gradientColors, st.mPositions, Shader.TileMode.CLAMP));
                 } else if (st.mGradient == RADIAL_GRADIENT) {
                     x0 = r.left + (r.right - r.left) * st.mCenterX;
                     y0 = r.top + (r.bottom - r.top) * st.mCenterY;
 
-                    final float level = st.mUseLevel ? (float) getLevel() / 10000.0f : 1.0f;
-
-                    mFillPaint.setShader(new RadialGradient(x0, y0,
-                            level * st.mGradientRadius, colors, null,
-                            Shader.TileMode.CLAMP));
-                    if (!mGradientState.mHasSolidColor) {
-                        mFillPaint.setColor(mAlpha << 24);
+                    float radius = st.mGradientRadius;
+                    if (st.mGradientRadiusType == RADIUS_TYPE_FRACTION) {
+                        // Fall back to parent width or height if intrinsic
+                        // size is not specified.
+                        final float width = st.mWidth >= 0 ? st.mWidth : r.width();
+                        final float height = st.mHeight >= 0 ? st.mHeight : r.height();
+                        radius *= Math.min(width, height);
+                    } else if (st.mGradientRadiusType == RADIUS_TYPE_FRACTION_PARENT) {
+                        radius *= Math.min(r.width(), r.height());
                     }
+
+                    if (st.mUseLevel) {
+                        radius *= getLevel() / 10000.0f;
+                    }
+
+                    mGradientRadius = radius;
+
+                    if (radius <= 0) {
+                        // We can't have a shader with non-positive radius, so
+                        // let's have a very, very small radius.
+                        radius = 0.001f;
+                    }
+
+                    mFillPaint.setShader(new RadialGradient(
+                            x0, y0, radius, gradientColors, null, Shader.TileMode.CLAMP));
                 } else if (st.mGradient == SWEEP_GRADIENT) {
                     x0 = r.left + (r.right - r.left) * st.mCenterX;
                     y0 = r.top + (r.bottom - r.top) * st.mCenterY;
 
-                    int[] tempColors = colors;
+                    int[] tempColors = gradientColors;
                     float[] tempPositions = null;
 
                     if (st.mUseLevel) {
                         tempColors = st.mTempColors;
-                        final int length = colors.length;
+                        final int length = gradientColors.length;
                         if (tempColors == null || tempColors.length != length + 1) {
                             tempColors = st.mTempColors = new int[length + 1];
                         }
-                        System.arraycopy(colors, 0, tempColors, 0, length);
-                        tempColors[length] = colors[length - 1];
+                        System.arraycopy(gradientColors, 0, tempColors, 0, length);
+                        tempColors[length] = gradientColors[length - 1];
 
                         tempPositions = st.mTempPositions;
-                        final float fraction = 1.0f / (float) (length - 1);
+                        final float fraction = 1.0f / (length - 1);
                         if (tempPositions == null || tempPositions.length != length + 1) {
                             tempPositions = st.mTempPositions = new float[length + 1];
                         }
 
-                        final float level = (float) getLevel() / 10000.0f;
+                        final float level = getLevel() / 10000.0f;
                         for (int i = 0; i < length; i++) {
                             tempPositions[i] = i * fraction * level;
                         }
@@ -787,9 +1160,12 @@ public class GradientDrawable extends Drawable {
 
                     }
                     mFillPaint.setShader(new SweepGradient(x0, y0, tempColors, tempPositions));
-                    if (!mGradientState.mHasSolidColor) {
-                        mFillPaint.setColor(mAlpha << 24);
-                    }
+                }
+
+                // If we don't have a solid color, the alpha channel must be
+                // maxed out so that alpha modulation works correctly.
+                if (st.mSolidColors == null) {
+                    mFillPaint.setColor(Color.BLACK);
                 }
             }
         }
@@ -797,45 +1173,173 @@ public class GradientDrawable extends Drawable {
     }
 
     @Override
-    public void inflate(Resources r, XmlPullParser parser,
-            AttributeSet attrs)
+    public void inflate(@NonNull Resources r, @NonNull XmlPullParser parser,
+            @NonNull AttributeSet attrs, @Nullable Theme theme)
             throws XmlPullParserException, IOException {
-        
-        final GradientState st = mGradientState;
-        
-        TypedArray a = r.obtainAttributes(attrs,
-                com.android.internal.R.styleable.GradientDrawable);
+        super.inflate(r, parser, attrs, theme);
 
-        super.inflateWithAttributes(r, parser, a,
-                com.android.internal.R.styleable.GradientDrawable_visible);
-        
-        int shapeType = a.getInt(
-                com.android.internal.R.styleable.GradientDrawable_shape, RECTANGLE);
-        boolean dither = a.getBoolean(
-                com.android.internal.R.styleable.GradientDrawable_dither, false);
-        
-        if (shapeType == RING) {
-            st.mInnerRadius = a.getDimensionPixelSize(
-                    com.android.internal.R.styleable.GradientDrawable_innerRadius, -1);
-            if (st.mInnerRadius == -1) {
-                st.mInnerRadiusRatio = a.getFloat(
-                        com.android.internal.R.styleable.GradientDrawable_innerRadiusRatio, 3.0f);
-            }
-            st.mThickness = a.getDimensionPixelSize(
-                    com.android.internal.R.styleable.GradientDrawable_thickness, -1);
-            if (st.mThickness == -1) {
-                st.mThicknessRatio = a.getFloat(
-                        com.android.internal.R.styleable.GradientDrawable_thicknessRatio, 9.0f);
-            }
-            st.mUseLevelForShape = a.getBoolean(
-                    com.android.internal.R.styleable.GradientDrawable_useLevel, true);
-        }
-        
+        mGradientState.setDensity(Drawable.resolveDensity(r, 0));
+
+        final TypedArray a = obtainAttributes(r, theme, attrs, R.styleable.GradientDrawable);
+        updateStateFromTypedArray(a);
         a.recycle();
-        
-        setShape(shapeType);
-        setDither(dither);
 
+        inflateChildElements(r, parser, attrs, theme);
+
+        updateLocalState(r);
+    }
+
+    @Override
+    public void applyTheme(@NonNull Theme t) {
+        super.applyTheme(t);
+
+        final GradientState state = mGradientState;
+        if (state == null) {
+            return;
+        }
+
+        state.setDensity(Drawable.resolveDensity(t.getResources(), 0));
+
+        if (state.mThemeAttrs != null) {
+            final TypedArray a = t.resolveAttributes(
+                    state.mThemeAttrs, R.styleable.GradientDrawable);
+            updateStateFromTypedArray(a);
+            a.recycle();
+        }
+
+        if (state.mTint != null && state.mTint.canApplyTheme()) {
+            state.mTint = state.mTint.obtainForTheme(t);
+        }
+
+        if (state.mSolidColors != null && state.mSolidColors.canApplyTheme()) {
+            state.mSolidColors = state.mSolidColors.obtainForTheme(t);
+        }
+
+        if (state.mStrokeColors != null && state.mStrokeColors.canApplyTheme()) {
+            state.mStrokeColors = state.mStrokeColors.obtainForTheme(t);
+        }
+
+        applyThemeChildElements(t);
+
+        updateLocalState(t.getResources());
+    }
+
+    /**
+     * Updates the constant state from the values in the typed array.
+     */
+    private void updateStateFromTypedArray(TypedArray a) {
+        final GradientState state = mGradientState;
+
+        // Account for any configuration changes.
+        state.mChangingConfigurations |= a.getChangingConfigurations();
+
+        // Extract the theme attributes, if any.
+        state.mThemeAttrs = a.extractThemeAttrs();
+
+        state.mShape = a.getInt(R.styleable.GradientDrawable_shape, state.mShape);
+        state.mDither = a.getBoolean(R.styleable.GradientDrawable_dither, state.mDither);
+
+        if (state.mShape == RING) {
+            state.mInnerRadius = a.getDimensionPixelSize(
+                    R.styleable.GradientDrawable_innerRadius, state.mInnerRadius);
+
+            if (state.mInnerRadius == -1) {
+                state.mInnerRadiusRatio = a.getFloat(
+                        R.styleable.GradientDrawable_innerRadiusRatio, state.mInnerRadiusRatio);
+            }
+
+            state.mThickness = a.getDimensionPixelSize(
+                    R.styleable.GradientDrawable_thickness, state.mThickness);
+
+            if (state.mThickness == -1) {
+                state.mThicknessRatio = a.getFloat(
+                        R.styleable.GradientDrawable_thicknessRatio, state.mThicknessRatio);
+            }
+
+            state.mUseLevelForShape = a.getBoolean(
+                    R.styleable.GradientDrawable_useLevel, state.mUseLevelForShape);
+        }
+
+        final int tintMode = a.getInt(R.styleable.GradientDrawable_tintMode, -1);
+        if (tintMode != -1) {
+            state.mTintMode = Drawable.parseTintMode(tintMode, PorterDuff.Mode.SRC_IN);
+        }
+
+        final ColorStateList tint = a.getColorStateList(R.styleable.GradientDrawable_tint);
+        if (tint != null) {
+            state.mTint = tint;
+        }
+
+        final int insetLeft = a.getDimensionPixelSize(
+                R.styleable.GradientDrawable_opticalInsetLeft, state.mOpticalInsets.left);
+        final int insetTop = a.getDimensionPixelSize(
+                R.styleable.GradientDrawable_opticalInsetTop, state.mOpticalInsets.top);
+        final int insetRight = a.getDimensionPixelSize(
+                R.styleable.GradientDrawable_opticalInsetRight, state.mOpticalInsets.right);
+        final int insetBottom = a.getDimensionPixelSize(
+                R.styleable.GradientDrawable_opticalInsetBottom, state.mOpticalInsets.bottom);
+        state.mOpticalInsets = Insets.of(insetLeft, insetTop, insetRight, insetBottom);
+    }
+
+    @Override
+    public boolean canApplyTheme() {
+        return (mGradientState != null && mGradientState.canApplyTheme()) || super.canApplyTheme();
+    }
+
+    private void applyThemeChildElements(Theme t) {
+        final GradientState st = mGradientState;
+
+        if (st.mAttrSize != null) {
+            final TypedArray a = t.resolveAttributes(
+                    st.mAttrSize, R.styleable.GradientDrawableSize);
+            updateGradientDrawableSize(a);
+            a.recycle();
+        }
+
+        if (st.mAttrGradient != null) {
+            final TypedArray a = t.resolveAttributes(
+                    st.mAttrGradient, R.styleable.GradientDrawableGradient);
+            try {
+                updateGradientDrawableGradient(t.getResources(), a);
+            } catch (XmlPullParserException e) {
+                rethrowAsRuntimeException(e);
+            } finally {
+                a.recycle();
+            }
+        }
+
+        if (st.mAttrSolid != null) {
+            final TypedArray a = t.resolveAttributes(
+                    st.mAttrSolid, R.styleable.GradientDrawableSolid);
+            updateGradientDrawableSolid(a);
+            a.recycle();
+        }
+
+        if (st.mAttrStroke != null) {
+            final TypedArray a = t.resolveAttributes(
+                    st.mAttrStroke, R.styleable.GradientDrawableStroke);
+            updateGradientDrawableStroke(a);
+            a.recycle();
+        }
+
+        if (st.mAttrCorners != null) {
+            final TypedArray a = t.resolveAttributes(
+                    st.mAttrCorners, R.styleable.DrawableCorners);
+            updateDrawableCorners(a);
+            a.recycle();
+        }
+
+        if (st.mAttrPadding != null) {
+            final TypedArray a = t.resolveAttributes(
+                    st.mAttrPadding, R.styleable.GradientDrawablePadding);
+            updateGradientDrawablePadding(a);
+            a.recycle();
+        }
+    }
+
+    private void inflateChildElements(Resources r, XmlPullParser parser, AttributeSet attrs,
+            Theme theme) throws XmlPullParserException, IOException {
+        TypedArray a;
         int type;
 
         final int innerDepth = parser.getDepth() + 1;
@@ -850,187 +1354,271 @@ public class GradientDrawable extends Drawable {
             if (depth > innerDepth) {
                 continue;
             }
-            
+
             String name = parser.getName();
-            
+
             if (name.equals("size")) {
-                a = r.obtainAttributes(attrs,
-                        com.android.internal.R.styleable.GradientDrawableSize);
-                int width = a.getDimensionPixelSize(
-                        com.android.internal.R.styleable.GradientDrawableSize_width, -1);
-                int height = a.getDimensionPixelSize(
-                        com.android.internal.R.styleable.GradientDrawableSize_height, -1);
+                a = obtainAttributes(r, theme, attrs, R.styleable.GradientDrawableSize);
+                updateGradientDrawableSize(a);
                 a.recycle();
-                setSize(width, height);
             } else if (name.equals("gradient")) {
-                a = r.obtainAttributes(attrs,
-                        com.android.internal.R.styleable.GradientDrawableGradient);
-                int startColor = a.getColor(
-                        com.android.internal.R.styleable.GradientDrawableGradient_startColor, 0);
-                boolean hasCenterColor = a
-                        .hasValue(com.android.internal.R.styleable.GradientDrawableGradient_centerColor);
-                int centerColor = a.getColor(
-                        com.android.internal.R.styleable.GradientDrawableGradient_centerColor, 0);
-                int endColor = a.getColor(
-                        com.android.internal.R.styleable.GradientDrawableGradient_endColor, 0);
-                int gradientType = a.getInt(
-                        com.android.internal.R.styleable.GradientDrawableGradient_type,
-                        LINEAR_GRADIENT);
-
-                st.mCenterX = getFloatOrFraction(
-                        a,
-                        com.android.internal.R.styleable.GradientDrawableGradient_centerX,
-                        0.5f);
-
-                st.mCenterY = getFloatOrFraction(
-                        a,
-                        com.android.internal.R.styleable.GradientDrawableGradient_centerY,
-                        0.5f);
-
-                st.mUseLevel = a.getBoolean(
-                        com.android.internal.R.styleable.GradientDrawableGradient_useLevel, false);
-                st.mGradient = gradientType;
-
-                if (gradientType == LINEAR_GRADIENT) {
-                    int angle = (int)a.getFloat(
-                            com.android.internal.R.styleable.GradientDrawableGradient_angle, 0);
-                    angle %= 360;
-                    if (angle % 45 != 0) {
-                        throw new XmlPullParserException(a.getPositionDescription()
-                                + "<gradient> tag requires 'angle' attribute to "
-                                + "be a multiple of 45");
-                    }
-
-                    switch (angle) {
-                    case 0:
-                        st.mOrientation = Orientation.LEFT_RIGHT;
-                        break;
-                    case 45:
-                        st.mOrientation = Orientation.BL_TR;
-                        break;
-                    case 90:
-                        st.mOrientation = Orientation.BOTTOM_TOP;
-                        break;
-                    case 135:
-                        st.mOrientation = Orientation.BR_TL;
-                        break;
-                    case 180:
-                        st.mOrientation = Orientation.RIGHT_LEFT;
-                        break;
-                    case 225:
-                        st.mOrientation = Orientation.TR_BL;
-                        break;
-                    case 270:
-                        st.mOrientation = Orientation.TOP_BOTTOM;
-                        break;
-                    case 315:
-                        st.mOrientation = Orientation.TL_BR;
-                        break;
-                    }
-                } else {
-                    TypedValue tv = a.peekValue(
-                            com.android.internal.R.styleable.GradientDrawableGradient_gradientRadius);
-                    if (tv != null) {
-                        boolean radiusRel = tv.type == TypedValue.TYPE_FRACTION;
-                        st.mGradientRadius = radiusRel ?
-                                tv.getFraction(1.0f, 1.0f) : tv.getFloat();
-                    } else if (gradientType == RADIAL_GRADIENT) {
-                        throw new XmlPullParserException(
-                                a.getPositionDescription()
-                                + "<gradient> tag requires 'gradientRadius' "
-                                + "attribute with radial type");
-                    }
-                }
-
+                a = obtainAttributes(r, theme, attrs, R.styleable.GradientDrawableGradient);
+                updateGradientDrawableGradient(r, a);
                 a.recycle();
-
-                if (hasCenterColor) {
-                    st.mColors = new int[3];
-                    st.mColors[0] = startColor;
-                    st.mColors[1] = centerColor;
-                    st.mColors[2] = endColor;
-                    
-                    st.mPositions = new float[3];
-                    st.mPositions[0] = 0.0f;
-                    // Since 0.5f is default value, try to take the one that isn't 0.5f
-                    st.mPositions[1] = st.mCenterX != 0.5f ? st.mCenterX : st.mCenterY;
-                    st.mPositions[2] = 1f;
-                } else {
-                    st.mColors = new int[2];
-                    st.mColors[0] = startColor;
-                    st.mColors[1] = endColor;
-                }
-                
             } else if (name.equals("solid")) {
-                a = r.obtainAttributes(attrs,
-                        com.android.internal.R.styleable.GradientDrawableSolid);
-                int argb = a.getColor(
-                        com.android.internal.R.styleable.GradientDrawableSolid_color, 0);
+                a = obtainAttributes(r, theme, attrs, R.styleable.GradientDrawableSolid);
+                updateGradientDrawableSolid(a);
                 a.recycle();
-                setColor(argb);
             } else if (name.equals("stroke")) {
-                a = r.obtainAttributes(attrs,
-                        com.android.internal.R.styleable.GradientDrawableStroke);
-                int width = a.getDimensionPixelSize(
-                        com.android.internal.R.styleable.GradientDrawableStroke_width, 0);
-                int color = a.getColor(
-                        com.android.internal.R.styleable.GradientDrawableStroke_color, 0);
-                float dashWidth = a.getDimension(
-                        com.android.internal.R.styleable.GradientDrawableStroke_dashWidth, 0);
-                if (dashWidth != 0.0f) {
-                    float dashGap = a.getDimension(
-                            com.android.internal.R.styleable.GradientDrawableStroke_dashGap, 0);
-                    setStroke(width, color, dashWidth, dashGap);
-                } else {
-                    setStroke(width, color);
-                }
+                a = obtainAttributes(r, theme, attrs, R.styleable.GradientDrawableStroke);
+                updateGradientDrawableStroke(a);
                 a.recycle();
             } else if (name.equals("corners")) {
-                a = r.obtainAttributes(attrs,
-                        com.android.internal.R.styleable.DrawableCorners);
-                int radius = a.getDimensionPixelSize(
-                        com.android.internal.R.styleable.DrawableCorners_radius, 0);
-                setCornerRadius(radius);
-                int topLeftRadius = a.getDimensionPixelSize(
-                        com.android.internal.R.styleable.DrawableCorners_topLeftRadius, radius);
-                int topRightRadius = a.getDimensionPixelSize(
-                        com.android.internal.R.styleable.DrawableCorners_topRightRadius, radius);
-                int bottomLeftRadius = a.getDimensionPixelSize(
-                        com.android.internal.R.styleable.DrawableCorners_bottomLeftRadius, radius);
-                int bottomRightRadius = a.getDimensionPixelSize(
-                        com.android.internal.R.styleable.DrawableCorners_bottomRightRadius, radius);
-                if (topLeftRadius != radius || topRightRadius != radius ||
-                        bottomLeftRadius != radius || bottomRightRadius != radius) {
-                    // The corner radii are specified in clockwise order (see Path.addRoundRect())
-                    setCornerRadii(new float[] {
-                            topLeftRadius, topLeftRadius,
-                            topRightRadius, topRightRadius,
-                            bottomRightRadius, bottomRightRadius,
-                            bottomLeftRadius, bottomLeftRadius
-                    });
-                }
+                a = obtainAttributes(r, theme, attrs, R.styleable.DrawableCorners);
+                updateDrawableCorners(a);
                 a.recycle();
             } else if (name.equals("padding")) {
-                a = r.obtainAttributes(attrs,
-                        com.android.internal.R.styleable.GradientDrawablePadding);
-                mPadding = new Rect(
-                        a.getDimensionPixelOffset(
-                                com.android.internal.R.styleable.GradientDrawablePadding_left, 0),
-                        a.getDimensionPixelOffset(
-                                com.android.internal.R.styleable.GradientDrawablePadding_top, 0),
-                        a.getDimensionPixelOffset(
-                                com.android.internal.R.styleable.GradientDrawablePadding_right, 0),
-                        a.getDimensionPixelOffset(
-                                com.android.internal.R.styleable.GradientDrawablePadding_bottom, 0));
+                a = obtainAttributes(r, theme, attrs, R.styleable.GradientDrawablePadding);
+                updateGradientDrawablePadding(a);
                 a.recycle();
-                mGradientState.mPadding = mPadding;
             } else {
                 Log.w("drawable", "Bad element under <shape>: " + name);
             }
+        }
+    }
 
+    private void updateGradientDrawablePadding(TypedArray a) {
+        final GradientState st = mGradientState;
+
+        // Account for any configuration changes.
+        st.mChangingConfigurations |= a.getChangingConfigurations();
+
+        // Extract the theme attributes, if any.
+        st.mAttrPadding = a.extractThemeAttrs();
+
+        if (st.mPadding == null) {
+            st.mPadding = new Rect();
         }
 
-        mGradientState.computeOpacity();
+        final Rect pad = st.mPadding;
+        pad.set(a.getDimensionPixelOffset(R.styleable.GradientDrawablePadding_left, pad.left),
+                a.getDimensionPixelOffset(R.styleable.GradientDrawablePadding_top, pad.top),
+                a.getDimensionPixelOffset(R.styleable.GradientDrawablePadding_right, pad.right),
+                a.getDimensionPixelOffset(R.styleable.GradientDrawablePadding_bottom, pad.bottom));
+        mPadding = pad;
+    }
+
+    private void updateDrawableCorners(TypedArray a) {
+        final GradientState st = mGradientState;
+
+        // Account for any configuration changes.
+        st.mChangingConfigurations |= a.getChangingConfigurations();
+
+        // Extract the theme attributes, if any.
+        st.mAttrCorners = a.extractThemeAttrs();
+
+        final int radius = a.getDimensionPixelSize(
+                R.styleable.DrawableCorners_radius, (int) st.mRadius);
+        setCornerRadius(radius);
+
+        // TODO: Update these to be themeable.
+        final int topLeftRadius = a.getDimensionPixelSize(
+                R.styleable.DrawableCorners_topLeftRadius, radius);
+        final int topRightRadius = a.getDimensionPixelSize(
+                R.styleable.DrawableCorners_topRightRadius, radius);
+        final int bottomLeftRadius = a.getDimensionPixelSize(
+                R.styleable.DrawableCorners_bottomLeftRadius, radius);
+        final int bottomRightRadius = a.getDimensionPixelSize(
+                R.styleable.DrawableCorners_bottomRightRadius, radius);
+        if (topLeftRadius != radius || topRightRadius != radius ||
+                bottomLeftRadius != radius || bottomRightRadius != radius) {
+            // The corner radii are specified in clockwise order (see Path.addRoundRect())
+            setCornerRadii(new float[] {
+                    topLeftRadius, topLeftRadius,
+                    topRightRadius, topRightRadius,
+                    bottomRightRadius, bottomRightRadius,
+                    bottomLeftRadius, bottomLeftRadius
+            });
+        }
+    }
+
+    private void updateGradientDrawableStroke(TypedArray a) {
+        final GradientState st = mGradientState;
+
+        // Account for any configuration changes.
+        st.mChangingConfigurations |= a.getChangingConfigurations();
+
+        // Extract the theme attributes, if any.
+        st.mAttrStroke = a.extractThemeAttrs();
+
+        // We have an explicit stroke defined, so the default stroke width
+        // must be at least 0 or the current stroke width.
+        final int defaultStrokeWidth = Math.max(0, st.mStrokeWidth);
+        final int width = a.getDimensionPixelSize(
+                R.styleable.GradientDrawableStroke_width, defaultStrokeWidth);
+        final float dashWidth = a.getDimension(
+                R.styleable.GradientDrawableStroke_dashWidth, st.mStrokeDashWidth);
+
+        ColorStateList colorStateList = a.getColorStateList(
+                R.styleable.GradientDrawableStroke_color);
+        if (colorStateList == null) {
+            colorStateList = st.mStrokeColors;
+        }
+
+        if (dashWidth != 0.0f) {
+            final float dashGap = a.getDimension(
+                    R.styleable.GradientDrawableStroke_dashGap, st.mStrokeDashGap);
+            setStroke(width, colorStateList, dashWidth, dashGap);
+        } else {
+            setStroke(width, colorStateList);
+        }
+    }
+
+    private void updateGradientDrawableSolid(TypedArray a) {
+        final GradientState st = mGradientState;
+
+        // Account for any configuration changes.
+        st.mChangingConfigurations |= a.getChangingConfigurations();
+
+        // Extract the theme attributes, if any.
+        st.mAttrSolid = a.extractThemeAttrs();
+
+        final ColorStateList colorStateList = a.getColorStateList(
+                R.styleable.GradientDrawableSolid_color);
+        if (colorStateList != null) {
+            setColor(colorStateList);
+        }
+    }
+
+    private void updateGradientDrawableGradient(Resources r, TypedArray a)
+            throws XmlPullParserException {
+        final GradientState st = mGradientState;
+
+        // Account for any configuration changes.
+        st.mChangingConfigurations |= a.getChangingConfigurations();
+
+        // Extract the theme attributes, if any.
+        st.mAttrGradient = a.extractThemeAttrs();
+
+        st.mCenterX = getFloatOrFraction(
+                a, R.styleable.GradientDrawableGradient_centerX, st.mCenterX);
+        st.mCenterY = getFloatOrFraction(
+                a, R.styleable.GradientDrawableGradient_centerY, st.mCenterY);
+        st.mUseLevel = a.getBoolean(
+                R.styleable.GradientDrawableGradient_useLevel, st.mUseLevel);
+        st.mGradient = a.getInt(
+                R.styleable.GradientDrawableGradient_type, st.mGradient);
+
+        // TODO: Update these to be themeable.
+        final int startColor = a.getColor(
+                R.styleable.GradientDrawableGradient_startColor, 0);
+        final boolean hasCenterColor = a.hasValue(
+                R.styleable.GradientDrawableGradient_centerColor);
+        final int centerColor = a.getColor(
+                R.styleable.GradientDrawableGradient_centerColor, 0);
+        final int endColor = a.getColor(
+                R.styleable.GradientDrawableGradient_endColor, 0);
+
+        if (hasCenterColor) {
+            st.mGradientColors = new int[3];
+            st.mGradientColors[0] = startColor;
+            st.mGradientColors[1] = centerColor;
+            st.mGradientColors[2] = endColor;
+
+            st.mPositions = new float[3];
+            st.mPositions[0] = 0.0f;
+            // Since 0.5f is default value, try to take the one that isn't 0.5f
+            st.mPositions[1] = st.mCenterX != 0.5f ? st.mCenterX : st.mCenterY;
+            st.mPositions[2] = 1f;
+        } else {
+            st.mGradientColors = new int[2];
+            st.mGradientColors[0] = startColor;
+            st.mGradientColors[1] = endColor;
+        }
+
+        if (st.mGradient == LINEAR_GRADIENT) {
+            int angle = (int) a.getFloat(R.styleable.GradientDrawableGradient_angle, st.mAngle);
+            angle %= 360;
+
+            if (angle % 45 != 0) {
+                throw new XmlPullParserException(a.getPositionDescription()
+                        + "<gradient> tag requires 'angle' attribute to "
+                        + "be a multiple of 45");
+            }
+
+            st.mAngle = angle;
+
+            switch (angle) {
+                case 0:
+                    st.mOrientation = Orientation.LEFT_RIGHT;
+                    break;
+                case 45:
+                    st.mOrientation = Orientation.BL_TR;
+                    break;
+                case 90:
+                    st.mOrientation = Orientation.BOTTOM_TOP;
+                    break;
+                case 135:
+                    st.mOrientation = Orientation.BR_TL;
+                    break;
+                case 180:
+                    st.mOrientation = Orientation.RIGHT_LEFT;
+                    break;
+                case 225:
+                    st.mOrientation = Orientation.TR_BL;
+                    break;
+                case 270:
+                    st.mOrientation = Orientation.TOP_BOTTOM;
+                    break;
+                case 315:
+                    st.mOrientation = Orientation.TL_BR;
+                    break;
+            }
+        } else {
+            final TypedValue tv = a.peekValue(R.styleable.GradientDrawableGradient_gradientRadius);
+            if (tv != null) {
+                final float radius;
+                final @RadiusType int radiusType;
+                if (tv.type == TypedValue.TYPE_FRACTION) {
+                    radius = tv.getFraction(1.0f, 1.0f);
+
+                    final int unit = (tv.data >> TypedValue.COMPLEX_UNIT_SHIFT)
+                            & TypedValue.COMPLEX_UNIT_MASK;
+                    if (unit == TypedValue.COMPLEX_UNIT_FRACTION_PARENT) {
+                        radiusType = RADIUS_TYPE_FRACTION_PARENT;
+                    } else {
+                        radiusType = RADIUS_TYPE_FRACTION;
+                    }
+                } else if (tv.type == TypedValue.TYPE_DIMENSION) {
+                    radius = tv.getDimension(r.getDisplayMetrics());
+                    radiusType = RADIUS_TYPE_PIXELS;
+                } else {
+                    radius = tv.getFloat();
+                    radiusType = RADIUS_TYPE_PIXELS;
+                }
+
+                st.mGradientRadius = radius;
+                st.mGradientRadiusType = radiusType;
+            } else if (st.mGradient == RADIAL_GRADIENT) {
+                throw new XmlPullParserException(
+                        a.getPositionDescription()
+                        + "<gradient> tag requires 'gradientRadius' "
+                        + "attribute with radial type");
+            }
+        }
+    }
+
+    private void updateGradientDrawableSize(TypedArray a) {
+        final GradientState st = mGradientState;
+
+        // Account for any configuration changes.
+        st.mChangingConfigurations |= a.getChangingConfigurations();
+
+        // Extract the theme attributes, if any.
+        st.mAttrSize = a.extractThemeAttrs();
+
+        st.mWidth = a.getDimensionPixelSize(R.styleable.GradientDrawableSize_width, st.mWidth);
+        st.mHeight = a.getDimensionPixelSize(R.styleable.GradientDrawableSize_height, st.mHeight);
     }
 
     private static float getFloatOrFraction(TypedArray a, int index, float defaultValue) {
@@ -1042,7 +1630,7 @@ public class GradientDrawable extends Drawable {
         }
         return v;
     }
-    
+
     @Override
     public int getIntrinsicWidth() {
         return mGradientState.mWidth;
@@ -1052,118 +1640,342 @@ public class GradientDrawable extends Drawable {
     public int getIntrinsicHeight() {
         return mGradientState.mHeight;
     }
-    
+
+    /** @hide */
+    @Override
+    public Insets getOpticalInsets() {
+        return mGradientState.mOpticalInsets;
+    }
+
     @Override
     public ConstantState getConstantState() {
         mGradientState.mChangingConfigurations = getChangingConfigurations();
         return mGradientState;
     }
 
+    private boolean isOpaqueForState() {
+        if (mGradientState.mStrokeWidth >= 0 && mStrokePaint != null
+                && !isOpaque(mStrokePaint.getColor())) {
+            return false;
+        }
+
+        // Don't check opacity if we're using a gradient, as we've already
+        // checked the gradient opacity in mOpaqueOverShape.
+        if (mGradientState.mGradientColors == null && !isOpaque(mFillPaint.getColor())) {
+            return false;
+        }
+
+        return true;
+    }
+
+    @Override
+    public void getOutline(Outline outline) {
+        final GradientState st = mGradientState;
+        final Rect bounds = getBounds();
+        // only report non-zero alpha if shape being drawn has consistent opacity over shape. Must
+        // either not have a stroke, or have same stroke/fill opacity
+        boolean useFillOpacity = st.mOpaqueOverShape && (mGradientState.mStrokeWidth <= 0
+                || mStrokePaint == null
+                || mStrokePaint.getAlpha() == mFillPaint.getAlpha());
+        outline.setAlpha(useFillOpacity
+                ? modulateAlpha(mFillPaint.getAlpha()) / 255.0f
+                : 0.0f);
+
+        switch (st.mShape) {
+            case RECTANGLE:
+                if (st.mRadiusArray != null) {
+                    buildPathIfDirty();
+                    outline.setConvexPath(mPath);
+                    return;
+                }
+
+                float rad = 0;
+                if (st.mRadius > 0.0f) {
+                    // clamp the radius based on width & height, matching behavior in draw()
+                    rad = Math.min(st.mRadius,
+                            Math.min(bounds.width(), bounds.height()) * 0.5f);
+                }
+                outline.setRoundRect(bounds, rad);
+                return;
+            case OVAL:
+                outline.setOval(bounds);
+                return;
+            case LINE:
+                // Hairlines (0-width stroke) must have a non-empty outline for
+                // shadows to draw correctly, so we'll use a very small width.
+                final float halfStrokeWidth = mStrokePaint == null ?
+                        0.0001f : mStrokePaint.getStrokeWidth() * 0.5f;
+                final float centerY = bounds.centerY();
+                final int top = (int) Math.floor(centerY - halfStrokeWidth);
+                final int bottom = (int) Math.ceil(centerY + halfStrokeWidth);
+
+                outline.setRect(bounds.left, top, bounds.right, bottom);
+                return;
+            default:
+                // TODO: support more complex shapes
+        }
+    }
+
     @Override
     public Drawable mutate() {
         if (!mMutated && super.mutate() == this) {
-            mGradientState = new GradientState(mGradientState);
-            initializeWithState(mGradientState);
+            mGradientState = new GradientState(mGradientState, null);
+            updateLocalState(null);
             mMutated = true;
         }
         return this;
     }
 
+    /**
+     * @hide
+     */
+    public void clearMutated() {
+        super.clearMutated();
+        mMutated = false;
+    }
+
     final static class GradientState extends ConstantState {
-        public int mChangingConfigurations;
-        public int mShape = RECTANGLE;
-        public int mGradient = LINEAR_GRADIENT;
+        public @Config int mChangingConfigurations;
+        public @Shape int mShape = RECTANGLE;
+        public @GradientType int mGradient = LINEAR_GRADIENT;
+        public int mAngle = 0;
         public Orientation mOrientation;
-        public int[] mColors;
-        public int[] mTempColors; // no need to copy
+        public ColorStateList mSolidColors;
+        public ColorStateList mStrokeColors;
+        public @ColorInt int[] mGradientColors;
+        public @ColorInt int[] mTempColors; // no need to copy
         public float[] mTempPositions; // no need to copy
         public float[] mPositions;
-        public boolean mHasSolidColor;
-        public int mSolidColor;
-        public int mStrokeWidth = -1;   // if >= 0 use stroking.
-        public int mStrokeColor;
-        public float mStrokeDashWidth;
-        public float mStrokeDashGap;
-        public float mRadius;    // use this if mRadiusArray is null
-        public float[] mRadiusArray;
-        public Rect mPadding;
+        public int mStrokeWidth = -1; // if >= 0 use stroking.
+        public float mStrokeDashWidth = 0.0f;
+        public float mStrokeDashGap = 0.0f;
+        public float mRadius = 0.0f; // use this if mRadiusArray is null
+        public float[] mRadiusArray = null;
+        public Rect mPadding = null;
         public int mWidth = -1;
         public int mHeight = -1;
-        public float mInnerRadiusRatio;
-        public float mThicknessRatio;
-        public int mInnerRadius;
-        public int mThickness;
-        private float mCenterX = 0.5f;
-        private float mCenterY = 0.5f;
-        private float mGradientRadius = 0.5f;
-        private boolean mUseLevel;
-        private boolean mUseLevelForShape;
-        private boolean mOpaque;
+        public float mInnerRadiusRatio = DEFAULT_INNER_RADIUS_RATIO;
+        public float mThicknessRatio = DEFAULT_THICKNESS_RATIO;
+        public int mInnerRadius = -1;
+        public int mThickness = -1;
+        public boolean mDither = false;
+        public Insets mOpticalInsets = Insets.NONE;
 
-        GradientState(Orientation orientation, int[] colors) {
+        float mCenterX = 0.5f;
+        float mCenterY = 0.5f;
+        float mGradientRadius = 0.5f;
+        @RadiusType int mGradientRadiusType = RADIUS_TYPE_PIXELS;
+        boolean mUseLevel = false;
+        boolean mUseLevelForShape = true;
+
+        boolean mOpaqueOverBounds;
+        boolean mOpaqueOverShape;
+
+        ColorStateList mTint = null;
+        PorterDuff.Mode mTintMode = DEFAULT_TINT_MODE;
+
+        int mDensity = DisplayMetrics.DENSITY_DEFAULT;
+
+        int[] mThemeAttrs;
+        int[] mAttrSize;
+        int[] mAttrGradient;
+        int[] mAttrSolid;
+        int[] mAttrStroke;
+        int[] mAttrCorners;
+        int[] mAttrPadding;
+
+        public GradientState(Orientation orientation, int[] gradientColors) {
             mOrientation = orientation;
-            setColors(colors);
+            setGradientColors(gradientColors);
         }
 
-        public GradientState(GradientState state) {
-            mChangingConfigurations = state.mChangingConfigurations;
-            mShape = state.mShape;
-            mGradient = state.mGradient;
-            mOrientation = state.mOrientation;
-            if (state.mColors != null) {
-                mColors = state.mColors.clone();
+        public GradientState(@NonNull GradientState orig, @Nullable Resources res) {
+            mChangingConfigurations = orig.mChangingConfigurations;
+            mShape = orig.mShape;
+            mGradient = orig.mGradient;
+            mAngle = orig.mAngle;
+            mOrientation = orig.mOrientation;
+            mSolidColors = orig.mSolidColors;
+            if (orig.mGradientColors != null) {
+                mGradientColors = orig.mGradientColors.clone();
             }
-            if (state.mPositions != null) {
-                mPositions = state.mPositions.clone();
+            if (orig.mPositions != null) {
+                mPositions = orig.mPositions.clone();
             }
-            mHasSolidColor = state.mHasSolidColor;
-            mSolidColor = state.mSolidColor;
-            mStrokeWidth = state.mStrokeWidth;
-            mStrokeColor = state.mStrokeColor;
-            mStrokeDashWidth = state.mStrokeDashWidth;
-            mStrokeDashGap = state.mStrokeDashGap;
-            mRadius = state.mRadius;
-            if (state.mRadiusArray != null) {
-                mRadiusArray = state.mRadiusArray.clone();
+            mStrokeColors = orig.mStrokeColors;
+            mStrokeWidth = orig.mStrokeWidth;
+            mStrokeDashWidth = orig.mStrokeDashWidth;
+            mStrokeDashGap = orig.mStrokeDashGap;
+            mRadius = orig.mRadius;
+            if (orig.mRadiusArray != null) {
+                mRadiusArray = orig.mRadiusArray.clone();
             }
-            if (state.mPadding != null) {
-                mPadding = new Rect(state.mPadding);
+            if (orig.mPadding != null) {
+                mPadding = new Rect(orig.mPadding);
             }
-            mWidth = state.mWidth;
-            mHeight = state.mHeight;
-            mInnerRadiusRatio = state.mInnerRadiusRatio;
-            mThicknessRatio = state.mThicknessRatio;
-            mInnerRadius = state.mInnerRadius;
-            mThickness = state.mThickness;
-            mCenterX = state.mCenterX;
-            mCenterY = state.mCenterY;
-            mGradientRadius = state.mGradientRadius;
-            mUseLevel = state.mUseLevel;
-            mUseLevelForShape = state.mUseLevelForShape;
-            mOpaque = state.mOpaque;
+            mWidth = orig.mWidth;
+            mHeight = orig.mHeight;
+            mInnerRadiusRatio = orig.mInnerRadiusRatio;
+            mThicknessRatio = orig.mThicknessRatio;
+            mInnerRadius = orig.mInnerRadius;
+            mThickness = orig.mThickness;
+            mDither = orig.mDither;
+            mOpticalInsets = orig.mOpticalInsets;
+            mCenterX = orig.mCenterX;
+            mCenterY = orig.mCenterY;
+            mGradientRadius = orig.mGradientRadius;
+            mGradientRadiusType = orig.mGradientRadiusType;
+            mUseLevel = orig.mUseLevel;
+            mUseLevelForShape = orig.mUseLevelForShape;
+            mOpaqueOverBounds = orig.mOpaqueOverBounds;
+            mOpaqueOverShape = orig.mOpaqueOverShape;
+            mTint = orig.mTint;
+            mTintMode = orig.mTintMode;
+            mThemeAttrs = orig.mThemeAttrs;
+            mAttrSize = orig.mAttrSize;
+            mAttrGradient = orig.mAttrGradient;
+            mAttrSolid = orig.mAttrSolid;
+            mAttrStroke = orig.mAttrStroke;
+            mAttrCorners = orig.mAttrCorners;
+            mAttrPadding = orig.mAttrPadding;
+
+            mDensity = Drawable.resolveDensity(res, orig.mDensity);
+            if (orig.mDensity != mDensity) {
+                applyDensityScaling(orig.mDensity, mDensity);
+            }
+        }
+
+        /**
+         * Sets the constant state density.
+         * <p>
+         * If the density has been previously set, dispatches the change to
+         * subclasses so that density-dependent properties may be scaled as
+         * necessary.
+         *
+         * @param targetDensity the new constant state density
+         */
+        public final void setDensity(int targetDensity) {
+            if (mDensity != targetDensity) {
+                final int sourceDensity = mDensity;
+                mDensity = targetDensity;
+
+                applyDensityScaling(sourceDensity, targetDensity);
+            }
+        }
+
+        private void applyDensityScaling(int sourceDensity, int targetDensity) {
+            if (mInnerRadius > 0) {
+                mInnerRadius = Drawable.scaleFromDensity(
+                        mInnerRadius, sourceDensity, targetDensity, true);
+            }
+            if (mThickness > 0) {
+                mThickness = Drawable.scaleFromDensity(
+                        mThickness, sourceDensity, targetDensity, true);
+            }
+            if (mOpticalInsets != Insets.NONE) {
+                final int left = Drawable.scaleFromDensity(
+                        mOpticalInsets.left, sourceDensity, targetDensity, true);
+                final int top = Drawable.scaleFromDensity(
+                        mOpticalInsets.top, sourceDensity, targetDensity, true);
+                final int right = Drawable.scaleFromDensity(
+                        mOpticalInsets.right, sourceDensity, targetDensity, true);
+                final int bottom = Drawable.scaleFromDensity(
+                        mOpticalInsets.bottom, sourceDensity, targetDensity, true);
+                mOpticalInsets = Insets.of(left, top, right, bottom);
+            }
+            if (mPadding != null) {
+                mPadding.left = Drawable.scaleFromDensity(
+                        mPadding.left, sourceDensity, targetDensity, false);
+                mPadding.top = Drawable.scaleFromDensity(
+                        mPadding.top, sourceDensity, targetDensity, false);
+                mPadding.right = Drawable.scaleFromDensity(
+                        mPadding.right, sourceDensity, targetDensity, false);
+                mPadding.bottom = Drawable.scaleFromDensity(
+                        mPadding.bottom, sourceDensity, targetDensity, false);
+            }
+            if (mRadius > 0) {
+                mRadius = Drawable.scaleFromDensity(mRadius, sourceDensity, targetDensity);
+            }
+            if (mRadiusArray != null) {
+                mRadiusArray[0] = Drawable.scaleFromDensity(
+                        (int) mRadiusArray[0], sourceDensity, targetDensity, true);
+                mRadiusArray[1] = Drawable.scaleFromDensity(
+                        (int) mRadiusArray[1], sourceDensity, targetDensity, true);
+                mRadiusArray[2] = Drawable.scaleFromDensity(
+                        (int) mRadiusArray[2], sourceDensity, targetDensity, true);
+                mRadiusArray[3] = Drawable.scaleFromDensity(
+                        (int) mRadiusArray[3], sourceDensity, targetDensity, true);
+            }
+            if (mStrokeWidth > 0) {
+                mStrokeWidth = Drawable.scaleFromDensity(
+                        mStrokeWidth, sourceDensity, targetDensity, true);
+            }
+            if (mStrokeDashWidth > 0) {
+                mStrokeDashWidth = Drawable.scaleFromDensity(
+                        mStrokeDashGap, sourceDensity, targetDensity);
+            }
+            if (mStrokeDashGap > 0) {
+                mStrokeDashGap = Drawable.scaleFromDensity(
+                        mStrokeDashGap, sourceDensity, targetDensity);
+            }
+            if (mGradientRadiusType == RADIUS_TYPE_PIXELS) {
+                mGradientRadius = Drawable.scaleFromDensity(
+                        mGradientRadius, sourceDensity, targetDensity);
+            }
+            if (mWidth > 0) {
+                mWidth = Drawable.scaleFromDensity(mWidth, sourceDensity, targetDensity, true);
+            }
+            if (mHeight > 0) {
+                mHeight = Drawable.scaleFromDensity(mHeight, sourceDensity, targetDensity, true);
+            }
+        }
+
+        @Override
+        public boolean canApplyTheme() {
+            return mThemeAttrs != null
+                    || mAttrSize != null || mAttrGradient != null
+                    || mAttrSolid != null || mAttrStroke != null
+                    || mAttrCorners != null || mAttrPadding != null
+                    || (mTint != null && mTint.canApplyTheme())
+                    || (mStrokeColors != null && mStrokeColors.canApplyTheme())
+                    || (mSolidColors != null && mSolidColors.canApplyTheme())
+                    || super.canApplyTheme();
         }
 
         @Override
         public Drawable newDrawable() {
-            return new GradientDrawable(this);
-        }
-        
-        @Override
-        public Drawable newDrawable(Resources res) {
-            return new GradientDrawable(this);
-        }
-        
-        @Override
-        public int getChangingConfigurations() {
-            return mChangingConfigurations;
+            return new GradientDrawable(this, null);
         }
 
-        public void setShape(int shape) {
+        @Override
+        public Drawable newDrawable(@Nullable Resources res) {
+            // If this drawable is being created for a different density,
+            // just create a new constant state and call it a day.
+            final GradientState state;
+            final int density = Drawable.resolveDensity(res, mDensity);
+            if (density != mDensity) {
+                state = new GradientState(this, res);
+            } else {
+                state = this;
+            }
+
+            return new GradientDrawable(state, res);
+        }
+
+        @Override
+        public @Config int getChangingConfigurations() {
+            return mChangingConfigurations
+                    | (mStrokeColors != null ? mStrokeColors.getChangingConfigurations() : 0)
+                    | (mSolidColors != null ? mSolidColors.getChangingConfigurations() : 0)
+                    | (mTint != null ? mTint.getChangingConfigurations() : 0);
+        }
+
+        public void setShape(@Shape int shape) {
             mShape = shape;
             computeOpacity();
         }
 
-        public void setGradientType(int gradient) {
+        public void setGradientType(@GradientType int gradient) {
             mGradient = gradient;
         }
 
@@ -1172,65 +1984,47 @@ public class GradientDrawable extends Drawable {
             mCenterY = y;
         }
 
-        public void setColors(int[] colors) {
-            mHasSolidColor = false;
-            mColors = colors;
+        public void setGradientColors(@Nullable int[] colors) {
+            mGradientColors = colors;
+            mSolidColors = null;
             computeOpacity();
         }
-        
-        public void setSolidColor(int argb) {
-            mHasSolidColor = true;
-            mSolidColor = argb;
-            mColors = null;
+
+        public void setSolidColors(@Nullable ColorStateList colors) {
+            mGradientColors = null;
+            mSolidColors = colors;
             computeOpacity();
         }
 
         private void computeOpacity() {
-            if (mShape != RECTANGLE) {
-                mOpaque = false;
-                return;
-            }
+            mOpaqueOverBounds = false;
+            mOpaqueOverShape = false;
 
-            if (mRadius > 0 || mRadiusArray != null) {
-                mOpaque = false;
-                return;
-            }
-
-            if (mStrokeWidth > 0 && !isOpaque(mStrokeColor)) {
-                mOpaque = false;
-                return;
-            }
-            
-            if (mHasSolidColor) {
-                mOpaque = isOpaque(mSolidColor);
-                return;
-            }
-
-            if (mColors != null) {
-                for (int i = 0; i < mColors.length; i++) {
-                    if (!isOpaque(mColors[i])) {
-                        mOpaque = false;
+            if (mGradientColors != null) {
+                for (int i = 0; i < mGradientColors.length; i++) {
+                    if (!isOpaque(mGradientColors[i])) {
                         return;
                     }
                 }
             }
 
-            mOpaque = true;
+            // An unfilled shape is not opaque over bounds or shape
+            if (mGradientColors == null && mSolidColors == null) {
+                return;
+            }
+
+            // Colors are opaque, so opaqueOverShape=true,
+            mOpaqueOverShape = true;
+            // and opaqueOverBounds=true if shape fills bounds
+            mOpaqueOverBounds = mShape == RECTANGLE
+                    && mRadius <= 0
+                    && mRadiusArray == null;
         }
 
-        private static boolean isOpaque(int color) {
-            return ((color >> 24) & 0xff) == 0xff;
-        }
-
-        public void setStroke(int width, int color) {
+        public void setStroke(int width, @Nullable ColorStateList colors, float dashWidth,
+                float dashGap) {
             mStrokeWidth = width;
-            mStrokeColor = color;
-            computeOpacity();
-        }
-
-        public void setStroke(int width, int color, float dashWidth, float dashGap) {
-            mStrokeWidth = width;
-            mStrokeColor = color;
+            mStrokeColors = colors;
             mStrokeDashWidth = dashWidth;
             mStrokeDashGap = dashGap;
             computeOpacity();
@@ -1256,39 +2050,70 @@ public class GradientDrawable extends Drawable {
             mHeight = height;
         }
 
-        public void setGradientRadius(float gradientRadius) {
+        public void setGradientRadius(float gradientRadius, @RadiusType int type) {
             mGradientRadius = gradientRadius;
+            mGradientRadiusType = type;
         }
     }
 
-    private GradientDrawable(GradientState state) {
-        mGradientState = state;
-        initializeWithState(state);
-        mRectIsDirty = true;
-        mMutated = false;
+    static boolean isOpaque(int color) {
+        return ((color >> 24) & 0xff) == 0xff;
     }
 
-    private void initializeWithState(GradientState state) {
-        if (state.mHasSolidColor) {
-            mFillPaint.setColor(state.mSolidColor);
-        } else if (state.mColors == null) {
+    /**
+     * Creates a new themed GradientDrawable based on the specified constant state.
+     * <p>
+     * The resulting drawable is guaranteed to have a new constant state.
+     *
+     * @param state Constant state from which the drawable inherits
+     */
+    private GradientDrawable(@NonNull GradientState state, @Nullable Resources res) {
+        mGradientState = state;
+
+        updateLocalState(res);
+    }
+
+    private void updateLocalState(Resources res) {
+        final GradientState state = mGradientState;
+
+        if (state.mSolidColors != null) {
+            final int[] currentState = getState();
+            final int stateColor = state.mSolidColors.getColorForState(currentState, 0);
+            mFillPaint.setColor(stateColor);
+        } else if (state.mGradientColors == null) {
             // If we don't have a solid color and we don't have a gradient,
             // the app is stroking the shape, set the color to the default
             // value of state.mSolidColor
             mFillPaint.setColor(0);
+        } else {
+            // Otherwise, make sure the fill alpha is maxed out.
+            mFillPaint.setColor(Color.BLACK);
         }
+
         mPadding = state.mPadding;
+
         if (state.mStrokeWidth >= 0) {
             mStrokePaint = new Paint(Paint.ANTI_ALIAS_FLAG);
             mStrokePaint.setStyle(Paint.Style.STROKE);
             mStrokePaint.setStrokeWidth(state.mStrokeWidth);
-            mStrokePaint.setColor(state.mStrokeColor);
+
+            if (state.mStrokeColors != null) {
+                final int[] currentState = getState();
+                final int strokeStateColor = state.mStrokeColors.getColorForState(
+                        currentState, 0);
+                mStrokePaint.setColor(strokeStateColor);
+            }
 
             if (state.mStrokeDashWidth != 0.0f) {
-                DashPathEffect e = new DashPathEffect(
+                final DashPathEffect e = new DashPathEffect(
                         new float[] { state.mStrokeDashWidth, state.mStrokeDashGap }, 0);
                 mStrokePaint.setPathEffect(e);
             }
         }
+
+        mTintFilter = updateTintFilter(mTintFilter, state.mTint, state.mTintMode);
+        mGradientIsDirty = true;
+
+        state.computeOpacity();
     }
 }

@@ -22,6 +22,7 @@ import org.apache.harmony.dalvik.ddmc.DdmServer;
 import android.util.Log;
 import android.os.Debug;
 import android.os.UserHandle;
+import dalvik.system.VMRuntime;
 
 import java.nio.ByteBuffer;
 
@@ -97,7 +98,9 @@ public class DdmHandleHello extends ChunkHandler {
     }
 
     /*
-     * Handle introductory packet.
+     * Handle introductory packet. This is called during JNI_CreateJavaVM
+     * before frameworks native methods are registered, so be careful not
+     * to call any APIs that depend on frameworks native code.
      */
     private Chunk handleHELO(Chunk request) {
         if (false)
@@ -124,8 +127,23 @@ public class DdmHandleHello extends ChunkHandler {
         //    appName = "unknown";
         String appName = DdmHandleAppName.getAppName();
 
-        ByteBuffer out = ByteBuffer.allocate(20
-                            + vmIdent.length()*2 + appName.length()*2);
+        VMRuntime vmRuntime = VMRuntime.getRuntime();
+        String instructionSetDescription =
+            vmRuntime.is64Bit() ? "64-bit" : "32-bit";
+        String vmInstructionSet = vmRuntime.vmInstructionSet();
+        if (vmInstructionSet != null && vmInstructionSet.length() > 0) {
+          instructionSetDescription += " (" + vmInstructionSet + ")";
+        }
+        String vmFlags = "CheckJNI="
+            + (vmRuntime.isCheckJniEnabled() ? "true" : "false");
+        boolean isNativeDebuggable = vmRuntime.isNativeDebuggable();
+
+        ByteBuffer out = ByteBuffer.allocate(28
+                            + vmIdent.length() * 2
+                            + appName.length() * 2
+                            + instructionSetDescription.length() * 2
+                            + vmFlags.length() * 2
+                            + 1);
         out.order(ChunkHandler.CHUNK_ORDER);
         out.putInt(DdmServer.CLIENT_PROTOCOL_VERSION);
         out.putInt(android.os.Process.myPid());
@@ -134,6 +152,11 @@ public class DdmHandleHello extends ChunkHandler {
         putString(out, vmIdent);
         putString(out, appName);
         out.putInt(UserHandle.myUserId());
+        out.putInt(instructionSetDescription.length());
+        putString(out, instructionSetDescription);
+        out.putInt(vmFlags.length());
+        putString(out, vmFlags);
+        out.put((byte)(isNativeDebuggable ? 1 : 0));
 
         Chunk reply = new Chunk(CHUNK_HELO, out);
 

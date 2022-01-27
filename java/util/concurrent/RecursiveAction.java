@@ -16,7 +16,7 @@ package java.util.concurrent;
  * <p><b>Sample Usages.</b> Here is a simple but complete ForkJoin
  * sort that sorts a given {@code long[]} array:
  *
- *  <pre> {@code
+ * <pre> {@code
  * static class SortTask extends RecursiveAction {
  *   final long[] array; final int lo, hi;
  *   SortTask(long[] array, int lo, int hi) {
@@ -34,7 +34,7 @@ package java.util.concurrent;
  *     }
  *   }
  *   // implementation details follow:
- *   final static int THRESHOLD = 1000;
+ *   static final int THRESHOLD = 1000;
  *   void sortSequentially(int lo, int hi) {
  *     Arrays.sort(array, lo, hi);
  *   }
@@ -50,7 +50,7 @@ package java.util.concurrent;
  * SortTask(anArray)} and invoking it in a ForkJoinPool.  As a more
  * concrete simple example, the following task increments each element
  * of an array:
- *  <pre> {@code
+ * <pre> {@code
  * class IncrementTask extends RecursiveAction {
  *   final long[] array; final int lo, hi;
  *   IncrementTask(long[] array, int lo, int hi) {
@@ -81,7 +81,7 @@ package java.util.concurrent;
  * performing leaf actions on unstolen tasks rather than further
  * subdividing.
  *
- *  <pre> {@code
+ * <pre> {@code
  * double sumOfSquares(ForkJoinPool pool, double[] array) {
  *   int n = array.length;
  *   Applyer a = new Applyer(array, 0, n, null);
@@ -111,27 +111,26 @@ package java.util.concurrent;
  *     int h = hi;
  *     Applyer right = null;
  *     while (h - l > 1 && getSurplusQueuedTaskCount() <= 3) {
- *        int mid = (l + h) >>> 1;
- *        right = new Applyer(array, mid, h, right);
- *        right.fork();
- *        h = mid;
+ *       int mid = (l + h) >>> 1;
+ *       right = new Applyer(array, mid, h, right);
+ *       right.fork();
+ *       h = mid;
  *     }
  *     double sum = atLeaf(l, h);
  *     while (right != null) {
- *        if (right.tryUnfork()) // directly calculate if not stolen
- *          sum += right.atLeaf(right.lo, right.hi);
+ *       if (right.tryUnfork()) // directly calculate if not stolen
+ *         sum += right.atLeaf(right.lo, right.hi);
  *       else {
- *          right.join();
- *          sum += right.result;
- *        }
- *        right = right.next;
- *      }
+ *         right.join();
+ *         sum += right.result;
+ *       }
+ *       right = right.next;
+ *     }
  *     result = sum;
  *   }
  * }}</pre>
  *
  * @since 1.7
- * @hide
  * @author Doug Lea
  */
 public abstract class RecursiveAction extends ForkJoinTask<Void> {

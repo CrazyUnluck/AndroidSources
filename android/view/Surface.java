@@ -16,6 +16,7 @@
 
 package android.view;
 
+import android.annotation.IntDef;
 import android.content.res.CompatibilityInfo.Translator;
 import android.graphics.Canvas;
 import android.graphics.Matrix;
@@ -24,6 +25,10 @@ import android.graphics.SurfaceTexture;
 import android.os.Parcel;
 import android.os.Parcelable;
 import android.util.Log;
+
+import java.lang.annotation.Retention;
+import java.lang.annotation.RetentionPolicy;
+
 import dalvik.system.CloseGuard;
 
 /**
@@ -32,19 +37,27 @@ import dalvik.system.CloseGuard;
 public class Surface implements Parcelable {
     private static final String TAG = "Surface";
 
-    private static native int nativeCreateFromSurfaceTexture(SurfaceTexture surfaceTexture)
+    private static native long nativeCreateFromSurfaceTexture(SurfaceTexture surfaceTexture)
             throws OutOfResourcesException;
-    private static native int nativeCreateFromSurfaceControl(int surfaceControlNativeObject);
+    private static native long nativeCreateFromSurfaceControl(long surfaceControlNativeObject);
 
-    private static native void nativeLockCanvas(int nativeObject, Canvas canvas, Rect dirty)
+    private static native long nativeLockCanvas(long nativeObject, Canvas canvas, Rect dirty)
             throws OutOfResourcesException;
-    private static native void nativeUnlockCanvasAndPost(int nativeObject, Canvas canvas);
+    private static native void nativeUnlockCanvasAndPost(long nativeObject, Canvas canvas);
 
-    private static native void nativeRelease(int nativeObject);
-    private static native boolean nativeIsValid(int nativeObject);
-    private static native boolean nativeIsConsumerRunningBehind(int nativeObject);
-    private static native int nativeReadFromParcel(int nativeObject, Parcel source);
-    private static native void nativeWriteToParcel(int nativeObject, Parcel dest);
+    private static native void nativeRelease(long nativeObject);
+    private static native boolean nativeIsValid(long nativeObject);
+    private static native boolean nativeIsConsumerRunningBehind(long nativeObject);
+    private static native long nativeReadFromParcel(long nativeObject, Parcel source);
+    private static native void nativeWriteToParcel(long nativeObject, Parcel dest);
+
+    private static native void nativeAllocateBuffers(long nativeObject);
+
+    private static native int nativeGetWidth(long nativeObject);
+    private static native int nativeGetHeight(long nativeObject);
+
+    private static native long nativeGetNextFrameNumber(long nativeObject);
+    private static native int nativeSetScalingMode(long nativeObject, int scalingMode);
 
     public static final Parcelable.Creator<Surface> CREATOR =
             new Parcelable.Creator<Surface>() {
@@ -71,13 +84,36 @@ public class Surface implements Parcelable {
     // Guarded state.
     final Object mLock = new Object(); // protects the native state
     private String mName;
-    int mNativeSurface; // package scope only for SurfaceControl access
-    private int mGenerationId; // incremented each time mNativeSurface changes
+    long mNativeObject; // package scope only for SurfaceControl access
+    private long mLockedObject;
+    private int mGenerationId; // incremented each time mNativeObject changes
     private final Canvas mCanvas = new CompatibleCanvas();
 
     // A matrix to scale the matrix set by application. This is set to null for
     // non compatibility mode.
     private Matrix mCompatibleMatrix;
+
+    private HwuiContext mHwuiContext;
+
+    /** @hide */
+    @Retention(RetentionPolicy.SOURCE)
+    @IntDef({SCALING_MODE_FREEZE, SCALING_MODE_SCALE_TO_WINDOW,
+                    SCALING_MODE_SCALE_CROP, SCALING_MODE_NO_SCALE_CROP})
+    public @interface ScalingMode {}
+    // From system/window.h
+    /** @hide */
+    public static final int SCALING_MODE_FREEZE = 0;
+    /** @hide */
+    public static final int SCALING_MODE_SCALE_TO_WINDOW = 1;
+    /** @hide */
+    public static final int SCALING_MODE_SCALE_CROP = 2;
+    /** @hide */
+    public static final int SCALING_MODE_NO_SCALE_CROP = 3;
+
+    /** @hide */
+    @IntDef({ROTATION_0, ROTATION_90, ROTATION_180, ROTATION_270})
+    @Retention(RetentionPolicy.SOURCE)
+    public @interface Rotation {}
 
     /**
      * Rotation constant: 0 degree rotation (natural orientation)
@@ -115,6 +151,7 @@ public class Surface implements Parcelable {
      *
      * @param surfaceTexture The {@link SurfaceTexture} that is updated by this
      * Surface.
+     * @throws OutOfResourcesException if the surface could not be created.
      */
     public Surface(SurfaceTexture surfaceTexture) {
         if (surfaceTexture == null) {
@@ -123,17 +160,12 @@ public class Surface implements Parcelable {
 
         synchronized (mLock) {
             mName = surfaceTexture.toString();
-            try {
-                setNativeObjectLocked(nativeCreateFromSurfaceTexture(surfaceTexture));
-            } catch (OutOfResourcesException ex) {
-                // We can't throw OutOfResourcesException because it would be an API change.
-                throw new RuntimeException(ex);
-            }
+            setNativeObjectLocked(nativeCreateFromSurfaceTexture(surfaceTexture));
         }
     }
 
     /* called from android_view_Surface_createFromIGraphicBufferProducer() */
-    private Surface(int nativeObject) {
+    private Surface(long nativeObject) {
         synchronized (mLock) {
             setNativeObjectLocked(nativeObject);
         }
@@ -158,9 +190,13 @@ public class Surface implements Parcelable {
      */
     public void release() {
         synchronized (mLock) {
-            if (mNativeSurface != 0) {
-                nativeRelease(mNativeSurface);
+            if (mNativeObject != 0) {
+                nativeRelease(mNativeObject);
                 setNativeObjectLocked(0);
+            }
+            if (mHwuiContext != null) {
+                mHwuiContext.destroy();
+                mHwuiContext = null;
             }
         }
     }
@@ -183,8 +219,8 @@ public class Surface implements Parcelable {
      */
     public boolean isValid() {
         synchronized (mLock) {
-            if (mNativeSurface == 0) return false;
-            return nativeIsValid(mNativeSurface);
+            if (mNativeObject == 0) return false;
+            return nativeIsValid(mNativeObject);
         }
     }
 
@@ -202,6 +238,18 @@ public class Surface implements Parcelable {
     }
 
     /**
+     * Returns the next frame number which will be dequeued for rendering.
+     * Intended for use with SurfaceFlinger's deferred transactions API.
+     *
+     * @hide
+     */
+    public long getNextFrameNumber() {
+        synchronized (mLock) {
+            return nativeGetNextFrameNumber(mNativeObject);
+        }
+    }
+
+    /**
      * Returns true if the consumer of this Surface is running behind the producer.
      *
      * @return True if the consumer is more than one buffer ahead of the producer.
@@ -210,7 +258,7 @@ public class Surface implements Parcelable {
     public boolean isConsumerRunningBehind() {
         synchronized (mLock) {
             checkNotReleasedLocked();
-            return nativeIsConsumerRunningBehind(mNativeSurface);
+            return nativeIsConsumerRunningBehind(mNativeObject);
         }
     }
 
@@ -228,12 +276,22 @@ public class Surface implements Parcelable {
      * The caller may also pass <code>null</code> instead, in the case where the
      * entire surface should be redrawn.
      * @return A canvas for drawing into the surface.
+     *
+     * @throws IllegalArgumentException If the inOutDirty rectangle is not valid.
+     * @throws OutOfResourcesException If the canvas cannot be locked.
      */
     public Canvas lockCanvas(Rect inOutDirty)
-            throws OutOfResourcesException, IllegalArgumentException {
+            throws Surface.OutOfResourcesException, IllegalArgumentException {
         synchronized (mLock) {
             checkNotReleasedLocked();
-            nativeLockCanvas(mNativeSurface, mCanvas, inOutDirty);
+            if (mLockedObject != 0) {
+                // Ideally, nativeLockCanvas() would throw in this situation and prevent the
+                // double-lock, but that won't happen if mNativeObject was updated.  We can't
+                // abandon the old mLockedObject because it might still be in use, so instead
+                // we just refuse to re-lock the Surface.
+                throw new IllegalArgumentException("Surface was already locked");
+            }
+            mLockedObject = nativeLockCanvas(mNativeObject, mCanvas, inOutDirty);
             return mCanvas;
         }
     }
@@ -245,18 +303,69 @@ public class Surface implements Parcelable {
      * @param canvas The canvas previously obtained from {@link #lockCanvas}.
      */
     public void unlockCanvasAndPost(Canvas canvas) {
+        synchronized (mLock) {
+            checkNotReleasedLocked();
+
+            if (mHwuiContext != null) {
+                mHwuiContext.unlockAndPost(canvas);
+            } else {
+                unlockSwCanvasAndPost(canvas);
+            }
+        }
+    }
+
+    private void unlockSwCanvasAndPost(Canvas canvas) {
         if (canvas != mCanvas) {
             throw new IllegalArgumentException("canvas object must be the same instance that "
                     + "was previously returned by lockCanvas");
         }
-
-        synchronized (mLock) {
-            checkNotReleasedLocked();
-            nativeUnlockCanvasAndPost(mNativeSurface, canvas);
+        if (mNativeObject != mLockedObject) {
+            Log.w(TAG, "WARNING: Surface's mNativeObject (0x" +
+                    Long.toHexString(mNativeObject) + ") != mLockedObject (0x" +
+                    Long.toHexString(mLockedObject) +")");
+        }
+        if (mLockedObject == 0) {
+            throw new IllegalStateException("Surface was not locked");
+        }
+        try {
+            nativeUnlockCanvasAndPost(mLockedObject, canvas);
+        } finally {
+            nativeRelease(mLockedObject);
+            mLockedObject = 0;
         }
     }
 
-    /** 
+    /**
+     * Gets a {@link Canvas} for drawing into this surface.
+     *
+     * After drawing into the provided {@link Canvas}, the caller must
+     * invoke {@link #unlockCanvasAndPost} to post the new contents to the surface.
+     *
+     * Unlike {@link #lockCanvas(Rect)} this will return a hardware-accelerated
+     * canvas. See the <a href="{@docRoot}guide/topics/graphics/hardware-accel.html#unsupported">
+     * unsupported drawing operations</a> for a list of what is and isn't
+     * supported in a hardware-accelerated canvas. It is also required to
+     * fully cover the surface every time {@link #lockHardwareCanvas()} is
+     * called as the buffer is not preserved between frames. Partial updates
+     * are not supported.
+     *
+     * @return A canvas for drawing into the surface.
+     *
+     * @throws IllegalStateException If the canvas cannot be locked.
+     */
+    public Canvas lockHardwareCanvas() {
+        synchronized (mLock) {
+            checkNotReleasedLocked();
+            if (mHwuiContext == null) {
+                mHwuiContext = new HwuiContext();
+            }
+            return mHwuiContext.lockCanvas(
+                    nativeGetWidth(mNativeObject),
+                    nativeGetHeight(mNativeObject));
+        }
+    }
+
+    /**
      * @deprecated This API has been removed and is not supported.  Do not use.
      */
     @Deprecated
@@ -290,16 +399,16 @@ public class Surface implements Parcelable {
             throw new IllegalArgumentException("other must not be null");
         }
 
-        int surfaceControlPtr = other.mNativeObject;
+        long surfaceControlPtr = other.mNativeObject;
         if (surfaceControlPtr == 0) {
             throw new NullPointerException(
                     "SurfaceControl native object is null. Are you using a released SurfaceControl?");
         }
-        int newNativeObject = nativeCreateFromSurfaceControl(surfaceControlPtr);
+        long newNativeObject = nativeCreateFromSurfaceControl(surfaceControlPtr);
 
         synchronized (mLock) {
-            if (mNativeSurface != 0) {
-                nativeRelease(mNativeSurface);
+            if (mNativeObject != 0) {
+                nativeRelease(mNativeObject);
             }
             setNativeObjectLocked(newNativeObject);
         }
@@ -317,15 +426,15 @@ public class Surface implements Parcelable {
             throw new IllegalArgumentException("other must not be null");
         }
         if (other != this) {
-            final int newPtr;
+            final long newPtr;
             synchronized (other.mLock) {
-                newPtr = other.mNativeSurface;
+                newPtr = other.mNativeObject;
                 other.setNativeObjectLocked(0);
             }
 
             synchronized (mLock) {
-                if (mNativeSurface != 0) {
-                    nativeRelease(mNativeSurface);
+                if (mNativeObject != 0) {
+                    nativeRelease(mNativeObject);
                 }
                 setNativeObjectLocked(newPtr);
             }
@@ -343,8 +452,12 @@ public class Surface implements Parcelable {
         }
 
         synchronized (mLock) {
+            // nativeReadFromParcel() will either return mNativeObject, or
+            // create a new native Surface and return it after reducing
+            // the reference count on mNativeObject.  Either way, it is
+            // not necessary to call nativeRelease() here.
             mName = source.readString();
-            setNativeObjectLocked(nativeReadFromParcel(mNativeSurface, source));
+            setNativeObjectLocked(nativeReadFromParcel(mNativeObject, source));
         }
     }
 
@@ -355,7 +468,7 @@ public class Surface implements Parcelable {
         }
         synchronized (mLock) {
             dest.writeString(mName);
-            nativeWriteToParcel(mNativeSurface, dest);
+            nativeWriteToParcel(mNativeObject, dest);
         }
         if ((flags & Parcelable.PARCELABLE_WRITE_RETURN_VALUE) != 0) {
             release();
@@ -365,32 +478,63 @@ public class Surface implements Parcelable {
     @Override
     public String toString() {
         synchronized (mLock) {
-            return "Surface(name=" + mName + ")";
+            return "Surface(name=" + mName + ")/@0x" +
+                    Integer.toHexString(System.identityHashCode(this));
         }
     }
 
-    private void setNativeObjectLocked(int ptr) {
-        if (mNativeSurface != ptr) {
-            if (mNativeSurface == 0 && ptr != 0) {
+    private void setNativeObjectLocked(long ptr) {
+        if (mNativeObject != ptr) {
+            if (mNativeObject == 0 && ptr != 0) {
                 mCloseGuard.open("release");
-            } else if (mNativeSurface != 0 && ptr == 0) {
+            } else if (mNativeObject != 0 && ptr == 0) {
                 mCloseGuard.close();
             }
-            mNativeSurface = ptr;
+            mNativeObject = ptr;
             mGenerationId += 1;
+            if (mHwuiContext != null) {
+                mHwuiContext.updateSurface();
+            }
         }
     }
 
     private void checkNotReleasedLocked() {
-        if (mNativeSurface == 0) {
+        if (mNativeObject == 0) {
             throw new IllegalStateException("Surface has already been released.");
         }
     }
 
     /**
-     * Exception thrown when a surface couldn't be created or resized.
+     * Allocate buffers ahead of time to avoid allocation delays during rendering
+     * @hide
      */
-    public static class OutOfResourcesException extends Exception {
+    public void allocateBuffers() {
+        synchronized (mLock) {
+            checkNotReleasedLocked();
+            nativeAllocateBuffers(mNativeObject);
+        }
+    }
+
+    /**
+     * Set the scaling mode to be used for this surfaces buffers
+     * @hide
+     */
+    void setScalingMode(@ScalingMode int scalingMode) {
+        synchronized (mLock) {
+            checkNotReleasedLocked();
+            int err = nativeSetScalingMode(mNativeObject, scalingMode);
+            if (err != 0) {
+                throw new IllegalArgumentException("Invalid scaling mode: " + scalingMode);
+            }
+        }
+    }
+
+    /**
+     * Exception thrown when a Canvas couldn't be locked with {@link Surface#lockCanvas}, or
+     * when a SurfaceTexture could not successfully be allocated.
+     */
+    @SuppressWarnings("serial")
+    public static class OutOfResourcesException extends RuntimeException {
         public OutOfResourcesException() {
         }
         public OutOfResourcesException(String name) {
@@ -463,9 +607,55 @@ public class Surface implements Parcelable {
         public void getMatrix(Matrix m) {
             super.getMatrix(m);
             if (mOrigMatrix == null) {
-                mOrigMatrix = new Matrix(); 
+                mOrigMatrix = new Matrix();
             }
             mOrigMatrix.set(m);
         }
     }
+
+    private final class HwuiContext {
+        private final RenderNode mRenderNode;
+        private long mHwuiRenderer;
+        private DisplayListCanvas mCanvas;
+
+        HwuiContext() {
+            mRenderNode = RenderNode.create("HwuiCanvas", null);
+            mRenderNode.setClipToBounds(false);
+            mHwuiRenderer = nHwuiCreate(mRenderNode.mNativeRenderNode, mNativeObject);
+        }
+
+        Canvas lockCanvas(int width, int height) {
+            if (mCanvas != null) {
+                throw new IllegalStateException("Surface was already locked!");
+            }
+            mCanvas = mRenderNode.start(width, height);
+            return mCanvas;
+        }
+
+        void unlockAndPost(Canvas canvas) {
+            if (canvas != mCanvas) {
+                throw new IllegalArgumentException("canvas object must be the same instance that "
+                        + "was previously returned by lockCanvas");
+            }
+            mRenderNode.end(mCanvas);
+            mCanvas = null;
+            nHwuiDraw(mHwuiRenderer);
+        }
+
+        void updateSurface() {
+            nHwuiSetSurface(mHwuiRenderer, mNativeObject);
+        }
+
+        void destroy() {
+            if (mHwuiRenderer != 0) {
+                nHwuiDestroy(mHwuiRenderer);
+                mHwuiRenderer = 0;
+            }
+        }
+    }
+
+    private static native long nHwuiCreate(long rootNode, long surface);
+    private static native void nHwuiSetSurface(long renderer, long surface);
+    private static native void nHwuiDraw(long renderer);
+    private static native void nHwuiDestroy(long renderer);
 }

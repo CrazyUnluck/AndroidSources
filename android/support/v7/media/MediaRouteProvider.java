@@ -16,12 +16,14 @@
 
 package android.support.v7.media;
 
+import android.content.ComponentName;
 import android.content.Context;
 import android.content.Intent;
 import android.os.Handler;
 import android.os.Message;
+import android.support.annotation.NonNull;
+import android.support.annotation.Nullable;
 import android.support.v7.media.MediaRouter.ControlRequestCallback;
-import android.text.TextUtils;
 
 /**
  * Media route providers are used to publish additional media routes for
@@ -73,7 +75,7 @@ public abstract class MediaRouteProvider {
      *
      * @param context The context.
      */
-    public MediaRouteProvider(Context context) {
+    public MediaRouteProvider(@NonNull Context context) {
         this(context, null);
     }
 
@@ -84,7 +86,7 @@ public abstract class MediaRouteProvider {
 
         mContext = context;
         if (metadata == null) {
-            mMetadata = new ProviderMetadata(context.getPackageName());
+            mMetadata = new ProviderMetadata(new ComponentName(context, getClass()));
         } else {
             mMetadata = metadata;
         }
@@ -116,7 +118,7 @@ public abstract class MediaRouteProvider {
      *
      * @param callback The callback to use, or null if none.
      */
-    public final void setCallback(Callback callback) {
+    public final void setCallback(@Nullable Callback callback) {
         MediaRouter.checkCallingThread();
         mCallback = callback;
     }
@@ -129,6 +131,7 @@ public abstract class MediaRouteProvider {
      *
      * @see #onDiscoveryRequestChanged
      */
+    @Nullable
     public final MediaRouteDiscoveryRequest getDiscoveryRequest() {
         return mDiscoveryRequest;
     }
@@ -184,7 +187,7 @@ public abstract class MediaRouteProvider {
      *
      * @see MediaRouter#addCallback
      */
-    public void onDiscoveryRequestChanged(MediaRouteDiscoveryRequest request) {
+    public void onDiscoveryRequestChanged(@Nullable MediaRouteDiscoveryRequest request) {
     }
 
     /**
@@ -199,6 +202,7 @@ public abstract class MediaRouteProvider {
      *
      * @see Callback#onDescriptorChanged
      */
+    @Nullable
     public final MediaRouteProviderDescriptor getDescriptor() {
         return mDescriptor;
     }
@@ -214,7 +218,7 @@ public abstract class MediaRouteProvider {
      *
      * @see Callback#onDescriptorChanged
      */
-    public final void setDescriptor(MediaRouteProviderDescriptor descriptor) {
+    public final void setDescriptor(@Nullable MediaRouteProviderDescriptor descriptor) {
         MediaRouter.checkCallingThread();
 
         if (mDescriptor != descriptor) {
@@ -245,6 +249,7 @@ public abstract class MediaRouteProvider {
      * @return The route controller.  Returns null if there is no such route or if the route
      * cannot be controlled using the route controller interface.
      */
+    @Nullable
     public RouteController onCreateRouteController(String routeId) {
         return null;
     }
@@ -256,30 +261,33 @@ public abstract class MediaRouteProvider {
      * </p>
      */
     public static final class ProviderMetadata {
-        private final String mPackageName;
+        private final ComponentName mComponentName;
 
-        /**
-         * Creates a provider metadata object.
-         *
-         * @param packageName The provider application's package name.
-         */
-        public ProviderMetadata(String packageName) {
-            if (TextUtils.isEmpty(packageName)) {
-                throw new IllegalArgumentException("packageName must not be null or empty");
+        ProviderMetadata(ComponentName componentName) {
+            if (componentName == null) {
+                throw new IllegalArgumentException("componentName must not be null");
             }
-            mPackageName = packageName;
+            mComponentName = componentName;
         }
 
         /**
-         * Gets the provider application's package name.
+         * Gets the provider's package name.
          */
         public String getPackageName() {
-            return mPackageName;
+            return mComponentName.getPackageName();
+        }
+
+        /**
+         * Gets the provider's component name.
+         */
+        public ComponentName getComponentName() {
+            return mComponentName;
         }
 
         @Override
         public String toString() {
-            return "ProviderMetadata{ packageName=" + mPackageName + " }";
+            return "ProviderMetadata{ componentName="
+                    + mComponentName.flattenToShortString() + " }";
         }
     }
 
@@ -323,6 +331,24 @@ public abstract class MediaRouteProvider {
         }
 
         /**
+         * Unselects the route and provides a reason. The default implementation
+         * calls {@link #onUnselect()}.
+         * <p>
+         * The reason provided will be one of the following:
+         * <ul>
+         * <li>{@link MediaRouter#UNSELECT_REASON_UNKNOWN}</li>
+         * <li>{@link MediaRouter#UNSELECT_REASON_DISCONNECTED}</li>
+         * <li>{@link MediaRouter#UNSELECT_REASON_STOPPED}</li>
+         * <li>{@link MediaRouter#UNSELECT_REASON_ROUTE_CHANGED}</li>
+         * </ul>
+         *
+         * @param reason The reason for unselecting the route.
+         */
+        public void onUnselect(int reason) {
+            onUnselect();
+        }
+
+        /**
          * Requests to set the volume of the route.
          *
          * @param volume The new volume value between 0 and {@link MediaRouteDescriptor#getVolumeMax}.
@@ -351,7 +377,7 @@ public abstract class MediaRouteProvider {
          *
          * @see MediaControlIntent
          */
-        public boolean onControlRequest(Intent intent, ControlRequestCallback callback) {
+        public boolean onControlRequest(Intent intent, @Nullable ControlRequestCallback callback) {
             return false;
         }
     }
@@ -366,8 +392,8 @@ public abstract class MediaRouteProvider {
          * @param provider The media route provider that changed, never null.
          * @param descriptor The new media route provider descriptor, or null if none.
          */
-        public void onDescriptorChanged(MediaRouteProvider provider,
-                MediaRouteProviderDescriptor descriptor) {
+        public void onDescriptorChanged(@NonNull MediaRouteProvider provider,
+                @Nullable MediaRouteProviderDescriptor descriptor) {
         }
     }
 

@@ -17,7 +17,6 @@
 package android.view;
 
 import android.content.Context;
-import android.os.Build;
 import android.os.Handler;
 import android.os.Message;
 
@@ -33,6 +32,9 @@ import android.os.Message;
  *  <li>In the {@link View#onTouchEvent(MotionEvent)} method ensure you call
  *          {@link #onTouchEvent(MotionEvent)}. The methods defined in your callback
  *          will be executed when the events occur.
+ *  <li>If listening for {@link OnContextClickListener#onContextClick(MotionEvent)}
+ *          you must call {@link #onGenericMotionEvent(MotionEvent)}
+ *          in {@link View#onGenericMotionEvent(MotionEvent)}.
  * </ul>
  */
 public class GestureDetector {
@@ -150,12 +152,29 @@ public class GestureDetector {
     }
 
     /**
+     * The listener that is used to notify when a context click occurs. When listening for a
+     * context click ensure that you call {@link #onGenericMotionEvent(MotionEvent)} in
+     * {@link View#onGenericMotionEvent(MotionEvent)}.
+     */
+    public interface OnContextClickListener {
+        /**
+         * Notified when a context click occurs.
+         *
+         * @param e The motion event that occurred during the context click.
+         * @return true if the event is consumed, else false
+         */
+        boolean onContextClick(MotionEvent e);
+    }
+
+    /**
      * A convenience class to extend when you only want to listen for a subset
      * of all the gestures. This implements all methods in the
-     * {@link OnGestureListener} and {@link OnDoubleTapListener} but does
-     * nothing and return {@code false} for all applicable methods.
+     * {@link OnGestureListener}, {@link OnDoubleTapListener}, and {@link OnContextClickListener}
+     * but does nothing and return {@code false} for all applicable methods.
      */
-    public static class SimpleOnGestureListener implements OnGestureListener, OnDoubleTapListener {
+    public static class SimpleOnGestureListener implements OnGestureListener, OnDoubleTapListener,
+            OnContextClickListener {
+
         public boolean onSingleTapUp(MotionEvent e) {
             return false;
         }
@@ -191,6 +210,10 @@ public class GestureDetector {
         public boolean onSingleTapConfirmed(MotionEvent e) {
             return false;
         }
+
+        public boolean onContextClick(MotionEvent e) {
+            return false;
+        }
     }
 
     private int mTouchSlopSquare;
@@ -202,6 +225,7 @@ public class GestureDetector {
     private static final int LONGPRESS_TIMEOUT = ViewConfiguration.getLongPressTimeout();
     private static final int TAP_TIMEOUT = ViewConfiguration.getTapTimeout();
     private static final int DOUBLE_TAP_TIMEOUT = ViewConfiguration.getDoubleTapTimeout();
+    private static final int DOUBLE_TAP_MIN_TIME = ViewConfiguration.getDoubleTapMinTime();
 
     // constants for Message.what used by GestureHandler below
     private static final int SHOW_PRESS = 1;
@@ -211,12 +235,15 @@ public class GestureDetector {
     private final Handler mHandler;
     private final OnGestureListener mListener;
     private OnDoubleTapListener mDoubleTapListener;
+    private OnContextClickListener mContextClickListener;
 
     private boolean mStillDown;
     private boolean mDeferConfirmSingleTap;
     private boolean mInLongPress;
+    private boolean mInContextClick;
     private boolean mAlwaysInTapRegion;
     private boolean mAlwaysInBiggerTapRegion;
+    private boolean mIgnoreNextUpEvent;
 
     private MotionEvent mCurrentDownEvent;
     private MotionEvent mPreviousUpEvent;
@@ -323,7 +350,7 @@ public class GestureDetector {
 
     /**
      * Creates a GestureDetector with the supplied listener.
-     * You may only use this constructor from a UI thread (this is the usual situation).
+     * You may only use this constructor from a {@link android.os.Looper} thread.
      * @see android.os.Handler#Handler()
      *
      * @param context the application's context
@@ -337,14 +364,14 @@ public class GestureDetector {
     }
 
     /**
-     * Creates a GestureDetector with the supplied listener.
-     * You may only use this constructor from a UI thread (this is the usual situation).
+     * Creates a GestureDetector with the supplied listener that runs deferred events on the
+     * thread associated with the supplied {@link android.os.Handler}.
      * @see android.os.Handler#Handler()
      *
      * @param context the application's context
      * @param listener the listener invoked for all the callbacks, this must
      * not be null.
-     * @param handler the handler to use     
+     * @param handler the handler to use for running deferred listener events.
      *
      * @throws NullPointerException if {@code listener} is null.
      */
@@ -358,18 +385,22 @@ public class GestureDetector {
         if (listener instanceof OnDoubleTapListener) {
             setOnDoubleTapListener((OnDoubleTapListener) listener);
         }
+        if (listener instanceof OnContextClickListener) {
+            setContextClickListener((OnContextClickListener) listener);
+        }
         init(context);
     }
     
     /**
-     * Creates a GestureDetector with the supplied listener.
-     * You may only use this constructor from a UI thread (this is the usual situation).
+     * Creates a GestureDetector with the supplied listener that runs deferred events on the
+     * thread associated with the supplied {@link android.os.Handler}.
      * @see android.os.Handler#Handler()
      *
      * @param context the application's context
      * @param listener the listener invoked for all the callbacks, this must
      * not be null.
-     * @param handler the handler to use
+     * @param handler the handler to use for running deferred listener events.
+     * @param unused currently not used.
      *
      * @throws NullPointerException if {@code listener} is null.
      */
@@ -416,6 +447,16 @@ public class GestureDetector {
      */
     public void setOnDoubleTapListener(OnDoubleTapListener onDoubleTapListener) {
         mDoubleTapListener = onDoubleTapListener;
+    }
+
+    /**
+     * Sets the listener which will be called for context clicks.
+     *
+     * @param onContextClickListener the listener invoked for all the callbacks, or null to stop
+     *            listening for context clicks.
+     */
+    public void setContextClickListener(OnContextClickListener onContextClickListener) {
+        mContextClickListener = onContextClickListener;
     }
 
     /**
@@ -539,7 +580,7 @@ public class GestureDetector {
             mStillDown = true;
             mInLongPress = false;
             mDeferConfirmSingleTap = false;
-            
+
             if (mIsLongpressEnabled) {
                 mHandler.removeMessages(LONG_PRESS);
                 mHandler.sendEmptyMessageAtTime(LONG_PRESS, mCurrentDownEvent.getDownTime()
@@ -550,7 +591,7 @@ public class GestureDetector {
             break;
 
         case MotionEvent.ACTION_MOVE:
-            if (mInLongPress) {
+            if (mInLongPress || mInContextClick) {
                 break;
             }
             final float scrollX = mLastFocusX - focusX;
@@ -590,12 +631,12 @@ public class GestureDetector {
             } else if (mInLongPress) {
                 mHandler.removeMessages(TAP);
                 mInLongPress = false;
-            } else if (mAlwaysInTapRegion) {
+            } else if (mAlwaysInTapRegion && !mIgnoreNextUpEvent) {
                 handled = mListener.onSingleTapUp(ev);
                 if (mDeferConfirmSingleTap && mDoubleTapListener != null) {
                     mDoubleTapListener.onSingleTapConfirmed(ev);
                 }
-            } else {
+            } else if (!mIgnoreNextUpEvent) {
 
                 // A fling must travel the minimum tap distance
                 final VelocityTracker velocityTracker = mVelocityTracker;
@@ -622,6 +663,7 @@ public class GestureDetector {
             }
             mIsDoubleTapping = false;
             mDeferConfirmSingleTap = false;
+            mIgnoreNextUpEvent = false;
             mHandler.removeMessages(SHOW_PRESS);
             mHandler.removeMessages(LONG_PRESS);
             break;
@@ -637,6 +679,45 @@ public class GestureDetector {
         return handled;
     }
 
+    /**
+     * Analyzes the given generic motion event and if applicable triggers the
+     * appropriate callbacks on the {@link OnGestureListener} supplied.
+     *
+     * @param ev The current motion event.
+     * @return true if the {@link OnGestureListener} consumed the event,
+     *              else false.
+     */
+    public boolean onGenericMotionEvent(MotionEvent ev) {
+        if (mInputEventConsistencyVerifier != null) {
+            mInputEventConsistencyVerifier.onGenericMotionEvent(ev, 0);
+        }
+
+        final int actionButton = ev.getActionButton();
+        switch (ev.getActionMasked()) {
+            case MotionEvent.ACTION_BUTTON_PRESS:
+                if (mContextClickListener != null && !mInContextClick && !mInLongPress
+                        && (actionButton == MotionEvent.BUTTON_STYLUS_PRIMARY
+                        || actionButton == MotionEvent.BUTTON_SECONDARY)) {
+                    if (mContextClickListener.onContextClick(ev)) {
+                        mInContextClick = true;
+                        mHandler.removeMessages(LONG_PRESS);
+                        mHandler.removeMessages(TAP);
+                        return true;
+                    }
+                }
+                break;
+
+            case MotionEvent.ACTION_BUTTON_RELEASE:
+                if (mInContextClick && (actionButton == MotionEvent.BUTTON_STYLUS_PRIMARY
+                        || actionButton == MotionEvent.BUTTON_SECONDARY)) {
+                    mInContextClick = false;
+                    mIgnoreNextUpEvent = true;
+                }
+                break;
+        }
+        return false;
+    }
+
     private void cancel() {
         mHandler.removeMessages(SHOW_PRESS);
         mHandler.removeMessages(LONG_PRESS);
@@ -648,9 +729,9 @@ public class GestureDetector {
         mAlwaysInTapRegion = false;
         mAlwaysInBiggerTapRegion = false;
         mDeferConfirmSingleTap = false;
-        if (mInLongPress) {
-            mInLongPress = false;
-        }
+        mInLongPress = false;
+        mInContextClick = false;
+        mIgnoreNextUpEvent = false;
     }
 
     private void cancelTaps() {
@@ -661,9 +742,9 @@ public class GestureDetector {
         mAlwaysInTapRegion = false;
         mAlwaysInBiggerTapRegion = false;
         mDeferConfirmSingleTap = false;
-        if (mInLongPress) {
-            mInLongPress = false;
-        }
+        mInLongPress = false;
+        mInContextClick = false;
+        mIgnoreNextUpEvent = false;
     }
 
     private boolean isConsideredDoubleTap(MotionEvent firstDown, MotionEvent firstUp,
@@ -672,7 +753,8 @@ public class GestureDetector {
             return false;
         }
 
-        if (secondDown.getEventTime() - firstUp.getEventTime() > DOUBLE_TAP_TIMEOUT) {
+        final long deltaTime = secondDown.getEventTime() - firstUp.getEventTime();
+        if (deltaTime > DOUBLE_TAP_TIMEOUT || deltaTime < DOUBLE_TAP_MIN_TIME) {
             return false;
         }
 

@@ -17,22 +17,17 @@
 package android.renderscript;
 
 import java.io.File;
-import java.io.IOException;
 import java.io.InputStream;
 
 import android.content.res.AssetManager;
 import android.content.res.Resources;
-import android.graphics.Bitmap;
-import android.graphics.BitmapFactory;
-import android.util.Log;
-import android.util.TypedValue;
 
 /**
  * @hide
  * @deprecated in API 16
- * FileA3D allows users to load Renderscript objects from files
+ * FileA3D allows users to load RenderScript objects from files
  * or resources stored on disk. It could be used to load items
- * such as 3D geometry data converted to a Renderscript format from
+ * such as 3D geometry data converted to a RenderScript format from
  * content creation tools. Currently only meshes are supported
  * in FileA3D.
  *
@@ -56,7 +51,7 @@ public class FileA3D extends BaseObj {
         UNKNOWN (0),
         /**
         * @deprecated in API 16
-        * Renderscript Mesh object
+        * RenderScript Mesh object
         **/
         MESH (1);
 
@@ -72,7 +67,7 @@ public class FileA3D extends BaseObj {
 
     /**
     * @deprecated in API 16
-    * IndexEntry contains information about one of the Renderscript
+    * IndexEntry contains information about one of the RenderScript
     * objects inside the file's index. It could be used to query the
     * object's type and also name and load the object itself if
     * necessary.
@@ -80,7 +75,7 @@ public class FileA3D extends BaseObj {
     public static class IndexEntry {
         RenderScript mRS;
         int mIndex;
-        int mID;
+        long mID;
         String mName;
         EntryType mEntryType;
         BaseObj mLoadedObj;
@@ -141,7 +136,7 @@ public class FileA3D extends BaseObj {
                 return null;
             }
 
-            int objectID = rs.nFileA3DGetEntryByIndex(entry.mID, entry.mIndex);
+            long objectID = rs.nFileA3DGetEntryByIndex(entry.mID, entry.mIndex);
             if(objectID == 0) {
                 return null;
             }
@@ -150,13 +145,16 @@ public class FileA3D extends BaseObj {
             case MESH:
                 entry.mLoadedObj = new Mesh(objectID, rs);
                 break;
+
+            default:
+                throw new RSRuntimeException("Unrecognized object type in file.");
             }
 
             entry.mLoadedObj.updateFromNative();
             return entry.mLoadedObj;
         }
 
-        IndexEntry(RenderScript rs, int index, int id, String name, EntryType type) {
+        IndexEntry(RenderScript rs, int index, long id, String name, EntryType type) {
             mRS = rs;
             mIndex = index;
             mID = id;
@@ -169,9 +167,10 @@ public class FileA3D extends BaseObj {
     IndexEntry[] mFileEntries;
     InputStream mInputStream;
 
-    FileA3D(int id, RenderScript rs, InputStream stream) {
+    FileA3D(long id, RenderScript rs, InputStream stream) {
         super(id, rs);
         mInputStream = stream;
+        guard.open("destroy");
     }
 
     private void initEntries() {
@@ -232,7 +231,7 @@ public class FileA3D extends BaseObj {
     */
     static public FileA3D createFromAsset(RenderScript rs, AssetManager mgr, String path) {
         rs.validate();
-        int fileId = rs.nFileA3DCreateFromAsset(mgr, path);
+        long fileId = rs.nFileA3DCreateFromAsset(mgr, path);
 
         if(fileId == 0) {
             throw new RSRuntimeException("Unable to create a3d file from asset " + path);
@@ -252,7 +251,7 @@ public class FileA3D extends BaseObj {
     * @return a3d file containing renderscript objects
     */
     static public FileA3D createFromFile(RenderScript rs, String path) {
-        int fileId = rs.nFileA3DCreateFromFile(path);
+        long fileId = rs.nFileA3DCreateFromFile(path);
 
         if(fileId == 0) {
             throw new RSRuntimeException("Unable to create a3d file from " + path);
@@ -295,9 +294,9 @@ public class FileA3D extends BaseObj {
             throw new RSRuntimeException("Unable to open resource " + id);
         }
 
-        int fileId = 0;
+        long fileId = 0;
         if (is instanceof AssetManager.AssetInputStream) {
-            int asset = ((AssetManager.AssetInputStream) is).getAssetInt();
+            long asset = ((AssetManager.AssetInputStream) is).getNativeAsset();
             fileId = rs.nFileA3DCreateFromAssetStream(asset);
         } else {
             throw new RSRuntimeException("Unsupported asset stream");

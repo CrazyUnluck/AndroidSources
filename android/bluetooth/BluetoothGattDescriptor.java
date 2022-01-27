@@ -16,6 +16,9 @@
 
 package android.bluetooth;
 
+import android.os.Parcel;
+import android.os.Parcelable;
+import android.os.ParcelUuid;
 import java.util.UUID;
 
 /**
@@ -25,7 +28,7 @@ import java.util.UUID;
  * characteristic, {@link BluetoothGattCharacteristic}. They can be used to describe
  * the characteristic's features or to control certain behaviours of the characteristic.
  */
-public class BluetoothGattDescriptor {
+public class BluetoothGattDescriptor implements Parcelable {
 
     /**
      * Value used to enable notification for a client configuration descriptor
@@ -91,6 +94,12 @@ public class BluetoothGattDescriptor {
     protected UUID mUuid;
 
     /**
+     * Instance ID for this descriptor.
+     * @hide
+     */
+    protected int mInstance;
+
+    /**
      * Permissions for this descriptor
      * @hide
      */
@@ -116,7 +125,7 @@ public class BluetoothGattDescriptor {
      * @param permissions Permissions for this descriptor
      */
     public BluetoothGattDescriptor(UUID uuid, int permissions) {
-        initDescriptor(null, uuid, permissions);
+        initDescriptor(null, uuid, 0, permissions);
     }
 
     /**
@@ -128,15 +137,53 @@ public class BluetoothGattDescriptor {
      * @param permissions Permissions for this descriptor
      */
     /*package*/ BluetoothGattDescriptor(BluetoothGattCharacteristic characteristic, UUID uuid,
-                                    int permissions) {
-        initDescriptor(characteristic, uuid, permissions);
+                                    int instance, int permissions) {
+        initDescriptor(characteristic, uuid, instance, permissions);
+    }
+
+    /**
+     * @hide
+     */
+    public BluetoothGattDescriptor(UUID uuid, int instance, int permissions) {
+        initDescriptor(null, uuid, instance, permissions);
     }
 
     private void initDescriptor(BluetoothGattCharacteristic characteristic, UUID uuid,
-                                int permissions) {
+                                int instance, int permissions) {
         mCharacteristic = characteristic;
         mUuid = uuid;
+        mInstance = instance;
         mPermissions = permissions;
+    }
+
+    /**
+     * @hide
+     */
+    public int describeContents() {
+        return 0;
+    }
+
+    public void writeToParcel(Parcel out, int flags) {
+        out.writeParcelable(new ParcelUuid(mUuid), 0);
+        out.writeInt(mInstance);
+        out.writeInt(mPermissions);
+    }
+
+    public static final Parcelable.Creator<BluetoothGattDescriptor> CREATOR
+            = new Parcelable.Creator<BluetoothGattDescriptor>() {
+        public BluetoothGattDescriptor createFromParcel(Parcel in) {
+            return new BluetoothGattDescriptor(in);
+        }
+
+        public BluetoothGattDescriptor[] newArray(int size) {
+            return new BluetoothGattDescriptor[size];
+        }
+    };
+
+    private BluetoothGattDescriptor(Parcel in) {
+        mUuid = ((ParcelUuid)in.readParcelable(null)).getUuid();
+        mInstance = in.readInt();
+        mPermissions = in.readInt();
     }
 
     /**
@@ -162,6 +209,21 @@ public class BluetoothGattDescriptor {
      */
     public UUID getUuid() {
         return mUuid;
+    }
+
+    /**
+     * Returns the instance ID for this descriptor.
+     *
+     * <p>If a remote device offers multiple descriptors with the same UUID,
+     * the instance ID is used to distuinguish between descriptors.
+     *
+     * <p>Requires {@link android.Manifest.permission#BLUETOOTH} permission.
+     *
+     * @return Instance ID of this descriptor
+     * @hide
+     */
+    public int getInstanceId() {
+        return mInstance;
     }
 
     /**

@@ -87,7 +87,6 @@ public class NetInitiatedActivity extends AlertActivity implements DialogInterfa
         final Intent intent = getIntent();
         final AlertController.AlertParams p = mAlertParams;
         Context context = getApplicationContext();
-        p.mIconId = com.android.internal.R.drawable.ic_dialog_usb;
         p.mTitle = intent.getStringExtra(GpsNetInitiatedHandler.NI_INTENT_KEY_TITLE);
         p.mMessage = intent.getStringExtra(GpsNetInitiatedHandler.NI_INTENT_KEY_MESSAGE);
         p.mPositiveButtonText = String.format(context.getString(R.string.gpsVerifYes));
@@ -134,7 +133,7 @@ public class NetInitiatedActivity extends AlertActivity implements DialogInterfa
         notificationId = -1;
     }
 
-    // Respond to NI Handler under GpsLocationProvider, 1 = accept, 2 = deny
+    // Respond to NI Handler under GnssLocationProvider, 1 = accept, 2 = deny
     private void sendUserResponse(int response) {
         if (DEBUG) Log.d(TAG, "sendUserResponse, response: " + response);
         LocationManager locationManager = (LocationManager)

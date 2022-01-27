@@ -16,41 +16,28 @@
 
 package com.android.shell;
 
-import static com.android.shell.BugreportPrefs.STATE_SHOW;
-import static com.android.shell.BugreportPrefs.getWarningState;
+import static com.android.shell.BugreportProgressService.EXTRA_BUGREPORT;
+import static com.android.shell.BugreportProgressService.EXTRA_ORIGINAL_INTENT;
+import static com.android.shell.BugreportProgressService.INTENT_BUGREPORT_FINISHED;
+import static com.android.shell.BugreportProgressService.getFileExtra;
+import static com.android.shell.BugreportProgressService.dumpIntent;
 
-import android.accounts.Account;
-import android.accounts.AccountManager;
-import android.app.Notification;
-import android.app.NotificationManager;
-import android.app.PendingIntent;
+import java.io.File;
+
 import android.content.BroadcastReceiver;
 import android.content.Context;
 import android.content.Intent;
-import android.net.Uri;
 import android.os.AsyncTask;
 import android.os.FileUtils;
-import android.os.SystemProperties;
-import android.support.v4.content.FileProvider;
 import android.text.format.DateUtils;
-import android.util.Patterns;
-
-import com.google.android.collect.Lists;
-
-import java.io.File;
-import java.util.ArrayList;
+import android.util.Log;
 
 /**
  * Receiver that handles finished bugreports, usually by attaching them to an
- * {@link Intent#ACTION_SEND}.
+ * {@link Intent#ACTION_SEND_MULTIPLE}.
  */
 public class BugreportReceiver extends BroadcastReceiver {
-    private static final String TAG = "Shell";
-
-    private static final String AUTHORITY = "com.android.shell";
-
-    private static final String EXTRA_BUGREPORT = "android.intent.extra.BUGREPORT";
-    private static final String EXTRA_SCREENSHOT = "android.intent.extra.SCREENSHOT";
+    private static final String TAG = "BugreportReceiver";
 
     /**
      * Always keep the newest 8 bugreport files; 4 reports and 4 screenshots are
@@ -65,117 +52,38 @@ public class BugreportReceiver extends BroadcastReceiver {
 
     @Override
     public void onReceive(Context context, Intent intent) {
-        final File bugreportFile = getFileExtra(intent, EXTRA_BUGREPORT);
-        final File screenshotFile = getFileExtra(intent, EXTRA_SCREENSHOT);
-
-        // Files are kept on private storage, so turn into Uris that we can
-        // grant temporary permissions for.
-        final Uri bugreportUri = FileProvider.getUriForFile(context, AUTHORITY, bugreportFile);
-        final Uri screenshotUri = FileProvider.getUriForFile(context, AUTHORITY, screenshotFile);
-
-        Intent sendIntent = buildSendIntent(context, bugreportUri, screenshotUri);
-        Intent notifIntent;
-
-        // Send through warning dialog by default
-        if (getWarningState(context, STATE_SHOW) == STATE_SHOW) {
-            notifIntent = buildWarningIntent(context, sendIntent);
-        } else {
-            notifIntent = sendIntent;
-        }
-        notifIntent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
-
-        final Notification.Builder builder = new Notification.Builder(context);
-        builder.setSmallIcon(com.android.internal.R.drawable.stat_sys_adb);
-        builder.setContentTitle(context.getString(R.string.bugreport_finished_title));
-        builder.setTicker(context.getString(R.string.bugreport_finished_title));
-        builder.setContentText(context.getString(R.string.bugreport_finished_text));
-        builder.setContentIntent(PendingIntent.getActivity(
-                context, 0, notifIntent, PendingIntent.FLAG_CANCEL_CURRENT));
-        builder.setAutoCancel(true);
-        NotificationManager.from(context).notify(TAG, 0, builder.build());
-
+        Log.d(TAG, "onReceive(): " + dumpIntent(intent));
         // Clean up older bugreports in background
-        final PendingResult result = goAsync();
+        cleanupOldFiles(this, intent, INTENT_BUGREPORT_FINISHED, MIN_KEEP_COUNT, MIN_KEEP_AGE);
+
+        // Delegate intent handling to service.
+        Intent serviceIntent = new Intent(context, BugreportProgressService.class);
+        serviceIntent.putExtra(EXTRA_ORIGINAL_INTENT, intent);
+        context.startService(serviceIntent);
+    }
+
+    static void cleanupOldFiles(BroadcastReceiver br, Intent intent, String expectedAction,
+            final int minCount, final long minAge) {
+        if (!expectedAction.equals(intent.getAction())) {
+            return;
+        }
+        final File bugreportFile = getFileExtra(intent, EXTRA_BUGREPORT);
+        if (bugreportFile == null || !bugreportFile.exists()) {
+            Log.e(TAG, "Not deleting old files because file " + bugreportFile + " doesn't exist");
+            return;
+        }
+        final PendingResult result = br.goAsync();
         new AsyncTask<Void, Void, Void>() {
             @Override
             protected Void doInBackground(Void... params) {
-                FileUtils.deleteOlderFiles(
-                        bugreportFile.getParentFile(), MIN_KEEP_COUNT, MIN_KEEP_AGE);
+                try {
+                    FileUtils.deleteOlderFiles(bugreportFile.getParentFile(), minCount, minAge);
+                } catch (RuntimeException e) {
+                    Log.e(TAG, "RuntimeException deleting old files", e);
+                }
                 result.finish();
                 return null;
             }
         }.execute();
-    }
-
-    private static Intent buildWarningIntent(Context context, Intent sendIntent) {
-        final Intent intent = new Intent(context, BugreportWarningActivity.class);
-        intent.putExtra(Intent.EXTRA_INTENT, sendIntent);
-        return intent;
-    }
-
-    /**
-     * Build {@link Intent} that can be used to share the given bugreport.
-     */
-    private static Intent buildSendIntent(Context context, Uri bugreportUri, Uri screenshotUri) {
-        final Intent intent = new Intent(Intent.ACTION_SEND_MULTIPLE);
-        intent.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION);
-        intent.addCategory(Intent.CATEGORY_DEFAULT);
-        intent.setType("application/vnd.android.bugreport");
-
-        intent.putExtra(Intent.EXTRA_SUBJECT, bugreportUri.getLastPathSegment());
-        intent.putExtra(Intent.EXTRA_TEXT, SystemProperties.get("ro.build.description"));
-
-        final ArrayList<Uri> attachments = Lists.newArrayList(bugreportUri, screenshotUri);
-        intent.putParcelableArrayListExtra(Intent.EXTRA_STREAM, attachments);
-
-        final Account sendToAccount = findSendToAccount(context);
-        if (sendToAccount != null) {
-            intent.putExtra(Intent.EXTRA_EMAIL, new String[] { sendToAccount.name });
-        }
-
-        return intent;
-    }
-
-    /**
-     * Find the best matching {@link Account} based on build properties.
-     */
-    private static Account findSendToAccount(Context context) {
-        final AccountManager am = (AccountManager) context.getSystemService(
-                Context.ACCOUNT_SERVICE);
-
-        String preferredDomain = SystemProperties.get("sendbug.preferred.domain");
-        if (!preferredDomain.startsWith("@")) {
-            preferredDomain = "@" + preferredDomain;
-        }
-
-        final Account[] accounts = am.getAccounts();
-        Account foundAccount = null;
-        for (Account account : accounts) {
-            if (Patterns.EMAIL_ADDRESS.matcher(account.name).matches()) {
-                if (!preferredDomain.isEmpty()) {
-                    // if we have a preferred domain and it matches, return; otherwise keep
-                    // looking
-                    if (account.name.endsWith(preferredDomain)) {
-                        return account;
-                    } else {
-                        foundAccount = account;
-                    }
-                    // if we don't have a preferred domain, just return since it looks like
-                    // an email address
-                } else {
-                    return account;
-                }
-            }
-        }
-        return foundAccount;
-    }
-
-    private static File getFileExtra(Intent intent, String key) {
-        final String path = intent.getStringExtra(key);
-        if (path != null) {
-            return new File(path);
-        } else {
-            return null;
-        }
     }
 }

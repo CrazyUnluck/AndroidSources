@@ -19,6 +19,7 @@ package android.hardware;
 import android.app.ActivityThread;
 import android.annotation.SdkConstant;
 import android.annotation.SdkConstant.SdkConstantType;
+import android.app.job.JobInfo;
 import android.content.Context;
 import android.graphics.ImageFormat;
 import android.graphics.Point;
@@ -31,6 +32,11 @@ import android.os.Looper;
 import android.os.Message;
 import android.os.RemoteException;
 import android.os.ServiceManager;
+import android.renderscript.Allocation;
+import android.renderscript.Element;
+import android.renderscript.RenderScript;
+import android.renderscript.RSIllegalArgumentException;
+import android.renderscript.Type;
 import android.util.Log;
 import android.text.TextUtils;
 import android.view.Surface;
@@ -39,9 +45,10 @@ import android.view.SurfaceHolder;
 import java.io.IOException;
 import java.lang.ref.WeakReference;
 import java.util.ArrayList;
-import java.util.HashMap;
+import java.util.LinkedHashMap;
 import java.util.List;
-import java.util.concurrent.locks.ReentrantLock;
+
+import static android.system.OsConstants.*;
 
 /**
  * The Camera class is used to set image capture settings, start/stop preview,
@@ -69,7 +76,7 @@ import java.util.concurrent.locks.ReentrantLock;
  * <li>If necessary, modify the returned {@link Camera.Parameters} object and call
  * {@link #setParameters(Camera.Parameters)}.
  *
- * <li>If desired, call {@link #setDisplayOrientation(int)}.
+ * <li>Call {@link #setDisplayOrientation(int)} to ensure correct orientation of preview.
  *
  * <li><b>Important</b>: Pass a fully initialized {@link SurfaceHolder} to
  * {@link #setPreviewDisplay(SurfaceHolder)}.  Without a surface, the camera
@@ -128,7 +135,11 @@ import java.util.concurrent.locks.ReentrantLock;
  * <p>For more information about using cameras, read the
  * <a href="{@docRoot}guide/topics/media/camera.html">Camera</a> developer guide.</p>
  * </div>
+ *
+ * @deprecated We recommend using the new {@link android.hardware.camera2} API for new
+ *             applications.
  */
+@Deprecated
 public class Camera {
     private static final String TAG = "Camera";
 
@@ -146,12 +157,13 @@ public class Camera {
     private static final int CAMERA_MSG_PREVIEW_METADATA = 0x400;
     private static final int CAMERA_MSG_FOCUS_MOVE       = 0x800;
 
-    private int mNativeContext; // accessed by native methods
+    private long mNativeContext; // accessed by native methods
     private EventHandler mEventHandler;
     private ShutterCallback mShutterCallback;
     private PictureCallback mRawImageCallback;
     private PictureCallback mJpegCallback;
     private PreviewCallback mPreviewCallback;
+    private boolean mUsingPreviewAllocation;
     private PictureCallback mPostviewCallback;
     private AutoFocusCallback mAutoFocusCallback;
     private AutoFocusMoveCallback mAutoFocusMoveCallback;
@@ -161,23 +173,49 @@ public class Camera {
     private boolean mOneShot;
     private boolean mWithBuffer;
     private boolean mFaceDetectionRunning = false;
-    private Object mAutoFocusCallbackLock = new Object();
+    private final Object mAutoFocusCallbackLock = new Object();
+
+    private static final int NO_ERROR = 0;
 
     /**
+     * @deprecated This broadcast is no longer delivered by the system; use
+     * {@link android.app.job.JobInfo.Builder JobInfo.Builder}.{@link android.app.job.JobInfo.Builder#addTriggerContentUri}
+     * instead.
      * Broadcast Action:  A new picture is taken by the camera, and the entry of
      * the picture has been added to the media store.
      * {@link android.content.Intent#getData} is URI of the picture.
      */
     @SdkConstant(SdkConstantType.BROADCAST_INTENT_ACTION)
+    @Deprecated
     public static final String ACTION_NEW_PICTURE = "android.hardware.action.NEW_PICTURE";
 
     /**
+     * @deprecated This broadcast is no longer delivered by the system; use
+     * {@link android.app.job.JobInfo.Builder JobInfo.Builder}.{@link android.app.job.JobInfo.Builder#addTriggerContentUri}
+     * instead.
      * Broadcast Action:  A new video is recorded by the camera, and the entry
      * of the video has been added to the media store.
      * {@link android.content.Intent#getData} is URI of the video.
      */
     @SdkConstant(SdkConstantType.BROADCAST_INTENT_ACTION)
+    @Deprecated
     public static final String ACTION_NEW_VIDEO = "android.hardware.action.NEW_VIDEO";
+
+    /**
+     * Camera HAL device API version 1.0
+     * @hide
+     */
+    public static final int CAMERA_HAL_API_VERSION_1_0 = 0x100;
+
+    /**
+     * A constant meaning the normal camera connect/open will be used.
+     */
+    private static final int CAMERA_HAL_API_VERSION_NORMAL_CONNECT = -2;
+
+    /**
+     * Used to indicate HAL version un-specified.
+     */
+    private static final int CAMERA_HAL_API_VERSION_UNSPECIFIED = -1;
 
     /**
      * Hardware face detection. It does not use much CPU.
@@ -216,7 +254,11 @@ public class Camera {
 
     /**
      * Information about a camera
+     *
+     * @deprecated We recommend using the new {@link android.hardware.camera2} API for new
+     *             applications.
      */
+    @Deprecated
     public static class CameraInfo {
         /**
          * The facing of the camera is opposite to that of the screen.
@@ -321,12 +363,94 @@ public class Camera {
         return null;
     }
 
-    Camera(int cameraId) {
+    /**
+     * Creates a new Camera object to access a particular hardware camera with
+     * given hal API version. If the same camera is opened by other applications
+     * or the hal API version is not supported by this device, this will throw a
+     * RuntimeException.
+     * <p>
+     * You must call {@link #release()} when you are done using the camera,
+     * otherwise it will remain locked and be unavailable to other applications.
+     * <p>
+     * Your application should only have one Camera object active at a time for
+     * a particular hardware camera.
+     * <p>
+     * Callbacks from other methods are delivered to the event loop of the
+     * thread which called open(). If this thread has no event loop, then
+     * callbacks are delivered to the main application event loop. If there is
+     * no main application event loop, callbacks are not delivered.
+     * <p class="caution">
+     * <b>Caution:</b> On some devices, this method may take a long time to
+     * complete. It is best to call this method from a worker thread (possibly
+     * using {@link android.os.AsyncTask}) to avoid blocking the main
+     * application UI thread.
+     *
+     * @param cameraId The hardware camera to access, between 0 and
+     * {@link #getNumberOfCameras()}-1.
+     * @param halVersion The HAL API version this camera device to be opened as.
+     * @return a new Camera object, connected, locked and ready for use.
+     *
+     * @throws IllegalArgumentException if the {@code halVersion} is invalid
+     *
+     * @throws RuntimeException if opening the camera fails (for example, if the
+     * camera is in use by another process or device policy manager has disabled
+     * the camera).
+     *
+     * @see android.app.admin.DevicePolicyManager#getCameraDisabled(android.content.ComponentName)
+     * @see #CAMERA_HAL_API_VERSION_1_0
+     *
+     * @hide
+     */
+    public static Camera openLegacy(int cameraId, int halVersion) {
+        if (halVersion < CAMERA_HAL_API_VERSION_1_0) {
+            throw new IllegalArgumentException("Invalid HAL version " + halVersion);
+        }
+
+        return new Camera(cameraId, halVersion);
+    }
+
+    /**
+     * Create a legacy camera object.
+     *
+     * @param cameraId The hardware camera to access, between 0 and
+     * {@link #getNumberOfCameras()}-1.
+     * @param halVersion The HAL API version this camera device to be opened as.
+     */
+    private Camera(int cameraId, int halVersion) {
+        int err = cameraInitVersion(cameraId, halVersion);
+        if (checkInitErrors(err)) {
+            if (err == -EACCES) {
+                throw new RuntimeException("Fail to connect to camera service");
+            } else if (err == -ENODEV) {
+                throw new RuntimeException("Camera initialization failed");
+            } else if (err == -ENOSYS) {
+                throw new RuntimeException("Camera initialization failed because some methods"
+                        + " are not implemented");
+            } else if (err == -EOPNOTSUPP) {
+                throw new RuntimeException("Camera initialization failed because the hal"
+                        + " version is not supported by this device");
+            } else if (err == -EINVAL) {
+                throw new RuntimeException("Camera initialization failed because the input"
+                        + " arugments are invalid");
+            } else if (err == -EBUSY) {
+                throw new RuntimeException("Camera initialization failed because the camera"
+                        + " device was already opened");
+            } else if (err == -EUSERS) {
+                throw new RuntimeException("Camera initialization failed because the max"
+                        + " number of camera devices were already opened");
+            }
+            // Should never hit this.
+            throw new RuntimeException("Unknown camera error");
+        }
+    }
+
+    private int cameraInitVersion(int cameraId, int halVersion) {
         mShutterCallback = null;
         mRawImageCallback = null;
         mJpegCallback = null;
         mPreviewCallback = null;
         mPostviewCallback = null;
+        mUsingPreviewAllocation = false;
         mZoomListener = null;
 
         Looper looper;
@@ -338,9 +462,59 @@ public class Camera {
             mEventHandler = null;
         }
 
-        String packageName = ActivityThread.currentPackageName();
+        return native_setup(new WeakReference<Camera>(this), cameraId, halVersion,
+                ActivityThread.currentOpPackageName());
+    }
 
-        native_setup(new WeakReference<Camera>(this), cameraId, packageName);
+    private int cameraInitNormal(int cameraId) {
+        return cameraInitVersion(cameraId, CAMERA_HAL_API_VERSION_NORMAL_CONNECT);
+    }
+
+    /**
+     * Connect to the camera service using #connectLegacy
+     *
+     * <p>
+     * This acts the same as normal except that it will return
+     * the detailed error code if open fails instead of
+     * converting everything into {@code NO_INIT}.</p>
+     *
+     * <p>Intended to use by the camera2 shim only, do <i>not</i> use this for other code.</p>
+     *
+     * @return a detailed errno error code, or {@code NO_ERROR} on success
+     *
+     * @hide
+     */
+    public int cameraInitUnspecified(int cameraId) {
+        return cameraInitVersion(cameraId, CAMERA_HAL_API_VERSION_UNSPECIFIED);
+    }
+
+    /** used by Camera#open, Camera#open(int) */
+    Camera(int cameraId) {
+        int err = cameraInitNormal(cameraId);
+        if (checkInitErrors(err)) {
+            if (err == -EACCES) {
+                throw new RuntimeException("Fail to connect to camera service");
+            } else if (err == -ENODEV) {
+                throw new RuntimeException("Camera initialization failed");
+            }
+            // Should never hit this.
+            throw new RuntimeException("Unknown camera error");
+        }
+    }
+
+
+    /**
+     * @hide
+     */
+    public static boolean checkInitErrors(int err) {
+        return err != NO_ERROR;
+    }
+
+    /**
+     * @hide
+     */
+    public static Camera openUninitialized() {
+        return new Camera();
     }
 
     /**
@@ -349,11 +523,12 @@ public class Camera {
     Camera() {
     }
 
+    @Override
     protected void finalize() {
         release();
     }
 
-    private native final void native_setup(Object camera_this, int cameraId,
+    private native final int native_setup(Object camera_this, int cameraId, int halVersion,
                                            String packageName);
 
     private native final void native_release();
@@ -451,13 +626,16 @@ public class Camera {
      */
     public final void setPreviewDisplay(SurfaceHolder holder) throws IOException {
         if (holder != null) {
-            setPreviewDisplay(holder.getSurface());
+            setPreviewSurface(holder.getSurface());
         } else {
-            setPreviewDisplay((Surface)null);
+            setPreviewSurface((Surface)null);
         }
     }
 
-    private native final void setPreviewDisplay(Surface surface) throws IOException;
+    /**
+     * @hide
+     */
+    public native final void setPreviewSurface(Surface surface) throws IOException;
 
     /**
      * Sets the {@link SurfaceTexture} to be used for live preview.
@@ -503,7 +681,11 @@ public class Camera {
      * @see #setOneShotPreviewCallback(Camera.PreviewCallback)
      * @see #setPreviewCallbackWithBuffer(Camera.PreviewCallback)
      * @see #startPreview()
+     *
+     * @deprecated We recommend using the new {@link android.hardware.camera2} API for new
+     *             applications.
      */
+    @Deprecated
     public interface PreviewCallback
     {
         /**
@@ -587,6 +769,9 @@ public class Camera {
         mPreviewCallback = cb;
         mOneShot = false;
         mWithBuffer = false;
+        if (cb != null) {
+            mUsingPreviewAllocation = false;
+        }
         // Always use one-shot mode. We fake camera preview mode by
         // doing one-shot preview continuously.
         setHasPreviewCallback(cb != null, false);
@@ -610,6 +795,9 @@ public class Camera {
         mPreviewCallback = cb;
         mOneShot = true;
         mWithBuffer = false;
+        if (cb != null) {
+            mUsingPreviewAllocation = false;
+        }
         setHasPreviewCallback(cb != null, false);
     }
 
@@ -645,6 +833,9 @@ public class Camera {
         mPreviewCallback = cb;
         mOneShot = false;
         mWithBuffer = true;
+        if (cb != null) {
+            mUsingPreviewAllocation = false;
+        }
         setHasPreviewCallback(cb != null, true);
     }
 
@@ -744,9 +935,137 @@ public class Camera {
     private native final void _addCallbackBuffer(
                                 byte[] callbackBuffer, int msgType);
 
+    /**
+     * <p>Create a {@link android.renderscript RenderScript}
+     * {@link android.renderscript.Allocation Allocation} to use as a
+     * destination of preview callback frames. Use
+     * {@link #setPreviewCallbackAllocation setPreviewCallbackAllocation} to use
+     * the created Allocation as a destination for camera preview frames.</p>
+     *
+     * <p>The Allocation will be created with a YUV type, and its contents must
+     * be accessed within Renderscript with the {@code rsGetElementAtYuv_*}
+     * accessor methods. Its size will be based on the current
+     * {@link Parameters#getPreviewSize preview size} configured for this
+     * camera.</p>
+     *
+     * @param rs the RenderScript context for this Allocation.
+     * @param usage additional usage flags to set for the Allocation. The usage
+     *   flag {@link android.renderscript.Allocation#USAGE_IO_INPUT} will always
+     *   be set on the created Allocation, but additional flags may be provided
+     *   here.
+     * @return a new YUV-type Allocation with dimensions equal to the current
+     *   preview size.
+     * @throws RSIllegalArgumentException if the usage flags are not compatible
+     *   with an YUV Allocation.
+     * @see #setPreviewCallbackAllocation
+     * @hide
+     */
+    public final Allocation createPreviewAllocation(RenderScript rs, int usage)
+            throws RSIllegalArgumentException {
+        Parameters p = getParameters();
+        Size previewSize = p.getPreviewSize();
+        Type.Builder yuvBuilder = new Type.Builder(rs,
+                Element.createPixel(rs,
+                        Element.DataType.UNSIGNED_8,
+                        Element.DataKind.PIXEL_YUV));
+        // Use YV12 for wide compatibility. Changing this requires also
+        // adjusting camera service's format selection.
+        yuvBuilder.setYuvFormat(ImageFormat.YV12);
+        yuvBuilder.setX(previewSize.width);
+        yuvBuilder.setY(previewSize.height);
+
+        Allocation a = Allocation.createTyped(rs, yuvBuilder.create(),
+                usage | Allocation.USAGE_IO_INPUT);
+
+        return a;
+    }
+
+    /**
+     * <p>Set an {@link android.renderscript.Allocation Allocation} as the
+     * target of preview callback data. Use this method for efficient processing
+     * of camera preview data with RenderScript. The Allocation must be created
+     * with the {@link #createPreviewAllocation createPreviewAllocation }
+     * method.</p>
+     *
+     * <p>Setting a preview allocation will disable any active preview callbacks
+     * set by {@link #setPreviewCallback setPreviewCallback} or
+     * {@link #setPreviewCallbackWithBuffer setPreviewCallbackWithBuffer}, and
+     * vice versa. Using a preview allocation still requires an active standard
+     * preview target to be set, either with
+     * {@link #setPreviewTexture setPreviewTexture} or
+     * {@link #setPreviewDisplay setPreviewDisplay}.</p>
+     *
+     * <p>To be notified when new frames are available to the Allocation, use
+     * {@link android.renderscript.Allocation#setIoInputNotificationHandler Allocation.setIoInputNotificationHandler}. To
+     * update the frame currently accessible from the Allocation to the latest
+     * preview frame, call
+     * {@link android.renderscript.Allocation#ioReceive Allocation.ioReceive}.</p>
+     *
+     * <p>To disable preview into the Allocation, call this method with a
+     * {@code null} parameter.</p>
+     *
+     * <p>Once a preview allocation is set, the preview size set by
+     * {@link Parameters#setPreviewSize setPreviewSize} cannot be changed. If
+     * you wish to change the preview size, first remove the preview allocation
+     * by calling {@code setPreviewCallbackAllocation(null)}, then change the
+     * preview size, create a new preview Allocation with
+     * {@link #createPreviewAllocation createPreviewAllocation}, and set it as
+     * the new preview callback allocation target.</p>
+     *
+     * <p>If you are using the preview data to create video or still images,
+     * strongly consider using {@link android.media.MediaActionSound} to
+     * properly indicate image capture or recording start/stop to the user.</p>
+     *
+     * @param previewAllocation the allocation to use as destination for preview
+     * @throws IOException if configuring the camera to use the Allocation for
+     *   preview fails.
+     * @throws IllegalArgumentException if the Allocation's dimensions or other
+     *   parameters don't meet the requirements.
+     * @see #createPreviewAllocation
+     * @see #setPreviewCallback
+     * @see #setPreviewCallbackWithBuffer
+     * @hide
+     */
+    public final void setPreviewCallbackAllocation(Allocation previewAllocation)
+            throws IOException {
+        Surface previewSurface = null;
+        if (previewAllocation != null) {
+             Parameters p = getParameters();
+             Size previewSize = p.getPreviewSize();
+             if (previewSize.width != previewAllocation.getType().getX() ||
+                     previewSize.height != previewAllocation.getType().getY()) {
+                 throw new IllegalArgumentException(
+                     "Allocation dimensions don't match preview dimensions: " +
+                     "Allocation is " +
+                     previewAllocation.getType().getX() +
+                     ", " +
+                     previewAllocation.getType().getY() +
+                     ". Preview is " + previewSize.width + ", " +
+                     previewSize.height);
+             }
+             if ((previewAllocation.getUsage() &
+                             Allocation.USAGE_IO_INPUT) == 0) {
+                 throw new IllegalArgumentException(
+                     "Allocation usage does not include USAGE_IO_INPUT");
+             }
+             if (previewAllocation.getType().getElement().getDataKind() !=
+                     Element.DataKind.PIXEL_YUV) {
+                 throw new IllegalArgumentException(
+                     "Allocation is not of a YUV type");
+             }
+             previewSurface = previewAllocation.getSurface();
+             mUsingPreviewAllocation = true;
+         } else {
+             mUsingPreviewAllocation = false;
+         }
+         setPreviewCallbackSurface(previewSurface);
+    }
+
+    private native final void setPreviewCallbackSurface(Surface s);
+
     private class EventHandler extends Handler
     {
-        private Camera mCamera;
+        private final Camera mCamera;
 
         public EventHandler(Camera c, Looper looper) {
             super(looper);
@@ -866,7 +1185,10 @@ public class Camera {
      * manifest element.</p>
      *
      * @see #autoFocus(AutoFocusCallback)
+     * @deprecated We recommend using the new {@link android.hardware.camera2} API for new
+     *             applications.
      */
+    @Deprecated
     public interface AutoFocusCallback
     {
         /**
@@ -977,7 +1299,11 @@ public class Camera {
      * Parameters#FOCUS_MODE_CONTINUOUS_VIDEO} and {@link
      * Parameters#FOCUS_MODE_CONTINUOUS_PICTURE}. Applications can show
      * autofocus animation based on this.</p>
+     *
+     * @deprecated We recommend using the new {@link android.hardware.camera2} API for new
+     *             applications.
      */
+    @Deprecated
     public interface AutoFocusMoveCallback
     {
         /**
@@ -1005,7 +1331,11 @@ public class Camera {
      * Callback interface used to signal the moment of actual image capture.
      *
      * @see #takePicture(ShutterCallback, PictureCallback, PictureCallback, PictureCallback)
+     *
+     * @deprecated We recommend using the new {@link android.hardware.camera2} API for new
+     *             applications.
      */
+    @Deprecated
     public interface ShutterCallback
     {
         /**
@@ -1022,7 +1352,11 @@ public class Camera {
      * Callback interface used to supply image data from a photo capture.
      *
      * @see #takePicture(ShutterCallback, PictureCallback, PictureCallback, PictureCallback)
+     *
+     * @deprecated We recommend using the new {@link android.hardware.camera2} API for new
+     *             applications.
      */
+    @Deprecated
     public interface PictureCallback {
         /**
          * Called when image data is available after a picture is taken.
@@ -1177,9 +1511,15 @@ public class Camera {
      * <p>Starting from API level 14, this method can be called when preview is
      * active.
      *
+     * <p><b>Note: </b>Before API level 24, the default value for orientation is 0. Starting in
+     * API level 24, the default orientation will be such that applications in forced-landscape mode
+     * will have correct preview orientation, which may be either a default of 0 or
+     * 180. Applications that operate in portrait mode or allow for changing orientation must still
+     * call this method after each orientation change to ensure correct preview display in all
+     * cases.</p>
+     *
      * @param degrees the angle that the picture will be rotated clockwise.
-     *                Valid values are 0, 90, 180, and 270. The starting
-     *                position is 0 (landscape).
+     *                Valid values are 0, 90, 180, and 270.
      * @see #setPreviewDisplay(SurfaceHolder)
      */
     public native final void setDisplayOrientation(int degrees);
@@ -1222,6 +1562,26 @@ public class Camera {
         return _enableShutterSound(enabled);
     }
 
+    /**
+     * Disable the shutter sound unconditionally.
+     *
+     * <p>
+     * This is only guaranteed to work for legacy cameras
+     * (i.e. initialized with {@link #cameraInitUnspecified}). Trying to call this on
+     * a regular camera will force a conditional check in the camera service.
+     * </p>
+     *
+     * @return {@code true} if the shutter sound state was successfully
+     *         changed. {@code false} if the shutter sound state could not be
+     *         changed. {@code true} is also returned if shutter sound playback
+     *         is already set to the requested state.
+     *
+     * @hide
+     */
+    public final boolean disableShutterSound() {
+        return _enableShutterSound(/*enabled*/false);
+    }
+
     private native final boolean _enableShutterSound(boolean enabled);
 
     /**
@@ -1229,7 +1589,11 @@ public class Camera {
      *
      * @see #setZoomChangeListener(OnZoomChangeListener)
      * @see #startSmoothZoom(int)
+     *
+     * @deprecated We recommend using the new {@link android.hardware.camera2} API for new
+     *             applications.
      */
+    @Deprecated
     public interface OnZoomChangeListener
     {
         /**
@@ -1259,7 +1623,10 @@ public class Camera {
     /**
      * Callback interface for face detected in the preview frame.
      *
+     * @deprecated We recommend using the new {@link android.hardware.camera2} API for new
+     *             applications.
      */
+    @Deprecated
     public interface FaceDetectionListener
     {
         /**
@@ -1343,7 +1710,10 @@ public class Camera {
      * list of face objects for use in focusing and metering.</p>
      *
      * @see FaceDetectionListener
+     * @deprecated We recommend using the new {@link android.hardware.camera2} API for new
+     *             applications.
      */
+    @Deprecated
     public static class Face {
         /**
          * Create an empty face.
@@ -1438,13 +1808,17 @@ public class Camera {
         public Point mouth = null;
     }
 
-    // Error codes match the enum in include/ui/Camera.h
-
     /**
      * Unspecified camera error.
      * @see Camera.ErrorCallback
      */
     public static final int CAMERA_ERROR_UNKNOWN = 1;
+
+    /**
+     * Camera was disconnected due to use by higher priority user.
+     * @see Camera.ErrorCallback
+     */
+    public static final int CAMERA_ERROR_EVICTED = 2;
 
     /**
      * Media server died. In this case, the application must release the
@@ -1457,7 +1831,11 @@ public class Camera {
      * Callback interface for camera error notification.
      *
      * @see #setErrorCallback(ErrorCallback)
+     *
+     * @deprecated We recommend using the new {@link android.hardware.camera2} API for new
+     *             applications.
      */
+    @Deprecated
     public interface ErrorCallback
     {
         /**
@@ -1492,6 +1870,17 @@ public class Camera {
      * @see #getParameters()
      */
     public void setParameters(Parameters params) {
+        // If using preview allocations, don't allow preview size changes
+        if (mUsingPreviewAllocation) {
+            Size newPreviewSize = params.getPreviewSize();
+            Size currentPreviewSize = getParameters().getPreviewSize();
+            if (newPreviewSize.width != currentPreviewSize.width ||
+                    newPreviewSize.height != currentPreviewSize.height) {
+                throw new IllegalStateException("Cannot change preview size" +
+                        " while a preview allocation is configured.");
+            }
+        }
+
         native_setParameters(params.flatten());
     }
 
@@ -1522,8 +1911,32 @@ public class Camera {
     }
 
     /**
-     * Image size (width and height dimensions).
+     * Returns a copied {@link Parameters}; for shim use only.
+     *
+     * @param parameters a non-{@code null} parameters
+     * @return a Parameter object, with all the parameters copied from {@code parameters}.
+     *
+     * @throws NullPointerException if {@code parameters} was {@code null}
+     * @hide
      */
+    public static Parameters getParametersCopy(Camera.Parameters parameters) {
+        if (parameters == null) {
+            throw new NullPointerException("parameters must not be null");
+        }
+
+        Camera camera = parameters.getOuter();
+        Parameters p = camera.new Parameters();
+        p.copyFrom(parameters);
+
+        return p;
+    }
+
+    /**
+     * Image size (width and height dimensions).
+     * @deprecated We recommend using the new {@link android.hardware.camera2} API for new
+     *             applications.
+     */
+    @Deprecated
     public class Size {
         /**
          * Sets the dimensions for pictures.
@@ -1590,7 +2003,11 @@ public class Camera {
      * @see Parameters#setMeteringAreas(List)
      * @see Parameters#getMeteringAreas()
      * @see Parameters#getMaxNumMeteringAreas()
+     *
+     * @deprecated We recommend using the new {@link android.hardware.camera2} API for new
+     *             applications.
      */
+    @Deprecated
     public static class Area {
         /**
          * Create an area with specified rectangle and weight.
@@ -1664,7 +2081,11 @@ public class Camera {
      * calling {@link Camera.Parameters#setColorEffect(String)}. If the
      * camera does not support color effects,
      * {@link Camera.Parameters#getSupportedColorEffects()} will return null.
+     *
+     * @deprecated We recommend using the new {@link android.hardware.camera2} API for new
+     *             applications.
      */
+    @Deprecated
     public class Parameters {
         // Parameter keys to communicate with the camera driver.
         private static final String KEY_PREVIEW_SIZE = "preview-size";
@@ -1995,10 +2416,52 @@ public class Camera {
         private static final String PIXEL_FORMAT_JPEG = "jpeg";
         private static final String PIXEL_FORMAT_BAYER_RGGB = "bayer-rggb";
 
-        private HashMap<String, String> mMap;
+        /**
+         * Order matters: Keys that are {@link #set(String, String) set} later
+         * will take precedence over keys that are set earlier (if the two keys
+         * conflict with each other).
+         *
+         * <p>One example is {@link #setPreviewFpsRange(int, int)} , since it
+         * conflicts with {@link #setPreviewFrameRate(int)} whichever key is set later
+         * is the one that will take precedence.
+         * </p>
+         */
+        private final LinkedHashMap<String, String> mMap;
 
         private Parameters() {
-            mMap = new HashMap<String, String>(64);
+            mMap = new LinkedHashMap<String, String>(/*initialCapacity*/64);
+        }
+
+        /**
+         * Overwrite existing parameters with a copy of the ones from {@code other}.
+         *
+         * <b>For use by the legacy shim only.</b>
+         *
+         * @hide
+         */
+        public void copyFrom(Parameters other) {
+            if (other == null) {
+                throw new NullPointerException("other must not be null");
+            }
+
+            mMap.putAll(other.mMap);
+        }
+
+        private Camera getOuter() {
+            return Camera.this;
+        }
+
+
+        /**
+         * Value equality check.
+         *
+         * @hide
+         */
+        public boolean same(Parameters other) {
+            if (this == other) {
+                return true;
+            }
+            return other != null && Parameters.this.mMap.equals(other.mMap);
         }
 
         /**
@@ -2006,6 +2469,7 @@ public class Camera {
          * @hide
          * @deprecated
          */
+        @Deprecated
         public void dump() {
             Log.e(TAG, "dump: size=" + mMap.size());
             for (String k : mMap.keySet()) {
@@ -2078,7 +2542,7 @@ public class Camera {
                 return;
             }
 
-            mMap.put(key, value);
+            put(key, value);
         }
 
         /**
@@ -2088,7 +2552,18 @@ public class Camera {
          * @param value the int value of the parameter
          */
         public void set(String key, int value) {
-            mMap.put(key, Integer.toString(value));
+            put(key, Integer.toString(value));
+        }
+
+        private void put(String key, String value) {
+            /*
+             * Remove the key if it already exists.
+             *
+             * This way setting a new value for an already existing key will always move
+             * that key to be ordered the latest in the map.
+             */
+            mMap.remove(key);
+            mMap.put(key, value);
         }
 
         private void set(String key, List<Area> areas) {
@@ -2422,8 +2897,7 @@ public class Camera {
          * <var>y</var> for the Y plane and row <var>c</var> for the U and V
          * planes:
          *
-         * {@code
-         * <pre>
+         * <pre>{@code
          * yStride   = (int) ceil(width / 16.0) * 16;
          * uvStride  = (int) ceil( (yStride / 2) / 16.0) * 16;
          * ySize     = yStride * height;
@@ -2431,8 +2905,9 @@ public class Camera {
          * yRowIndex = yStride * y;
          * uRowIndex = ySize + uvSize + uvStride * c;
          * vRowIndex = ySize + uvStride * c;
-         * size      = ySize + uvSize * 2;</pre>
+         * size      = ySize + uvSize * 2;
          * }
+         *</pre>
          *
          * @param pixel_format the desired preview picture format, defined by
          *   one of the {@link android.graphics.ImageFormat} constants.  (E.g.,
@@ -2578,7 +3053,6 @@ public class Camera {
             case ImageFormat.YV12:      return PIXEL_FORMAT_YUV420P;
             case ImageFormat.RGB_565:   return PIXEL_FORMAT_RGB565;
             case ImageFormat.JPEG:      return PIXEL_FORMAT_JPEG;
-            case ImageFormat.BAYER_RGGB: return PIXEL_FORMAT_BAYER_RGGB;
             default:                    return null;
             }
         }
@@ -2614,21 +3088,24 @@ public class Camera {
          * JPEG {@link PictureCallback}. The camera driver may set orientation
          * in the EXIF header without rotating the picture. Or the driver may
          * rotate the picture and the EXIF thumbnail. If the Jpeg picture is
-         * rotated, the orientation in the EXIF header will be missing or 1
-         * (row #0 is top and column #0 is left side).
+         * rotated, the orientation in the EXIF header will be missing or 1 (row
+         * #0 is top and column #0 is left side).
          *
-         * <p>If applications want to rotate the picture to match the orientation
-         * of what users see, apps should use {@link
-         * android.view.OrientationEventListener} and {@link CameraInfo}.
-         * The value from OrientationEventListener is relative to the natural
-         * orientation of the device. CameraInfo.orientation is the angle
-         * between camera orientation and natural device orientation. The sum
-         * of the two is the rotation angle for back-facing camera. The
-         * difference of the two is the rotation angle for front-facing camera.
-         * Note that the JPEG pictures of front-facing cameras are not mirrored
-         * as in preview display.
+         * <p>
+         * If applications want to rotate the picture to match the orientation
+         * of what users see, apps should use
+         * {@link android.view.OrientationEventListener} and
+         * {@link android.hardware.Camera.CameraInfo}. The value from
+         * OrientationEventListener is relative to the natural orientation of
+         * the device. CameraInfo.orientation is the angle between camera
+         * orientation and natural device orientation. The sum of the two is the
+         * rotation angle for back-facing camera. The difference of the two is
+         * the rotation angle for front-facing camera. Note that the JPEG
+         * pictures of front-facing cameras are not mirrored as in preview
+         * display.
          *
-         * <p>For example, suppose the natural orientation of the device is
+         * <p>
+         * For example, suppose the natural orientation of the device is
          * portrait. The device is rotated 270 degrees clockwise, so the device
          * orientation is 270. Suppose a back-facing camera sensor is mounted in
          * landscape and the top side of the camera sensor is aligned with the
@@ -2711,8 +3188,8 @@ public class Camera {
         }
 
         /**
-         * Sets GPS processing method. It will store up to 32 characters
-         * in JPEG EXIF header.
+         * Sets GPS processing method. The method will be stored in a UTF-8 string up to 31 bytes
+         * long, in the JPEG EXIF header.
          *
          * @param processing_method The processing method to get this location.
          */

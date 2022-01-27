@@ -1025,6 +1025,14 @@ public class BigDecimal extends Number implements Comparable<BigDecimal>, Serial
         }
 
         long diffScale = ((long)this.scale - divisor.scale) - scale;
+
+        // Check whether the diffScale will fit into an int. See http://b/17393664.
+        if (bitLength(diffScale) > 32) {
+            throw new ArithmeticException(
+                    "Unable to perform divisor / dividend scaling: the difference in scale is too" +
+                            " big (" + diffScale + ")");
+        }
+
         if(this.bitLength < 64 && divisor.bitLength < 64 ) {
             if(diffScale == 0) {
                 return dividePrimitiveLongs(this.smallValue,
@@ -1666,26 +1674,20 @@ public class BigDecimal extends Number implements Comparable<BigDecimal>, Serial
     }
 
     /**
-     * Returns a new {@code BigDecimal} whose value is the absolute value of
+     * Returns a {@code BigDecimal} whose value is the absolute value of
      * {@code this}. The scale of the result is the same as the scale of this.
-     *
-     * @return {@code abs(this)}
      */
     public BigDecimal abs() {
         return ((signum() < 0) ? negate() : this);
     }
 
     /**
-     * Returns a new {@code BigDecimal} whose value is the absolute value of
+     * Returns a {@code BigDecimal} whose value is the absolute value of
      * {@code this}. The result is rounded according to the passed context
      * {@code mc}.
-     *
-     * @param mc
-     *            rounding mode and precision for the result of this operation.
-     * @return {@code abs(this)}
      */
     public BigDecimal abs(MathContext mc) {
-        BigDecimal result = abs();
+        BigDecimal result = (signum() < 0) ? negate() : new BigDecimal(getUnscaledValue(), scale);
         result.inplaceRound(mc);
         return result;
     }
@@ -2119,8 +2121,8 @@ public class BigDecimal extends Number implements Comparable<BigDecimal>, Serial
         if (x instanceof BigDecimal) {
             BigDecimal x1 = (BigDecimal) x;
             return x1.scale == scale
-                   && (bitLength < 64 ? (x1.smallValue == smallValue)
-                    : intVal.equals(x1.intVal));
+                    && x1.bitLength == bitLength
+                    && (bitLength < 64 ? (x1.smallValue == smallValue) : x1.intVal.equals(intVal));
         }
         return false;
     }

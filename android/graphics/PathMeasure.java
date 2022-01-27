@@ -35,7 +35,7 @@ public class PathMeasure {
     
     /**
      * Create a PathMeasure object associated with the specified path object
-     * (already created and specified). The meansure object can now return the
+     * (already created and specified). The measure object can now return the
      * path's length, and the position and tangent of any position along the
      * path.
      *
@@ -112,10 +112,29 @@ public class PathMeasure {
      * Given a start and stop distance, return in dst the intervening
      * segment(s). If the segment is zero-length, return false, else return
      * true. startD and stopD are pinned to legal values (0..getLength()).
-     * If startD <= stopD then return false (and leave dst untouched).
-     * Begin the segment with a moveTo if startWithMoveTo is true
+     * If startD >= stopD then return false (and leave dst untouched).
+     * Begin the segment with a moveTo if startWithMoveTo is true.
+     *
+     * <p>On {@link android.os.Build.VERSION_CODES#KITKAT} and earlier
+     * releases, the resulting path may not display on a hardware-accelerated
+     * Canvas. A simple workaround is to add a single operation to this path,
+     * such as <code>dst.rLineTo(0, 0)</code>.</p>
      */
     public boolean getSegment(float startD, float stopD, Path dst, boolean startWithMoveTo) {
+        // Skia used to enforce this as part of it's API, but has since relaxed that restriction
+        // so to maintain consistency in our API we enforce the preconditions here.
+        float length = getLength();
+        if (startD < 0) {
+            startD = 0;
+        }
+        if (stopD > length) {
+            stopD = length;
+        }
+        if (startD >= stopD) {
+            return false;
+        }
+
+        dst.isSimplePath = false;
         return native_getSegment(native_instance, startD, stopD, dst.ni(), startWithMoveTo);
     }
 
@@ -136,18 +155,19 @@ public class PathMeasure {
 
     protected void finalize() throws Throwable {
         native_destroy(native_instance);
+        native_instance = 0;  // Other finalizers can still call us.
     }
 
-    private static native int native_create(int native_path, boolean forceClosed);
-    private static native void native_setPath(int native_instance, int native_path, boolean forceClosed);
-    private static native float native_getLength(int native_instance);
-    private static native boolean native_getPosTan(int native_instance, float distance, float pos[], float tan[]);
-    private static native boolean native_getMatrix(int native_instance, float distance, int native_matrix, int flags);
-    private static native boolean native_getSegment(int native_instance, float startD, float stopD, int native_path, boolean startWithMoveTo);
-    private static native boolean native_isClosed(int native_instance);
-    private static native boolean native_nextContour(int native_instance);
-    private static native void native_destroy(int native_instance);
+    private static native long native_create(long native_path, boolean forceClosed);
+    private static native void native_setPath(long native_instance, long native_path, boolean forceClosed);
+    private static native float native_getLength(long native_instance);
+    private static native boolean native_getPosTan(long native_instance, float distance, float pos[], float tan[]);
+    private static native boolean native_getMatrix(long native_instance, float distance, long native_matrix, int flags);
+    private static native boolean native_getSegment(long native_instance, float startD, float stopD, long native_path, boolean startWithMoveTo);
+    private static native boolean native_isClosed(long native_instance);
+    private static native boolean native_nextContour(long native_instance);
+    private static native void native_destroy(long native_instance);
 
-    /* package */private final int native_instance;
+    /* package */private long native_instance;
 }
 

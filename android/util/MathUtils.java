@@ -20,7 +20,7 @@ import java.util.Random;
 
 /**
  * A class that contains utility methods related to numbers.
- * 
+ *
  * @hide Pending API council approval
  */
 public final class MathUtils {
@@ -32,7 +32,7 @@ public final class MathUtils {
     }
 
     public static float abs(float v) {
-        return v > 0 ? v : -v; 
+        return v > 0 ? v : -v;
     }
 
     public static int constrain(int amount, int low, int high) {
@@ -94,7 +94,7 @@ public final class MathUtils {
     public static float dist(float x1, float y1, float x2, float y2) {
         final float x = (x2 - x1);
         final float y = (y2 - y1);
-        return (float) Math.sqrt(x * x + y * y);
+        return (float) Math.hypot(x, y);
     }
 
     public static float dist(float x1, float y1, float z1, float x2, float y2, float z2) {
@@ -105,7 +105,7 @@ public final class MathUtils {
     }
 
     public static float mag(float a, float b) {
-        return (float) Math.sqrt(a * a + b * b);
+        return (float) Math.hypot(a, b);
     }
 
     public static float mag(float a, float b, float c) {
@@ -114,6 +114,14 @@ public final class MathUtils {
 
     public static float sq(float v) {
         return v * v;
+    }
+
+    public static float dot(float v1x, float v1y, float v2x, float v2y) {
+        return v1x * v2x + v1y * v2y;
+    }
+
+    public static float cross(float v1x, float v1y, float v2x, float v2y) {
+        return v1x * v2y - v1y * v2x;
     }
 
     public static float radians(float degrees) {
@@ -142,16 +150,37 @@ public final class MathUtils {
 
     public static float tan(float angle) {
         return (float) Math.tan(angle);
-    }    
+    }
 
     public static float lerp(float start, float stop, float amount) {
         return start + (stop - start) * amount;
     }
-    
+
+    /**
+     * Returns an interpolated angle in degrees between a set of start and end
+     * angles.
+     * <p>
+     * Unlike {@link #lerp(float, float, float)}, the direction and distance of
+     * travel is determined by the shortest angle between the start and end
+     * angles. For example, if the starting angle is 0 and the ending angle is
+     * 350, then the interpolated angle will be in the range [0,-10] rather
+     * than [0,350].
+     *
+     * @param start the starting angle in degrees
+     * @param end the ending angle in degrees
+     * @param amount the position between start and end in the range [0,1]
+     *               where 0 is the starting angle and 1 is the ending angle
+     * @return the interpolated angle in degrees
+     */
+    public static float lerpDeg(float start, float end, float amount) {
+        final float minAngle = (((end - start) + 180) % 360) - 180;
+        return minAngle * amount + start;
+    }
+
     public static float norm(float start, float stop, float value) {
         return (value - start) / (stop - start);
     }
-    
+
     public static float map(float minStart, float minStop, float maxStart, float maxStop, float value) {
         return maxStart + (maxStart - maxStop) * ((value - minStart) / (minStop - minStart));
     }
@@ -164,7 +193,7 @@ public final class MathUtils {
         if (howsmall >= howbig) return howsmall;
         return (int) (sRandom.nextFloat() * (howbig - howsmall) + howsmall);
     }
-    
+
     public static float random(float howbig) {
         return sRandom.nextFloat() * howbig;
     }
@@ -176,5 +205,25 @@ public final class MathUtils {
 
     public static void randomSeed(long seed) {
         sRandom.setSeed(seed);
+    }
+
+    /**
+     * Returns the sum of the two parameters, or throws an exception if the resulting sum would
+     * cause an overflow or underflow.
+     * @throws IllegalArgumentException when overflow or underflow would occur.
+     */
+    public static int addOrThrow(int a, int b) throws IllegalArgumentException {
+        if (b == 0) {
+            return a;
+        }
+
+        if (b > 0 && a <= (Integer.MAX_VALUE - b)) {
+            return a + b;
+        }
+
+        if (b < 0 && a >= (Integer.MIN_VALUE - b)) {
+            return a + b;
+        }
+        throw new IllegalArgumentException("Addition overflow: " + a + " + " + b);
     }
 }

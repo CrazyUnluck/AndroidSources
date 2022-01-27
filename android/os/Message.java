@@ -71,7 +71,21 @@ public final class Message implements Parcelable {
      */
     public Messenger replyTo;
 
-    /** If set message is in use */
+    /**
+     * Optional field indicating the uid that sent the message.  This is
+     * only valid for messages posted by a {@link Messenger}; otherwise,
+     * it will be -1.
+     */
+    public int sendingUid = -1;
+
+    /** If set message is in use.
+     * This flag is set when the message is enqueued and remains set while it
+     * is delivered and afterwards when it is recycled.  The flag is only cleared
+     * when a new message is created or obtained since that is the only time that
+     * applications are allowed to modify the contents of the message.
+     *
+     * It is an error to attempt to enqueue or recycle a message that is already in use.
+     */
     /*package*/ static final int FLAG_IN_USE = 1 << 0;
 
     /** If set message is asynchronous */
@@ -86,9 +100,9 @@ public final class Message implements Parcelable {
     
     /*package*/ Bundle data;
     
-    /*package*/ Handler target;     
+    /*package*/ Handler target;
     
-    /*package*/ Runnable callback;   
+    /*package*/ Runnable callback;
     
     // sometimes we store linked lists of these things
     /*package*/ Message next;
@@ -98,6 +112,8 @@ public final class Message implements Parcelable {
     private static int sPoolSize = 0;
 
     private static final int MAX_POOL_SIZE = 50;
+
+    private static boolean gCheckRecycle = true;
 
     /**
      * Return a new Message instance from the global pool. Allows us to
@@ -109,6 +125,7 @@ public final class Message implements Parcelable {
                 Message m = sPool;
                 sPool = m.next;
                 m.next = null;
+                m.flags = 0; // clear in-use flag
                 sPoolSize--;
                 return m;
             }
@@ -129,6 +146,7 @@ public final class Message implements Parcelable {
         m.arg2 = orig.arg2;
         m.obj = orig.obj;
         m.replyTo = orig.replyTo;
+        m.sendingUid = orig.sendingUid;
         if (orig.data != null) {
             m.data = new Bundle(orig.data);
         }
@@ -240,13 +258,50 @@ public final class Message implements Parcelable {
         return m;
     }
 
+    /** @hide */
+    public static void updateCheckRecycle(int targetSdkVersion) {
+        if (targetSdkVersion < Build.VERSION_CODES.LOLLIPOP) {
+            gCheckRecycle = false;
+        }
+    }
+
     /**
-     * Return a Message instance to the global pool.  You MUST NOT touch
-     * the Message after calling this function -- it has effectively been
-     * freed.
+     * Return a Message instance to the global pool.
+     * <p>
+     * You MUST NOT touch the Message after calling this function because it has
+     * effectively been freed.  It is an error to recycle a message that is currently
+     * enqueued or that is in the process of being delivered to a Handler.
+     * </p>
      */
     public void recycle() {
-        clearForRecycle();
+        if (isInUse()) {
+            if (gCheckRecycle) {
+                throw new IllegalStateException("This message cannot be recycled because it "
+                        + "is still in use.");
+            }
+            return;
+        }
+        recycleUnchecked();
+    }
+
+    /**
+     * Recycles a Message that may be in-use.
+     * Used internally by the MessageQueue and Looper when disposing of queued Messages.
+     */
+    void recycleUnchecked() {
+        // Mark the message as in use while it remains in the recycled object pool.
+        // Clear out all other details.
+        flags = FLAG_IN_USE;
+        what = 0;
+        arg1 = 0;
+        arg2 = 0;
+        obj = null;
+        replyTo = null;
+        sendingUid = -1;
+        when = 0;
+        target = null;
+        callback = null;
+        data = null;
 
         synchronized (sPoolSync) {
             if (sPoolSize < MAX_POOL_SIZE) {
@@ -269,6 +324,7 @@ public final class Message implements Parcelable {
         this.arg2 = o.arg2;
         this.obj = o.obj;
         this.replyTo = o.replyTo;
+        this.sendingUid = o.sendingUid;
 
         if (o.data != null) {
             this.data = (Bundle) o.data.clone();
@@ -343,7 +399,7 @@ public final class Message implements Parcelable {
     }
 
     /**
-     * Sets a Bundle of arbitrary data values. Use arg1 and arg1 members 
+     * Sets a Bundle of arbitrary data values. Use arg1 and arg2 members
      * as a lower cost way to send a few simple integer values, if you can.
      * @see #getData() 
      * @see #peekData()
@@ -361,38 +417,42 @@ public final class Message implements Parcelable {
     }
 
     /**
-     * Returns true if the message is asynchronous.
-     *
-     * Asynchronous messages represent interrupts or events that do not require global ordering
-     * with represent to synchronous messages.  Asynchronous messages are not subject to
-     * the synchronization barriers introduced by {@link MessageQueue#enqueueSyncBarrier(long)}.
+     * Returns true if the message is asynchronous, meaning that it is not
+     * subject to {@link Looper} synchronization barriers.
      *
      * @return True if the message is asynchronous.
      *
      * @see #setAsynchronous(boolean)
-     * @see MessageQueue#enqueueSyncBarrier(long)
-     * @see MessageQueue#removeSyncBarrier(int)
-     *
-     * @hide
      */
     public boolean isAsynchronous() {
         return (flags & FLAG_ASYNCHRONOUS) != 0;
     }
 
     /**
-     * Sets whether the message is asynchronous.
-     *
-     * Asynchronous messages represent interrupts or events that do not require global ordering
-     * with represent to synchronous messages.  Asynchronous messages are not subject to
-     * the synchronization barriers introduced by {@link MessageQueue#enqueueSyncBarrier(long)}.
+     * Sets whether the message is asynchronous, meaning that it is not
+     * subject to {@link Looper} synchronization barriers.
+     * <p>
+     * Certain operations, such as view invalidation, may introduce synchronization
+     * barriers into the {@link Looper}'s message queue to prevent subsequent messages
+     * from being delivered until some condition is met.  In the case of view invalidation,
+     * messages which are posted after a call to {@link android.view.View#invalidate}
+     * are suspended by means of a synchronization barrier until the next frame is
+     * ready to be drawn.  The synchronization barrier ensures that the invalidation
+     * request is completely handled before resuming.
+     * </p><p>
+     * Asynchronous messages are exempt from synchronization barriers.  They typically
+     * represent interrupts, input events, and other signals that must be handled independently
+     * even while other work has been suspended.
+     * </p><p>
+     * Note that asynchronous messages may be delivered out of order with respect to
+     * synchronous messages although they are always delivered in order among themselves.
+     * If the relative order of these messages matters then they probably should not be
+     * asynchronous in the first place.  Use with caution.
+     * </p>
      *
      * @param async True if the message is asynchronous.
      *
      * @see #isAsynchronous()
-     * @see MessageQueue#enqueueSyncBarrier(long)
-     * @see MessageQueue#removeSyncBarrier(int)
-     *
-     * @hide
      */
     public void setAsynchronous(boolean async) {
         if (async) {
@@ -400,19 +460,6 @@ public final class Message implements Parcelable {
         } else {
             flags &= ~FLAG_ASYNCHRONOUS;
         }
-    }
-
-    /*package*/ void clearForRecycle() {
-        flags = 0;
-        what = 0;
-        arg1 = 0;
-        arg2 = 0;
-        obj = null;
-        replyTo = null;
-        when = 0;
-        target = null;
-        callback = null;
-        data = null;
     }
 
     /*package*/ boolean isInUse() {
@@ -428,36 +475,48 @@ public final class Message implements Parcelable {
     public Message() {
     }
 
+    @Override
     public String toString() {
         return toString(SystemClock.uptimeMillis());
     }
 
     String toString(long now) {
-        StringBuilder   b = new StringBuilder();
-        
-        b.append("{ what=");
-        b.append(what);
+        StringBuilder b = new StringBuilder();
+        b.append("{ when=");
+        TimeUtils.formatDuration(when - now, b);
 
-        b.append(" when=");
-        TimeUtils.formatDuration(when-now, b);
+        if (target != null) {
+            if (callback != null) {
+                b.append(" callback=");
+                b.append(callback.getClass().getName());
+            } else {
+                b.append(" what=");
+                b.append(what);
+            }
 
-        if (arg1 != 0) {
-            b.append(" arg1=");
+            if (arg1 != 0) {
+                b.append(" arg1=");
+                b.append(arg1);
+            }
+
+            if (arg2 != 0) {
+                b.append(" arg2=");
+                b.append(arg2);
+            }
+
+            if (obj != null) {
+                b.append(" obj=");
+                b.append(obj);
+            }
+
+            b.append(" target=");
+            b.append(target.getClass().getName());
+        } else {
+            b.append(" barrier=");
             b.append(arg1);
         }
 
-        if (arg2 != 0) {
-            b.append(" arg2=");
-            b.append(arg2);
-        }
-
-        if (obj != null) {
-            b.append(" obj=");
-            b.append(obj);
-        }
-
         b.append(" }");
-        
         return b.toString();
     }
 
@@ -501,6 +560,7 @@ public final class Message implements Parcelable {
         dest.writeLong(when);
         dest.writeBundle(data);
         Messenger.writeMessengerOrNullToParcel(replyTo, dest);
+        dest.writeInt(sendingUid);
     }
 
     private void readFromParcel(Parcel source) {
@@ -513,5 +573,6 @@ public final class Message implements Parcelable {
         when = source.readLong();
         data = source.readBundle();
         replyTo = Messenger.readMessengerOrNullFromParcel(source);
+        sendingUid = source.readInt();
     }
 }

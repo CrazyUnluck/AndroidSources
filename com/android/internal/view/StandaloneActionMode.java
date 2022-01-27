@@ -46,7 +46,8 @@ public class StandaloneActionMode extends ActionMode implements MenuBuilder.Call
         mContextView = view;
         mCallback = callback;
 
-        mMenu = new MenuBuilder(context).setDefaultShowAsAction(MenuItem.SHOW_AS_ACTION_IF_ROOM);
+        mMenu = new MenuBuilder(view.getContext()).setDefaultShowAsAction(
+                        MenuItem.SHOW_AS_ACTION_IF_ROOM);
         mMenu.setCallback(this);
         mFocusable = isFocusable;
     }
@@ -63,12 +64,12 @@ public class StandaloneActionMode extends ActionMode implements MenuBuilder.Call
 
     @Override
     public void setTitle(int resId) {
-        setTitle(mContext.getString(resId));
+        setTitle(resId != 0 ? mContext.getString(resId) : null);
     }
 
     @Override
     public void setSubtitle(int resId) {
-        setSubtitle(mContext.getString(resId));
+        setSubtitle(resId != 0 ? mContext.getString(resId) : null);
     }
 
     @Override
@@ -126,7 +127,7 @@ public class StandaloneActionMode extends ActionMode implements MenuBuilder.Call
 
     @Override
     public MenuInflater getMenuInflater() {
-        return new MenuInflater(mContext);
+        return new MenuInflater(mContextView.getContext());
     }
 
     public boolean onMenuItemSelected(MenuBuilder menu, MenuItem item) {
@@ -141,7 +142,7 @@ public class StandaloneActionMode extends ActionMode implements MenuBuilder.Call
             return true;
         }
 
-        new MenuPopupHelper(mContext, subMenu).show();
+        new MenuPopupHelper(mContextView.getContext(), subMenu).show();
         return true;
     }
 

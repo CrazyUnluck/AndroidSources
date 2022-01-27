@@ -22,16 +22,16 @@ package android.opengl;
  *
  */
 public class EGLContext extends EGLObjectHandle {
-    private EGLContext(int handle) {
+    private EGLContext(long handle) {
         super(handle);
     }
 
     @Override
     public boolean equals(Object o) {
         if (this == o) return true;
-        if (o == null || getClass() != o.getClass()) return false;
+        if (!(o instanceof EGLContext)) return false;
 
         EGLContext that = (EGLContext) o;
-        return getHandle() == that.getHandle();
+        return getNativeHandle() == that.getNativeHandle();
     }
 }

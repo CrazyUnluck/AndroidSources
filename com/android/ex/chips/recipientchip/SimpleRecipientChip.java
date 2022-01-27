@@ -27,6 +27,10 @@ class SimpleRecipientChip implements BaseRecipientChip {
 
     private final long mContactId;
 
+    private final Long mDirectoryId;
+
+    private final String mLookupKey;
+
     private final long mDataId;
 
     private final RecipientEntry mEntry;
@@ -39,6 +43,8 @@ class SimpleRecipientChip implements BaseRecipientChip {
         mDisplay = entry.getDisplayName();
         mValue = entry.getDestination().trim();
         mContactId = entry.getContactId();
+        mDirectoryId = entry.getDirectoryId();
+        mLookupKey = entry.getLookupKey();
         mDataId = entry.getDataId();
         mEntry = entry;
     }
@@ -66,6 +72,16 @@ class SimpleRecipientChip implements BaseRecipientChip {
     @Override
     public long getContactId() {
         return mContactId;
+    }
+
+    @Override
+    public Long getDirectoryId() {
+        return mDirectoryId;
+    }
+
+    @Override
+    public String getLookupKey() {
+        return mLookupKey;
     }
 
     @Override

@@ -24,7 +24,6 @@ import android.content.Intent;
 import android.content.ServiceConnection;
 import android.os.IBinder;
 import android.os.RemoteException;
-import android.os.ServiceManager;
 import android.util.Log;
 
 import java.util.ArrayList;
@@ -137,44 +136,70 @@ public final class BluetoothPan implements BluetoothProfile {
         } catch (RemoteException re) {
             Log.w(TAG,"Unable to register BluetoothStateChangeCallback",re);
         }
-        Log.d(TAG, "BluetoothPan() call bindService");
-        if (!context.bindService(new Intent(IBluetoothPan.class.getName()),
-                                 mConnection, 0)) {
-            Log.e(TAG, "Could not bind to Bluetooth HID Service");
+        if (VDBG) Log.d(TAG, "BluetoothPan() call bindService");
+        doBind();
+    }
+
+    boolean doBind() {
+        Intent intent = new Intent(IBluetoothPan.class.getName());
+        ComponentName comp = intent.resolveSystemService(mContext.getPackageManager(), 0);
+        intent.setComponent(comp);
+        if (comp == null || !mContext.bindServiceAsUser(intent, mConnection, 0,
+                android.os.Process.myUserHandle())) {
+            Log.e(TAG, "Could not bind to Bluetooth Pan Service with " + intent);
+            return false;
         }
-        Log.d(TAG, "BluetoothPan(), bindService called");
+        return true;
     }
 
     /*package*/ void close() {
         if (VDBG) log("close()");
-        if (mConnection != null) {
-            mContext.unbindService(mConnection);
-            mConnection = null;
+
+        IBluetoothManager mgr = mAdapter.getBluetoothManager();
+        if (mgr != null) {
+            try {
+                mgr.unregisterStateChangeCallback(mStateChangeCallback);
+            } catch (RemoteException re) {
+                Log.w(TAG,"Unable to unregister BluetoothStateChangeCallback",re);
+            }
+        }
+
+        synchronized (mConnection) {
+            if (mPanService != null) {
+                try {
+                    mPanService = null;
+                    mContext.unbindService(mConnection);
+                } catch (Exception re) {
+                    Log.e(TAG,"",re);
+                }
+            }
         }
         mServiceListener = null;
-        try {
-            mAdapter.getBluetoothManager().unregisterStateChangeCallback(mStateChangeCallback);
-        } catch (RemoteException re) {
-            Log.w(TAG,"Unable to register BluetoothStateChangeCallback",re);
-        }
     }
 
     protected void finalize() {
         close();
     }
 
-    private IBluetoothStateChangeCallback mStateChangeCallback = new IBluetoothStateChangeCallback.Stub() {
+    final private IBluetoothStateChangeCallback mStateChangeCallback = new IBluetoothStateChangeCallback.Stub() {
 
         @Override
-        public void onBluetoothStateChange(boolean on) throws RemoteException {
-            //Handle enable request to bind again.
+        public void onBluetoothStateChange(boolean on) {
+            // Handle enable request to bind again.
+            Log.d(TAG, "onBluetoothStateChange on: " + on);
             if (on) {
-                Log.d(TAG, "onBluetoothStateChange(on) call bindService");
-                if (!mContext.bindService(new Intent(IBluetoothPan.class.getName()),
-                                     mConnection, 0)) {
-                    Log.e(TAG, "Could not bind to Bluetooth HID Service");
+                try {
+                    if (mPanService == null) {
+                        if (VDBG) Log.d(TAG, "onBluetoothStateChange calling doBind()");
+                        doBind();
+                    }
+
+                } catch (IllegalStateException e) {
+                    Log.e(TAG,"onBluetoothStateChange: could not bind to PAN service: ", e);
+
+                } catch (SecurityException e) {
+                    Log.e(TAG,"onBluetoothStateChange: could not bind to PAN service: ", e);
                 }
-                Log.d(TAG, "BluetoothPan(), bindService called");
             } else {
                 if (VDBG) Log.d(TAG,"Unbinding service...");
                 synchronized (mConnection) {
@@ -317,24 +342,30 @@ public final class BluetoothPan implements BluetoothProfile {
 
     public void setBluetoothTethering(boolean value) {
         if (DBG) log("setBluetoothTethering(" + value + ")");
-        try {
-            mPanService.setBluetoothTethering(value);
-        } catch (RemoteException e) {
-            Log.e(TAG, "Stack:" + Log.getStackTraceString(new Throwable()));
+
+        if (mPanService != null && isEnabled()) {
+            try {
+                mPanService.setBluetoothTethering(value);
+            } catch (RemoteException e) {
+                Log.e(TAG, "Stack:" + Log.getStackTraceString(new Throwable()));
+            }
         }
     }
 
     public boolean isTetheringOn() {
         if (VDBG) log("isTetheringOn()");
-        try {
-            return mPanService.isTetheringOn();
-        } catch (RemoteException e) {
-            Log.e(TAG, "Stack:" + Log.getStackTraceString(new Throwable()));
+
+        if (mPanService != null && isEnabled()) {
+            try {
+                return mPanService.isTetheringOn();
+            } catch (RemoteException e) {
+                Log.e(TAG, "Stack:" + Log.getStackTraceString(new Throwable()));
+            }
         }
         return false;
     }
 
-    private ServiceConnection mConnection = new ServiceConnection() {
+    private final ServiceConnection mConnection = new ServiceConnection() {
         public void onServiceConnected(ComponentName className, IBinder service) {
             if (DBG) Log.d(TAG, "BluetoothPAN Proxy object connected");
             mPanService = IBluetoothPan.Stub.asInterface(service);

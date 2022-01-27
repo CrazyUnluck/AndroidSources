@@ -22,17 +22,17 @@ import android.view.MenuItem;
  * Helper for accessing features in {@link android.view.Menu}
  * introduced after API level 4 in a backwards compatible fashion.
  */
-public class MenuCompat {
+public final class MenuCompat {
     /**
      * Call {@link MenuItem#setShowAsAction(int) MenuItem.setShowAsAction()}.
-     * If running on a pre-{@link android.os.Build.VERSION_CODES#HONEYCOMB} device,
-     * does nothing and returns false.  Otherwise returns true.
      *
      * @deprecated Use {@link MenuItemCompat#setShowAsAction(MenuItem, int)
      *     MenuItemCompat.setShowAsAction(MenuItem, int)}
      */
     @Deprecated
-    public static boolean setShowAsAction(MenuItem item, int actionEnum) {
-        return MenuItemCompat.setShowAsAction(item, actionEnum);
+    public static void setShowAsAction(MenuItem item, int actionEnum) {
+        MenuItemCompat.setShowAsAction(item, actionEnum);
     }
+
+    private MenuCompat() {}
 }

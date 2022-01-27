@@ -17,10 +17,7 @@
 package com.android.colorpicker;
 
 import android.content.Context;
-import android.graphics.PorterDuff.Mode;
-import android.graphics.drawable.ColorDrawable;
 import android.graphics.drawable.Drawable;
-import android.graphics.drawable.LayerDrawable;
 import android.view.LayoutInflater;
 import android.view.View;
 import android.widget.FrameLayout;

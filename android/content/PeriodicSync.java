@@ -21,68 +21,120 @@ import android.os.Bundle;
 import android.os.Parcel;
 import android.accounts.Account;
 
+import java.util.Objects;
+
 /**
- * Value type that contains information about a periodic sync. Is parcelable, making it suitable
- * for passing in an IPC.
+ * Value type that contains information about a periodic sync.
  */
 public class PeriodicSync implements Parcelable {
-    /** The account to be synced */
+    /** The account to be synced. Can be null. */
     public final Account account;
-    /** The authority of the sync */
+    /** The authority of the sync. Can be null. */
     public final String authority;
     /** Any extras that parameters that are to be passed to the sync adapter. */
     public final Bundle extras;
-    /** How frequently the sync should be scheduled, in seconds. */
+    /** How frequently the sync should be scheduled, in seconds. Kept around for API purposes. */
     public final long period;
+    /**
+     * How much flexibility can be taken in scheduling the sync, in seconds.
+     * {@hide}
+     */
+    public final long flexTime;
 
-    /** Creates a new PeriodicSync, copying the Bundle */
-    public PeriodicSync(Account account, String authority, Bundle extras, long period) {
+      /**
+       * Creates a new PeriodicSync, copying the Bundle. This constructor is no longer used.
+       */
+    public PeriodicSync(Account account, String authority, Bundle extras, long periodInSeconds) {
+        this.account = account;
+        this.authority = authority;
+        if (extras == null) {
+            this.extras = new Bundle();
+        } else {
+            this.extras = new Bundle(extras);
+        }
+        this.period = periodInSeconds;
+        // Old API uses default flex time. No-one should be using this ctor anyway.
+        this.flexTime = 0L;
+    }
+
+    /**
+     * Create a copy of a periodic sync.
+     * {@hide}
+     */
+    public PeriodicSync(PeriodicSync other) {
+        this.account = other.account;
+        this.authority = other.authority;
+        this.extras = new Bundle(other.extras);
+        this.period = other.period;
+        this.flexTime = other.flexTime;
+    }
+
+    /**
+     * A PeriodicSync for a sync with a specified provider.
+     * {@hide}
+     */
+    public PeriodicSync(Account account, String authority, Bundle extras,
+            long period, long flexTime) {
         this.account = account;
         this.authority = authority;
         this.extras = new Bundle(extras);
         this.period = period;
+        this.flexTime = flexTime;
     }
 
+    private PeriodicSync(Parcel in) {
+        this.account = in.readParcelable(null);
+        this.authority = in.readString();
+        this.extras = in.readBundle();
+        this.period = in.readLong();
+        this.flexTime = in.readLong();
+    }
+
+    @Override
     public int describeContents() {
         return 0;
     }
 
+    @Override
     public void writeToParcel(Parcel dest, int flags) {
-        account.writeToParcel(dest, flags);
+        dest.writeParcelable(account, flags);
         dest.writeString(authority);
         dest.writeBundle(extras);
         dest.writeLong(period);
+        dest.writeLong(flexTime);
     }
 
     public static final Creator<PeriodicSync> CREATOR = new Creator<PeriodicSync>() {
+        @Override
         public PeriodicSync createFromParcel(Parcel source) {
-            return new PeriodicSync(Account.CREATOR.createFromParcel(source),
-                    source.readString(), source.readBundle(), source.readLong());
+            return new PeriodicSync(source);
         }
 
+        @Override
         public PeriodicSync[] newArray(int size) {
             return new PeriodicSync[size];
         }
     };
 
+    @Override
     public boolean equals(Object o) {
         if (o == this) {
             return true;
         }
-
         if (!(o instanceof PeriodicSync)) {
             return false;
         }
-
         final PeriodicSync other = (PeriodicSync) o;
-
         return account.equals(other.account)
                 && authority.equals(other.authority)
                 && period == other.period
                 && syncExtrasEquals(extras, other.extras);
     }
 
-    /** {@hide} */
+    /**
+     * Periodic sync extra comparison function.
+     * {@hide}
+     */
     public static boolean syncExtrasEquals(Bundle b1, Bundle b2) {
         if (b1.size() != b2.size()) {
             return false;
@@ -94,10 +146,20 @@ public class PeriodicSync implements Parcelable {
             if (!b2.containsKey(key)) {
                 return false;
             }
-            if (!b1.get(key).equals(b2.get(key))) {
+            // Null check. According to ContentResolver#validateSyncExtrasBundle null-valued keys
+            // are allowed in the bundle.
+            if (!Objects.equals(b1.get(key), b2.get(key))) {
                 return false;
             }
         }
         return true;
+    }
+
+    @Override
+    public String toString() {
+        return "account: " + account +
+               ", authority: " + authority +
+               ". period: " + period + "s " +
+               ", flex: " + flexTime;
     }
 }

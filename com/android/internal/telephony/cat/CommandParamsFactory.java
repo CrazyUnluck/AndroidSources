@@ -25,7 +25,16 @@ import com.android.internal.telephony.uicc.IccFileHandler;
 
 import java.util.Iterator;
 import java.util.List;
-
+import static com.android.internal.telephony.cat.CatCmdMessage.
+                   SetupEventListConstants.USER_ACTIVITY_EVENT;
+import static com.android.internal.telephony.cat.CatCmdMessage.
+                   SetupEventListConstants.IDLE_SCREEN_AVAILABLE_EVENT;
+import static com.android.internal.telephony.cat.CatCmdMessage.
+                   SetupEventListConstants.LANGUAGE_SELECTION_EVENT;
+import static com.android.internal.telephony.cat.CatCmdMessage.
+                   SetupEventListConstants.BROWSER_TERMINATION_EVENT;
+import static com.android.internal.telephony.cat.CatCmdMessage.
+                   SetupEventListConstants.BROWSING_STATUS_EVENT;
 /**
  * Factory class, used for decoding raw byte arrays, received from baseband,
  * into a CommandParams object.
@@ -37,6 +46,7 @@ class CommandParamsFactory extends Handler {
     private CommandParams mCmdParams = null;
     private int mIconLoadState = LOAD_NO_ICON;
     private RilMessageDecoder mCaller = null;
+    private boolean mloadIcon = false;
 
     // constants
     static final int MSG_ID_LOAD_ICON_DONE = 1;
@@ -55,6 +65,22 @@ class CommandParamsFactory extends Handler {
     // Command Qualifier values for PLI command
     static final int DTTZ_SETTING                           = 0x03;
     static final int LANGUAGE_SETTING                       = 0x04;
+
+    // As per TS 102.223 Annex C, Structure of CAT communications,
+    // the APDU length can be max 255 bytes. This leaves only 239 bytes for user
+    // input string. CMD details TLV + Device IDs TLV + Result TLV + Other
+    // details of TextString TLV not including user input take 16 bytes.
+    //
+    // If UCS2 encoding is used, maximum 118 UCS2 chars can be encoded in 238 bytes.
+    // Each UCS2 char takes 2 bytes. Byte Order Mask(BOM), 0xFEFF takes 2 bytes.
+    //
+    // If GSM 7 bit default(use 8 bits to represent a 7 bit char) format is used,
+    // maximum 239 chars can be encoded in 239 bytes since each char takes 1 byte.
+    //
+    // No issues for GSM 7 bit packed format encoding.
+
+    private static final int MAX_GSM7_DEFAULT_CHARS = 239;
+    private static final int MAX_UCS2_CHARS = 118;
 
     static synchronized CommandParamsFactory getInstance(RilMessageDecoder caller,
             IccFileHandler fh) {
@@ -171,6 +197,9 @@ class CommandParamsFactory extends Handler {
              case PLAY_TONE:
                 cmdPending = processPlayTone(cmdDet, ctlvs);
                 break;
+             case SET_UP_EVENT_LIST:
+                 cmdPending = processSetUpEventList(cmdDet, ctlvs);
+                 break;
              case PROVIDE_LOCAL_INFORMATION:
                 cmdPending = processProvideLocalInfo(cmdDet, ctlvs);
                 break;
@@ -211,6 +240,15 @@ class CommandParamsFactory extends Handler {
         int iconIndex = 0;
 
         if (data == null) {
+            CatLog.d(this, "Optional Icon data is NULL");
+            mCmdParams.mLoadIconFailed = true;
+            mloadIcon = false;
+            /** In case of icon load fail consider the
+            ** received proactive command as valid (sending RESULT OK) as
+            ** The result code, 'PRFRMD_ICON_NOT_DISPLAYED' will be added in the
+            ** terminal response by CatService/StkAppService if needed based on
+            ** the value of mLoadIconFailed.
+            */
             return ResultCode.OK;
         }
         switch(mIconLoadState) {
@@ -222,6 +260,10 @@ class CommandParamsFactory extends Handler {
             // set each item icon.
             for (Bitmap icon : icons) {
                 mCmdParams.setIcon(icon);
+                if (icon == null && mloadIcon) {
+                    CatLog.d(this, "Optional Icon data is NULL while loading multi icons");
+                    mCmdParams.mLoadIconFailed = true;
+                }
             }
             break;
         }
@@ -324,6 +366,7 @@ class CommandParamsFactory extends Handler {
         mCmdParams = new DisplayTextParams(cmdDet, textMsg);
 
         if (iconId != null) {
+            mloadIcon = true;
             mIconLoadState = LOAD_SINGLE_ICON;
             mIconLoader.loadIcon(iconId.recordNumber, this
                     .obtainMessage(MSG_ID_LOAD_ICON_DONE));
@@ -355,18 +398,25 @@ class CommandParamsFactory extends Handler {
         if (ctlv != null) {
             textMsg.text = ValueParser.retrieveTextString(ctlv);
         }
-        // load icons only when text exist.
-        if (textMsg.text != null) {
-            ctlv = searchForTag(ComprehensionTlvTag.ICON_ID, ctlvs);
-            if (ctlv != null) {
-                iconId = ValueParser.retrieveIconId(ctlv);
-                textMsg.iconSelfExplanatory = iconId.selfExplanatory;
-            }
+
+        ctlv = searchForTag(ComprehensionTlvTag.ICON_ID, ctlvs);
+        if (ctlv != null) {
+            iconId = ValueParser.retrieveIconId(ctlv);
+            textMsg.iconSelfExplanatory = iconId.selfExplanatory;
         }
 
+        /*
+         * If the tlv object doesn't contain text and the icon is not self
+         * explanatory then reply with command not understood.
+         */
+
+        if (textMsg.text == null && iconId != null && !textMsg.iconSelfExplanatory) {
+            throw new ResultException(ResultCode.CMD_DATA_NOT_UNDERSTOOD);
+        }
         mCmdParams = new DisplayTextParams(cmdDet, textMsg);
 
         if (iconId != null) {
+            mloadIcon = true;
             mIconLoadState = LOAD_SINGLE_ICON;
             mIconLoader.loadIcon(iconId.recordNumber, this
                     .obtainMessage(MSG_ID_LOAD_ICON_DONE));
@@ -424,6 +474,7 @@ class CommandParamsFactory extends Handler {
         mCmdParams = new GetInputParams(cmdDet, input);
 
         if (iconId != null) {
+            mloadIcon = true;
             mIconLoadState = LOAD_SINGLE_ICON;
             mIconLoader.loadIcon(iconId.recordNumber, this
                     .obtainMessage(MSG_ID_LOAD_ICON_DONE));
@@ -488,9 +539,22 @@ class CommandParamsFactory extends Handler {
         input.packed = (cmdDet.commandQualifier & 0x08) != 0;
         input.helpAvailable = (cmdDet.commandQualifier & 0x80) != 0;
 
+        // Truncate the maxLen if it exceeds the max number of chars that can
+        // be encoded. Limit depends on DCS in Command Qualifier.
+        if (input.ucs2 && input.maxLen > MAX_UCS2_CHARS) {
+            CatLog.d(this, "UCS2: received maxLen = " + input.maxLen +
+                  ", truncating to " + MAX_UCS2_CHARS);
+            input.maxLen = MAX_UCS2_CHARS;
+        } else if (!input.packed && input.maxLen > MAX_GSM7_DEFAULT_CHARS) {
+            CatLog.d(this, "GSM 7Bit Default: received maxLen = " + input.maxLen +
+                  ", truncating to " + MAX_GSM7_DEFAULT_CHARS);
+            input.maxLen = MAX_GSM7_DEFAULT_CHARS;
+        }
+
         mCmdParams = new GetInputParams(cmdDet, input);
 
         if (iconId != null) {
+            mloadIcon = true;
             mIconLoadState = LOAD_SINGLE_ICON;
             mIconLoader.loadIcon(iconId.recordNumber, this
                     .obtainMessage(MSG_ID_LOAD_ICON_DONE));
@@ -604,6 +668,7 @@ class CommandParamsFactory extends Handler {
         case LOAD_NO_ICON:
             return false;
         case LOAD_SINGLE_ICON:
+            mloadIcon = true;
             mIconLoader.loadIcon(titleIconId.recordNumber, this
                     .obtainMessage(MSG_ID_LOAD_ICON_DONE));
             break;
@@ -616,6 +681,7 @@ class CommandParamsFactory extends Handler {
                 System.arraycopy(itemsIconId.recordNumbers, 0, recordNumbers,
                         1, itemsIconId.recordNumbers.length);
             }
+            mloadIcon = true;
             mIconLoader.loadIcons(recordNumbers, this
                     .obtainMessage(MSG_ID_LOAD_ICON_DONE));
             break;
@@ -654,10 +720,61 @@ class CommandParamsFactory extends Handler {
         mCmdParams = new DisplayTextParams(cmdDet, textMsg);
 
         if (iconId != null) {
+            mloadIcon = true;
             mIconLoadState = LOAD_SINGLE_ICON;
             mIconLoader.loadIcon(iconId.recordNumber, this
                     .obtainMessage(MSG_ID_LOAD_ICON_DONE));
             return true;
+        }
+        return false;
+    }
+
+    /**
+     * Processes SET_UP_EVENT_LIST proactive command from the SIM card.
+     *
+     * @param cmdDet Command Details object retrieved.
+     * @param ctlvs List of ComprehensionTlv objects following Command Details
+     *        object and Device Identities object within the proactive command
+     * @return false. This function always returns false meaning that the command
+     *         processing is  not pending and additional asynchronous processing
+     *         is not required.
+     */
+    private boolean processSetUpEventList(CommandDetails cmdDet,
+            List<ComprehensionTlv> ctlvs) {
+
+        CatLog.d(this, "process SetUpEventList");
+        ComprehensionTlv ctlv = searchForTag(ComprehensionTlvTag.EVENT_LIST, ctlvs);
+        if (ctlv != null) {
+            try {
+                byte[] rawValue = ctlv.getRawValue();
+                int valueIndex = ctlv.getValueIndex();
+                int valueLen = ctlv.getLength();
+                int[] eventList = new int[valueLen];
+                int eventValue = -1;
+                int i = 0;
+                while (valueLen > 0) {
+                    eventValue = rawValue[valueIndex] & 0xff;
+                    valueIndex++;
+                    valueLen--;
+
+                    switch (eventValue) {
+                        case USER_ACTIVITY_EVENT:
+                        case IDLE_SCREEN_AVAILABLE_EVENT:
+                        case LANGUAGE_SELECTION_EVENT:
+                        case BROWSER_TERMINATION_EVENT:
+                        case BROWSING_STATUS_EVENT:
+                            eventList[i] = eventValue;
+                            i++;
+                            break;
+                        default:
+                            break;
+                    }
+
+                }
+                mCmdParams = new SetEventListParams(cmdDet, eventList);
+            } catch (IndexOutOfBoundsException e) {
+                CatLog.e(this, " IndexOutofBoundException in processSetUpEventList");
+            }
         }
         return false;
     }
@@ -920,5 +1037,13 @@ class CommandParamsFactory extends Handler {
             return true;
         }
         return false;
+    }
+
+    public void dispose() {
+        mIconLoader.dispose();
+        mIconLoader = null;
+        mCmdParams = null;
+        mCaller = null;
+        sInstance = null;
     }
 }

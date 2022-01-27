@@ -23,9 +23,7 @@ import android.content.Context;
 import android.content.DialogInterface;
 import android.content.Intent;
 import android.content.IntentFilter;
-import android.graphics.Typeface;
 import android.hardware.usb.IUsbManager;
-import android.hardware.usb.UsbDevice;
 import android.hardware.usb.UsbManager;
 import android.os.Bundle;
 import android.os.IBinder;
@@ -35,12 +33,9 @@ import android.util.Log;
 import android.view.LayoutInflater;
 import android.view.View;
 import android.widget.CheckBox;
-import android.widget.LinearLayout;
-import android.widget.TextView;
 
 import com.android.internal.app.AlertActivity;
 import com.android.internal.app.AlertController;
-
 import com.android.systemui.R;
 
 public class UsbDebuggingActivity extends AlertActivity
@@ -70,7 +65,6 @@ public class UsbDebuggingActivity extends AlertActivity
 
         final AlertController.AlertParams ap = mAlertParams;
         ap.mTitle = getString(R.string.usb_debugging_title);
-        ap.mIconId = com.android.internal.R.drawable.ic_dialog_usb;
         ap.mMessage = getString(R.string.usb_debugging_message, fingerprints);
         ap.mPositiveButtonText = getString(android.R.string.ok);
         ap.mNegativeButtonText = getString(android.R.string.cancel);

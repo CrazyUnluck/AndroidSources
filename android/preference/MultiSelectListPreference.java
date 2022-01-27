@@ -16,6 +16,7 @@
 
 package android.preference;
 
+import android.annotation.ArrayRes;
 import android.app.AlertDialog.Builder;
 import android.content.Context;
 import android.content.DialogInterface;
@@ -44,15 +45,25 @@ public class MultiSelectListPreference extends DialogPreference {
     private Set<String> mValues = new HashSet<String>();
     private Set<String> mNewValues = new HashSet<String>();
     private boolean mPreferenceChanged;
-    
-    public MultiSelectListPreference(Context context, AttributeSet attrs) {
-        super(context, attrs);
-        
-        TypedArray a = context.obtainStyledAttributes(attrs,
-                com.android.internal.R.styleable.MultiSelectListPreference, 0, 0);
+
+    public MultiSelectListPreference(
+            Context context, AttributeSet attrs, int defStyleAttr, int defStyleRes) {
+        super(context, attrs, defStyleAttr, defStyleRes);
+
+        final TypedArray a = context.obtainStyledAttributes(attrs,
+                com.android.internal.R.styleable.MultiSelectListPreference, defStyleAttr,
+                defStyleRes);
         mEntries = a.getTextArray(com.android.internal.R.styleable.MultiSelectListPreference_entries);
         mEntryValues = a.getTextArray(com.android.internal.R.styleable.MultiSelectListPreference_entryValues);
         a.recycle();
+    }
+
+    public MultiSelectListPreference(Context context, AttributeSet attrs, int defStyleAttr) {
+        this(context, attrs, defStyleAttr, 0);
+    }
+
+    public MultiSelectListPreference(Context context, AttributeSet attrs) {
+        this(context, attrs, com.android.internal.R.attr.dialogPreferenceStyle);
     }
     
     public MultiSelectListPreference(Context context) {
@@ -77,7 +88,7 @@ public class MultiSelectListPreference extends DialogPreference {
      * @see #setEntries(CharSequence[])
      * @param entriesResId The entries array as a resource.
      */
-    public void setEntries(int entriesResId) {
+    public void setEntries(@ArrayRes int entriesResId) {
         setEntries(getContext().getResources().getTextArray(entriesResId));
     }
     
@@ -105,7 +116,7 @@ public class MultiSelectListPreference extends DialogPreference {
      * @see #setEntryValues(CharSequence[])
      * @param entryValuesResId The entry values array as a resource.
      */
-    public void setEntryValues(int entryValuesResId) {
+    public void setEntryValues(@ArrayRes int entryValuesResId) {
         setEntryValues(getContext().getResources().getTextArray(entryValuesResId));
     }
     

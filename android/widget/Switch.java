@@ -16,14 +16,22 @@
 
 package android.widget;
 
+import android.animation.ObjectAnimator;
+import android.annotation.DrawableRes;
+import android.annotation.NonNull;
+import android.annotation.Nullable;
+import android.annotation.StyleRes;
 import android.content.Context;
 import android.content.res.ColorStateList;
 import android.content.res.Resources;
 import android.content.res.TypedArray;
 import android.graphics.Canvas;
+import android.graphics.Insets;
 import android.graphics.Paint;
+import android.graphics.PorterDuff;
 import android.graphics.Rect;
 import android.graphics.Typeface;
+import android.graphics.Region.Op;
 import android.graphics.drawable.Drawable;
 import android.text.Layout;
 import android.text.StaticLayout;
@@ -32,9 +40,13 @@ import android.text.TextUtils;
 import android.text.method.AllCapsTransformationMethod;
 import android.text.method.TransformationMethod2;
 import android.util.AttributeSet;
+import android.util.FloatProperty;
+import android.util.MathUtils;
 import android.view.Gravity;
 import android.view.MotionEvent;
+import android.view.SoundEffectConstants;
 import android.view.VelocityTracker;
+import android.view.ViewStructure;
 import android.view.ViewConfiguration;
 import android.view.accessibility.AccessibilityEvent;
 import android.view.accessibility.AccessibilityNodeInfo;
@@ -51,7 +63,7 @@ import com.android.internal.R;
  * {@link #setTextAppearance(android.content.Context, int) textAppearance} and the related
  * setTypeface() methods control the typeface and style of label text, whereas the
  * {@link #setSwitchTextAppearance(android.content.Context, int) switchTextAppearance} and
- * the related seSwitchTypeface() methods control that of the thumb.
+ * the related setSwitchTypeface() methods control that of the thumb.
  *
  * <p>See the <a href="{@docRoot}guide/topics/ui/controls/togglebutton.html">Toggle Buttons</a>
  * guide.</p>
@@ -66,6 +78,8 @@ import com.android.internal.R;
  * @attr ref android.R.styleable#Switch_track
  */
 public class Switch extends CompoundButton {
+    private static final int THUMB_ANIMATION_DURATION = 250;
+
     private static final int TOUCH_MODE_IDLE = 0;
     private static final int TOUCH_MODE_DOWN = 1;
     private static final int TOUCH_MODE_DRAGGING = 2;
@@ -76,12 +90,24 @@ public class Switch extends CompoundButton {
     private static final int MONOSPACE = 3;
 
     private Drawable mThumbDrawable;
+    private ColorStateList mThumbTintList = null;
+    private PorterDuff.Mode mThumbTintMode = null;
+    private boolean mHasThumbTint = false;
+    private boolean mHasThumbTintMode = false;
+
     private Drawable mTrackDrawable;
+    private ColorStateList mTrackTintList = null;
+    private PorterDuff.Mode mTrackTintMode = null;
+    private boolean mHasTrackTint = false;
+    private boolean mHasTrackTintMode = false;
+
     private int mThumbTextPadding;
     private int mSwitchMinWidth;
     private int mSwitchPadding;
+    private boolean mSplitTrack;
     private CharSequence mTextOn;
     private CharSequence mTextOff;
+    private boolean mShowText;
 
     private int mTouchMode;
     private int mTouchSlop;
@@ -91,13 +117,35 @@ public class Switch extends CompoundButton {
     private int mMinFlingVelocity;
 
     private float mThumbPosition;
-    private int mSwitchWidth;
-    private int mSwitchHeight;
-    private int mThumbWidth; // Does not include padding
 
+    /**
+     * Width required to draw the switch track and thumb. Includes padding and
+     * optical bounds for both the track and thumb.
+     */
+    private int mSwitchWidth;
+
+    /**
+     * Height required to draw the switch track and thumb. Includes padding and
+     * optical bounds for both the track and thumb.
+     */
+    private int mSwitchHeight;
+
+    /**
+     * Width of the thumb's content region. Does not include padding or
+     * optical bounds.
+     */
+    private int mThumbWidth;
+
+    /** Left bound for drawing the switch track and thumb. */
     private int mSwitchLeft;
+
+    /** Top bound for drawing the switch track and thumb. */
     private int mSwitchTop;
+
+    /** Right bound for drawing the switch track and thumb. */
     private int mSwitchRight;
+
+    /** Bottom bound for drawing the switch track and thumb. */
     private int mSwitchBottom;
 
     private TextPaint mTextPaint;
@@ -105,6 +153,7 @@ public class Switch extends CompoundButton {
     private Layout mOnLayout;
     private Layout mOffLayout;
     private TransformationMethod2 mSwitchTransformationMethod;
+    private ObjectAnimator mPositionAnimator;
 
     @SuppressWarnings("hiding")
     private final Rect mTempRect = new Rect();
@@ -139,39 +188,101 @@ public class Switch extends CompoundButton {
      *
      * @param context The Context that will determine this widget's theming.
      * @param attrs Specification of attributes that should deviate from the default styling.
-     * @param defStyle An attribute ID within the active theme containing a reference to the
-     *                 default style for this widget. e.g. android.R.attr.switchStyle.
+     * @param defStyleAttr An attribute in the current theme that contains a
+     *        reference to a style resource that supplies default values for
+     *        the view. Can be 0 to not look for defaults.
      */
-    public Switch(Context context, AttributeSet attrs, int defStyle) {
-        super(context, attrs, defStyle);
+    public Switch(Context context, AttributeSet attrs, int defStyleAttr) {
+        this(context, attrs, defStyleAttr, 0);
+    }
+
+
+    /**
+     * Construct a new Switch with a default style determined by the given theme
+     * attribute or style resource, overriding specific style attributes as
+     * requested.
+     *
+     * @param context The Context that will determine this widget's theming.
+     * @param attrs Specification of attributes that should deviate from the
+     *        default styling.
+     * @param defStyleAttr An attribute in the current theme that contains a
+     *        reference to a style resource that supplies default values for
+     *        the view. Can be 0 to not look for defaults.
+     * @param defStyleRes A resource identifier of a style resource that
+     *        supplies default values for the view, used only if
+     *        defStyleAttr is 0 or can not be found in the theme. Can be 0
+     *        to not look for defaults.
+     */
+    public Switch(Context context, AttributeSet attrs, int defStyleAttr, int defStyleRes) {
+        super(context, attrs, defStyleAttr, defStyleRes);
 
         mTextPaint = new TextPaint(Paint.ANTI_ALIAS_FLAG);
-        Resources res = getResources();
+
+        final Resources res = getResources();
         mTextPaint.density = res.getDisplayMetrics().density;
         mTextPaint.setCompatibilityScaling(res.getCompatibilityInfo().applicationScale);
 
-        TypedArray a = context.obtainStyledAttributes(attrs,
-                com.android.internal.R.styleable.Switch, defStyle, 0);
-
+        final TypedArray a = context.obtainStyledAttributes(
+                attrs, com.android.internal.R.styleable.Switch, defStyleAttr, defStyleRes);
         mThumbDrawable = a.getDrawable(com.android.internal.R.styleable.Switch_thumb);
+        if (mThumbDrawable != null) {
+            mThumbDrawable.setCallback(this);
+        }
         mTrackDrawable = a.getDrawable(com.android.internal.R.styleable.Switch_track);
+        if (mTrackDrawable != null) {
+            mTrackDrawable.setCallback(this);
+        }
         mTextOn = a.getText(com.android.internal.R.styleable.Switch_textOn);
         mTextOff = a.getText(com.android.internal.R.styleable.Switch_textOff);
+        mShowText = a.getBoolean(com.android.internal.R.styleable.Switch_showText, true);
         mThumbTextPadding = a.getDimensionPixelSize(
                 com.android.internal.R.styleable.Switch_thumbTextPadding, 0);
         mSwitchMinWidth = a.getDimensionPixelSize(
                 com.android.internal.R.styleable.Switch_switchMinWidth, 0);
         mSwitchPadding = a.getDimensionPixelSize(
                 com.android.internal.R.styleable.Switch_switchPadding, 0);
+        mSplitTrack = a.getBoolean(com.android.internal.R.styleable.Switch_splitTrack, false);
 
-        int appearance = a.getResourceId(
+        ColorStateList thumbTintList = a.getColorStateList(
+                com.android.internal.R.styleable.Switch_thumbTint);
+        if (thumbTintList != null) {
+            mThumbTintList = thumbTintList;
+            mHasThumbTint = true;
+        }
+        PorterDuff.Mode thumbTintMode = Drawable.parseTintMode(
+                a.getInt(com.android.internal.R.styleable.Switch_thumbTintMode, -1), null);
+        if (mThumbTintMode != thumbTintMode) {
+            mThumbTintMode = thumbTintMode;
+            mHasThumbTintMode = true;
+        }
+        if (mHasThumbTint || mHasThumbTintMode) {
+            applyThumbTint();
+        }
+
+        ColorStateList trackTintList = a.getColorStateList(
+                com.android.internal.R.styleable.Switch_trackTint);
+        if (trackTintList != null) {
+            mTrackTintList = trackTintList;
+            mHasTrackTint = true;
+        }
+        PorterDuff.Mode trackTintMode = Drawable.parseTintMode(
+                a.getInt(com.android.internal.R.styleable.Switch_trackTintMode, -1), null);
+        if (mTrackTintMode != trackTintMode) {
+            mTrackTintMode = trackTintMode;
+            mHasTrackTintMode = true;
+        }
+        if (mHasTrackTint || mHasTrackTintMode) {
+            applyTrackTint();
+        }
+
+        final int appearance = a.getResourceId(
                 com.android.internal.R.styleable.Switch_switchTextAppearance, 0);
         if (appearance != 0) {
             setSwitchTextAppearance(context, appearance);
         }
         a.recycle();
 
-        ViewConfiguration config = ViewConfiguration.get(context);
+        final ViewConfiguration config = ViewConfiguration.get(context);
         mTouchSlop = config.getScaledTouchSlop();
         mMinFlingVelocity = config.getScaledMinimumFlingVelocity();
 
@@ -186,7 +297,7 @@ public class Switch extends CompoundButton {
      *
      * @attr ref android.R.styleable#Switch_switchTextAppearance
      */
-    public void setSwitchTextAppearance(Context context, int resid) {
+    public void setSwitchTextAppearance(Context context, @StyleRes int resid) {
         TypedArray appearance =
                 context.obtainStyledAttributes(resid,
                         com.android.internal.R.styleable.TextAppearance);
@@ -377,7 +488,13 @@ public class Switch extends CompoundButton {
      * @attr ref android.R.styleable#Switch_track
      */
     public void setTrackDrawable(Drawable track) {
+        if (mTrackDrawable != null) {
+            mTrackDrawable.setCallback(null);
+        }
         mTrackDrawable = track;
+        if (track != null) {
+            track.setCallback(this);
+        }
         requestLayout();
     }
 
@@ -388,8 +505,8 @@ public class Switch extends CompoundButton {
      *
      * @attr ref android.R.styleable#Switch_track
      */
-    public void setTrackResource(int resId) {
-        setTrackDrawable(getContext().getResources().getDrawable(resId));
+    public void setTrackResource(@DrawableRes int resId) {
+        setTrackDrawable(getContext().getDrawable(resId));
     }
 
     /**
@@ -404,6 +521,86 @@ public class Switch extends CompoundButton {
     }
 
     /**
+     * Applies a tint to the track drawable. Does not modify the current
+     * tint mode, which is {@link PorterDuff.Mode#SRC_IN} by default.
+     * <p>
+     * Subsequent calls to {@link #setTrackDrawable(Drawable)} will
+     * automatically mutate the drawable and apply the specified tint and tint
+     * mode using {@link Drawable#setTintList(ColorStateList)}.
+     *
+     * @param tint the tint to apply, may be {@code null} to clear tint
+     *
+     * @attr ref android.R.styleable#Switch_trackTint
+     * @see #getTrackTintList()
+     * @see Drawable#setTintList(ColorStateList)
+     */
+    public void setTrackTintList(@Nullable ColorStateList tint) {
+        mTrackTintList = tint;
+        mHasTrackTint = true;
+
+        applyTrackTint();
+    }
+
+    /**
+     * @return the tint applied to the track drawable
+     * @attr ref android.R.styleable#Switch_trackTint
+     * @see #setTrackTintList(ColorStateList)
+     */
+    @Nullable
+    public ColorStateList getTrackTintList() {
+        return mTrackTintList;
+    }
+
+    /**
+     * Specifies the blending mode used to apply the tint specified by
+     * {@link #setTrackTintList(ColorStateList)}} to the track drawable.
+     * The default mode is {@link PorterDuff.Mode#SRC_IN}.
+     *
+     * @param tintMode the blending mode used to apply the tint, may be
+     *                 {@code null} to clear tint
+     * @attr ref android.R.styleable#Switch_trackTintMode
+     * @see #getTrackTintMode()
+     * @see Drawable#setTintMode(PorterDuff.Mode)
+     */
+    public void setTrackTintMode(@Nullable PorterDuff.Mode tintMode) {
+        mTrackTintMode = tintMode;
+        mHasTrackTintMode = true;
+
+        applyTrackTint();
+    }
+
+    /**
+     * @return the blending mode used to apply the tint to the track
+     *         drawable
+     * @attr ref android.R.styleable#Switch_trackTintMode
+     * @see #setTrackTintMode(PorterDuff.Mode)
+     */
+    @Nullable
+    public PorterDuff.Mode getTrackTintMode() {
+        return mTrackTintMode;
+    }
+
+    private void applyTrackTint() {
+        if (mTrackDrawable != null && (mHasTrackTint || mHasTrackTintMode)) {
+            mTrackDrawable = mTrackDrawable.mutate();
+
+            if (mHasTrackTint) {
+                mTrackDrawable.setTintList(mTrackTintList);
+            }
+
+            if (mHasTrackTintMode) {
+                mTrackDrawable.setTintMode(mTrackTintMode);
+            }
+
+            // The drawable (or one of its children) may not have been
+            // stateful before applying the tint, so let's try again.
+            if (mTrackDrawable.isStateful()) {
+                mTrackDrawable.setState(getDrawableState());
+            }
+        }
+    }
+
+    /**
      * Set the drawable used for the switch "thumb" - the piece that the user
      * can physically touch and drag along the track.
      *
@@ -412,7 +609,13 @@ public class Switch extends CompoundButton {
      * @attr ref android.R.styleable#Switch_thumb
      */
     public void setThumbDrawable(Drawable thumb) {
+        if (mThumbDrawable != null) {
+            mThumbDrawable.setCallback(null);
+        }
         mThumbDrawable = thumb;
+        if (thumb != null) {
+            thumb.setCallback(this);
+        }
         requestLayout();
     }
 
@@ -424,8 +627,8 @@ public class Switch extends CompoundButton {
      *
      * @attr ref android.R.styleable#Switch_thumb
      */
-    public void setThumbResource(int resId) {
-        setThumbDrawable(getContext().getResources().getDrawable(resId));
+    public void setThumbResource(@DrawableRes int resId) {
+        setThumbDrawable(getContext().getDrawable(resId));
     }
 
     /**
@@ -438,6 +641,109 @@ public class Switch extends CompoundButton {
      */
     public Drawable getThumbDrawable() {
         return mThumbDrawable;
+    }
+
+    /**
+     * Applies a tint to the thumb drawable. Does not modify the current
+     * tint mode, which is {@link PorterDuff.Mode#SRC_IN} by default.
+     * <p>
+     * Subsequent calls to {@link #setThumbDrawable(Drawable)} will
+     * automatically mutate the drawable and apply the specified tint and tint
+     * mode using {@link Drawable#setTintList(ColorStateList)}.
+     *
+     * @param tint the tint to apply, may be {@code null} to clear tint
+     *
+     * @attr ref android.R.styleable#Switch_thumbTint
+     * @see #getThumbTintList()
+     * @see Drawable#setTintList(ColorStateList)
+     */
+    public void setThumbTintList(@Nullable ColorStateList tint) {
+        mThumbTintList = tint;
+        mHasThumbTint = true;
+
+        applyThumbTint();
+    }
+
+    /**
+     * @return the tint applied to the thumb drawable
+     * @attr ref android.R.styleable#Switch_thumbTint
+     * @see #setThumbTintList(ColorStateList)
+     */
+    @Nullable
+    public ColorStateList getThumbTintList() {
+        return mThumbTintList;
+    }
+
+    /**
+     * Specifies the blending mode used to apply the tint specified by
+     * {@link #setThumbTintList(ColorStateList)}} to the thumb drawable.
+     * The default mode is {@link PorterDuff.Mode#SRC_IN}.
+     *
+     * @param tintMode the blending mode used to apply the tint, may be
+     *                 {@code null} to clear tint
+     * @attr ref android.R.styleable#Switch_thumbTintMode
+     * @see #getThumbTintMode()
+     * @see Drawable#setTintMode(PorterDuff.Mode)
+     */
+    public void setThumbTintMode(@Nullable PorterDuff.Mode tintMode) {
+        mThumbTintMode = tintMode;
+        mHasThumbTintMode = true;
+
+        applyThumbTint();
+    }
+
+    /**
+     * @return the blending mode used to apply the tint to the thumb
+     *         drawable
+     * @attr ref android.R.styleable#Switch_thumbTintMode
+     * @see #setThumbTintMode(PorterDuff.Mode)
+     */
+    @Nullable
+    public PorterDuff.Mode getThumbTintMode() {
+        return mThumbTintMode;
+    }
+
+    private void applyThumbTint() {
+        if (mThumbDrawable != null && (mHasThumbTint || mHasThumbTintMode)) {
+            mThumbDrawable = mThumbDrawable.mutate();
+
+            if (mHasThumbTint) {
+                mThumbDrawable.setTintList(mThumbTintList);
+            }
+
+            if (mHasThumbTintMode) {
+                mThumbDrawable.setTintMode(mThumbTintMode);
+            }
+
+            // The drawable (or one of its children) may not have been
+            // stateful before applying the tint, so let's try again.
+            if (mThumbDrawable.isStateful()) {
+                mThumbDrawable.setState(getDrawableState());
+            }
+        }
+    }
+
+    /**
+     * Specifies whether the track should be split by the thumb. When true,
+     * the thumb's optical bounds will be clipped out of the track drawable,
+     * then the thumb will be drawn into the resulting gap.
+     *
+     * @param splitTrack Whether the track should be split by the thumb
+     *
+     * @attr ref android.R.styleable#Switch_splitTrack
+     */
+    public void setSplitTrack(boolean splitTrack) {
+        mSplitTrack = splitTrack;
+        invalidate();
+    }
+
+    /**
+     * Returns whether the track should be split by the thumb.
+     *
+     * @attr ref android.R.styleable#Switch_splitTrack
+     */
+    public boolean getSplitTrack() {
+        return mSplitTrack;
     }
 
     /**
@@ -478,39 +784,103 @@ public class Switch extends CompoundButton {
         requestLayout();
     }
 
+    /**
+     * Sets whether the on/off text should be displayed.
+     *
+     * @param showText {@code true} to display on/off text
+     * @attr ref android.R.styleable#Switch_showText
+     */
+    public void setShowText(boolean showText) {
+        if (mShowText != showText) {
+            mShowText = showText;
+            requestLayout();
+        }
+    }
+
+    /**
+     * @return whether the on/off text should be displayed
+     * @attr ref android.R.styleable#Switch_showText
+     */
+    public boolean getShowText() {
+        return mShowText;
+    }
+
     @Override
     public void onMeasure(int widthMeasureSpec, int heightMeasureSpec) {
-        if (mOnLayout == null) {
-            mOnLayout = makeLayout(mTextOn);
-        }
-        if (mOffLayout == null) {
-            mOffLayout = makeLayout(mTextOff);
+        if (mShowText) {
+            if (mOnLayout == null) {
+                mOnLayout = makeLayout(mTextOn);
+            }
+
+            if (mOffLayout == null) {
+                mOffLayout = makeLayout(mTextOff);
+            }
         }
 
-        mTrackDrawable.getPadding(mTempRect);
-        final int maxTextWidth = Math.max(mOnLayout.getWidth(), mOffLayout.getWidth());
+        final Rect padding = mTempRect;
+        final int thumbWidth;
+        final int thumbHeight;
+        if (mThumbDrawable != null) {
+            // Cached thumb width does not include padding.
+            mThumbDrawable.getPadding(padding);
+            thumbWidth = mThumbDrawable.getIntrinsicWidth() - padding.left - padding.right;
+            thumbHeight = mThumbDrawable.getIntrinsicHeight();
+        } else {
+            thumbWidth = 0;
+            thumbHeight = 0;
+        }
+
+        final int maxTextWidth;
+        if (mShowText) {
+            maxTextWidth = Math.max(mOnLayout.getWidth(), mOffLayout.getWidth())
+                    + mThumbTextPadding * 2;
+        } else {
+            maxTextWidth = 0;
+        }
+
+        mThumbWidth = Math.max(maxTextWidth, thumbWidth);
+
+        final int trackHeight;
+        if (mTrackDrawable != null) {
+            mTrackDrawable.getPadding(padding);
+            trackHeight = mTrackDrawable.getIntrinsicHeight();
+        } else {
+            padding.setEmpty();
+            trackHeight = 0;
+        }
+
+        // Adjust left and right padding to ensure there's enough room for the
+        // thumb's padding (when present).
+        int paddingLeft = padding.left;
+        int paddingRight = padding.right;
+        if (mThumbDrawable != null) {
+            final Insets inset = mThumbDrawable.getOpticalInsets();
+            paddingLeft = Math.max(paddingLeft, inset.left);
+            paddingRight = Math.max(paddingRight, inset.right);
+        }
+
         final int switchWidth = Math.max(mSwitchMinWidth,
-                maxTextWidth * 2 + mThumbTextPadding * 4 + mTempRect.left + mTempRect.right);
-        final int switchHeight = mTrackDrawable.getIntrinsicHeight();
-
-        mThumbWidth = maxTextWidth + mThumbTextPadding * 2;
-
+                2 * mThumbWidth + paddingLeft + paddingRight);
+        final int switchHeight = Math.max(trackHeight, thumbHeight);
         mSwitchWidth = switchWidth;
         mSwitchHeight = switchHeight;
 
         super.onMeasure(widthMeasureSpec, heightMeasureSpec);
+
         final int measuredHeight = getMeasuredHeight();
         if (measuredHeight < switchHeight) {
             setMeasuredDimension(getMeasuredWidthAndState(), switchHeight);
         }
     }
 
+    /** @hide */
     @Override
-    public void onPopulateAccessibilityEvent(AccessibilityEvent event) {
-        super.onPopulateAccessibilityEvent(event);
-        Layout layout =  isChecked() ? mOnLayout : mOffLayout;
-        if (layout != null && !TextUtils.isEmpty(layout.getText())) {
-            event.getText().add(layout.getText());
+    public void onPopulateAccessibilityEventInternal(AccessibilityEvent event) {
+        super.onPopulateAccessibilityEventInternal(event);
+
+        final CharSequence text = isChecked() ? mTextOn : mTextOff;
+        if (text != null) {
+            event.getText().add(text);
         }
     }
 
@@ -528,9 +898,16 @@ public class Switch extends CompoundButton {
      * @return true if (x, y) is within the target area of the switch thumb
      */
     private boolean hitThumb(float x, float y) {
+        if (mThumbDrawable == null) {
+            return false;
+        }
+
+        // Relies on mTempRect, MUST be called first!
+        final int thumbOffset = getThumbOffset();
+
         mThumbDrawable.getPadding(mTempRect);
         final int thumbTop = mSwitchTop - mTouchSlop;
-        final int thumbLeft = mSwitchLeft + (int) (mThumbPosition + 0.5f) - mTouchSlop;
+        final int thumbLeft = mSwitchLeft + thumbOffset - mTouchSlop;
         final int thumbRight = thumbLeft + mThumbWidth +
                 mTempRect.left + mTempRect.right + mTouchSlop;
         final int thumbBottom = mSwitchBottom + mTouchSlop;
@@ -575,13 +952,23 @@ public class Switch extends CompoundButton {
 
                     case TOUCH_MODE_DRAGGING: {
                         final float x = ev.getX();
-                        final float dx = x - mTouchX;
-                        float newPos = Math.max(0,
-                                Math.min(mThumbPosition + dx, getThumbScrollRange()));
+                        final int thumbScrollRange = getThumbScrollRange();
+                        final float thumbScrollOffset = x - mTouchX;
+                        float dPos;
+                        if (thumbScrollRange != 0) {
+                            dPos = thumbScrollOffset / thumbScrollRange;
+                        } else {
+                            // If the thumb scroll range is empty, just use the
+                            // movement direction to snap on or off.
+                            dPos = thumbScrollOffset > 0 ? 1 : -1;
+                        }
+                        if (isLayoutRtl()) {
+                            dPos = -dPos;
+                        }
+                        final float newPos = MathUtils.constrain(mThumbPosition + dPos, 0, 1);
                         if (newPos != mThumbPosition) {
-                            mThumbPosition = newPos;
                             mTouchX = x;
-                            invalidate();
+                            setThumbPosition(newPos);
                         }
                         return true;
                     }
@@ -593,6 +980,8 @@ public class Switch extends CompoundButton {
             case MotionEvent.ACTION_CANCEL: {
                 if (mTouchMode == TOUCH_MODE_DRAGGING) {
                     stopDrag(ev);
+                    // Allow super class to handle pressed state, etc.
+                    super.onTouchEvent(ev);
                     return true;
                 }
                 mTouchMode = TOUCH_MODE_IDLE;
@@ -618,75 +1007,113 @@ public class Switch extends CompoundButton {
      */
     private void stopDrag(MotionEvent ev) {
         mTouchMode = TOUCH_MODE_IDLE;
-        // Up and not canceled, also checks the switch has not been disabled during the drag
-        boolean commitChange = ev.getAction() == MotionEvent.ACTION_UP && isEnabled();
 
-        cancelSuperTouch(ev);
-
+        // Commit the change if the event is up and not canceled and the switch
+        // has not been disabled during the drag.
+        final boolean commitChange = ev.getAction() == MotionEvent.ACTION_UP && isEnabled();
+        final boolean oldState = isChecked();
+        final boolean newState;
         if (commitChange) {
-            boolean newState;
             mVelocityTracker.computeCurrentVelocity(1000);
-            float xvel = mVelocityTracker.getXVelocity();
+            final float xvel = mVelocityTracker.getXVelocity();
             if (Math.abs(xvel) > mMinFlingVelocity) {
                 newState = isLayoutRtl() ? (xvel < 0) : (xvel > 0);
             } else {
                 newState = getTargetCheckedState();
             }
-            animateThumbToCheckedState(newState);
         } else {
-            animateThumbToCheckedState(isChecked());
+            newState = oldState;
         }
+
+        if (newState != oldState) {
+            playSoundEffect(SoundEffectConstants.CLICK);
+        }
+        // Always call setChecked so that the thumb is moved back to the correct edge
+        setChecked(newState);
+        cancelSuperTouch(ev);
     }
 
     private void animateThumbToCheckedState(boolean newCheckedState) {
-        // TODO animate!
-        //float targetPos = newCheckedState ? 0 : getThumbScrollRange();
-        //mThumbPosition = targetPos;
-        setChecked(newCheckedState);
+        final float targetPosition = newCheckedState ? 1 : 0;
+        mPositionAnimator = ObjectAnimator.ofFloat(this, THUMB_POS, targetPosition);
+        mPositionAnimator.setDuration(THUMB_ANIMATION_DURATION);
+        mPositionAnimator.setAutoCancel(true);
+        mPositionAnimator.start();
+    }
+
+    private void cancelPositionAnimator() {
+        if (mPositionAnimator != null) {
+            mPositionAnimator.cancel();
+        }
     }
 
     private boolean getTargetCheckedState() {
-        if (isLayoutRtl()) {
-            return mThumbPosition <= getThumbScrollRange() / 2;
-        } else {
-            return mThumbPosition >= getThumbScrollRange() / 2;
-        }
+        return mThumbPosition > 0.5f;
     }
 
-    private void setThumbPosition(boolean checked) {
-        if (isLayoutRtl()) {
-            mThumbPosition = checked ? 0 : getThumbScrollRange();
-        } else {
-            mThumbPosition = checked ? getThumbScrollRange() : 0;
-        }
+    /**
+     * Sets the thumb position as a decimal value between 0 (off) and 1 (on).
+     *
+     * @param position new position between [0,1]
+     */
+    private void setThumbPosition(float position) {
+        mThumbPosition = position;
+        invalidate();
+    }
+
+    @Override
+    public void toggle() {
+        setChecked(!isChecked());
     }
 
     @Override
     public void setChecked(boolean checked) {
         super.setChecked(checked);
-        setThumbPosition(isChecked());
-        invalidate();
+
+        // Calling the super method may result in setChecked() getting called
+        // recursively with a different value, so load the REAL value...
+        checked = isChecked();
+
+        if (isAttachedToWindow() && isLaidOut()) {
+            animateThumbToCheckedState(checked);
+        } else {
+            // Immediately move the thumb to the new position.
+            cancelPositionAnimator();
+            setThumbPosition(checked ? 1 : 0);
+        }
     }
 
     @Override
     protected void onLayout(boolean changed, int left, int top, int right, int bottom) {
         super.onLayout(changed, left, top, right, bottom);
 
-        setThumbPosition(isChecked());
+        int opticalInsetLeft = 0;
+        int opticalInsetRight = 0;
+        if (mThumbDrawable != null) {
+            final Rect trackPadding = mTempRect;
+            if (mTrackDrawable != null) {
+                mTrackDrawable.getPadding(trackPadding);
+            } else {
+                trackPadding.setEmpty();
+            }
 
-        int switchRight;
-        int switchLeft;
-
-        if (isLayoutRtl()) {
-            switchLeft = getPaddingLeft();
-            switchRight = switchLeft + mSwitchWidth;
-        } else {
-            switchRight = getWidth() - getPaddingRight();
-            switchLeft = switchRight - mSwitchWidth;
+            final Insets insets = mThumbDrawable.getOpticalInsets();
+            opticalInsetLeft = Math.max(0, insets.left - trackPadding.left);
+            opticalInsetRight = Math.max(0, insets.right - trackPadding.right);
         }
 
-        int switchTop = 0;
-        int switchBottom = 0;
+        final int switchRight;
+        final int switchLeft;
+        if (isLayoutRtl()) {
+            switchLeft = getPaddingLeft() + opticalInsetLeft;
+            switchRight = switchLeft + mSwitchWidth - opticalInsetLeft - opticalInsetRight;
+        } else {
+            switchRight = getWidth() - getPaddingRight() - opticalInsetRight;
+            switchLeft = switchRight - mSwitchWidth + opticalInsetLeft + opticalInsetRight;
+        }
+
+        final int switchTop;
+        final int switchBottom;
         switch (getGravity() & Gravity.VERTICAL_GRAVITY_MASK) {
             default:
             case Gravity.TOP:
@@ -713,50 +1140,132 @@ public class Switch extends CompoundButton {
     }
 
     @Override
+    public void draw(Canvas c) {
+        final Rect padding = mTempRect;
+        final int switchLeft = mSwitchLeft;
+        final int switchTop = mSwitchTop;
+        final int switchRight = mSwitchRight;
+        final int switchBottom = mSwitchBottom;
+
+        int thumbInitialLeft = switchLeft + getThumbOffset();
+
+        final Insets thumbInsets;
+        if (mThumbDrawable != null) {
+            thumbInsets = mThumbDrawable.getOpticalInsets();
+        } else {
+            thumbInsets = Insets.NONE;
+        }
+
+        // Layout the track.
+        if (mTrackDrawable != null) {
+            mTrackDrawable.getPadding(padding);
+
+            // Adjust thumb position for track padding.
+            thumbInitialLeft += padding.left;
+
+            // If necessary, offset by the optical insets of the thumb asset.
+            int trackLeft = switchLeft;
+            int trackTop = switchTop;
+            int trackRight = switchRight;
+            int trackBottom = switchBottom;
+            if (thumbInsets != Insets.NONE) {
+                if (thumbInsets.left > padding.left) {
+                    trackLeft += thumbInsets.left - padding.left;
+                }
+                if (thumbInsets.top > padding.top) {
+                    trackTop += thumbInsets.top - padding.top;
+                }
+                if (thumbInsets.right > padding.right) {
+                    trackRight -= thumbInsets.right - padding.right;
+                }
+                if (thumbInsets.bottom > padding.bottom) {
+                    trackBottom -= thumbInsets.bottom - padding.bottom;
+                }
+            }
+            mTrackDrawable.setBounds(trackLeft, trackTop, trackRight, trackBottom);
+        }
+
+        // Layout the thumb.
+        if (mThumbDrawable != null) {
+            mThumbDrawable.getPadding(padding);
+
+            final int thumbLeft = thumbInitialLeft - padding.left;
+            final int thumbRight = thumbInitialLeft + mThumbWidth + padding.right;
+            mThumbDrawable.setBounds(thumbLeft, switchTop, thumbRight, switchBottom);
+
+            final Drawable background = getBackground();
+            if (background != null) {
+                background.setHotspotBounds(thumbLeft, switchTop, thumbRight, switchBottom);
+            }
+        }
+
+        // Draw the background.
+        super.draw(c);
+    }
+
+    @Override
     protected void onDraw(Canvas canvas) {
         super.onDraw(canvas);
 
-        // Draw the switch
-        int switchLeft = mSwitchLeft;
-        int switchTop = mSwitchTop;
-        int switchRight = mSwitchRight;
-        int switchBottom = mSwitchBottom;
-
-        mTrackDrawable.setBounds(switchLeft, switchTop, switchRight, switchBottom);
-        mTrackDrawable.draw(canvas);
-
-        canvas.save();
-
-        mTrackDrawable.getPadding(mTempRect);
-        int switchInnerLeft = switchLeft + mTempRect.left;
-        int switchInnerTop = switchTop + mTempRect.top;
-        int switchInnerRight = switchRight - mTempRect.right;
-        int switchInnerBottom = switchBottom - mTempRect.bottom;
-        canvas.clipRect(switchInnerLeft, switchTop, switchInnerRight, switchBottom);
-
-        mThumbDrawable.getPadding(mTempRect);
-        final int thumbPos = (int) (mThumbPosition + 0.5f);
-        int thumbLeft = switchInnerLeft - mTempRect.left + thumbPos;
-        int thumbRight = switchInnerLeft + thumbPos + mThumbWidth + mTempRect.right;
-
-        mThumbDrawable.setBounds(thumbLeft, switchTop, thumbRight, switchBottom);
-        mThumbDrawable.draw(canvas);
-
-        // mTextColors should not be null, but just in case
-        if (mTextColors != null) {
-            mTextPaint.setColor(mTextColors.getColorForState(getDrawableState(),
-                    mTextColors.getDefaultColor()));
+        final Rect padding = mTempRect;
+        final Drawable trackDrawable = mTrackDrawable;
+        if (trackDrawable != null) {
+            trackDrawable.getPadding(padding);
+        } else {
+            padding.setEmpty();
         }
-        mTextPaint.drawableState = getDrawableState();
 
-        Layout switchText = getTargetCheckedState() ? mOnLayout : mOffLayout;
+        final int switchTop = mSwitchTop;
+        final int switchBottom = mSwitchBottom;
+        final int switchInnerTop = switchTop + padding.top;
+        final int switchInnerBottom = switchBottom - padding.bottom;
+
+        final Drawable thumbDrawable = mThumbDrawable;
+        if (trackDrawable != null) {
+            if (mSplitTrack && thumbDrawable != null) {
+                final Insets insets = thumbDrawable.getOpticalInsets();
+                thumbDrawable.copyBounds(padding);
+                padding.left += insets.left;
+                padding.right -= insets.right;
+
+                final int saveCount = canvas.save();
+                canvas.clipRect(padding, Op.DIFFERENCE);
+                trackDrawable.draw(canvas);
+                canvas.restoreToCount(saveCount);
+            } else {
+                trackDrawable.draw(canvas);
+            }
+        }
+
+        final int saveCount = canvas.save();
+
+        if (thumbDrawable != null) {
+            thumbDrawable.draw(canvas);
+        }
+
+        final Layout switchText = getTargetCheckedState() ? mOnLayout : mOffLayout;
         if (switchText != null) {
-            canvas.translate((thumbLeft + thumbRight) / 2 - switchText.getWidth() / 2,
-                    (switchInnerTop + switchInnerBottom) / 2 - switchText.getHeight() / 2);
+            final int drawableState[] = getDrawableState();
+            if (mTextColors != null) {
+                mTextPaint.setColor(mTextColors.getColorForState(drawableState, 0));
+            }
+            mTextPaint.drawableState = drawableState;
+
+            final int cX;
+            if (thumbDrawable != null) {
+                final Rect bounds = thumbDrawable.getBounds();
+                cX = bounds.left + bounds.right;
+            } else {
+                cX = getWidth();
+            }
+
+            final int left = cX / 2 - switchText.getWidth() / 2;
+            final int top = (switchInnerTop + switchInnerBottom) / 2 - switchText.getHeight() / 2;
+            canvas.translate(left, top);
             switchText.draw(canvas);
         }
 
-        canvas.restore();
+        canvas.restoreToCount(saveCount);
     }
 
     @Override
@@ -783,12 +1292,39 @@ public class Switch extends CompoundButton {
         return padding;
     }
 
+    /**
+     * Translates thumb position to offset according to current RTL setting and
+     * thumb scroll range. Accounts for both track and thumb padding.
+     *
+     * @return thumb offset
+     */
+    private int getThumbOffset() {
+        final float thumbPosition;
+        if (isLayoutRtl()) {
+            thumbPosition = 1 - mThumbPosition;
+        } else {
+            thumbPosition = mThumbPosition;
+        }
+        return (int) (thumbPosition * getThumbScrollRange() + 0.5f);
+    }
+
     private int getThumbScrollRange() {
-        if (mTrackDrawable == null) {
+        if (mTrackDrawable != null) {
+            final Rect padding = mTempRect;
+            mTrackDrawable.getPadding(padding);
+
+            final Insets insets;
+            if (mThumbDrawable != null) {
+                insets = mThumbDrawable.getOpticalInsets();
+            } else {
+                insets = Insets.NONE;
+            }
+
+            return mSwitchWidth - mThumbWidth - padding.left - padding.right
+                    - insets.left - insets.right;
+        } else {
             return 0;
         }
-        mTrackDrawable.getPadding(mTempRect);
-        return mSwitchWidth - mThumbWidth - mTempRect.left - mTempRect.right;
     }
 
     @Override
@@ -804,38 +1340,88 @@ public class Switch extends CompoundButton {
     protected void drawableStateChanged() {
         super.drawableStateChanged();
 
-        int[] myDrawableState = getDrawableState();
+        final int[] state = getDrawableState();
+        boolean changed = false;
 
-        // Set the state of the Drawable
-        // Drawable may be null when checked state is set from XML, from super constructor
-        if (mThumbDrawable != null) mThumbDrawable.setState(myDrawableState);
-        if (mTrackDrawable != null) mTrackDrawable.setState(myDrawableState);
+        final Drawable thumbDrawable = mThumbDrawable;
+        if (thumbDrawable != null && thumbDrawable.isStateful()) {
+            changed |= thumbDrawable.setState(state);
+        }
 
-        invalidate();
+        final Drawable trackDrawable = mTrackDrawable;
+        if (trackDrawable != null && trackDrawable.isStateful()) {
+            changed |= trackDrawable.setState(state);
+        }
+
+        if (changed) {
+            invalidate();
+        }
     }
 
     @Override
-    protected boolean verifyDrawable(Drawable who) {
+    public void drawableHotspotChanged(float x, float y) {
+        super.drawableHotspotChanged(x, y);
+
+        if (mThumbDrawable != null) {
+            mThumbDrawable.setHotspot(x, y);
+        }
+
+        if (mTrackDrawable != null) {
+            mTrackDrawable.setHotspot(x, y);
+        }
+    }
+
+    @Override
+    protected boolean verifyDrawable(@NonNull Drawable who) {
         return super.verifyDrawable(who) || who == mThumbDrawable || who == mTrackDrawable;
     }
 
     @Override
     public void jumpDrawablesToCurrentState() {
         super.jumpDrawablesToCurrentState();
-        mThumbDrawable.jumpToCurrentState();
-        mTrackDrawable.jumpToCurrentState();
+
+        if (mThumbDrawable != null) {
+            mThumbDrawable.jumpToCurrentState();
+        }
+
+        if (mTrackDrawable != null) {
+            mTrackDrawable.jumpToCurrentState();
+        }
+
+        if (mPositionAnimator != null && mPositionAnimator.isStarted()) {
+            mPositionAnimator.end();
+            mPositionAnimator = null;
+        }
     }
 
     @Override
-    public void onInitializeAccessibilityEvent(AccessibilityEvent event) {
-        super.onInitializeAccessibilityEvent(event);
-        event.setClassName(Switch.class.getName());
+    public CharSequence getAccessibilityClassName() {
+        return Switch.class.getName();
     }
 
     @Override
-    public void onInitializeAccessibilityNodeInfo(AccessibilityNodeInfo info) {
-        super.onInitializeAccessibilityNodeInfo(info);
-        info.setClassName(Switch.class.getName());
+    public void onProvideStructure(ViewStructure structure) {
+        super.onProvideStructure(structure);
+        CharSequence switchText = isChecked() ? mTextOn : mTextOff;
+        if (!TextUtils.isEmpty(switchText)) {
+            CharSequence oldText = structure.getText();
+            if (TextUtils.isEmpty(oldText)) {
+                structure.setText(switchText);
+            } else {
+                StringBuilder newText = new StringBuilder();
+                newText.append(oldText).append(' ').append(switchText);
+                structure.setText(newText);
+            }
+            // The style of the label text is provided via the base TextView class. This is more
+            // relevant than the style of the (optional) on/off text on the switch button itself,
+            // so ignore the size/color/style stored this.mTextPaint.
+        }
+    }
+
+    /** @hide */
+    @Override
+    public void onInitializeAccessibilityNodeInfoInternal(AccessibilityNodeInfo info) {
+        super.onInitializeAccessibilityNodeInfoInternal(info);
         CharSequence switchText = isChecked() ? mTextOn : mTextOff;
         if (!TextUtils.isEmpty(switchText)) {
             CharSequence oldText = info.getText();
@@ -848,4 +1434,16 @@ public class Switch extends CompoundButton {
             }
         }
     }
+
+    private static final FloatProperty<Switch> THUMB_POS = new FloatProperty<Switch>("thumbPos") {
+        @Override
+        public Float get(Switch object) {
+            return object.mThumbPosition;
+        }
+
+        @Override
+        public void setValue(Switch object, float value) {
+            object.setThumbPosition(value);
+        }
+    };
 }

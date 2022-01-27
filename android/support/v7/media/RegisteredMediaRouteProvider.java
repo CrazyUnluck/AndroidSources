@@ -36,6 +36,8 @@ import java.lang.ref.WeakReference;
 import java.util.ArrayList;
 import java.util.List;
 
+import static android.support.v7.media.MediaRouteProviderProtocol.*;
+
 /**
  * Maintains a connection to a particular media route provider service.
  */
@@ -54,7 +56,7 @@ final class RegisteredMediaRouteProvider extends MediaRouteProvider
     private boolean mConnectionReady;
 
     public RegisteredMediaRouteProvider(Context context, ComponentName componentName) {
-        super(context, new ProviderMetadata(componentName.getPackageName()));
+        super(context, new ProviderMetadata(componentName));
 
         mComponentName = componentName;
         mPrivateHandler = new PrivateHandler();
@@ -154,7 +156,7 @@ final class RegisteredMediaRouteProvider extends MediaRouteProvider
                 Log.d(TAG, this + ": Binding");
             }
 
-            Intent service = new Intent(MediaRouteProviderService.SERVICE_INTERFACE);
+            Intent service = new Intent(MediaRouteProviderProtocol.SERVICE_INTERFACE);
             service.setComponent(mComponentName);
             try {
                 mBound = getContext().bindService(service, this, Context.BIND_AUTO_CREATE);
@@ -191,7 +193,7 @@ final class RegisteredMediaRouteProvider extends MediaRouteProvider
             disconnect();
 
             Messenger messenger = (service != null ? new Messenger(service) : null);
-            if (MediaRouteProviderService.isValidRemoteMessenger(messenger)) {
+            if (isValidRemoteMessenger(messenger)) {
                 Connection connection = new Connection(messenger);
                 if (connection.register()) {
                     mActiveConnection = connection;
@@ -342,9 +344,14 @@ final class RegisteredMediaRouteProvider extends MediaRouteProvider
 
         @Override
         public void onUnselect() {
+            onUnselect(MediaRouter.UNSELECT_REASON_UNKNOWN);
+        }
+
+        @Override
+        public void onUnselect(int reason) {
             mSelected = false;
             if (mConnection != null) {
-                mConnection.unselectRoute(mControllerId);
+                mConnection.unselectRoute(mControllerId, reason);
             }
         }
 
@@ -397,9 +404,9 @@ final class RegisteredMediaRouteProvider extends MediaRouteProvider
 
         public boolean register() {
             mPendingRegisterRequestId = mNextRequestId++;
-            if (!sendRequest(MediaRouteProviderService.CLIENT_MSG_REGISTER,
+            if (!sendRequest(CLIENT_MSG_REGISTER,
                     mPendingRegisterRequestId,
-                    MediaRouteProviderService.CLIENT_VERSION_CURRENT, null, null)) {
+                    CLIENT_VERSION_CURRENT, null, null)) {
                 return false;
             }
 
@@ -413,7 +420,7 @@ final class RegisteredMediaRouteProvider extends MediaRouteProvider
         }
 
         public void dispose() {
-            sendRequest(MediaRouteProviderService.CLIENT_MSG_UNREGISTER, 0, 0, null, null);
+            sendRequest(CLIENT_MSG_UNREGISTER, 0, 0, null, null);
             mReceiveHandler.dispose();
             mServiceMessenger.getBinder().unlinkToDeath(this, 0);
 
@@ -428,7 +435,7 @@ final class RegisteredMediaRouteProvider extends MediaRouteProvider
         private void failPendingCallbacks() {
             int count = 0;
             for (int i = 0; i < mPendingCallbacks.size(); i++) {
-                mPendingCallbacks.get(i).onError(null, null);
+                mPendingCallbacks.valueAt(i).onError(null, null);
             }
             mPendingCallbacks.clear();
         }
@@ -454,7 +461,7 @@ final class RegisteredMediaRouteProvider extends MediaRouteProvider
                 Bundle descriptorBundle) {
             if (mServiceVersion == 0
                     && requestId == mPendingRegisterRequestId
-                    && serviceVersion >= MediaRouteProviderService.SERVICE_VERSION_1) {
+                    && serviceVersion >= SERVICE_VERSION_1) {
                 mPendingRegisterRequestId = 0;
                 mServiceVersion = serviceVersion;
                 onConnectionDescriptorChanged(this,
@@ -507,45 +514,47 @@ final class RegisteredMediaRouteProvider extends MediaRouteProvider
         public int createRouteController(String routeId) {
             int controllerId = mNextControllerId++;
             Bundle data = new Bundle();
-            data.putString(MediaRouteProviderService.CLIENT_DATA_ROUTE_ID, routeId);
-            sendRequest(MediaRouteProviderService.CLIENT_MSG_CREATE_ROUTE_CONTROLLER,
+            data.putString(CLIENT_DATA_ROUTE_ID, routeId);
+            sendRequest(CLIENT_MSG_CREATE_ROUTE_CONTROLLER,
                     mNextRequestId++, controllerId, null, data);
             return controllerId;
         }
 
         public void releaseRouteController(int controllerId) {
-            sendRequest(MediaRouteProviderService.CLIENT_MSG_RELEASE_ROUTE_CONTROLLER,
+            sendRequest(CLIENT_MSG_RELEASE_ROUTE_CONTROLLER,
                     mNextRequestId++, controllerId, null, null);
         }
 
         public void selectRoute(int controllerId) {
-            sendRequest(MediaRouteProviderService.CLIENT_MSG_SELECT_ROUTE,
+            sendRequest(CLIENT_MSG_SELECT_ROUTE,
                     mNextRequestId++, controllerId, null, null);
         }
 
-        public void unselectRoute(int controllerId) {
-            sendRequest(MediaRouteProviderService.CLIENT_MSG_UNSELECT_ROUTE,
-                    mNextRequestId++, controllerId, null, null);
+        public void unselectRoute(int controllerId, int reason) {
+            Bundle extras = new Bundle();
+            extras.putInt(CLIENT_DATA_UNSELECT_REASON, reason);
+            sendRequest(CLIENT_MSG_UNSELECT_ROUTE,
+                    mNextRequestId++, controllerId, null, extras);
         }
 
         public void setVolume(int controllerId, int volume) {
             Bundle data = new Bundle();
-            data.putInt(MediaRouteProviderService.CLIENT_DATA_VOLUME, volume);
-            sendRequest(MediaRouteProviderService.CLIENT_MSG_SET_ROUTE_VOLUME,
+            data.putInt(CLIENT_DATA_VOLUME, volume);
+            sendRequest(CLIENT_MSG_SET_ROUTE_VOLUME,
                     mNextRequestId++, controllerId, null, data);
         }
 
         public void updateVolume(int controllerId, int delta) {
             Bundle data = new Bundle();
-            data.putInt(MediaRouteProviderService.CLIENT_DATA_VOLUME, delta);
-            sendRequest(MediaRouteProviderService.CLIENT_MSG_UPDATE_ROUTE_VOLUME,
+            data.putInt(CLIENT_DATA_VOLUME, delta);
+            sendRequest(CLIENT_MSG_UPDATE_ROUTE_VOLUME,
                     mNextRequestId++, controllerId, null, data);
         }
 
         public boolean sendControlRequest(int controllerId, Intent intent,
                 ControlRequestCallback callback) {
             int requestId = mNextRequestId++;
-            if (sendRequest(MediaRouteProviderService.CLIENT_MSG_ROUTE_CONTROL_REQUEST,
+            if (sendRequest(CLIENT_MSG_ROUTE_CONTROL_REQUEST,
                     requestId, controllerId, intent, null)) {
                 if (callback != null) {
                     mPendingCallbacks.put(requestId, callback);
@@ -556,7 +565,7 @@ final class RegisteredMediaRouteProvider extends MediaRouteProvider
         }
 
         public void setDiscoveryRequest(MediaRouteDiscoveryRequest request) {
-            sendRequest(MediaRouteProviderService.CLIENT_MSG_SET_DISCOVERY_REQUEST,
+            sendRequest(CLIENT_MSG_SET_DISCOVERY_REQUEST,
                     mNextRequestId++, 0, request != null ? request.asBundle() : null, null);
         }
 
@@ -574,7 +583,7 @@ final class RegisteredMediaRouteProvider extends MediaRouteProvider
             } catch (DeadObjectException ex) {
                 // The service died.
             } catch (RemoteException ex) {
-                if (what != MediaRouteProviderService.CLIENT_MSG_UNREGISTER) {
+                if (what != CLIENT_MSG_UNREGISTER) {
                     Log.e(TAG, "Could not send message to service.", ex);
                 }
             }
@@ -627,37 +636,37 @@ final class RegisteredMediaRouteProvider extends MediaRouteProvider
         private boolean processMessage(Connection connection,
                 int what, int requestId, int arg, Object obj, Bundle data) {
             switch (what) {
-                case MediaRouteProviderService.SERVICE_MSG_GENERIC_FAILURE:
+                case SERVICE_MSG_GENERIC_FAILURE:
                     connection.onGenericFailure(requestId);
                     return true;
 
-                case MediaRouteProviderService.SERVICE_MSG_GENERIC_SUCCESS:
+                case SERVICE_MSG_GENERIC_SUCCESS:
                     connection.onGenericSuccess(requestId);
                     return true;
 
-                case MediaRouteProviderService.SERVICE_MSG_REGISTERED:
+                case SERVICE_MSG_REGISTERED:
                     if (obj == null || obj instanceof Bundle) {
                         return connection.onRegistered(requestId, arg, (Bundle)obj);
                     }
                     break;
 
-                case MediaRouteProviderService.SERVICE_MSG_DESCRIPTOR_CHANGED:
+                case SERVICE_MSG_DESCRIPTOR_CHANGED:
                     if (obj == null || obj instanceof Bundle) {
                         return connection.onDescriptorChanged((Bundle)obj);
                     }
                     break;
 
-                case MediaRouteProviderService.SERVICE_MSG_CONTROL_REQUEST_SUCCEEDED:
+                case SERVICE_MSG_CONTROL_REQUEST_SUCCEEDED:
                     if (obj == null || obj instanceof Bundle) {
                         return connection.onControlRequestSucceeded(
                                 requestId, (Bundle)obj);
                     }
                     break;
 
-                case MediaRouteProviderService.SERVICE_MSG_CONTROL_REQUEST_FAILED:
+                case SERVICE_MSG_CONTROL_REQUEST_FAILED:
                     if (obj == null || obj instanceof Bundle) {
-                        String error =
-                                data.getString(MediaRouteProviderService.SERVICE_DATA_ERROR);
+                        String error = (data == null ? null :
+                                data.getString(SERVICE_DATA_ERROR));
                         return connection.onControlRequestFailed(
                                 requestId, error, (Bundle)obj);
                     }

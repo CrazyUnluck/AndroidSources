@@ -16,10 +16,14 @@
 
 package android.widget;
 
-import com.android.internal.R;
-import com.android.internal.util.Predicate;
 import com.google.android.collect.Lists;
 
+import com.android.internal.R;
+import com.android.internal.util.Predicate;
+
+import android.annotation.IdRes;
+import android.annotation.NonNull;
+import android.annotation.Nullable;
 import android.content.Context;
 import android.content.Intent;
 import android.content.res.TypedArray;
@@ -28,6 +32,8 @@ import android.graphics.Paint;
 import android.graphics.PixelFormat;
 import android.graphics.Rect;
 import android.graphics.drawable.Drawable;
+import android.os.Bundle;
+import android.os.Trace;
 import android.util.AttributeSet;
 import android.util.MathUtils;
 import android.util.SparseBooleanArray;
@@ -37,14 +43,18 @@ import android.view.SoundEffectConstants;
 import android.view.View;
 import android.view.ViewDebug;
 import android.view.ViewGroup;
+import android.view.ViewHierarchyEncoder;
 import android.view.ViewParent;
 import android.view.ViewRootImpl;
-import android.view.accessibility.AccessibilityEvent;
 import android.view.accessibility.AccessibilityNodeInfo;
+import android.view.accessibility.AccessibilityNodeInfo.AccessibilityAction;
+import android.view.accessibility.AccessibilityNodeInfo.CollectionInfo;
+import android.view.accessibility.AccessibilityNodeInfo.CollectionItemInfo;
 import android.view.accessibility.AccessibilityNodeProvider;
 import android.widget.RemoteViews.RemoteView;
 
 import java.util.ArrayList;
+import java.util.List;
 
 /*
  * Implementation Notes:
@@ -137,45 +147,48 @@ public class ListView extends AbsListView {
     }
 
     public ListView(Context context, AttributeSet attrs) {
-        this(context, attrs, com.android.internal.R.attr.listViewStyle);
+        this(context, attrs, R.attr.listViewStyle);
     }
 
-    public ListView(Context context, AttributeSet attrs, int defStyle) {
-        super(context, attrs, defStyle);
+    public ListView(Context context, AttributeSet attrs, int defStyleAttr) {
+        this(context, attrs, defStyleAttr, 0);
+    }
 
-        TypedArray a = context.obtainStyledAttributes(attrs,
-                com.android.internal.R.styleable.ListView, defStyle, 0);
+    public ListView(Context context, AttributeSet attrs, int defStyleAttr, int defStyleRes) {
+        super(context, attrs, defStyleAttr, defStyleRes);
 
-        CharSequence[] entries = a.getTextArray(
-                com.android.internal.R.styleable.ListView_entries);
+        final TypedArray a = context.obtainStyledAttributes(
+                attrs, R.styleable.ListView, defStyleAttr, defStyleRes);
+
+        final CharSequence[] entries = a.getTextArray(R.styleable.ListView_entries);
         if (entries != null) {
-            setAdapter(new ArrayAdapter<CharSequence>(context,
-                    com.android.internal.R.layout.simple_list_item_1, entries));
+            setAdapter(new ArrayAdapter<>(context, R.layout.simple_list_item_1, entries));
         }
 
-        final Drawable d = a.getDrawable(com.android.internal.R.styleable.ListView_divider);
+        final Drawable d = a.getDrawable(R.styleable.ListView_divider);
         if (d != null) {
-            // If a divider is specified use its intrinsic height for divider height
+            // Use an implicit divider height which may be explicitly
+            // overridden by android:dividerHeight further down.
             setDivider(d);
         }
-        
-        final Drawable osHeader = a.getDrawable(
-                com.android.internal.R.styleable.ListView_overScrollHeader);
+
+        final Drawable osHeader = a.getDrawable(R.styleable.ListView_overScrollHeader);
         if (osHeader != null) {
             setOverscrollHeader(osHeader);
         }
 
-        final Drawable osFooter = a.getDrawable(
-                com.android.internal.R.styleable.ListView_overScrollFooter);
+        final Drawable osFooter = a.getDrawable(R.styleable.ListView_overScrollFooter);
         if (osFooter != null) {
             setOverscrollFooter(osFooter);
         }
 
-        // Use the height specified, zero being the default
-        final int dividerHeight = a.getDimensionPixelSize(
-                com.android.internal.R.styleable.ListView_dividerHeight, 0);
-        if (dividerHeight != 0) {
-            setDividerHeight(dividerHeight);
+        // Use an explicit divider height, if specified.
+        if (a.hasValueOrEmpty(R.styleable.ListView_dividerHeight)) {
+            final int dividerHeight = a.getDimensionPixelSize(
+                    R.styleable.ListView_dividerHeight, 0);
+            if (dividerHeight != 0) {
+                setDividerHeight(dividerHeight);
+            }
         }
 
         mHeaderDividersEnabled = a.getBoolean(R.styleable.ListView_headerDividersEnabled, true);
@@ -240,35 +253,40 @@ public class ListView extends AbsListView {
     }
 
     /**
-     * Add a fixed view to appear at the top of the list. If addHeaderView is
+     * Add a fixed view to appear at the top of the list. If this method is
      * called more than once, the views will appear in the order they were
      * added. Views added using this call can take focus if they want.
      * <p>
-     * NOTE: Call this before calling setAdapter. This is so ListView can wrap
-     * the supplied cursor with one that will also account for header and footer
-     * views.
+     * Note: When first introduced, this method could only be called before
+     * setting the adapter with {@link #setAdapter(ListAdapter)}. Starting with
+     * {@link android.os.Build.VERSION_CODES#KITKAT}, this method may be
+     * called at any time. If the ListView's adapter does not extend
+     * {@link HeaderViewListAdapter}, it will be wrapped with a supporting
+     * instance of {@link WrapperListAdapter}.
      *
      * @param v The view to add.
      * @param data Data to associate with this view
      * @param isSelectable whether the item is selectable
      */
     public void addHeaderView(View v, Object data, boolean isSelectable) {
-
-        if (mAdapter != null && ! (mAdapter instanceof HeaderViewListAdapter)) {
-            throw new IllegalStateException(
-                    "Cannot add header view to list -- setAdapter has already been called.");
-        }
-
-        FixedViewInfo info = new FixedViewInfo();
+        final FixedViewInfo info = new FixedViewInfo();
         info.view = v;
         info.data = data;
         info.isSelectable = isSelectable;
         mHeaderViewInfos.add(info);
+        mAreAllItemsSelectable &= isSelectable;
 
-        // in the case of re-adding a header view, or adding one later on,
-        // we need to notify the observer
-        if (mAdapter != null && mDataSetObserver != null) {
-            mDataSetObserver.onChanged();
+        // Wrap the adapter if it wasn't already wrapped.
+        if (mAdapter != null) {
+            if (!(mAdapter instanceof HeaderViewListAdapter)) {
+                mAdapter = new HeaderViewListAdapter(mHeaderViewInfos, mFooterViewInfos, mAdapter);
+            }
+
+            // In the case of re-adding a header view, or adding one later on,
+            // we need to notify the observer.
+            if (mDataSetObserver != null) {
+                mDataSetObserver.onChanged();
+            }
         }
     }
 
@@ -277,9 +295,12 @@ public class ListView extends AbsListView {
      * called more than once, the views will appear in the order they were
      * added. Views added using this call can take focus if they want.
      * <p>
-     * NOTE: Call this before calling setAdapter. This is so ListView can wrap
-     * the supplied cursor with one that will also account for header and footer
-     * views.
+     * Note: When first introduced, this method could only be called before
+     * setting the adapter with {@link #setAdapter(ListAdapter)}. Starting with
+     * {@link android.os.Build.VERSION_CODES#KITKAT}, this method may be
+     * called at any time. If the ListView's adapter does not extend
+     * {@link HeaderViewListAdapter}, it will be wrapped with a supporting
+     * instance of {@link WrapperListAdapter}.
      *
      * @param v The view to add.
      */
@@ -330,41 +351,50 @@ public class ListView extends AbsListView {
      * called more than once, the views will appear in the order they were
      * added. Views added using this call can take focus if they want.
      * <p>
-     * NOTE: Call this before calling setAdapter. This is so ListView can wrap
-     * the supplied cursor with one that will also account for header and footer
-     * views.
+     * Note: When first introduced, this method could only be called before
+     * setting the adapter with {@link #setAdapter(ListAdapter)}. Starting with
+     * {@link android.os.Build.VERSION_CODES#KITKAT}, this method may be
+     * called at any time. If the ListView's adapter does not extend
+     * {@link HeaderViewListAdapter}, it will be wrapped with a supporting
+     * instance of {@link WrapperListAdapter}.
      *
      * @param v The view to add.
      * @param data Data to associate with this view
      * @param isSelectable true if the footer view can be selected
      */
     public void addFooterView(View v, Object data, boolean isSelectable) {
-
-        // NOTE: do not enforce the adapter being null here, since unlike in
-        // addHeaderView, it was never enforced here, and so existing apps are
-        // relying on being able to add a footer and then calling setAdapter to
-        // force creation of the HeaderViewListAdapter wrapper
-
-        FixedViewInfo info = new FixedViewInfo();
+        final FixedViewInfo info = new FixedViewInfo();
         info.view = v;
         info.data = data;
         info.isSelectable = isSelectable;
         mFooterViewInfos.add(info);
+        mAreAllItemsSelectable &= isSelectable;
 
-        // in the case of re-adding a footer view, or adding one later on,
-        // we need to notify the observer
-        if (mAdapter != null && mDataSetObserver != null) {
-            mDataSetObserver.onChanged();
+        // Wrap the adapter if it wasn't already wrapped.
+        if (mAdapter != null) {
+            if (!(mAdapter instanceof HeaderViewListAdapter)) {
+                mAdapter = new HeaderViewListAdapter(mHeaderViewInfos, mFooterViewInfos, mAdapter);
+            }
+
+            // In the case of re-adding a footer view, or adding one later on,
+            // we need to notify the observer.
+            if (mDataSetObserver != null) {
+                mDataSetObserver.onChanged();
+            }
         }
     }
 
     /**
-     * Add a fixed view to appear at the bottom of the list. If addFooterView is called more
-     * than once, the views will appear in the order they were added. Views added using
-     * this call can take focus if they want.
-     * <p>NOTE: Call this before calling setAdapter. This is so ListView can wrap the supplied
-     * cursor with one that will also account for header and footer views.
-     *
+     * Add a fixed view to appear at the bottom of the list. If addFooterView is
+     * called more than once, the views will appear in the order they were
+     * added. Views added using this call can take focus if they want.
+     * <p>
+     * Note: When first introduced, this method could only be called before
+     * setting the adapter with {@link #setAdapter(ListAdapter)}. Starting with
+     * {@link android.os.Build.VERSION_CODES#KITKAT}, this method may be
+     * called at any time. If the ListView's adapter does not extend
+     * {@link HeaderViewListAdapter}, it will be wrapped with a supporting
+     * instance of {@link WrapperListAdapter}.
      *
      * @param v The view to add.
      */
@@ -490,7 +520,6 @@ public class ListView extends AbsListView {
 
         requestLayout();
     }
-
 
     /**
      * The list is empty. Clear everything out.
@@ -1079,20 +1108,63 @@ public class ListView extends AbsListView {
     }
 
     private class FocusSelector implements Runnable {
+        // the selector is waiting to set selection on the list view
+        private static final int STATE_SET_SELECTION = 1;
+        // the selector set the selection on the list view, waiting for a layoutChildren pass
+        private static final int STATE_WAIT_FOR_LAYOUT = 2;
+        // the selector's selection has been honored and it is waiting to request focus on the
+        // target child.
+        private static final int STATE_REQUEST_FOCUS = 3;
+
+        private int mAction;
         private int mPosition;
         private int mPositionTop;
-        
-        public FocusSelector setup(int position, int top) {
+
+        FocusSelector setupForSetSelection(int position, int top) {
             mPosition = position;
             mPositionTop = top;
+            mAction = STATE_SET_SELECTION;
             return this;
         }
-        
+
         public void run() {
-            setSelectionFromTop(mPosition, mPositionTop);
+            if (mAction == STATE_SET_SELECTION) {
+                setSelectionFromTop(mPosition, mPositionTop);
+                mAction = STATE_WAIT_FOR_LAYOUT;
+            } else if (mAction == STATE_REQUEST_FOCUS) {
+                final int childIndex = mPosition - mFirstPosition;
+                final View child = getChildAt(childIndex);
+                if (child != null) {
+                    child.requestFocus();
+                }
+                mAction = -1;
+            }
+        }
+
+        @Nullable Runnable setupFocusIfValid(int position) {
+            if (mAction != STATE_WAIT_FOR_LAYOUT || position != mPosition) {
+                return null;
+            }
+            mAction = STATE_REQUEST_FOCUS;
+            return this;
+        }
+
+        void onLayoutComplete() {
+            if (mAction == STATE_WAIT_FOR_LAYOUT) {
+                mAction = -1;
+            }
         }
     }
-    
+
+    @Override
+    protected void onDetachedFromWindow() {
+        if (mFocusSelector != null) {
+            removeCallbacks(mFocusSelector);
+            mFocusSelector = null;
+        }
+        super.onDetachedFromWindow();
+    }
+
     @Override
     protected void onSizeChanged(int w, int h, int oldw, int oldh) {
         if (getChildCount() > 0) {
@@ -1105,7 +1177,7 @@ public class ListView extends AbsListView {
                 if (mFocusSelector == null) {
                     mFocusSelector = new FocusSelector();
                 }
-                post(mFocusSelector.setup(childPosition, top));
+                post(mFocusSelector.setupForSetSelection(childPosition, top));
             }
         }
         super.onSizeChanged(w, h, oldw, oldh);
@@ -1116,8 +1188,8 @@ public class ListView extends AbsListView {
         // Sets up mListPadding
         super.onMeasure(widthMeasureSpec, heightMeasureSpec);
 
-        int widthMode = MeasureSpec.getMode(widthMeasureSpec);
-        int heightMode = MeasureSpec.getMode(heightMeasureSpec);
+        final int widthMode = MeasureSpec.getMode(widthMeasureSpec);
+        final int heightMode = MeasureSpec.getMode(heightMeasureSpec);
         int widthSize = MeasureSpec.getSize(widthMeasureSpec);
         int heightSize = MeasureSpec.getSize(heightMeasureSpec);
 
@@ -1126,11 +1198,13 @@ public class ListView extends AbsListView {
         int childState = 0;
 
         mItemCount = mAdapter == null ? 0 : mAdapter.getCount();
-        if (mItemCount > 0 && (widthMode == MeasureSpec.UNSPECIFIED ||
-                heightMode == MeasureSpec.UNSPECIFIED)) {
+        if (mItemCount > 0 && (widthMode == MeasureSpec.UNSPECIFIED
+                || heightMode == MeasureSpec.UNSPECIFIED)) {
             final View child = obtainView(0, mIsScrap);
 
-            measureScrapChild(child, 0, widthMeasureSpec);
+            // Lay out child directly against the parent measure spec so that
+            // we can obtain exected minimum width and height.
+            measureScrapChild(child, 0, widthMeasureSpec, heightSize);
 
             childWidth = child.getMeasuredWidth();
             childHeight = child.getMeasuredHeight();
@@ -1138,7 +1212,7 @@ public class ListView extends AbsListView {
 
             if (recycleOnMeasure() && mRecycler.shouldRecycleViewType(
                     ((LayoutParams) child.getLayoutParams()).viewType)) {
-                mRecycler.addScrapView(child, -1);
+                mRecycler.addScrapView(child, 0);
             }
         }
 
@@ -1146,7 +1220,7 @@ public class ListView extends AbsListView {
             widthSize = mListPadding.left + mListPadding.right + childWidth +
                     getVerticalScrollbarWidth();
         } else {
-            widthSize |= (childState&MEASURED_STATE_MASK);
+            widthSize |= (childState & MEASURED_STATE_MASK);
         }
 
         if (heightMode == MeasureSpec.UNSPECIFIED) {
@@ -1159,29 +1233,35 @@ public class ListView extends AbsListView {
             heightSize = measureHeightOfChildren(widthMeasureSpec, 0, NO_POSITION, heightSize, -1);
         }
 
-        setMeasuredDimension(widthSize , heightSize);
-        mWidthMeasureSpec = widthMeasureSpec;        
+        setMeasuredDimension(widthSize, heightSize);
+
+        mWidthMeasureSpec = widthMeasureSpec;
     }
 
-    private void measureScrapChild(View child, int position, int widthMeasureSpec) {
+    private void measureScrapChild(View child, int position, int widthMeasureSpec, int heightHint) {
         LayoutParams p = (LayoutParams) child.getLayoutParams();
         if (p == null) {
             p = (AbsListView.LayoutParams) generateDefaultLayoutParams();
             child.setLayoutParams(p);
         }
         p.viewType = mAdapter.getItemViewType(position);
+        p.isEnabled = mAdapter.isEnabled(position);
         p.forceAdd = true;
 
-        int childWidthSpec = ViewGroup.getChildMeasureSpec(widthMeasureSpec,
+        final int childWidthSpec = ViewGroup.getChildMeasureSpec(widthMeasureSpec,
                 mListPadding.left + mListPadding.right, p.width);
-        int lpHeight = p.height;
-        int childHeightSpec;
+        final int lpHeight = p.height;
+        final int childHeightSpec;
         if (lpHeight > 0) {
             childHeightSpec = MeasureSpec.makeMeasureSpec(lpHeight, MeasureSpec.EXACTLY);
         } else {
-            childHeightSpec = MeasureSpec.makeMeasureSpec(0, MeasureSpec.UNSPECIFIED);
+            childHeightSpec = MeasureSpec.makeSafeMeasureSpec(heightHint, MeasureSpec.UNSPECIFIED);
         }
         child.measure(childWidthSpec, childHeightSpec);
+
+        // Since this view was measured directly aginst the parent measure
+        // spec, we must measure it again before reuse.
+        child.forceLayout();
     }
 
     /**
@@ -1221,8 +1301,7 @@ public class ListView extends AbsListView {
      * @return The height of this ListView with the given children.
      */
     final int measureHeightOfChildren(int widthMeasureSpec, int startPosition, int endPosition,
-            final int maxHeight, int disallowPartialChildPosition) {
-
+            int maxHeight, int disallowPartialChildPosition) {
         final ListAdapter adapter = mAdapter;
         if (adapter == null) {
             return mListPadding.top + mListPadding.bottom;
@@ -1230,7 +1309,7 @@ public class ListView extends AbsListView {
 
         // Include the padding of the list
         int returnedHeight = mListPadding.top + mListPadding.bottom;
-        final int dividerHeight = ((mDividerHeight > 0) && mDivider != null) ? mDividerHeight : 0;
+        final int dividerHeight = mDividerHeight;
         // The previous height value that was less than maxHeight and contained
         // no partial children
         int prevHeightWithoutPartialChild = 0;
@@ -1246,7 +1325,7 @@ public class ListView extends AbsListView {
         for (i = startPosition; i <= endPosition; ++i) {
             child = obtainView(i, isScrap);
 
-            measureScrapChild(child, i, widthMeasureSpec);
+            measureScrapChild(child, i, widthMeasureSpec, maxHeight);
 
             if (i > 0) {
                 // Count the divider for all but one child
@@ -1462,11 +1541,11 @@ public class ListView extends AbsListView {
     @Override
     protected void layoutChildren() {
         final boolean blockLayoutRequests = mBlockLayoutRequests;
-        if (!blockLayoutRequests) {
-            mBlockLayoutRequests = true;
-        } else {
+        if (blockLayoutRequests) {
             return;
         }
+
+        mBlockLayoutRequests = true;
 
         try {
             super.layoutChildren();
@@ -1479,10 +1558,10 @@ public class ListView extends AbsListView {
                 return;
             }
 
-            int childrenTop = mListPadding.top;
-            int childrenBottom = mBottom - mTop - mListPadding.bottom;
+            final int childrenTop = mListPadding.top;
+            final int childrenBottom = mBottom - mTop - mListPadding.bottom;
+            final int childCount = getChildCount();
 
-            int childCount = getChildCount();
             int index = 0;
             int delta = 0;
 
@@ -1490,12 +1569,6 @@ public class ListView extends AbsListView {
             View oldSel = null;
             View oldFirst = null;
             View newSel = null;
-
-            View focusLayoutRestoreView = null;
-
-            AccessibilityNodeInfo accessibilityFocusLayoutRestoreNode = null;
-            View accessibilityFocusLayoutRestoreView = null;
-            int accessibilityFocusPosition = INVALID_POSITION;
 
             // Remember stuff we will need down below
             switch (mLayoutMode) {
@@ -1544,77 +1617,79 @@ public class ListView extends AbsListView {
             } else if (mItemCount != mAdapter.getCount()) {
                 throw new IllegalStateException("The content of the adapter has changed but "
                         + "ListView did not receive a notification. Make sure the content of "
-                        + "your adapter is not modified from a background thread, but only "
-                        + "from the UI thread. [in ListView(" + getId() + ", " + getClass() 
+                        + "your adapter is not modified from a background thread, but only from "
+                        + "the UI thread. Make sure your adapter calls notifyDataSetChanged() "
+                        + "when its content changes. [in ListView(" + getId() + ", " + getClass()
                         + ") with Adapter(" + mAdapter.getClass() + ")]");
             }
 
             setSelectedPositionInt(mNextSelectedPosition);
+
+            AccessibilityNodeInfo accessibilityFocusLayoutRestoreNode = null;
+            View accessibilityFocusLayoutRestoreView = null;
+            int accessibilityFocusPosition = INVALID_POSITION;
 
             // Remember which child, if any, had accessibility focus. This must
             // occur before recycling any views, since that will clear
             // accessibility focus.
             final ViewRootImpl viewRootImpl = getViewRootImpl();
             if (viewRootImpl != null) {
-                final View accessFocusedView = viewRootImpl.getAccessibilityFocusedHost();
-                if (accessFocusedView != null) {
-                    final View accessFocusedChild = findAccessibilityFocusedChild(
-                            accessFocusedView);
-                    if (accessFocusedChild != null) {
-                        if (!dataChanged || isDirectChildHeaderOrFooter(accessFocusedChild)) {
-                            // If the views won't be changing, try to maintain
-                            // focus on the current view host and (if
-                            // applicable) its virtual view.
-                            accessibilityFocusLayoutRestoreView = accessFocusedView;
+                final View focusHost = viewRootImpl.getAccessibilityFocusedHost();
+                if (focusHost != null) {
+                    final View focusChild = getAccessibilityFocusedChild(focusHost);
+                    if (focusChild != null) {
+                        if (!dataChanged || isDirectChildHeaderOrFooter(focusChild)
+                                || focusChild.hasTransientState() || mAdapterHasStableIds) {
+                            // The views won't be changing, so try to maintain
+                            // focus on the current host and virtual view.
+                            accessibilityFocusLayoutRestoreView = focusHost;
                             accessibilityFocusLayoutRestoreNode = viewRootImpl
                                     .getAccessibilityFocusedVirtualView();
-                        } else {
-                            // Otherwise, try to maintain focus at the same
-                            // position.
-                            accessibilityFocusPosition = getPositionForView(accessFocusedChild);
                         }
+
+                        // If all else fails, maintain focus at the same
+                        // position.
+                        accessibilityFocusPosition = getPositionForView(focusChild);
                     }
                 }
+            }
+
+            View focusLayoutRestoreDirectChild = null;
+            View focusLayoutRestoreView = null;
+
+            // Take focus back to us temporarily to avoid the eventual call to
+            // clear focus when removing the focused child below from messing
+            // things up when ViewAncestor assigns focus back to someone else.
+            final View focusedChild = getFocusedChild();
+            if (focusedChild != null) {
+                // TODO: in some cases focusedChild.getParent() == null
+
+                // We can remember the focused view to restore after re-layout
+                // if the data hasn't changed, or if the focused position is a
+                // header or footer.
+                if (!dataChanged || isDirectChildHeaderOrFooter(focusedChild)
+                        || focusedChild.hasTransientState() || mAdapterHasStableIds) {
+                    focusLayoutRestoreDirectChild = focusedChild;
+                    // Remember the specific view that had focus.
+                    focusLayoutRestoreView = findFocus();
+                    if (focusLayoutRestoreView != null) {
+                        // Tell it we are going to mess with it.
+                        focusLayoutRestoreView.dispatchStartTemporaryDetach();
+                    }
+                }
+                requestFocus();
             }
 
             // Pull all children into the RecycleBin.
             // These views will be reused if possible
             final int firstPosition = mFirstPosition;
             final RecycleBin recycleBin = mRecycler;
-
-            // reset the focus restoration
-            View focusLayoutRestoreDirectChild = null;
-
-            // Don't put header or footer views into the Recycler. Those are
-            // already cached in mHeaderViews;
             if (dataChanged) {
                 for (int i = 0; i < childCount; i++) {
                     recycleBin.addScrapView(getChildAt(i), firstPosition+i);
                 }
             } else {
                 recycleBin.fillActiveViews(childCount, firstPosition);
-            }
-
-            // take focus back to us temporarily to avoid the eventual
-            // call to clear focus when removing the focused child below
-            // from messing things up when ViewAncestor assigns focus back
-            // to someone else
-            final View focusedChild = getFocusedChild();
-            if (focusedChild != null) {
-                // TODO: in some cases focusedChild.getParent() == null
-
-                // we can remember the focused view to restore after relayout if the
-                // data hasn't changed, or if the focused position is a header or footer
-                if (!dataChanged || isDirectChildHeaderOrFooter(focusedChild)) {
-                    focusLayoutRestoreDirectChild = focusedChild;
-                    // remember the specific view that had focus
-                    focusLayoutRestoreView = findFocus();
-                    if (focusLayoutRestoreView != null) {
-                        // tell it we are going to mess with it
-                        focusLayoutRestoreView.onStartTemporaryDetach();
-                    }
-                }
-                requestFocus();
             }
 
             // Clear out old views
@@ -1642,7 +1717,21 @@ public class ListView extends AbsListView {
                 adjustViewsUpOrDown();
                 break;
             case LAYOUT_SPECIFIC:
-                sel = fillSpecific(reconcileSelectedPosition(), mSpecificTop);
+                final int selectedPosition = reconcileSelectedPosition();
+                sel = fillSpecific(selectedPosition, mSpecificTop);
+                /**
+                 * When ListView is resized, FocusSelector requests an async selection for the
+                 * previously focused item to make sure it is still visible. If the item is not
+                 * selectable, it won't regain focus so instead we call FocusSelector
+                 * to directly request focus on the view after it is visible.
+                 */
+                if (sel == null && mFocusSelector != null) {
+                    final Runnable focusRunnable = mFocusSelector
+                            .setupFocusIfValid(selectedPosition);
+                    if (focusRunnable != null) {
+                        post(focusRunnable);
+                    }
+                }
                 break;
             case LAYOUT_MOVE_SELECTION:
                 sel = moveSelection(oldSel, newSel, delta, childrenTop, childrenBottom);
@@ -1675,17 +1764,21 @@ public class ListView extends AbsListView {
             // Flush any cached views that did not get reused above
             recycleBin.scrapActiveViews();
 
+            // remove any header/footer that has been temp detached and not re-attached
+            removeUnusedFixedViews(mHeaderViewInfos);
+            removeUnusedFixedViews(mFooterViewInfos);
+
             if (sel != null) {
-                // the current selected item should get focus if items
-                // are focusable
+                // The current selected item should get focus if items are
+                // focusable.
                 if (mItemsCanFocus && hasFocus() && !sel.hasFocus()) {
                     final boolean focusWasTaken = (sel == focusLayoutRestoreDirectChild &&
                             focusLayoutRestoreView != null &&
                             focusLayoutRestoreView.requestFocus()) || sel.requestFocus();
                     if (!focusWasTaken) {
-                        // selected item didn't take focus, fine, but still want
-                        // to make sure something else outside of the selected view
-                        // has focus
+                        // Selected item didn't take focus, but we still want to
+                        // make sure something else outside of the selected view
+                        // has focus.
                         final View focused = getFocusedChild();
                         if (focused != null) {
                             focused.clearFocus();
@@ -1700,48 +1793,69 @@ public class ListView extends AbsListView {
                 }
                 mSelectedTop = sel.getTop();
             } else {
-                if (mTouchMode > TOUCH_MODE_DOWN && mTouchMode < TOUCH_MODE_SCROLL) {
-                    View child = getChildAt(mMotionPosition - mFirstPosition);
-                    if (child != null) positionSelector(mMotionPosition, child);
+                final boolean inTouchMode = mTouchMode == TOUCH_MODE_TAP
+                        || mTouchMode == TOUCH_MODE_DONE_WAITING;
+                if (inTouchMode) {
+                    // If the user's finger is down, select the motion position.
+                    final View child = getChildAt(mMotionPosition - mFirstPosition);
+                    if (child != null) {
+                        positionSelector(mMotionPosition, child);
+                    }
+                } else if (mSelectorPosition != INVALID_POSITION) {
+                    // If we had previously positioned the selector somewhere,
+                    // put it back there. It might not match up with the data,
+                    // but it's transitioning out so it's not a big deal.
+                    final View child = getChildAt(mSelectorPosition - mFirstPosition);
+                    if (child != null) {
+                        positionSelector(mSelectorPosition, child);
+                    }
                 } else {
+                    // Otherwise, clear selection.
                     mSelectedTop = 0;
                     mSelectorRect.setEmpty();
                 }
 
-                // even if there is not selected position, we may need to restore
-                // focus (i.e. something focusable in touch mode)
+                // Even if there is not selected position, we may need to
+                // restore focus (i.e. something focusable in touch mode).
                 if (hasFocus() && focusLayoutRestoreView != null) {
                     focusLayoutRestoreView.requestFocus();
                 }
             }
 
-            // Attempt to restore accessibility focus.
-            if (accessibilityFocusLayoutRestoreView != null) {
-                final AccessibilityNodeProvider provider =
-                        accessibilityFocusLayoutRestoreView.getAccessibilityNodeProvider();
-                if ((accessibilityFocusLayoutRestoreNode != null) && (provider != null)) {
-                    final int virtualViewId = AccessibilityNodeInfo.getVirtualDescendantId(
-                            accessibilityFocusLayoutRestoreNode.getSourceNodeId());
-                    provider.performAction(virtualViewId,
-                            AccessibilityNodeInfo.ACTION_ACCESSIBILITY_FOCUS, null);
-                } else {
-                    accessibilityFocusLayoutRestoreView.requestAccessibilityFocus();
-                }
-            } else if (accessibilityFocusPosition != INVALID_POSITION) {
-                // Bound the position within the visible children.
-                final int position = MathUtils.constrain(
-                        (accessibilityFocusPosition - mFirstPosition), 0, (getChildCount() - 1));
-                final View restoreView = getChildAt(position);
-                if (restoreView != null) {
-                    restoreView.requestAccessibilityFocus();
+            // Attempt to restore accessibility focus, if necessary.
+            if (viewRootImpl != null) {
+                final View newAccessibilityFocusedView = viewRootImpl.getAccessibilityFocusedHost();
+                if (newAccessibilityFocusedView == null) {
+                    if (accessibilityFocusLayoutRestoreView != null
+                            && accessibilityFocusLayoutRestoreView.isAttachedToWindow()) {
+                        final AccessibilityNodeProvider provider =
+                                accessibilityFocusLayoutRestoreView.getAccessibilityNodeProvider();
+                        if (accessibilityFocusLayoutRestoreNode != null && provider != null) {
+                            final int virtualViewId = AccessibilityNodeInfo.getVirtualDescendantId(
+                                    accessibilityFocusLayoutRestoreNode.getSourceNodeId());
+                            provider.performAction(virtualViewId,
+                                    AccessibilityNodeInfo.ACTION_ACCESSIBILITY_FOCUS, null);
+                        } else {
+                            accessibilityFocusLayoutRestoreView.requestAccessibilityFocus();
+                        }
+                    } else if (accessibilityFocusPosition != INVALID_POSITION) {
+                        // Bound the position within the visible children.
+                        final int position = MathUtils.constrain(
+                                accessibilityFocusPosition - mFirstPosition, 0,
+                                getChildCount() - 1);
+                        final View restoreView = getChildAt(position);
+                        if (restoreView != null) {
+                            restoreView.requestAccessibilityFocus();
+                        }
+                    }
                 }
             }
 
-            // tell focus view we are done mucking with it, if it is still in
+            // Tell focus view we are done mucking with it, if it is still in
             // our view hierarchy.
             if (focusLayoutRestoreView != null
                     && focusLayoutRestoreView.getWindowToken() != null) {
-                focusLayoutRestoreView.onFinishTemporaryDetach();
+                focusLayoutRestoreView.dispatchFinishTemporaryDetach();
             }
             
             mLayoutMode = LAYOUT_NORMAL;
@@ -1761,26 +1875,43 @@ public class ListView extends AbsListView {
 
             invokeOnItemScrollListener();
         } finally {
+            if (mFocusSelector != null) {
+                mFocusSelector.onLayoutComplete();
+            }
             if (!blockLayoutRequests) {
                 mBlockLayoutRequests = false;
             }
         }
     }
 
+    @Override
+    boolean trackMotionScroll(int deltaY, int incrementalDeltaY) {
+        final boolean result = super.trackMotionScroll(deltaY, incrementalDeltaY);
+        removeUnusedFixedViews(mHeaderViewInfos);
+        removeUnusedFixedViews(mFooterViewInfos);
+        return result;
+    }
+
     /**
-     * @param focusedView the view that has accessibility focus.
-     * @return the direct child that contains accessibility focus.
+     * Header and Footer views are not scrapped / recycled like other views but they are still
+     * detached from the ViewGroup. After a layout operation, call this method to remove such views.
+     *
+     * @param infoList The info list to be traversed
      */
-    private View findAccessibilityFocusedChild(View focusedView) {
-        ViewParent viewParent = focusedView.getParent();
-        while ((viewParent instanceof View) && (viewParent != this)) {
-            focusedView = (View) viewParent;
-            viewParent = viewParent.getParent();
+    private void removeUnusedFixedViews(@Nullable List<FixedViewInfo> infoList) {
+        if (infoList == null) {
+            return;
         }
-        if (!(viewParent instanceof View)) {
-            return null;
+        for (int i = infoList.size() - 1; i >= 0; i--) {
+            final FixedViewInfo fixedViewInfo = infoList.get(i);
+            final View view = fixedViewInfo.view;
+            final LayoutParams lp = (LayoutParams) view.getLayoutParams();
+            if (view.getParent() == null && lp != null && lp.recycledHeaderFooter) {
+                removeDetachedView(view, false);
+                lp.recycledHeaderFooter = false;
+            }
+
         }
-        return focusedView;
     }
 
     /**
@@ -1788,7 +1919,6 @@ public class ListView extends AbsListView {
      * @return Whether child is a header or footer view.
      */
     private boolean isDirectChildHeaderOrFooter(View child) {
-
         final ArrayList<FixedViewInfo> headers = mHeaderViewInfos;
         final int numHeaders = headers.size();
         for (int i = 0; i < numHeaders; i++) {
@@ -1796,6 +1926,7 @@ public class ListView extends AbsListView {
                 return true;
             }
         }
+
         final ArrayList<FixedViewInfo> footers = mFooterViewInfos;
         final int numFooters = footers.size();
         for (int i = 0; i < numFooters; i++) {
@@ -1803,6 +1934,7 @@ public class ListView extends AbsListView {
                 return true;
             }
         }
+
         return false;
     }
 
@@ -1861,6 +1993,8 @@ public class ListView extends AbsListView {
      */
     private void setupChild(View child, int position, int y, boolean flowDown, int childrenLeft,
             boolean selected, boolean recycled) {
+        Trace.traceBegin(Trace.TRACE_TAG_VIEW, "setupListItem");
+
         final boolean isSelected = selected && shouldShowSelector();
         final boolean updateChildSelected = isSelected != child.isSelected();
         final int mode = mTouchMode;
@@ -1876,9 +2010,10 @@ public class ListView extends AbsListView {
             p = (AbsListView.LayoutParams) generateDefaultLayoutParams();
         }
         p.viewType = mAdapter.getItemViewType(position);
+        p.isEnabled = mAdapter.isEnabled(position);
 
-        if ((recycled && !p.forceAdd) || (p.recycledHeaderFooter &&
-                p.viewType == AdapterView.ITEM_VIEW_TYPE_HEADER_OR_FOOTER)) {
+        if ((recycled && !p.forceAdd) || (p.recycledHeaderFooter
+                && p.viewType == AdapterView.ITEM_VIEW_TYPE_HEADER_OR_FOOTER)) {
             attachViewToParent(child, flowDown ? -1 : 0, p);
         } else {
             p.forceAdd = false;
@@ -1906,14 +2041,15 @@ public class ListView extends AbsListView {
         }
 
         if (needToMeasure) {
-            int childWidthSpec = ViewGroup.getChildMeasureSpec(mWidthMeasureSpec,
+            final int childWidthSpec = ViewGroup.getChildMeasureSpec(mWidthMeasureSpec,
                     mListPadding.left + mListPadding.right, p.width);
-            int lpHeight = p.height;
-            int childHeightSpec;
+            final int lpHeight = p.height;
+            final int childHeightSpec;
             if (lpHeight > 0) {
                 childHeightSpec = MeasureSpec.makeMeasureSpec(lpHeight, MeasureSpec.EXACTLY);
             } else {
-                childHeightSpec = MeasureSpec.makeMeasureSpec(0, MeasureSpec.UNSPECIFIED);
+                childHeightSpec = MeasureSpec.makeSafeMeasureSpec(getMeasuredHeight(),
+                        MeasureSpec.UNSPECIFIED);
             }
             child.measure(childWidthSpec, childHeightSpec);
         } else {
@@ -1941,6 +2077,8 @@ public class ListView extends AbsListView {
                 != position) {
             child.jumpDrawablesToCurrentState();
         }
+
+        Trace.traceEnd(Trace.TRACE_TAG_VIEW);
     }
 
     @Override
@@ -1958,45 +2096,6 @@ public class ListView extends AbsListView {
     @Override
     public void setSelection(int position) {
         setSelectionFromTop(position, 0);
-    }
-
-    /**
-     * Sets the selected item and positions the selection y pixels from the top edge
-     * of the ListView. (If in touch mode, the item will not be selected but it will
-     * still be positioned appropriately.)
-     *
-     * @param position Index (starting at 0) of the data item to be selected.
-     * @param y The distance from the top edge of the ListView (plus padding) that the
-     *        item will be positioned.
-     */
-    public void setSelectionFromTop(int position, int y) {
-        if (mAdapter == null) {
-            return;
-        }
-
-        if (!isInTouchMode()) {
-            position = lookForSelectablePosition(position, true);
-            if (position >= 0) {
-                setNextSelectedPositionInt(position);
-            }
-        } else {
-            mResurrectToPosition = position;
-        }
-
-        if (position >= 0) {
-            mLayoutMode = LAYOUT_SPECIFIC;
-            mSpecificTop = mListPadding.top + y;
-
-            if (mNeedSync) {
-                mSyncPosition = position;
-                mSyncRowId = mAdapter.getItemId(position);
-            }
-
-            if (mPositionScroller != null) {
-                mPositionScroller.stop();
-            }
-            requestLayout();
-        }
     }
 
     /**
@@ -2058,17 +2157,61 @@ public class ListView extends AbsListView {
                     position--;
                 }
             }
-
-            if (position < 0 || position >= count) {
-                return INVALID_POSITION;
-            }
-            return position;
-        } else {
-            if (position < 0 || position >= count) {
-                return INVALID_POSITION;
-            }
-            return position;
         }
+
+        if (position < 0 || position >= count) {
+            return INVALID_POSITION;
+        }
+
+        return position;
+    }
+
+    /**
+     * Find a position that can be selected (i.e., is not a separator). If there
+     * are no selectable positions in the specified direction from the starting
+     * position, searches in the opposite direction from the starting position
+     * to the current position.
+     *
+     * @param current the current position
+     * @param position the starting position
+     * @param lookDown whether to look down for other positions
+     * @return the next selectable position, or {@link #INVALID_POSITION} if
+     *         nothing can be found
+     */
+    int lookForSelectablePositionAfter(int current, int position, boolean lookDown) {
+        final ListAdapter adapter = mAdapter;
+        if (adapter == null || isInTouchMode()) {
+            return INVALID_POSITION;
+        }
+
+        // First check after the starting position in the specified direction.
+        final int after = lookForSelectablePosition(position, lookDown);
+        if (after != INVALID_POSITION) {
+            return after;
+        }
+
+        // Then check between the starting position and the current position.
+        final int count = adapter.getCount();
+        current = MathUtils.constrain(current, -1, count - 1);
+        if (lookDown) {
+            position = Math.min(position - 1, count - 1);
+            while ((position > current) && !adapter.isEnabled(position)) {
+                position--;
+            }
+            if (position <= current) {
+                return INVALID_POSITION;
+            }
+        } else {
+            position = Math.max(0, position + 1);
+            while ((position < current) && !adapter.isEnabled(position)) {
+                position++;
+            }
+            if (position >= current) {
+                return INVALID_POSITION;
+            }
+        }
+
+        return position;
     }
 
     /**
@@ -2123,7 +2266,7 @@ public class ListView extends AbsListView {
     }
 
     private boolean commonKey(int keyCode, int count, KeyEvent event) {
-        if (mAdapter == null || !mIsAttached) {
+        if (mAdapter == null || !isAttachedToWindow()) {
             return false;
         }
 
@@ -2133,8 +2276,17 @@ public class ListView extends AbsListView {
 
         boolean handled = false;
         int action = event.getAction();
+        if (KeyEvent.isConfirmKey(keyCode)
+                && event.hasNoModifiers() && action != KeyEvent.ACTION_UP) {
+            handled = resurrectSelectionIfNeeded();
+            if (!handled && event.getRepeatCount() == 0 && getChildCount() > 0) {
+                keyPressed();
+                handled = true;
+            }
+        }
 
-        if (action != KeyEvent.ACTION_UP) {
+
+        if (!handled && action != KeyEvent.ACTION_UP) {
             switch (keyCode) {
             case KeyEvent.KEYCODE_DPAD_UP:
                 if (event.hasNoModifiers()) {
@@ -2182,29 +2334,6 @@ public class ListView extends AbsListView {
                 }
                 break;
 
-            case KeyEvent.KEYCODE_DPAD_CENTER:
-            case KeyEvent.KEYCODE_ENTER:
-                if (event.hasNoModifiers()) {
-                    handled = resurrectSelectionIfNeeded();
-                    if (!handled
-                            && event.getRepeatCount() == 0 && getChildCount() > 0) {
-                        keyPressed();
-                        handled = true;
-                    }
-                }
-                break;
-
-            case KeyEvent.KEYCODE_SPACE:
-                if (mPopup == null || !mPopup.isShowing()) {
-                    if (event.hasNoModifiers()) {
-                        handled = resurrectSelectionIfNeeded() || pageScroll(FOCUS_DOWN);
-                    } else if (event.hasModifiers(KeyEvent.META_SHIFT_ON)) {
-                        handled = resurrectSelectionIfNeeded() || pageScroll(FOCUS_UP);
-                    }
-                    handled = true;
-                }
-                break;
-
             case KeyEvent.KEYCODE_PAGE_UP:
                 if (event.hasNoModifiers()) {
                     handled = resurrectSelectionIfNeeded() || pageScroll(FOCUS_UP);
@@ -2234,18 +2363,14 @@ public class ListView extends AbsListView {
                 break;
 
             case KeyEvent.KEYCODE_TAB:
-                // XXX Sometimes it is useful to be able to TAB through the items in
-                //     a ListView sequentially.  Unfortunately this can create an
-                //     asymmetry in TAB navigation order unless the list selection
-                //     always reverts to the top or bottom when receiving TAB focus from
-                //     another widget.  Leaving this behavior disabled for now but
-                //     perhaps it should be configurable (and more comprehensive).
-                if (false) {
-                    if (event.hasNoModifiers()) {
-                        handled = resurrectSelectionIfNeeded() || arrowScroll(FOCUS_DOWN);
-                    } else if (event.hasModifiers(KeyEvent.META_SHIFT_ON)) {
-                        handled = resurrectSelectionIfNeeded() || arrowScroll(FOCUS_UP);
-                    }
+                // This creates an asymmetry in TAB navigation order. At some
+                // point in the future we may decide that it's preferable to
+                // force the list selection to the top or bottom when receiving
+                // TAB focus from another widget, but for now this is adequate.
+                if (event.hasNoModifiers()) {
+                    handled = resurrectSelectionIfNeeded() || arrowScroll(FOCUS_DOWN);
+                } else if (event.hasModifiers(KeyEvent.META_SHIFT_ON)) {
+                    handled = resurrectSelectionIfNeeded() || arrowScroll(FOCUS_UP);
                 }
                 break;
             }
@@ -2281,27 +2406,30 @@ public class ListView extends AbsListView {
      * @return whether selection was moved
      */
     boolean pageScroll(int direction) {
-        int nextPage = -1;
-        boolean down = false;
+        final int nextPage;
+        final boolean down;
 
         if (direction == FOCUS_UP) {
             nextPage = Math.max(0, mSelectedPosition - getChildCount() - 1);
+            down = false;
         } else if (direction == FOCUS_DOWN) {
             nextPage = Math.min(mItemCount - 1, mSelectedPosition + getChildCount() - 1);
             down = true;
+        } else {
+            return false;
         }
 
         if (nextPage >= 0) {
-            int position = lookForSelectablePosition(nextPage, down);
+            final int position = lookForSelectablePositionAfter(mSelectedPosition, nextPage, down);
             if (position >= 0) {
                 mLayoutMode = LAYOUT_SPECIFIC;
                 mSpecificTop = mPaddingTop + getVerticalFadingEdgeLength();
 
-                if (down && position > mItemCount - getChildCount()) {
+                if (down && (position > (mItemCount - getChildCount()))) {
                     mLayoutMode = LAYOUT_FORCE_BOTTOM;
                 }
 
-                if (!down && position < getChildCount()) {
+                if (!down && (position < getChildCount())) {
                     mLayoutMode = LAYOUT_FORCE_TOP;
                 }
 
@@ -2319,18 +2447,18 @@ public class ListView extends AbsListView {
     }
 
     /**
-     * Go to the last or first item if possible (not worrying about panning across or navigating
-     * within the internal focus of the currently selected item.)
+     * Go to the last or first item if possible (not worrying about panning
+     * across or navigating within the internal focus of the currently selected
+     * item.)
      *
      * @param direction either {@link View#FOCUS_UP} or {@link View#FOCUS_DOWN}
-     *
      * @return whether selection was moved
      */
     boolean fullScroll(int direction) {
         boolean moved = false;
         if (direction == FOCUS_UP) {
             if (mSelectedPosition != 0) {
-                int position = lookForSelectablePosition(0, true);
+                final int position = lookForSelectablePositionAfter(mSelectedPosition, 0, true);
                 if (position >= 0) {
                     mLayoutMode = LAYOUT_FORCE_TOP;
                     setSelectionInt(position);
@@ -2339,8 +2467,10 @@ public class ListView extends AbsListView {
                 moved = true;
             }
         } else if (direction == FOCUS_DOWN) {
-            if (mSelectedPosition < mItemCount - 1) {
-                int position = lookForSelectablePosition(mItemCount - 1, true);
+            final int lastItem = (mItemCount - 1);
+            if (mSelectedPosition < lastItem) {
+                final int position = lookForSelectablePositionAfter(
+                        mSelectedPosition, lastItem, false);
                 if (position >= 0) {
                     mLayoutMode = LAYOUT_FORCE_BOTTOM;
                     setSelectionInt(position);
@@ -2382,10 +2512,15 @@ public class ListView extends AbsListView {
                         (ViewGroup) selectedView, currentFocus, direction);
                 if (nextFocus != null) {
                     // do the math to get interesting rect in next focus' coordinates
-                    currentFocus.getFocusedRect(mTempRect);
-                    offsetDescendantRectToMyCoords(currentFocus, mTempRect);
-                    offsetRectIntoDescendantCoords(nextFocus, mTempRect);
-                    if (nextFocus.requestFocus(direction, mTempRect)) {
+                    Rect focusedRect = mTempRect;
+                    if (currentFocus != null) {
+                        currentFocus.getFocusedRect(focusedRect);
+                        offsetDescendantRectToMyCoords(currentFocus, focusedRect);
+                        offsetRectIntoDescendantCoords(nextFocus, focusedRect);
+                    } else {
+                        focusedRect = null;
+                    }
+                    if (nextFocus.requestFocus(direction, focusedRect)) {
                         return true;
                     }
                 }
@@ -2425,24 +2560,37 @@ public class ListView extends AbsListView {
 
     /**
      * Used by {@link #arrowScrollImpl(int)} to help determine the next selected position
-     * to move to. This can return a position currently not represented by a view on screen
-     * but only in the direction given.
+     * to move to. This return a position in the direction given if the selected item
+     * is fully visible.
      *
+     * @param selectedView Current selected view to move from
      * @param selectedPos Current selected position to move from
      * @param direction Direction to move in
      * @return Desired selected position after moving in the given direction
      */
-    private final int nextSelectedPositionForDirection(int selectedPos, int direction) {
+    private final int nextSelectedPositionForDirection(
+            View selectedView, int selectedPos, int direction) {
         int nextSelected;
+
         if (direction == View.FOCUS_DOWN) {
-            nextSelected = selectedPos != INVALID_POSITION && selectedPos >= mFirstPosition ?
-                    selectedPos + 1 :
-                    mFirstPosition;
+            final int listBottom = getHeight() - mListPadding.bottom;
+            if (selectedView != null && selectedView.getBottom() <= listBottom) {
+                nextSelected = selectedPos != INVALID_POSITION && selectedPos >= mFirstPosition ?
+                        selectedPos + 1 :
+                        mFirstPosition;
+            } else {
+                return INVALID_POSITION;
+            }
         } else {
-            final int lastPos = mFirstPosition + getChildCount() - 1;
-            nextSelected = selectedPos != INVALID_POSITION && selectedPos <= lastPos ?
-                    selectedPos - 1 :
-                    lastPos;
+            final int listTop = mListPadding.top;
+            if (selectedView != null && selectedView.getTop() >= listTop) {
+                final int lastPos = mFirstPosition + getChildCount() - 1;
+                nextSelected = selectedPos != INVALID_POSITION && selectedPos <= lastPos ?
+                        selectedPos - 1 :
+                        lastPos;
+            } else {
+                return INVALID_POSITION;
+            }
         }
 
         if (nextSelected < 0 || nextSelected >= mAdapter.getCount()) {
@@ -2466,7 +2614,7 @@ public class ListView extends AbsListView {
         View selectedView = getSelectedView();
         int selectedPos = mSelectedPosition;
 
-        int nextSelectedPosition = nextSelectedPositionForDirection(selectedPos, direction);
+        int nextSelectedPosition = nextSelectedPositionForDirection(selectedView, selectedPos, direction);
         int amountToScroll = amountToScroll(direction, nextSelectedPosition);
 
         // if we are moving focus, we may OVERRIDE the default behavior
@@ -2505,8 +2653,10 @@ public class ListView extends AbsListView {
         if (mItemsCanFocus && (focusResult == null)
                 && selectedView != null && selectedView.hasFocus()) {
             final View focused = selectedView.findFocus();
-            if (!isViewAncestorOf(focused, this) || distanceToView(focused) > 0) {
-                focused.clearFocus();
+            if (focused != null) {
+                if (!isViewAncestorOf(focused, this) || distanceToView(focused) > 0) {
+                    focused.clearFocus();
+                }
             }
         }
 
@@ -2523,7 +2673,7 @@ public class ListView extends AbsListView {
 
         if (needToRedraw) {
             if (selectedView != null) {
-                positionSelector(selectedPos, selectedView);
+                positionSelectorLikeFocus(selectedPos, selectedView);
                 mSelectedTop = selectedView.getTop();
             }
             if (!awakenScrollBars()) {
@@ -2635,7 +2785,8 @@ public class ListView extends AbsListView {
         if (lpHeight > 0) {
             childHeightSpec = MeasureSpec.makeMeasureSpec(lpHeight, MeasureSpec.EXACTLY);
         } else {
-            childHeightSpec = MeasureSpec.makeMeasureSpec(0, MeasureSpec.UNSPECIFIED);
+            childHeightSpec = MeasureSpec.makeSafeMeasureSpec(getMeasuredHeight(),
+                    MeasureSpec.UNSPECIFIED);
         }
         child.measure(childWidthSpec, childHeightSpec);
     }
@@ -3063,6 +3214,9 @@ public class ListView extends AbsListView {
                 last = getChildAt(--lastIndex);
             }
         }
+        recycleBin.fullyDetachScrapViews();
+        removeUnusedFixedViews(mHeaderViewInfos);
+        removeUnusedFixedViews(mFooterViewInfos);
     }
 
     private View addViewAbove(View theView, int position) {
@@ -3195,7 +3349,7 @@ public class ListView extends AbsListView {
             final int count = getChildCount();
             final int headerCount = mHeaderViewInfos.size();
             final int itemCount = mItemCount;
-            final int footerLimit = itemCount - mFooterViewInfos.size() - 1;
+            final int footerLimit = (itemCount - mFooterViewInfos.size());
             final boolean headerDividers = mHeaderDividersEnabled;
             final boolean footerDividers = mFooterDividersEnabled;
             final int first = mFirstPosition;
@@ -3239,17 +3393,24 @@ public class ListView extends AbsListView {
                 }
 
                 for (int i = 0; i < count; i++) {
-                    if ((headerDividers || first + i >= headerCount) &&
-                            (footerDividers || first + i < footerLimit)) {
-                        View child = getChildAt(i);
+                    final int itemIndex = (first + i);
+                    final boolean isHeader = (itemIndex < headerCount);
+                    final boolean isFooter = (itemIndex >= footerLimit);
+                    if ((headerDividers || !isHeader) && (footerDividers || !isFooter)) {
+                        final View child = getChildAt(i);
                         bottom = child.getBottom();
-                        // Don't draw dividers next to items that are not enabled
+                        final boolean isLastItem = (i == (count - 1));
 
-                        if (drawDividers &&
-                                (bottom < listBottom && !(drawOverscrollFooter && i == count - 1))) {
-                            if ((areAllItemsSelectable ||
-                                    (adapter.isEnabled(first + i) && (i == count - 1 ||
-                                            adapter.isEnabled(first + i + 1))))) {
+                        if (drawDividers && (bottom < listBottom)
+                                && !(drawOverscrollFooter && isLastItem)) {
+                            final int nextIndex = (itemIndex + 1);
+                            // Draw dividers between enabled items, headers
+                            // and/or footers when enabled and requested, and
+                            // after the last enabled item.
+                            if (adapter.isEnabled(itemIndex) && (headerDividers || !isHeader
+                                    && (nextIndex >= headerCount)) && (isLastItem
+                                    || adapter.isEnabled(nextIndex) && (footerDividers || !isFooter
+                                            && (nextIndex < footerLimit)))) {
                                 bounds.top = bottom;
                                 bounds.bottom = bottom + dividerHeight;
                                 drawDivider(canvas, bounds, i);
@@ -3282,20 +3443,27 @@ public class ListView extends AbsListView {
 
                 final int start = drawOverscrollHeader ? 1 : 0;
                 for (int i = start; i < count; i++) {
-                    if ((headerDividers || first + i >= headerCount) &&
-                            (footerDividers || first + i < footerLimit)) {
-                        View child = getChildAt(i);
+                    final int itemIndex = (first + i);
+                    final boolean isHeader = (itemIndex < headerCount);
+                    final boolean isFooter = (itemIndex >= footerLimit);
+                    if ((headerDividers || !isHeader) && (footerDividers || !isFooter)) {
+                        final View child = getChildAt(i);
                         top = child.getTop();
-                        // Don't draw dividers next to items that are not enabled
-                        if (top > effectivePaddingTop) {
-                            if ((areAllItemsSelectable ||
-                                    (adapter.isEnabled(first + i) && (i == count - 1 ||
-                                            adapter.isEnabled(first + i + 1))))) {
+                        if (drawDividers && (top > effectivePaddingTop)) {
+                            final boolean isFirstItem = (i == start);
+                            final int previousIndex = (itemIndex - 1);
+                            // Draw dividers between enabled items, headers
+                            // and/or footers when enabled and requested, and
+                            // before the first enabled item.
+                            if (adapter.isEnabled(itemIndex) && (headerDividers || !isHeader
+                                    && (previousIndex >= headerCount)) && (isFirstItem ||
+                                    adapter.isEnabled(previousIndex) && (footerDividers || !isFooter
+                                            && (previousIndex < footerLimit)))) {
                                 bounds.top = top - dividerHeight;
                                 bounds.bottom = top;
-                                // Give the method the child ABOVE the divider, so we
-                                // subtract one from our child
-                                // position. Give -1 when there is no child above the
+                                // Give the method the child ABOVE the divider,
+                                // so we subtract one from our child position.
+                                // Give -1 when there is no child above the
                                 // divider.
                                 drawDivider(canvas, bounds, i - 1);
                             } else if (fillForMissingDividers) {
@@ -3356,18 +3524,23 @@ public class ListView extends AbsListView {
      * Returns the drawable that will be drawn between each item in the list.
      *
      * @return the current drawable drawn between list elements
+     * @attr ref R.styleable#ListView_divider
      */
+    @Nullable
     public Drawable getDivider() {
         return mDivider;
     }
 
     /**
-     * Sets the drawable that will be drawn between each item in the list. If the drawable does
-     * not have an intrinsic height, you should also call {@link #setDividerHeight(int)}
+     * Sets the drawable that will be drawn between each item in the list.
+     * <p>
+     * <strong>Note:</strong> If the drawable does not have an intrinsic
+     * height, you should also call {@link #setDividerHeight(int)}.
      *
-     * @param divider The drawable to use.
+     * @param divider the drawable to use
+     * @attr ref R.styleable#ListView_divider
      */
-    public void setDivider(Drawable divider) {
+    public void setDivider(@Nullable Drawable divider) {
         if (divider != null) {
             mDividerHeight = divider.getIntrinsicHeight();
         } else {
@@ -3404,6 +3577,7 @@ public class ListView extends AbsListView {
      * @param headerDividersEnabled True to draw the headers, false otherwise.
      *
      * @see #setFooterDividersEnabled(boolean)
+     * @see #areHeaderDividersEnabled()
      * @see #addHeaderView(android.view.View)
      */
     public void setHeaderDividersEnabled(boolean headerDividersEnabled) {
@@ -3412,16 +3586,35 @@ public class ListView extends AbsListView {
     }
 
     /**
+     * @return Whether the drawing of the divider for header views is enabled
+     *
+     * @see #setHeaderDividersEnabled(boolean)
+     */
+    public boolean areHeaderDividersEnabled() {
+        return mHeaderDividersEnabled;
+    }
+
+    /**
      * Enables or disables the drawing of the divider for footer views.
      *
      * @param footerDividersEnabled True to draw the footers, false otherwise.
      *
      * @see #setHeaderDividersEnabled(boolean)
+     * @see #areFooterDividersEnabled()
      * @see #addFooterView(android.view.View)
      */
     public void setFooterDividersEnabled(boolean footerDividersEnabled) {
         mFooterDividersEnabled = footerDividersEnabled;
         invalidate();
+    }
+
+    /**
+     * @return Whether the drawing of the divider for footer views is enabled
+     *
+     * @see #setFooterDividersEnabled(boolean)
+     */
+    public boolean areFooterDividersEnabled() {
+        return mFooterDividersEnabled;
     }
     
     /**
@@ -3538,7 +3731,7 @@ public class ListView extends AbsListView {
      * First look in our children, then in any header and footer views that may be scrolled off.
      */
     @Override
-    protected View findViewTraversal(int id) {
+    protected View findViewTraversal(@IdRes int id) {
         View v;
         v = super.findViewTraversal(id);
         if (v == null) {
@@ -3719,14 +3912,135 @@ public class ListView extends AbsListView {
     }
 
     @Override
-    public void onInitializeAccessibilityEvent(AccessibilityEvent event) {
-        super.onInitializeAccessibilityEvent(event);
-        event.setClassName(ListView.class.getName());
+    int getHeightForPosition(int position) {
+        final int height = super.getHeightForPosition(position);
+        if (shouldAdjustHeightForDivider(position)) {
+            return height + mDividerHeight;
+        }
+        return height;
+    }
+
+    private boolean shouldAdjustHeightForDivider(int itemIndex) {
+        final int dividerHeight = mDividerHeight;
+        final Drawable overscrollHeader = mOverScrollHeader;
+        final Drawable overscrollFooter = mOverScrollFooter;
+        final boolean drawOverscrollHeader = overscrollHeader != null;
+        final boolean drawOverscrollFooter = overscrollFooter != null;
+        final boolean drawDividers = dividerHeight > 0 && mDivider != null;
+
+        if (drawDividers) {
+            final boolean fillForMissingDividers = isOpaque() && !super.isOpaque();
+            final int itemCount = mItemCount;
+            final int headerCount = mHeaderViewInfos.size();
+            final int footerLimit = (itemCount - mFooterViewInfos.size());
+            final boolean isHeader = (itemIndex < headerCount);
+            final boolean isFooter = (itemIndex >= footerLimit);
+            final boolean headerDividers = mHeaderDividersEnabled;
+            final boolean footerDividers = mFooterDividersEnabled;
+            if ((headerDividers || !isHeader) && (footerDividers || !isFooter)) {
+                final ListAdapter adapter = mAdapter;
+                if (!mStackFromBottom) {
+                    final boolean isLastItem = (itemIndex == (itemCount - 1));
+                    if (!drawOverscrollFooter || !isLastItem) {
+                        final int nextIndex = itemIndex + 1;
+                        // Draw dividers between enabled items, headers
+                        // and/or footers when enabled and requested, and
+                        // after the last enabled item.
+                        if (adapter.isEnabled(itemIndex) && (headerDividers || !isHeader
+                                && (nextIndex >= headerCount)) && (isLastItem
+                                || adapter.isEnabled(nextIndex) && (footerDividers || !isFooter
+                                                && (nextIndex < footerLimit)))) {
+                            return true;
+                        } else if (fillForMissingDividers) {
+                            return true;
+                        }
+                    }
+                } else {
+                    final int start = drawOverscrollHeader ? 1 : 0;
+                    final boolean isFirstItem = (itemIndex == start);
+                    if (!isFirstItem) {
+                        final int previousIndex = (itemIndex - 1);
+                        // Draw dividers between enabled items, headers
+                        // and/or footers when enabled and requested, and
+                        // before the first enabled item.
+                        if (adapter.isEnabled(itemIndex) && (headerDividers || !isHeader
+                                && (previousIndex >= headerCount)) && (isFirstItem ||
+                                adapter.isEnabled(previousIndex) && (footerDividers || !isFooter
+                                        && (previousIndex < footerLimit)))) {
+                            return true;
+                        } else if (fillForMissingDividers) {
+                            return true;
+                        }
+                    }
+                }
+            }
+        }
+
+        return false;
     }
 
     @Override
-    public void onInitializeAccessibilityNodeInfo(AccessibilityNodeInfo info) {
-        super.onInitializeAccessibilityNodeInfo(info);
-        info.setClassName(ListView.class.getName());
+    public CharSequence getAccessibilityClassName() {
+        return ListView.class.getName();
+    }
+
+    /** @hide */
+    @Override
+    public void onInitializeAccessibilityNodeInfoInternal(AccessibilityNodeInfo info) {
+        super.onInitializeAccessibilityNodeInfoInternal(info);
+
+        final int rowsCount = getCount();
+        final int selectionMode = getSelectionModeForAccessibility();
+        final CollectionInfo collectionInfo = CollectionInfo.obtain(
+                rowsCount, 1, false, selectionMode);
+        info.setCollectionInfo(collectionInfo);
+
+        if (rowsCount > 0) {
+            info.addAction(AccessibilityAction.ACTION_SCROLL_TO_POSITION);
+        }
+    }
+
+    /** @hide */
+    @Override
+    public boolean performAccessibilityActionInternal(int action, Bundle arguments) {
+        if (super.performAccessibilityActionInternal(action, arguments)) {
+            return true;
+        }
+
+        switch (action) {
+            case R.id.accessibilityActionScrollToPosition: {
+                final int row = arguments.getInt(AccessibilityNodeInfo.ACTION_ARGUMENT_ROW_INT, -1);
+                final int position = Math.min(row, getCount() - 1);
+                if (row >= 0) {
+                    // The accessibility service gets data asynchronously, so
+                    // we'll be a little lenient by clamping the last position.
+                    smoothScrollToPosition(position);
+                    return true;
+                }
+            } break;
+        }
+
+        return false;
+    }
+
+    @Override
+    public void onInitializeAccessibilityNodeInfoForItem(
+            View view, int position, AccessibilityNodeInfo info) {
+        super.onInitializeAccessibilityNodeInfoForItem(view, position, info);
+
+        final LayoutParams lp = (LayoutParams) view.getLayoutParams();
+        final boolean isHeading = lp != null && lp.viewType == ITEM_VIEW_TYPE_HEADER_OR_FOOTER;
+        final boolean isSelected = isItemChecked(position);
+        final CollectionItemInfo itemInfo = CollectionItemInfo.obtain(
+                position, 1, 0, 1, isHeading, isSelected);
+        info.setCollectionItemInfo(itemInfo);
+    }
+
+    /** @hide */
+    @Override
+    protected void encodeProperties(@NonNull ViewHierarchyEncoder encoder) {
+        super.encodeProperties(encoder);
+
+        encoder.addProperty("recycleOnMeasure", recycleOnMeasure());
     }
 }

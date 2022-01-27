@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2102 The Android Open Source Project
+ * Copyright (C) 2012 The Android Open Source Project
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -21,7 +21,7 @@ import android.util.Log;
 
 
 /**
- * Class for exposing the native Renderscript byte2 type back to the Android system.
+ * Class for exposing the native RenderScript byte2 type back to the Android system.
  *
  **/
 public class Byte2 {

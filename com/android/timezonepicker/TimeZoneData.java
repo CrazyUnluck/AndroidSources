@@ -475,7 +475,6 @@ public class TimeZoneData {
         return processedTimeZones;
     }
 
-    @SuppressWarnings("unused")
     private static Locale mBackupCountryLocale;
     private static String[] mBackupCountryCodes;
     private static String[] mBackupCountryNames;

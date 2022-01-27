@@ -16,8 +16,17 @@
 
 package java.nio;
 
+import java.io.Closeable;
 import java.io.FileDescriptor;
+import java.io.IOException;
+import java.nio.channels.ClosedChannelException;
 import java.nio.channels.FileChannel;
+import java.util.Set;
+
+import static android.system.OsConstants.*;
+import sun.misc.Cleaner;
+import sun.nio.ch.DirectBuffer;
+import sun.nio.ch.FileChannelImpl;
 
 /**
  * @hide internal use only
@@ -30,21 +39,31 @@ public final class NioUtils {
         if (buffer == null) {
             return;
         }
-        ((DirectByteBuffer) buffer).free();
+
+        DirectByteBuffer dbb = (DirectByteBuffer) buffer;
+        // Run the cleaner early, if one is defined.
+        if (dbb.cleaner != null) {
+            dbb.cleaner.clean();
+        }
+
+        dbb.memoryRef.free();
     }
 
     /**
      * Returns the int file descriptor from within the given FileChannel 'fc'.
      */
     public static FileDescriptor getFD(FileChannel fc) {
-        return ((FileChannelImpl) fc).getFD();
+        return ((FileChannelImpl) fc).fd;
     }
 
     /**
      * Helps bridge between io and nio.
      */
-    public static FileChannel newFileChannel(Object stream, FileDescriptor fd, int mode) {
-        return new FileChannelImpl(stream, fd, mode);
+    public static FileChannel newFileChannel(Closeable ioObject, FileDescriptor fd, int mode) {
+        boolean readable = (mode & (O_RDONLY | O_RDWR | O_SYNC)) != 0;
+        boolean writable = (mode & (O_WRONLY | O_RDWR | O_SYNC)) != 0;
+        boolean append = (mode & O_APPEND) != 0;
+        return FileChannelImpl.open(fd, null, readable, writable, append, ioObject);
     }
 
     /**
@@ -52,7 +71,7 @@ public final class NioUtils {
      * Normally, attempting to access the array backing a read-only buffer throws.
      */
     public static byte[] unsafeArray(ByteBuffer b) {
-        return ((ByteArrayBuffer) b).backingArray;
+        return b.array();
     }
 
     /**
@@ -60,6 +79,6 @@ public final class NioUtils {
      * even if the ByteBuffer is read-only.
      */
     public static int unsafeArrayOffset(ByteBuffer b) {
-        return ((ByteArrayBuffer) b).arrayOffset;
+        return b.arrayOffset();
     }
 }

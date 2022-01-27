@@ -16,13 +16,19 @@
 
 package android.net;
 
+import java.io.FileDescriptor;
 import java.net.InetAddress;
 import java.net.Inet4Address;
 import java.net.Inet6Address;
+import java.net.SocketException;
 import java.net.UnknownHostException;
 import java.util.Collection;
+import java.util.Locale;
 
+import android.os.Parcel;
 import android.util.Log;
+import android.util.Pair;
+
 
 /**
  * Native methods for managing network interfaces.
@@ -33,74 +39,71 @@ public class NetworkUtils {
 
     private static final String TAG = "NetworkUtils";
 
-    /** Bring the named network interface up. */
-    public native static int enableInterface(String interfaceName);
-
-    /** Bring the named network interface down. */
-    public native static int disableInterface(String interfaceName);
-
-    /** Setting bit 0 indicates reseting of IPv4 addresses required */
-    public static final int RESET_IPV4_ADDRESSES = 0x01;
-
-    /** Setting bit 1 indicates reseting of IPv4 addresses required */
-    public static final int RESET_IPV6_ADDRESSES = 0x02;
-
-    /** Reset all addresses */
-    public static final int RESET_ALL_ADDRESSES = RESET_IPV4_ADDRESSES | RESET_IPV6_ADDRESSES;
+    /**
+     * Attaches a socket filter that accepts DHCP packets to the given socket.
+     */
+    public native static void attachDhcpFilter(FileDescriptor fd) throws SocketException;
 
     /**
-     * Reset IPv6 or IPv4 sockets that are connected via the named interface.
+     * Attaches a socket filter that accepts ICMP6 router advertisement packets to the given socket.
+     * @param fd the socket's {@link FileDescriptor}.
+     * @param packetType the hardware address type, one of ARPHRD_*.
+     */
+    public native static void attachRaFilter(FileDescriptor fd, int packetType) throws SocketException;
+
+    /**
+     * Binds the current process to the network designated by {@code netId}.  All sockets created
+     * in the future (and not explicitly bound via a bound {@link SocketFactory} (see
+     * {@link Network#getSocketFactory}) will be bound to this network.  Note that if this
+     * {@code Network} ever disconnects all sockets created in this way will cease to work.  This
+     * is by design so an application doesn't accidentally use sockets it thinks are still bound to
+     * a particular {@code Network}.  Passing NETID_UNSET clears the binding.
+     */
+    public native static boolean bindProcessToNetwork(int netId);
+
+    /**
+     * Return the netId last passed to {@link #bindProcessToNetwork}, or NETID_UNSET if
+     * {@link #unbindProcessToNetwork} has been called since {@link #bindProcessToNetwork}.
+     */
+    public native static int getBoundNetworkForProcess();
+
+    /**
+     * Binds host resolutions performed by this process to the network designated by {@code netId}.
+     * {@link #bindProcessToNetwork} takes precedence over this setting.  Passing NETID_UNSET clears
+     * the binding.
      *
-     * @param interfaceName is the interface to reset
-     * @param mask {@see #RESET_IPV4_ADDRESSES} and {@see #RESET_IPV6_ADDRESSES}
+     * @deprecated This is strictly for legacy usage to support startUsingNetworkFeature().
      */
-    public native static int resetConnections(String interfaceName, int mask);
+    public native static boolean bindProcessToNetworkForHostResolution(int netId);
 
     /**
-     * Start the DHCP client daemon, in order to have it request addresses
-     * for the named interface, and then configure the interface with those
-     * addresses. This call blocks until it obtains a result (either success
-     * or failure) from the daemon.
-     * @param interfaceName the name of the interface to configure
-     * @param dhcpResults if the request succeeds, this object is filled in with
-     * the IP address information.
-     * @return {@code true} for success, {@code false} for failure
+     * Explicitly binds {@code socketfd} to the network designated by {@code netId}.  This
+     * overrides any binding via {@link #bindProcessToNetwork}.
+     * @return 0 on success or negative errno on failure.
      */
-    public native static boolean runDhcp(String interfaceName, DhcpResults dhcpResults);
+    public native static int bindSocketToNetwork(int socketfd, int netId);
 
     /**
-     * Initiate renewal on the Dhcp client daemon. This call blocks until it obtains
-     * a result (either success or failure) from the daemon.
-     * @param interfaceName the name of the interface to configure
-     * @param dhcpResults if the request succeeds, this object is filled in with
-     * the IP address information.
-     * @return {@code true} for success, {@code false} for failure
+     * Protect {@code fd} from VPN connections.  After protecting, data sent through
+     * this socket will go directly to the underlying network, so its traffic will not be
+     * forwarded through the VPN.
      */
-    public native static boolean runDhcpRenew(String interfaceName, DhcpResults dhcpResults);
+    public static boolean protectFromVpn(FileDescriptor fd) {
+        return protectFromVpn(fd.getInt$());
+    }
 
     /**
-     * Shut down the DHCP client daemon.
-     * @param interfaceName the name of the interface for which the daemon
-     * should be stopped
-     * @return {@code true} for success, {@code false} for failure
+     * Protect {@code socketfd} from VPN connections.  After protecting, data sent through
+     * this socket will go directly to the underlying network, so its traffic will not be
+     * forwarded through the VPN.
      */
-    public native static boolean stopDhcp(String interfaceName);
+    public native static boolean protectFromVpn(int socketfd);
 
     /**
-     * Release the current DHCP lease.
-     * @param interfaceName the name of the interface for which the lease should
-     * be released
-     * @return {@code true} for success, {@code false} for failure
+     * Determine if {@code uid} can access network designated by {@code netId}.
+     * @return {@code true} if {@code uid} can access network, {@code false} otherwise.
      */
-    public native static boolean releaseDhcpLease(String interfaceName);
-
-    /**
-     * Return the last DHCP-related error message that was recorded.
-     * <p/>NOTE: This string is not localized, but currently it is only
-     * used in logging.
-     * @return the most recent error message, if any
-     */
-    public native static String getDhcpError();
+    public native static boolean queryUserAccess(int uid, int netId);
 
     /**
      * Convert a IPv4 address from an integer to an InetAddress.
@@ -155,6 +158,25 @@ public class NetworkUtils {
     }
 
     /**
+     * Convert an IPv4 netmask to a prefix length, checking that the netmask is contiguous.
+     * @param netmask as a {@code Inet4Address}.
+     * @return the network prefix length
+     * @throws IllegalArgumentException the specified netmask was not contiguous.
+     * @hide
+     */
+    public static int netmaskToPrefixLength(Inet4Address netmask) {
+        // inetAddressToInt returns an int in *network* byte order.
+        int i = Integer.reverseBytes(inetAddressToInt(netmask));
+        int prefixLength = Integer.bitCount(i);
+        int trailingZeros = Integer.numberOfTrailingZeros(i);
+        if (trailingZeros != 32 - prefixLength) {
+            throw new IllegalArgumentException("Non-contiguous netmask: " + Integer.toHexString(i));
+        }
+        return prefixLength;
+    }
+
+
+    /**
      * Create an InetAddress from a string where the string must be a standard
      * representation of a V4 or V6 address.  Avoids doing a DNS lookup on failure
      * but it will throw an IllegalArgumentException in that case.
@@ -168,24 +190,43 @@ public class NetworkUtils {
     }
 
     /**
-     * Get InetAddress masked with prefixLength.  Will never return null.
-     * @param IP address which will be masked with specified prefixLength
-     * @param prefixLength the prefixLength used to mask the IP
+     * Writes an InetAddress to a parcel. The address may be null. This is likely faster than
+     * calling writeSerializable.
      */
-    public static InetAddress getNetworkPart(InetAddress address, int prefixLength) {
-        if (address == null) {
-            throw new RuntimeException("getNetworkPart doesn't accept null address");
+    protected static void parcelInetAddress(Parcel parcel, InetAddress address, int flags) {
+        byte[] addressArray = (address != null) ? address.getAddress() : null;
+        parcel.writeByteArray(addressArray);
+    }
+
+    /**
+     * Reads an InetAddress from a parcel. Returns null if the address that was written was null
+     * or if the data is invalid.
+     */
+    protected static InetAddress unparcelInetAddress(Parcel in) {
+        byte[] addressArray = in.createByteArray();
+        if (addressArray == null) {
+            return null;
         }
+        try {
+            return InetAddress.getByAddress(addressArray);
+        } catch (UnknownHostException e) {
+            return null;
+        }
+    }
 
-        byte[] array = address.getAddress();
 
+    /**
+     *  Masks a raw IP address byte array with the specified prefix length.
+     */
+    public static void maskRawAddress(byte[] array, int prefixLength) {
         if (prefixLength < 0 || prefixLength > array.length * 8) {
-            throw new RuntimeException("getNetworkPart - bad prefixLength");
+            throw new RuntimeException("IP address with " + array.length +
+                    " bytes has invalid prefix length " + prefixLength);
         }
 
         int offset = prefixLength / 8;
-        int reminder = prefixLength % 8;
-        byte mask = (byte)(0xFF << (8 - reminder));
+        int remainder = prefixLength % 8;
+        byte mask = (byte)(0xFF << (8 - remainder));
 
         if (offset < array.length) array[offset] = (byte)(array[offset] & mask);
 
@@ -194,6 +235,16 @@ public class NetworkUtils {
         for (; offset < array.length; offset++) {
             array[offset] = 0;
         }
+    }
+
+    /**
+     * Get InetAddress masked with prefixLength.  Will never return null.
+     * @param address the IP address to mask with
+     * @param prefixLength the prefixLength used to mask the IP
+     */
+    public static InetAddress getNetworkPart(InetAddress address, int prefixLength) {
+        byte[] array = address.getAddress();
+        maskRawAddress(array, prefixLength);
 
         InetAddress netPart = null;
         try {
@@ -202,6 +253,46 @@ public class NetworkUtils {
             throw new RuntimeException("getNetworkPart error - " + e.toString());
         }
         return netPart;
+    }
+
+    /**
+     * Returns the implicit netmask of an IPv4 address, as was the custom before 1993.
+     */
+    public static int getImplicitNetmask(Inet4Address address) {
+        int firstByte = address.getAddress()[0] & 0xff;  // Convert to an unsigned value.
+        if (firstByte < 128) {
+            return 8;
+        } else if (firstByte < 192) {
+            return 16;
+        } else if (firstByte < 224) {
+            return 24;
+        } else {
+            return 32;  // Will likely not end well for other reasons.
+        }
+    }
+
+    /**
+     * Utility method to parse strings such as "192.0.2.5/24" or "2001:db8::cafe:d00d/64".
+     * @hide
+     */
+    public static Pair<InetAddress, Integer> parseIpAndMask(String ipAndMaskString) {
+        InetAddress address = null;
+        int prefixLength = -1;
+        try {
+            String[] pieces = ipAndMaskString.split("/", 2);
+            prefixLength = Integer.parseInt(pieces[1]);
+            address = InetAddress.parseNumericAddress(pieces[0]);
+        } catch (NullPointerException e) {            // Null string.
+        } catch (ArrayIndexOutOfBoundsException e) {  // No prefix length.
+        } catch (NumberFormatException e) {           // Non-numeric prefix.
+        } catch (IllegalArgumentException e) {        // Invalid IP address.
+        }
+
+        if (address == null || prefixLength == -1) {
+            throw new IllegalArgumentException("Invalid IP address and mask " + ipAndMaskString);
+        }
+
+        return new Pair<InetAddress, Integer>(address, prefixLength);
     }
 
     /**
@@ -223,7 +314,7 @@ public class NetworkUtils {
     public static InetAddress hexToInet6Address(String addrHexString)
             throws IllegalArgumentException {
         try {
-            return numericToInetAddress(String.format("%s:%s:%s:%s:%s:%s:%s:%s",
+            return numericToInetAddress(String.format(Locale.US, "%s:%s:%s:%s:%s:%s:%s:%s",
                     addrHexString.substring(0,4),   addrHexString.substring(4,8),
                     addrHexString.substring(8,12),  addrHexString.substring(12,16),
                     addrHexString.substring(16,20), addrHexString.substring(20,24),

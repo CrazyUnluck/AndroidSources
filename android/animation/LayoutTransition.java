@@ -28,6 +28,7 @@ import java.util.Collection;
 import java.util.HashMap;
 import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Map;
 
 /**
  * This class enables automatic animations on layout changes in ViewGroup objects. To enable
@@ -191,13 +192,25 @@ public class LayoutTransition {
     private long mChangingStagger = 0;
 
     /**
+     * Static interpolators - these are stateless and can be shared across the instances
+     */
+    private static TimeInterpolator ACCEL_DECEL_INTERPOLATOR =
+            new AccelerateDecelerateInterpolator();
+    private static TimeInterpolator DECEL_INTERPOLATOR = new DecelerateInterpolator();
+    private static TimeInterpolator sAppearingInterpolator = ACCEL_DECEL_INTERPOLATOR;
+    private static TimeInterpolator sDisappearingInterpolator = ACCEL_DECEL_INTERPOLATOR;
+    private static TimeInterpolator sChangingAppearingInterpolator = DECEL_INTERPOLATOR;
+    private static TimeInterpolator sChangingDisappearingInterpolator = DECEL_INTERPOLATOR;
+    private static TimeInterpolator sChangingInterpolator = DECEL_INTERPOLATOR;
+
+    /**
      * The default interpolators used for the animations
      */
-    private TimeInterpolator mAppearingInterpolator = new AccelerateDecelerateInterpolator();
-    private TimeInterpolator mDisappearingInterpolator = new AccelerateDecelerateInterpolator();
-    private TimeInterpolator mChangingAppearingInterpolator = new DecelerateInterpolator();
-    private TimeInterpolator mChangingDisappearingInterpolator = new DecelerateInterpolator();
-    private TimeInterpolator mChangingInterpolator = new DecelerateInterpolator();
+    private TimeInterpolator mAppearingInterpolator = sAppearingInterpolator;
+    private TimeInterpolator mDisappearingInterpolator = sDisappearingInterpolator;
+    private TimeInterpolator mChangingAppearingInterpolator = sChangingAppearingInterpolator;
+    private TimeInterpolator mChangingDisappearingInterpolator = sChangingDisappearingInterpolator;
+    private TimeInterpolator mChangingInterpolator = sChangingInterpolator;
 
     /**
      * These hashmaps are used to store the animations that are currently running as part of
@@ -745,7 +758,7 @@ public class LayoutTransition {
         // reset the inter-animation delay, in case we use it later
         staggerDelay = 0;
 
-        final ViewTreeObserver observer = parent.getViewTreeObserver(); // used for later cleanup
+        final ViewTreeObserver observer = parent.getViewTreeObserver();
         if (!observer.isAlive()) {
             // If the observer's not in a good state, skip the transition
             return;
@@ -778,21 +791,9 @@ public class LayoutTransition {
         // This is the cleanup step. When we get this rendering event, we know that all of
         // the appropriate animations have been set up and run. Now we can clear out the
         // layout listeners.
-        observer.addOnPreDrawListener(new ViewTreeObserver.OnPreDrawListener() {
-            public boolean onPreDraw() {
-                parent.getViewTreeObserver().removeOnPreDrawListener(this);
-                int count = layoutChangeListenerMap.size();
-                if (count > 0) {
-                    Collection<View> views = layoutChangeListenerMap.keySet();
-                    for (View view : views) {
-                        View.OnLayoutChangeListener listener = layoutChangeListenerMap.get(view);
-                        view.removeOnLayoutChangeListener(listener);
-                    }
-                }
-                layoutChangeListenerMap.clear();
-                return true;
-            }
-        });
+        CleanupCallback callback = new CleanupCallback(layoutChangeListenerMap, parent);
+        observer.addOnPreDrawListener(callback);
+        parent.addOnAttachStateChangeListener(callback);
     }
 
     /**
@@ -887,11 +888,15 @@ public class LayoutTransition {
                     PropertyValuesHolder[] oldValues = valueAnim.getValues();
                     for (int i = 0; i < oldValues.length; ++i) {
                         PropertyValuesHolder pvh = oldValues[i];
-                        KeyframeSet keyframeSet = pvh.mKeyframeSet;
-                        if (keyframeSet.mFirstKeyframe == null ||
-                                keyframeSet.mLastKeyframe == null ||
-                                !keyframeSet.mFirstKeyframe.getValue().equals(
-                                keyframeSet.mLastKeyframe.getValue())) {
+                        if (pvh.mKeyframes instanceof KeyframeSet) {
+                            KeyframeSet keyframeSet = (KeyframeSet) pvh.mKeyframes;
+                            if (keyframeSet.mFirstKeyframe == null ||
+                                    keyframeSet.mLastKeyframe == null ||
+                                    !keyframeSet.mFirstKeyframe.getValue().equals(
+                                            keyframeSet.mLastKeyframe.getValue())) {
+                                valuesDiffer = true;
+                            }
+                        } else if (!pvh.mKeyframes.getValue(0).equals(pvh.mKeyframes.getValue(1))) {
                             valuesDiffer = true;
                         }
                     }
@@ -905,14 +910,24 @@ public class LayoutTransition {
                     case APPEARING:
                         startDelay = mChangingAppearingDelay + staggerDelay;
                         staggerDelay += mChangingAppearingStagger;
+                        if (mChangingAppearingInterpolator != sChangingAppearingInterpolator) {
+                            anim.setInterpolator(mChangingAppearingInterpolator);
+                        }
                         break;
                     case DISAPPEARING:
                         startDelay = mChangingDisappearingDelay + staggerDelay;
                         staggerDelay += mChangingDisappearingStagger;
+                        if (mChangingDisappearingInterpolator !=
+                                sChangingDisappearingInterpolator) {
+                            anim.setInterpolator(mChangingDisappearingInterpolator);
+                        }
                         break;
                     case CHANGING:
                         startDelay = mChangingDelay + staggerDelay;
                         staggerDelay += mChangingStagger;
+                        if (mChangingInterpolator != sChangingInterpolator) {
+                            anim.setInterpolator(mChangingInterpolator);
+                        }
                         break;
                 }
                 anim.setStartDelay(startDelay);
@@ -1148,6 +1163,9 @@ public class LayoutTransition {
         anim.setTarget(child);
         anim.setStartDelay(mAppearingDelay);
         anim.setDuration(mAppearingDuration);
+        if (mAppearingInterpolator != sAppearingInterpolator) {
+            anim.setInterpolator(mAppearingInterpolator);
+        }
         if (anim instanceof ObjectAnimator) {
             ((ObjectAnimator) anim).setCurrentPlayTime(0);
         }
@@ -1192,6 +1210,9 @@ public class LayoutTransition {
         Animator anim = mDisappearingAnim.clone();
         anim.setStartDelay(mDisappearingDelay);
         anim.setDuration(mDisappearingDuration);
+        if (mDisappearingInterpolator != sDisappearingInterpolator) {
+            anim.setInterpolator(mDisappearingInterpolator);
+        }
         anim.setTarget(child);
         final float preAnimAlpha = child.getAlpha();
         anim.addListener(new AnimatorListenerAdapter() {
@@ -1466,5 +1487,51 @@ public class LayoutTransition {
         public void endTransition(LayoutTransition transition, ViewGroup container,
                 View view, int transitionType);
     }
+
+    /**
+     * Utility class to clean up listeners after animations are setup. Cleanup happens
+     * when either the OnPreDrawListener method is called or when the parent is detached,
+     * whichever comes first.
+     */
+    private static final class CleanupCallback implements ViewTreeObserver.OnPreDrawListener,
+            View.OnAttachStateChangeListener {
+
+        final Map<View, View.OnLayoutChangeListener> layoutChangeListenerMap;
+        final ViewGroup parent;
+
+        CleanupCallback(Map<View, View.OnLayoutChangeListener> listenerMap, ViewGroup parent) {
+            this.layoutChangeListenerMap = listenerMap;
+            this.parent = parent;
+        }
+
+        private void cleanup() {
+            parent.getViewTreeObserver().removeOnPreDrawListener(this);
+            parent.removeOnAttachStateChangeListener(this);
+            int count = layoutChangeListenerMap.size();
+            if (count > 0) {
+                Collection<View> views = layoutChangeListenerMap.keySet();
+                for (View view : views) {
+                    View.OnLayoutChangeListener listener = layoutChangeListenerMap.get(view);
+                    view.removeOnLayoutChangeListener(listener);
+                }
+                layoutChangeListenerMap.clear();
+            }
+        }
+
+        @Override
+        public void onViewAttachedToWindow(View v) {
+        }
+
+        @Override
+        public void onViewDetachedFromWindow(View v) {
+            cleanup();
+        }
+
+        @Override
+        public boolean onPreDraw() {
+            cleanup();
+            return true;
+        }
+    };
 
 }

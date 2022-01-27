@@ -16,6 +16,8 @@
 
 package android.webkit;
 
+import android.annotation.SystemApi;
+import android.content.Intent;
 import android.content.pm.ActivityInfo;
 import android.graphics.Bitmap;
 import android.net.Uri;
@@ -68,13 +70,14 @@ public class WebChromeClient {
     }
 
     /**
-     * Notify the host application that the current page would
-     * like to show a custom View.  This is used for Fullscreen
-     * video playback; see "HTML5 Video support" documentation on
+     * Notify the host application that the current page has entered full
+     * screen mode. The host application must show the custom View which
+     * contains the web contents &mdash; video or other HTML content &mdash;
+     * in full screen mode. Also see "Full screen support" documentation on
      * {@link WebView}.
      * @param view is the View object to be shown.
-     * @param callback is the callback to be invoked if and when the view
-     * is dismissed.
+     * @param callback invoke this callback to request the page to exit
+     * full screen mode.
      */
     public void onShowCustomView(View view, CustomViewCallback callback) {};
 
@@ -92,10 +95,12 @@ public class WebChromeClient {
     @Deprecated
     public void onShowCustomView(View view, int requestedOrientation,
             CustomViewCallback callback) {};
-    
+
     /**
-     * Notify the host application that the current page would
-     * like to hide its custom view.
+     * Notify the host application that the current page has exited full
+     * screen mode. The host application must hide the custom View, ie. the
+     * View passed to {@link #onShowCustomView} when the content entered fullscreen.
+     * Also see "Full screen support" documentation on {@link WebView}.
      */
     public void onHideCustomView() {}
 
@@ -238,9 +243,10 @@ public class WebChromeClient {
     * @param totalQuota The total quota for all origins, in bytes
     * @param quotaUpdater An instance of {@link WebStorage.QuotaUpdater} which
     *                     must be used to inform the WebView of the new quota.
+    * @deprecated This method is no longer called; WebView now uses the HTML5 / JavaScript Quota
+    *             Management API.
     */
-    // Note that the callback must always be executed at some point to ensure
-    // that the sleeping WebCore thread is woken up.
+    @Deprecated
     public void onExceededDatabaseQuota(String url, String databaseIdentifier,
             long quota, long estimatedDatabaseSize, long totalQuota,
             WebStorage.QuotaUpdater quotaUpdater) {
@@ -263,9 +269,10 @@ public class WebChromeClient {
     * @param quota the current maximum Application Cache size, in bytes
     * @param quotaUpdater An instance of {@link WebStorage.QuotaUpdater} which
     *                     must be used to inform the WebView of the new quota.
+    * @deprecated This method is no longer called; WebView now uses the HTML5 / JavaScript Quota
+    *             Management API.
     */
-    // Note that the callback must always be executed at some point to ensure
-    // that the sleeping WebCore thread is woken up.
+    @Deprecated
     public void onReachedMaxAppCacheSize(long requiredStorage, long quota,
             WebStorage.QuotaUpdater quotaUpdater) {
         quotaUpdater.updateQuota(quota);
@@ -277,6 +284,13 @@ public class WebChromeClient {
      * currently set for that origin. The host application should invoke the
      * specified callback with the desired permission state. See
      * {@link GeolocationPermissions} for details.
+     *
+     * <p>Note that for applications targeting Android N and later SDKs
+     * (API level > {@link android.os.Build.VERSION_CODES#M})
+     * this method is only called for requests originating from secure
+     * origins such as https. On non-secure origins geolocation requests
+     * are automatically denied.</p>
+     *
      * @param origin The origin of the web content attempting to use the
      *               Geolocation API.
      * @param callback The callback to use to set the permission state for the
@@ -292,6 +306,28 @@ public class WebChromeClient {
      * has been canceled. Any related UI should therefore be hidden.
      */
     public void onGeolocationPermissionsHidePrompt() {}
+
+    /**
+     * Notify the host application that web content is requesting permission to
+     * access the specified resources and the permission currently isn't granted
+     * or denied. The host application must invoke {@link PermissionRequest#grant(String[])}
+     * or {@link PermissionRequest#deny()}.
+     *
+     * If this method isn't overridden, the permission is denied.
+     *
+     * @param request the PermissionRequest from current web content.
+     */
+    public void onPermissionRequest(PermissionRequest request) {
+        request.deny();
+    }
+
+    /**
+     * Notify the host application that the given permission request
+     * has been canceled. Any related UI should therefore be hidden.
+     *
+     * @param request the PermissionRequest that needs be canceled.
+     */
+    public void onPermissionRequestCanceled(PermissionRequest request) {}
 
     /**
      * Tell the client that a JavaScript execution timeout has occured. And the
@@ -351,10 +387,9 @@ public class WebChromeClient {
     }
 
     /**
-     * When the user starts to playback a video element, it may take time for enough
-     * data to be buffered before the first frames can be rendered. While this buffering
-     * is taking place, the ChromeClient can use this function to provide a View to be
-     * displayed. For example, the ChromeClient could show a spinner animation.
+     * Obtains a View to be displayed while buffering of full screen video is taking
+     * place. The host application can override this method to provide a View
+     * containing a spinner or similar.
      *
      * @return View The View to be displayed whilst the video is loading.
      */
@@ -368,6 +403,111 @@ public class WebChromeClient {
     }
 
     /**
+     * Tell the client to show a file chooser.
+     *
+     * This is called to handle HTML forms with 'file' input type, in response to the
+     * user pressing the "Select File" button.
+     * To cancel the request, call <code>filePathCallback.onReceiveValue(null)</code> and
+     * return true.
+     *
+     * @param webView The WebView instance that is initiating the request.
+     * @param filePathCallback Invoke this callback to supply the list of paths to files to upload,
+     *                         or NULL to cancel. Must only be called if the
+     *                         <code>showFileChooser</code> implementations returns true.
+     * @param fileChooserParams Describes the mode of file chooser to be opened, and options to be
+     *                          used with it.
+     * @return true if filePathCallback will be invoked, false to use default handling.
+     *
+     * @see FileChooserParams
+     */
+    public boolean onShowFileChooser(WebView webView, ValueCallback<Uri[]> filePathCallback,
+            FileChooserParams fileChooserParams) {
+        return false;
+    }
+
+    /**
+     * Parameters used in the {@link #onShowFileChooser} method.
+     */
+    public static abstract class FileChooserParams {
+        /** Open single file. Requires that the file exists before allowing the user to pick it. */
+        public static final int MODE_OPEN = 0;
+        /** Like Open but allows multiple files to be selected. */
+        public static final int MODE_OPEN_MULTIPLE = 1;
+        /** Like Open but allows a folder to be selected. The implementation should enumerate
+            all files selected by this operation.
+            This feature is not supported at the moment.
+            @hide */
+        public static final int MODE_OPEN_FOLDER = 2;
+        /**  Allows picking a nonexistent file and saving it. */
+        public static final int MODE_SAVE = 3;
+
+        /**
+         * Parse the result returned by the file picker activity. This method should be used with
+         * {@link #createIntent}. Refer to {@link #createIntent} for how to use it.
+         *
+         * @param resultCode the integer result code returned by the file picker activity.
+         * @param data the intent returned by the file picker activity.
+         * @return the Uris of selected file(s) or null if the resultCode indicates
+         *         activity canceled or any other error.
+         */
+        public static Uri[] parseResult(int resultCode, Intent data) {
+            return WebViewFactory.getProvider().getStatics().parseFileChooserResult(resultCode, data);
+        }
+
+        /**
+         * Returns file chooser mode.
+         */
+        public abstract int getMode();
+
+        /**
+         * Returns an array of acceptable MIME types. The returned MIME type
+         * could be partial such as audio/*. The array will be empty if no
+         * acceptable types are specified.
+         */
+        public abstract String[] getAcceptTypes();
+
+        /**
+         * Returns preference for a live media captured value (e.g. Camera, Microphone).
+         * True indicates capture is enabled, false disabled.
+         *
+         * Use <code>getAcceptTypes</code> to determine suitable capture devices.
+         */
+        public abstract boolean isCaptureEnabled();
+
+        /**
+         * Returns the title to use for this file selector, or null. If null a default
+         * title should be used.
+         */
+        public abstract CharSequence getTitle();
+
+        /**
+         * The file name of a default selection if specified, or null.
+         */
+        public abstract String getFilenameHint();
+
+        /**
+         * Creates an intent that would start a file picker for file selection.
+         * The Intent supports choosing files from simple file sources available
+         * on the device. Some advanced sources (for example, live media capture)
+         * may not be supported and applications wishing to support these sources
+         * or more advanced file operations should build their own Intent.
+         *
+         * <pre>
+         * How to use:
+         * 1. Build an intent using {@link #createIntent}
+         * 2. Fire the intent using {@link android.app.Activity#startActivityForResult}.
+         * 3. Check for ActivityNotFoundException and take a user friendly action if thrown.
+         * 4. Listen the result using {@link android.app.Activity#onActivityResult}
+         * 5. Parse the result using {@link #parseResult} only if media capture was not requested.
+         * 6. Send the result using filePathCallback of {@link WebChromeClient#onShowFileChooser}
+         * </pre>
+         *
+         * @return an Intent that supports basic file chooser sources.
+         */
+        public abstract Intent createIntent();
+    }
+
+    /**
      * Tell the client to open a file chooser.
      * @param uploadFile A ValueCallback to set the URI of the file to upload.
      *      onReceiveValue must be called to wake up the thread.a
@@ -375,8 +515,12 @@ public class WebChromeClient {
      *         associated with this file picker.
      * @param capture The value of the 'capture' attribute of the input tag
      *         associated with this file picker.
-     * @hide
+     *
+     * @deprecated Use {@link #showFileChooser} instead.
+     * @hide This method was not published in any SDK version.
      */
+    @SystemApi
+    @Deprecated
     public void openFileChooser(ValueCallback<Uri> uploadFile, String acceptType, String capture) {
         uploadFile.onReceiveValue(null);
     }

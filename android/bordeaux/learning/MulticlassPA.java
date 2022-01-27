@@ -49,20 +49,20 @@ public class MulticlassPA {
         System.loadLibrary("bordeaux");
     }
 
-    private int nativeClassifier;
+    private long nativeClassifier;
 
     /*
      * Initialize native classifier
      */
-    private native int initNativeClassifier(int num_classes, int num_dims, float aggressiveness);
+    private native long initNativeClassifier(int num_classes, int num_dims, float aggressiveness);
 
-    private native void deleteNativeClassifier(int classPtr);
+    private native void deleteNativeClassifier(long classPtr);
 
     private native boolean nativeSparseTrainOneExample(int[] index_array,
                                                      float[] float_array,
-                                                     int target, int classPtr);
+                                                     int target, long classPtr);
 
     private native int nativeSparseGetClass(int[] index_array,
                                             float[] float_array,
-                                            int classPtr);
+                                            long classPtr);
 }

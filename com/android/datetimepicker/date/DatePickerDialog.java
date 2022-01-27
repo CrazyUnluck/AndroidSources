@@ -19,15 +19,9 @@ package com.android.datetimepicker.date;
 import android.animation.ObjectAnimator;
 import android.app.Activity;
 import android.app.DialogFragment;
-import android.content.Context;
 import android.content.res.Resources;
 import android.os.Bundle;
-import android.os.SystemClock;
-import android.os.Vibrator;
-import android.text.format.DateFormat;
 import android.text.format.DateUtils;
-import android.text.format.Time;
-import android.util.AttributeSet;
 import android.util.Log;
 import android.view.LayoutInflater;
 import android.view.View;
@@ -35,17 +29,16 @@ import android.view.View.OnClickListener;
 import android.view.ViewGroup;
 import android.view.Window;
 import android.view.WindowManager;
-import android.view.accessibility.AccessibilityEvent;
 import android.view.animation.AlphaAnimation;
 import android.view.animation.Animation;
 import android.widget.Button;
 import android.widget.LinearLayout;
 import android.widget.TextView;
-import android.widget.ViewAnimator;
 
+import com.android.datetimepicker.HapticFeedbackController;
 import com.android.datetimepicker.R;
 import com.android.datetimepicker.Utils;
-import com.android.datetimepicker.date.SimpleMonthAdapter.CalendarDay;
+import com.android.datetimepicker.date.MonthAdapter.CalendarDay;
 
 import java.text.SimpleDateFormat;
 import java.util.Calendar;
@@ -104,9 +97,10 @@ public class DatePickerDialog extends DialogFragment implements
     private int mWeekStart = mCalendar.getFirstDayOfWeek();
     private int mMinYear = DEFAULT_START_YEAR;
     private int mMaxYear = DEFAULT_END_YEAR;
+    private Calendar mMinDate;
+    private Calendar mMaxDate;
 
-    private Vibrator mVibrator;
-    private long mLastVibrate;
+    private HapticFeedbackController mHapticFeedbackController;
 
     private boolean mDelayAnimation = true;
 
@@ -134,7 +128,7 @@ public class DatePickerDialog extends DialogFragment implements
     /**
      * The callback used to notify other date picker components of a change in selected date.
      */
-    interface OnDateChangedListener {
+    public interface OnDateChangedListener {
 
         public void onDateChanged();
     }
@@ -171,7 +165,6 @@ public class DatePickerDialog extends DialogFragment implements
         final Activity activity = getActivity();
         activity.getWindow().setSoftInputMode(
                 WindowManager.LayoutParams.SOFT_INPUT_STATE_ALWAYS_HIDDEN);
-        mVibrator = (Vibrator) activity.getSystemService(Context.VIBRATOR_SERVICE);
         if (savedInstanceState != null) {
             mCalendar.set(Calendar.YEAR, savedInstanceState.getInt(KEY_SELECTED_YEAR));
             mCalendar.set(Calendar.MONTH, savedInstanceState.getInt(KEY_SELECTED_MONTH));
@@ -228,7 +221,7 @@ public class DatePickerDialog extends DialogFragment implements
         }
 
         final Activity activity = getActivity();
-        mDayPickerView = new DayPickerView(activity, this);
+        mDayPickerView = new SimpleDayPickerView(activity, this);
         mYearPickerView = new YearPickerView(activity, this);
 
         Resources res = getResources();
@@ -274,7 +267,21 @@ public class DatePickerDialog extends DialogFragment implements
                 mYearPickerView.postSetSelectionFromTop(listPosition, listPositionOffset);
             }
         }
+
+        mHapticFeedbackController = new HapticFeedbackController(activity);
         return view;
+    }
+
+    @Override
+    public void onResume() {
+        super.onResume();
+        mHapticFeedbackController.start();
+    }
+
+    @Override
+    public void onPause() {
+        super.onPause();
+        mHapticFeedbackController.stop();
     }
 
     private void setCurrentView(final int viewIndex) {
@@ -371,6 +378,48 @@ public class DatePickerDialog extends DialogFragment implements
         }
     }
 
+    /**
+     * Sets the minimal date supported by this DatePicker. Dates before (but not including) the
+     * specified date will be disallowed from being selected.
+     * @param calendar a Calendar object set to the year, month, day desired as the mindate.
+     */
+    public void setMinDate(Calendar calendar) {
+        mMinDate = calendar;
+
+        if (mDayPickerView != null) {
+            mDayPickerView.onChange();
+        }
+    }
+
+    /**
+     * @return The minimal date supported by this DatePicker. Null if it has not been set.
+     */
+    @Override
+    public Calendar getMinDate() {
+        return mMinDate;
+    }
+
+    /**
+     * Sets the minimal date supported by this DatePicker. Dates after (but not including) the
+     * specified date will be disallowed from being selected.
+     * @param calendar a Calendar object set to the year, month, day desired as the maxdate.
+     */
+    public void setMaxDate(Calendar calendar) {
+        mMaxDate = calendar;
+
+        if (mDayPickerView != null) {
+            mDayPickerView.onChange();
+        }
+    }
+
+    /**
+     * @return The maximal date supported by this DatePicker. Null if it has not been set.
+     */
+    @Override
+    public Calendar getMaxDate() {
+        return mMaxDate;
+    }
+
     public void setOnDateSetListener(OnDateSetListener listener) {
         mCallBack = listener;
     }
@@ -453,19 +502,8 @@ public class DatePickerDialog extends DialogFragment implements
         mListeners.remove(listener);
     }
 
-    /**
-     * Try to vibrate. To prevent this becoming a single continuous vibration, nothing will
-     * happen if we have vibrated very recently.
-     */
     @Override
     public void tryVibrate() {
-        if (mVibrator != null) {
-            long now = SystemClock.uptimeMillis();
-            // We want to try to vibrate each individual tick discretely.
-            if (now - mLastVibrate >= 125) {
-                mVibrator.vibrate(5);
-                mLastVibrate = now;
-            }
-        }
+        mHapticFeedbackController.tryVibrate();
     }
 }

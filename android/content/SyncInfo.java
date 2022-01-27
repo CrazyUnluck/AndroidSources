@@ -19,12 +19,18 @@ package android.content;
 import android.accounts.Account;
 import android.os.Parcel;
 import android.os.Parcelable;
-import android.os.Parcelable.Creator;
 
 /**
  * Information about the sync operation that is currently underway.
  */
 public class SyncInfo implements Parcelable {
+    /**
+     * Used when the caller receiving this object doesn't have permission to access the accounts
+     * on device.
+     * @See Manifest.permission.GET_ACCOUNTS
+     */
+    private static final Account REDACTED_ACCOUNT = new Account("*****", "*****");
+
     /** @hide */
     public final int authorityId;
 
@@ -45,13 +51,31 @@ public class SyncInfo implements Parcelable {
      */
     public final long startTime;
 
+    /**
+     * Creates a SyncInfo object with an unusable Account. Used when the caller receiving this
+     * object doesn't have access to the accounts on the device.
+     * @See Manifest.permission.GET_ACCOUNTS
+     * @hide
+     */
+    public static SyncInfo createAccountRedacted(
+        int authorityId, String authority, long startTime) {
+            return new SyncInfo(authorityId, REDACTED_ACCOUNT, authority, startTime);
+    }
+
     /** @hide */
-    public SyncInfo(int authorityId, Account account, String authority,
-            long startTime) {
+    public SyncInfo(int authorityId, Account account, String authority, long startTime) {
         this.authorityId = authorityId;
         this.account = account;
         this.authority = authority;
         this.startTime = startTime;
+    }
+
+    /** @hide */
+    public SyncInfo(SyncInfo other) {
+        this.authorityId = other.authorityId;
+        this.account = new Account(other.account.name, other.account.type);
+        this.authority = other.authority;
+        this.startTime = other.startTime;
     }
 
     /** @hide */
@@ -62,7 +86,7 @@ public class SyncInfo implements Parcelable {
     /** @hide */
     public void writeToParcel(Parcel parcel, int flags) {
         parcel.writeInt(authorityId);
-        account.writeToParcel(parcel, 0);
+        parcel.writeParcelable(account, flags);
         parcel.writeString(authority);
         parcel.writeLong(startTime);
     }
@@ -70,7 +94,7 @@ public class SyncInfo implements Parcelable {
     /** @hide */
     SyncInfo(Parcel parcel) {
         authorityId = parcel.readInt();
-        account = new Account(parcel);
+        account = parcel.readParcelable(Account.class.getClassLoader());
         authority = parcel.readString();
         startTime = parcel.readLong();
     }

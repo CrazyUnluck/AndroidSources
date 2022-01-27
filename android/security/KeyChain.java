@@ -15,30 +15,41 @@
  */
 package android.security;
 
+import android.annotation.NonNull;
+import android.annotation.Nullable;
+import android.annotation.WorkerThread;
 import android.app.Activity;
 import android.app.PendingIntent;
 import android.content.ComponentName;
 import android.content.Context;
 import android.content.Intent;
 import android.content.ServiceConnection;
+import android.net.Uri;
 import android.os.IBinder;
 import android.os.Looper;
+import android.os.Process;
 import android.os.RemoteException;
+import android.os.UserHandle;
+import android.security.keystore.AndroidKeyStoreProvider;
+import android.security.keystore.KeyProperties;
+
 import java.io.ByteArrayInputStream;
 import java.io.Closeable;
-import java.security.InvalidKeyException;
 import java.security.Principal;
 import java.security.PrivateKey;
+import java.security.UnrecoverableKeyException;
 import java.security.cert.Certificate;
 import java.security.cert.CertificateException;
 import java.security.cert.CertificateFactory;
 import java.security.cert.X509Certificate;
+import java.util.ArrayList;
+import java.util.Collection;
 import java.util.List;
+import java.util.Locale;
 import java.util.concurrent.BlockingQueue;
 import java.util.concurrent.LinkedBlockingQueue;
 
-import org.apache.harmony.xnet.provider.jsse.OpenSSLEngine;
-import org.apache.harmony.xnet.provider.jsse.TrustedCertificateStore;
+import com.android.org.conscrypt.TrustedCertificateStore;
 
 /**
  * The {@code KeyChain} class provides access to private keys and
@@ -80,17 +91,25 @@ import org.apache.harmony.xnet.provider.jsse.TrustedCertificateStore;
 // TODO reference intent for credential installation when public
 public final class KeyChain {
 
-    private static final String TAG = "KeyChain";
-
     /**
      * @hide Also used by KeyChainService implementation
      */
     public static final String ACCOUNT_TYPE = "com.android.keychain";
 
     /**
+     * Package name for KeyChain chooser.
+     */
+    private static final String KEYCHAIN_PACKAGE = "com.android.keychain";
+
+    /**
      * Action to bring up the KeyChainActivity
      */
     private static final String ACTION_CHOOSER = "com.android.keychain.CHOOSER";
+
+    /**
+     * Package name for the Certificate Installer.
+     */
+    private static final String CERT_INSTALLER_PACKAGE = "com.android.certinstaller";
 
     /**
      * Extra for use with {@link #ACTION_CHOOSER}
@@ -102,13 +121,7 @@ public final class KeyChain {
      * Extra for use with {@link #ACTION_CHOOSER}
      * @hide Also used by KeyChainActivity implementation
      */
-    public static final String EXTRA_HOST = "host";
-
-    /**
-     * Extra for use with {@link #ACTION_CHOOSER}
-     * @hide Also used by KeyChainActivity implementation
-     */
-    public static final String EXTRA_PORT = "port";
+    public static final String EXTRA_URI = "uri";
 
     /**
      * Extra for use with {@link #ACTION_CHOOSER}
@@ -198,9 +211,10 @@ public final class KeyChain {
      * successfully installed, otherwise {@link
      * Activity#RESULT_CANCELED} will be returned.
      */
+    @NonNull
     public static Intent createInstallIntent() {
         Intent intent = new Intent(ACTION_INSTALL);
-        intent.setClassName("com.android.certinstaller",
+        intent.setClassName(CERT_INSTALLER_PACKAGE,
                             "com.android.certinstaller.CertInstallerMain");
         return intent;
     }
@@ -210,6 +224,9 @@ public final class KeyChain {
      * for a private key and certificate pair for authentication. The
      * selected alias or null will be returned via the
      * KeyChainAliasCallback callback.
+     *
+     * <p>The device or profile owner can intercept this before the activity
+     * is shown, to pick a specific private key alias.
      *
      * <p>{@code keyTypes} and {@code issuers} may be used to
      * highlight suggested choices to the user, although to cope with
@@ -239,10 +256,58 @@ public final class KeyChain {
      * @param alias The alias to preselect if available, or null if
      *     unavailable.
      */
-    public static void choosePrivateKeyAlias(Activity activity, KeyChainAliasCallback response,
-                                             String[] keyTypes, Principal[] issuers,
-                                             String host, int port,
-                                             String alias) {
+    public static void choosePrivateKeyAlias(@NonNull Activity activity,
+            @NonNull KeyChainAliasCallback response,
+            @KeyProperties.KeyAlgorithmEnum String[] keyTypes, Principal[] issuers,
+            @Nullable String host, int port, @Nullable String alias) {
+        Uri uri = null;
+        if (host != null) {
+            uri = new Uri.Builder()
+                    .authority(host + (port != -1 ? ":" + port : ""))
+                    .build();
+        }
+        choosePrivateKeyAlias(activity, response, keyTypes, issuers, uri, alias);
+    }
+
+    /**
+     * Launches an {@code Activity} for the user to select the alias
+     * for a private key and certificate pair for authentication. The
+     * selected alias or null will be returned via the
+     * KeyChainAliasCallback callback.
+     *
+     * <p>The device or profile owner can intercept this before the activity
+     * is shown, to pick a specific private key alias.</p>
+     *
+     * <p>{@code keyTypes} and {@code issuers} may be used to
+     * highlight suggested choices to the user, although to cope with
+     * sometimes erroneous values provided by servers, the user may be
+     * able to override these suggestions.
+     *
+     * <p>{@code host} and {@code port} may be used to give the user
+     * more context about the server requesting the credentials.
+     *
+     * <p>{@code alias} allows the chooser to preselect an existing
+     * alias which will still be subject to user confirmation.
+     *
+     * @param activity The {@link Activity} context to use for
+     *     launching the new sub-Activity to prompt the user to select
+     *     a private key; used only to call startActivity(); must not
+     *     be null.
+     * @param response Callback to invoke when the request completes;
+     *     must not be null
+     * @param keyTypes The acceptable types of asymmetric keys such as
+     *     "EC" or "RSA", or a null array.
+     * @param issuers The acceptable certificate issuers for the
+     *     certificate matching the private key, or null.
+     * @param uri The full URI the server is requesting the certificate
+     *     for, or null if unavailable.
+     * @param alias The alias to preselect if available, or null if
+     *     unavailable.
+     */
+    public static void choosePrivateKeyAlias(@NonNull Activity activity,
+            @NonNull KeyChainAliasCallback response,
+            @KeyProperties.KeyAlgorithmEnum String[] keyTypes, Principal[] issuers,
+            @Nullable Uri uri, @Nullable String alias) {
         /*
          * TODO currently keyTypes, issuers are unused. They are meant
          * to follow the semantics and purpose of X509KeyManager
@@ -250,7 +315,7 @@ public final class KeyChain {
          *
          * keyTypes would allow the list to be filtered and typically
          * will be set correctly by the server. In practice today,
-         * most all users will want only RSA, rarely DSA, and usually
+         * most all users will want only RSA or EC, and usually
          * only a small number of certs will be available.
          *
          * issuers is typically not useful. Some servers historically
@@ -266,9 +331,9 @@ public final class KeyChain {
             throw new NullPointerException("response == null");
         }
         Intent intent = new Intent(ACTION_CHOOSER);
+        intent.setPackage(KEYCHAIN_PACKAGE);
         intent.putExtra(EXTRA_RESPONSE, new AliasResponse(response));
-        intent.putExtra(EXTRA_HOST, host);
-        intent.putExtra(EXTRA_PORT, port);
+        intent.putExtra(EXTRA_URI, uri);
         intent.putExtra(EXTRA_ALIAS, alias);
         // the PendingIntent is used to get calling package name
         intent.putExtra(EXTRA_SENDER, PendingIntent.getActivity(activity, 0, new Intent(), 0));
@@ -287,13 +352,18 @@ public final class KeyChain {
 
     /**
      * Returns the {@code PrivateKey} for the requested alias, or null
-     * if no there is no result.
+     * if there is no result.
      *
-     * @param alias The alias of the desired private key, typically
-     * returned via {@link KeyChainAliasCallback#alias}.
+     * <p> This method may block while waiting for a connection to another process, and must never
+     * be called from the main thread.
+     *
+     * @param alias The alias of the desired private key, typically returned via
+     *              {@link KeyChainAliasCallback#alias}.
      * @throws KeyChainException if the alias was valid but there was some problem accessing it.
+     * @throws IllegalStateException if called from the main thread.
      */
-    public static PrivateKey getPrivateKey(Context context, String alias)
+    @Nullable @WorkerThread
+    public static PrivateKey getPrivateKey(@NonNull Context context, @NonNull String alias)
             throws KeyChainException, InterruptedException {
         if (alias == null) {
             throw new NullPointerException("alias == null");
@@ -303,17 +373,16 @@ public final class KeyChain {
             final IKeyChainService keyChainService = keyChainConnection.getService();
             final String keyId = keyChainService.requestPrivateKey(alias);
             if (keyId == null) {
-                throw new KeyChainException("keystore had a problem");
+                return null;
             }
-
-            final OpenSSLEngine engine = OpenSSLEngine.getInstance("keystore");
-            return engine.getPrivateKeyById(keyId);
+            return AndroidKeyStoreProvider.loadAndroidKeyStorePrivateKeyFromKeystore(
+                    KeyStore.getInstance(), keyId, KeyStore.UID_SELF);
         } catch (RemoteException e) {
             throw new KeyChainException(e);
         } catch (RuntimeException e) {
             // only certain RuntimeExceptions can be propagated across the IKeyChainService call
             throw new KeyChainException(e);
-        } catch (InvalidKeyException e) {
+        } catch (UnrecoverableKeyException e) {
             throw new KeyChainException(e);
         } finally {
             keyChainConnection.close();
@@ -322,14 +391,24 @@ public final class KeyChain {
 
     /**
      * Returns the {@code X509Certificate} chain for the requested
-     * alias, or null if no there is no result.
+     * alias, or null if there is no result.
+     * <p>
+     * <strong>Note:</strong> If a certificate chain was explicitly specified when the alias was
+     * installed, this method will return that chain. If only the client certificate was specified
+     * at the installation time, this method will try to build a certificate chain using all
+     * available trust anchors (preinstalled and user-added).
+     *
+     * <p> This method may block while waiting for a connection to another process, and must never
+     * be called from the main thread.
      *
      * @param alias The alias of the desired certificate chain, typically
      * returned via {@link KeyChainAliasCallback#alias}.
      * @throws KeyChainException if the alias was valid but there was some problem accessing it.
+     * @throws IllegalStateException if called from the main thread.
      */
-    public static X509Certificate[] getCertificateChain(Context context, String alias)
-            throws KeyChainException, InterruptedException {
+    @Nullable @WorkerThread
+    public static X509Certificate[] getCertificateChain(@NonNull Context context,
+            @NonNull String alias) throws KeyChainException, InterruptedException {
         if (alias == null) {
             throw new NullPointerException("alias == null");
         }
@@ -341,11 +420,33 @@ public final class KeyChain {
             if (certificateBytes == null) {
                 return null;
             }
-
-            TrustedCertificateStore store = new TrustedCertificateStore();
-            List<X509Certificate> chain = store
-                    .getCertificateChain(toCertificate(certificateBytes));
-            return chain.toArray(new X509Certificate[chain.size()]);
+            X509Certificate leafCert = toCertificate(certificateBytes);
+            final byte[] certChainBytes = keyChainService.getCaCertificates(alias);
+            // If the keypair is installed with a certificate chain by either
+            // DevicePolicyManager.installKeyPair or CertInstaller, return that chain.
+            if (certChainBytes != null && certChainBytes.length != 0) {
+                Collection<X509Certificate> chain = toCertificates(certChainBytes);
+                ArrayList<X509Certificate> fullChain = new ArrayList<>(chain.size() + 1);
+                fullChain.add(leafCert);
+                fullChain.addAll(chain);
+                return fullChain.toArray(new X509Certificate[fullChain.size()]);
+            } else {
+                // If there isn't a certificate chain, either due to a pre-existing keypair
+                // installed before N, or no chain is explicitly installed under the new logic,
+                // fall back to old behavior of constructing the chain from trusted credentials.
+                //
+                // This logic exists to maintain old behaviour for already installed keypair, at
+                // the cost of potentially returning extra certificate chain for new clients who
+                // explicitly installed only the client certificate without a chain. The latter
+                // case is actually no different from pre-N behaviour of getCertificateChain(),
+                // in that sense this change introduces no regression. Besides the returned chain
+                // is still valid so the consumer of the chain should have no problem verifying it.
+                TrustedCertificateStore store = new TrustedCertificateStore();
+                List<X509Certificate> chain = store.getCertificateChain(leafCert);
+                return chain.toArray(new X509Certificate[chain.size()]);
+            }
+        } catch (CertificateException e) {
+            throw new KeyChainException(e);
         } catch (RemoteException e) {
             throw new KeyChainException(e);
         } catch (RuntimeException e) {
@@ -361,8 +462,11 @@ public final class KeyChain {
      * specific {@code PrivateKey} type indicated by {@code algorithm} (e.g.,
      * "RSA").
      */
-    public static boolean isKeyAlgorithmSupported(String algorithm) {
-        return "RSA".equals(algorithm);
+    public static boolean isKeyAlgorithmSupported(
+            @NonNull @KeyProperties.KeyAlgorithmEnum String algorithm) {
+        final String algUpper = algorithm.toUpperCase(Locale.US);
+        return KeyProperties.KEY_ALGORITHM_EC.equals(algUpper)
+                || KeyProperties.KEY_ALGORITHM_RSA.equals(algUpper);
     }
 
     /**
@@ -371,16 +475,32 @@ public final class KeyChain {
      * imported or generated. This can be used to tell if there is special
      * hardware support that can be used to bind keys to the device in a way
      * that makes it non-exportable.
+     *
+     * @deprecated Whether the key is bound to the secure hardware is known only
+     * once the key has been imported. To find out, use:
+     * <pre>{@code
+     * PrivateKey key = ...; // private key from KeyChain
+     *
+     * KeyFactory keyFactory =
+     *     KeyFactory.getInstance(key.getAlgorithm(), "AndroidKeyStore");
+     * KeyInfo keyInfo = keyFactory.getKeySpec(key, KeyInfo.class);
+     * if (keyInfo.isInsideSecureHardware()) {
+     *     // The key is bound to the secure hardware of this Android
+     * }}</pre>
      */
-    public static boolean isBoundKeyAlgorithm(String algorithm) {
+    @Deprecated
+    public static boolean isBoundKeyAlgorithm(
+            @NonNull @KeyProperties.KeyAlgorithmEnum String algorithm) {
         if (!isKeyAlgorithmSupported(algorithm)) {
             return false;
         }
 
-        return KeyStore.getInstance().isHardwareBacked();
+        return KeyStore.getInstance().isHardwareBacked(algorithm);
     }
 
-    private static X509Certificate toCertificate(byte[] bytes) {
+    /** @hide */
+    @NonNull
+    public static X509Certificate toCertificate(@NonNull byte[] bytes) {
         if (bytes == null) {
             throw new IllegalArgumentException("bytes == null");
         }
@@ -388,6 +508,21 @@ public final class KeyChain {
             CertificateFactory certFactory = CertificateFactory.getInstance("X.509");
             Certificate cert = certFactory.generateCertificate(new ByteArrayInputStream(bytes));
             return (X509Certificate) cert;
+        } catch (CertificateException e) {
+            throw new AssertionError(e);
+        }
+    }
+
+    /** @hide */
+    @NonNull
+    public static Collection<X509Certificate> toCertificates(@NonNull byte[] bytes) {
+        if (bytes == null) {
+            throw new IllegalArgumentException("bytes == null");
+        }
+        try {
+            CertificateFactory certFactory = CertificateFactory.getInstance("X.509");
+            return (Collection<X509Certificate>) certFactory.generateCertificates(
+                    new ByteArrayInputStream(bytes));
         } catch (CertificateException e) {
             throw new AssertionError(e);
         }
@@ -421,7 +556,17 @@ public final class KeyChain {
      *
      * Caller should call unbindService on the result when finished.
      */
-    public static KeyChainConnection bind(Context context) throws InterruptedException {
+    @WorkerThread
+    public static KeyChainConnection bind(@NonNull Context context) throws InterruptedException {
+        return bindAsUser(context, Process.myUserHandle());
+    }
+
+    /**
+     * @hide
+     */
+    @WorkerThread
+    public static KeyChainConnection bindAsUser(@NonNull Context context, UserHandle user)
+            throws InterruptedException {
         if (context == null) {
             throw new NullPointerException("context == null");
         }
@@ -441,16 +586,17 @@ public final class KeyChain {
             }
             @Override public void onServiceDisconnected(ComponentName name) {}
         };
-        boolean isBound = context.bindService(new Intent(IKeyChainService.class.getName()),
-                                              keyChainServiceConnection,
-                                              Context.BIND_AUTO_CREATE);
-        if (!isBound) {
+        Intent intent = new Intent(IKeyChainService.class.getName());
+        ComponentName comp = intent.resolveSystemService(context.getPackageManager(), 0);
+        intent.setComponent(comp);
+        if (comp == null || !context.bindServiceAsUser(
+                intent, keyChainServiceConnection, Context.BIND_AUTO_CREATE, user)) {
             throw new AssertionError("could not bind to KeyChainService");
         }
         return new KeyChainConnection(context, keyChainServiceConnection, q.take());
     }
 
-    private static void ensureNotOnMainThread(Context context) {
+    private static void ensureNotOnMainThread(@NonNull Context context) {
         Looper looper = Looper.myLooper();
         if (looper != null && looper == context.getMainLooper()) {
             throw new IllegalStateException(

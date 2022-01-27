@@ -16,23 +16,30 @@
 
 package android.media;
 
-import com.android.internal.database.SortCursor;
-
 import android.annotation.SdkConstant;
 import android.annotation.SdkConstant.SdkConstantType;
 import android.app.Activity;
+import android.content.ContentResolver;
 import android.content.ContentUris;
 import android.content.Context;
-import android.content.res.AssetFileDescriptor;
+import android.content.pm.PackageManager;
 import android.database.Cursor;
 import android.net.Uri;
 import android.os.Environment;
-import android.provider.DrmStore;
+import android.os.ParcelFileDescriptor;
+import android.os.Process;
 import android.provider.MediaStore;
 import android.provider.Settings;
 import android.provider.Settings.System;
 import android.util.Log;
 
+import com.android.internal.database.SortCursor;
+
+import libcore.io.Streams;
+
+import java.io.IOException;
+import java.io.InputStream;
+import java.io.OutputStream;
 import java.util.ArrayList;
 import java.util.List;
 
@@ -85,7 +92,6 @@ public class RingtoneManager {
      * {@link #EXTRA_RINGTONE_SHOW_DEFAULT},
      * {@link #EXTRA_RINGTONE_SHOW_SILENT}, {@link #EXTRA_RINGTONE_TYPE},
      * {@link #EXTRA_RINGTONE_DEFAULT_URI}, {@link #EXTRA_RINGTONE_TITLE},
-     * {@link #EXTRA_RINGTONE_INCLUDE_DRM}.
      * <p>
      * Output: {@link #EXTRA_RINGTONE_PICKED_URI}.
      */
@@ -113,7 +119,9 @@ public class RingtoneManager {
 
     /**
      * Given to the ringtone picker as a boolean. Whether to include DRM ringtones.
+     * @deprecated DRM ringtones are no longer supported
      */
+    @Deprecated
     public static final String EXTRA_RINGTONE_INCLUDE_DRM =
             "android.intent.extra.ringtone.INCLUDE_DRM";
     
@@ -159,7 +167,16 @@ public class RingtoneManager {
      * in most cases.
      */
     public static final String EXTRA_RINGTONE_TITLE = "android.intent.extra.ringtone.TITLE";
-    
+
+    /**
+     * @hide
+     * Given to the ringtone picker as an int. Additional AudioAttributes flags to use
+     * when playing the ringtone in the picker.
+     * @see #ACTION_RINGTONE_PICKER
+     */
+    public static final String EXTRA_RINGTONE_AUDIO_ATTRIBUTES_FLAGS =
+            "android.intent.extra.ringtone.AUDIO_ATTRIBUTES_FLAGS";
+
     /**
      * Returned from the ringtone picker as a {@link Uri}.
      * <p>
@@ -181,12 +198,6 @@ public class RingtoneManager {
         MediaStore.Audio.Media._ID, MediaStore.Audio.Media.TITLE,
         "\"" + MediaStore.Audio.Media.INTERNAL_CONTENT_URI + "\"",
         MediaStore.Audio.Media.TITLE_KEY
-    };
-
-    private static final String[] DRM_COLUMNS = new String[] {
-        DrmStore.Audio._ID, DrmStore.Audio.TITLE,
-        "\"" + DrmStore.Audio.CONTENT_URI + "\"",
-        DrmStore.Audio.TITLE + " AS " + MediaStore.Audio.Media.TITLE_KEY
     };
 
     private static final String[] MEDIA_COLUMNS = new String[] {
@@ -213,9 +224,9 @@ public class RingtoneManager {
      */
     public static final int URI_COLUMN_INDEX = 2;
 
-    private Activity mActivity;
-    private Context mContext;
-    
+    private final Activity mActivity;
+    private final Context mContext;
+
     private Cursor mCursor;
 
     private int mType = TYPE_RINGTONE;
@@ -229,8 +240,6 @@ public class RingtoneManager {
     private boolean mStopPreviousRingtone = true;
     private Ringtone mPreviousRingtone;
 
-    private boolean mIncludeDrm;
-    
     /**
      * Constructs a RingtoneManager. This constructor is recommended as its
      * constructed instance manages cursor(s).
@@ -238,7 +247,8 @@ public class RingtoneManager {
      * @param activity The activity used to get a managed cursor.
      */
     public RingtoneManager(Activity activity) {
-        mContext = mActivity = activity;
+        mActivity = activity;
+        mContext = activity;
         setType(mType);
     }
 
@@ -250,6 +260,7 @@ public class RingtoneManager {
      * @param context The context to used to get a cursor.
      */
     public RingtoneManager(Context context) {
+        mActivity = null;
         mContext = context;
         setType(mType);
     }
@@ -263,7 +274,6 @@ public class RingtoneManager {
      * @see #EXTRA_RINGTONE_TYPE           
      */
     public void setType(int type) {
-
         if (mCursor != null) {
             throw new IllegalStateException(
                     "Setting filter columns should be done before querying for ringtones.");
@@ -292,7 +302,7 @@ public class RingtoneManager {
                 return AudioManager.STREAM_RING;
         }
     }
-    
+
     /**
      * Whether retrieving another {@link Ringtone} will stop playing the
      * previously retrieved {@link Ringtone}.
@@ -328,18 +338,26 @@ public class RingtoneManager {
      * 
      * @return Whether DRM ringtones will be included.
      * @see #setIncludeDrm(boolean)
+     * Obsolete - always returns false
+     * @deprecated DRM ringtones are no longer supported
      */
+    @Deprecated
     public boolean getIncludeDrm() {
-        return mIncludeDrm;
+        return false;
     }
 
     /**
      * Sets whether to include DRM ringtones.
      * 
      * @param includeDrm Whether to include DRM ringtones.
+     * Obsolete - no longer has any effect
+     * @deprecated DRM ringtones are no longer supported
      */
+    @Deprecated
     public void setIncludeDrm(boolean includeDrm) {
-        mIncludeDrm = includeDrm;
+        if (includeDrm) {
+            Log.w(TAG, "setIncludeDrm no longer supported");
+        }
     }
 
     /**
@@ -351,7 +369,10 @@ public class RingtoneManager {
      * If {@link RingtoneManager#RingtoneManager(Activity)} was not used, the
      * caller should manage the returned cursor through its activity's life
      * cycle to prevent leaking the cursor.
-     * 
+     * <p>
+     * Note that the list of ringtones available will differ depending on whether the caller
+     * has the {@link android.Manifest.permission#READ_EXTERNAL_STORAGE} permission.
+     *
      * @return A {@link Cursor} of all the ringtones available.
      * @see #ID_COLUMN_INDEX
      * @see #TITLE_COLUMN_INDEX
@@ -363,10 +384,9 @@ public class RingtoneManager {
         }
         
         final Cursor internalCursor = getInternalRingtones();
-        final Cursor drmCursor = mIncludeDrm ? getDrmRingtones() : null;
         final Cursor mediaCursor = getMediaRingtones();
              
-        return mCursor = new SortCursor(new Cursor[] { internalCursor, drmCursor, mediaCursor },
+        return mCursor = new SortCursor(new Cursor[] { internalCursor, mediaCursor },
                 MediaStore.Audio.Media.DEFAULT_SORT_ORDER);
     }
 
@@ -448,8 +468,10 @@ public class RingtoneManager {
 
     /**
      * Returns a valid ringtone URI. No guarantees on which it returns. If it
-     * cannot find one, returns null.
-     * 
+     * cannot find one, returns null. If it can only find one on external storage and the caller
+     * doesn't have the {@link android.Manifest.permission#READ_EXTERNAL_STORAGE} permission,
+     * returns null.
+     *
      * @param context The context to use for querying.
      * @return A ringtone URI, or null if one cannot be found.
      */
@@ -460,10 +482,6 @@ public class RingtoneManager {
 
         if (uri == null) {
             uri = getValidRingtoneUriFromCursorAndClose(context, rm.getMediaRingtones());
-        }
-        
-        if (uri == null) {
-            uri = getValidRingtoneUriFromCursorAndClose(context, rm.getDrmRingtones());
         }
         
         return uri;
@@ -487,18 +505,17 @@ public class RingtoneManager {
     private Cursor getInternalRingtones() {
         return query(
                 MediaStore.Audio.Media.INTERNAL_CONTENT_URI, INTERNAL_COLUMNS,
-                constructBooleanTrueWhereClause(mFilterColumns, mIncludeDrm),
+                constructBooleanTrueWhereClause(mFilterColumns),
                 null, MediaStore.Audio.Media.DEFAULT_SORT_ORDER);
-    }
-    
-    private Cursor getDrmRingtones() {
-        // DRM store does not have any columns to use for filtering 
-        return query(
-                DrmStore.Audio.CONTENT_URI, DRM_COLUMNS,
-                null, null, DrmStore.Audio.TITLE);
     }
 
     private Cursor getMediaRingtones() {
+        if (PackageManager.PERMISSION_GRANTED != mContext.checkPermission(
+                android.Manifest.permission.READ_EXTERNAL_STORAGE,
+                Process.myPid(), Process.myUid())) {
+            Log.w(TAG, "No READ_EXTERNAL_STORAGE permission, ignoring ringtones on ext storage");
+            return null;
+        }
          // Get the external media cursor. First check to see if it is mounted.
         final String status = Environment.getExternalStorageState();
         
@@ -506,7 +523,7 @@ public class RingtoneManager {
                     status.equals(Environment.MEDIA_MOUNTED_READ_ONLY))
                 ? query(
                     MediaStore.Audio.Media.EXTERNAL_CONTENT_URI, MEDIA_COLUMNS,
-                    constructBooleanTrueWhereClause(mFilterColumns, mIncludeDrm), null,
+                    constructBooleanTrueWhereClause(mFilterColumns), null,
                     MediaStore.Audio.Media.DEFAULT_SORT_ORDER)
                 : null;
     }
@@ -536,7 +553,7 @@ public class RingtoneManager {
      * @param columns The columns that must be true.
      * @return The where clause.
      */
-    private static String constructBooleanTrueWhereClause(List<String> columns, boolean includeDrm) {
+    private static String constructBooleanTrueWhereClause(List<String> columns) {
         
         if (columns == null) return null;
         
@@ -553,15 +570,6 @@ public class RingtoneManager {
         }
 
         sb.append(")");
-
-        if (!includeDrm) {
-            // If not DRM files should be shown, the where clause
-            // will be something like "(is_notification=1) and is_drm=0"
-            sb.append(" and ");
-            sb.append(MediaStore.MediaColumns.IS_DRM);
-            sb.append("=0");
-        }
-
 
         return sb.toString();
     }
@@ -635,7 +643,8 @@ public class RingtoneManager {
     public static Uri getActualDefaultRingtoneUri(Context context, int type) {
         String setting = getSettingForType(type);
         if (setting == null) return null;
-        final String uriString = Settings.System.getString(context.getContentResolver(), setting);
+        final String uriString = Settings.System.getStringForUser(context.getContentResolver(),
+                setting, context.getUserId());
         return uriString != null ? Uri.parse(uriString) : null;
     }
     
@@ -650,12 +659,48 @@ public class RingtoneManager {
      * @see #getActualDefaultRingtoneUri(Context, int)
      */
     public static void setActualDefaultRingtoneUri(Context context, int type, Uri ringtoneUri) {
+        final ContentResolver resolver = context.getContentResolver();
+
         String setting = getSettingForType(type);
         if (setting == null) return;
-        Settings.System.putString(context.getContentResolver(), setting,
-                ringtoneUri != null ? ringtoneUri.toString() : null);
+        Settings.System.putStringForUser(resolver, setting,
+                ringtoneUri != null ? ringtoneUri.toString() : null, context.getUserId());
+
+        // Stream selected ringtone into cache so it's available for playback
+        // when CE storage is still locked
+        if (ringtoneUri != null) {
+            final Uri cacheUri = getCacheForType(type);
+            try (InputStream in = openRingtone(context, ringtoneUri);
+                    OutputStream out = resolver.openOutputStream(cacheUri)) {
+                Streams.copy(in, out);
+            } catch (IOException e) {
+                Log.w(TAG, "Failed to cache ringtone: " + e);
+            }
+        }
     }
-    
+
+    /**
+     * Try opening the given ringtone locally first, but failover to
+     * {@link IRingtonePlayer} if we can't access it directly. Typically happens
+     * when process doesn't hold
+     * {@link android.Manifest.permission#READ_EXTERNAL_STORAGE}.
+     */
+    private static InputStream openRingtone(Context context, Uri uri) throws IOException {
+        final ContentResolver resolver = context.getContentResolver();
+        try {
+            return resolver.openInputStream(uri);
+        } catch (SecurityException | IOException e) {
+            Log.w(TAG, "Failed to open directly; attempting failover: " + e);
+            final IRingtonePlayer player = context.getSystemService(AudioManager.class)
+                    .getRingtonePlayer();
+            try {
+                return new ParcelFileDescriptor.AutoCloseInputStream(player.openRingtone(uri));
+            } catch (Exception e2) {
+                throw new IOException(e2);
+            }
+        }
+    }
+
     private static String getSettingForType(int type) {
         if ((type & TYPE_RINGTONE) != 0) {
             return Settings.System.RINGTONE;
@@ -667,7 +712,20 @@ public class RingtoneManager {
             return null;
         }
     }
-    
+
+    /** {@hide} */
+    public static Uri getCacheForType(int type) {
+        if ((type & TYPE_RINGTONE) != 0) {
+            return Settings.System.RINGTONE_CACHE_URI;
+        } else if ((type & TYPE_NOTIFICATION) != 0) {
+            return Settings.System.NOTIFICATION_SOUND_CACHE_URI;
+        } else if ((type & TYPE_ALARM) != 0) {
+            return Settings.System.ALARM_ALERT_CACHE_URI;
+        } else {
+            return null;
+        }
+    }
+
     /**
      * Returns whether the given {@link Uri} is one of the default ringtones.
      * 

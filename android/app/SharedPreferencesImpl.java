@@ -16,9 +16,13 @@
 
 package android.app;
 
+import android.annotation.Nullable;
 import android.content.SharedPreferences;
 import android.os.FileUtils;
 import android.os.Looper;
+import android.system.ErrnoException;
+import android.system.Os;
+import android.system.StructStat;
 import android.util.Log;
 
 import com.google.android.collect.Maps;
@@ -42,12 +46,8 @@ import java.util.Map;
 import java.util.Set;
 import java.util.WeakHashMap;
 import java.util.concurrent.CountDownLatch;
-import java.util.concurrent.ExecutorService;
 
-import libcore.io.ErrnoException;
 import libcore.io.IoUtils;
-import libcore.io.Libcore;
-import libcore.io.StructStat;
 
 final class SharedPreferencesImpl implements SharedPreferences {
     private static final String TAG = "SharedPreferencesImpl";
@@ -87,20 +87,20 @@ final class SharedPreferencesImpl implements SharedPreferences {
         }
         new Thread("SharedPreferencesImpl-load") {
             public void run() {
-                synchronized (SharedPreferencesImpl.this) {
-                    loadFromDiskLocked();
-                }
+                loadFromDisk();
             }
         }.start();
     }
 
-    private void loadFromDiskLocked() {
-        if (mLoaded) {
-            return;
-        }
-        if (mBackupFile.exists()) {
-            mFile.delete();
-            mBackupFile.renameTo(mFile);
+    private void loadFromDisk() {
+        synchronized (SharedPreferencesImpl.this) {
+            if (mLoaded) {
+                return;
+            }
+            if (mBackupFile.exists()) {
+                mFile.delete();
+                mBackupFile.renameTo(mFile);
+            }
         }
 
         // Debugging
@@ -111,37 +111,37 @@ final class SharedPreferencesImpl implements SharedPreferences {
         Map map = null;
         StructStat stat = null;
         try {
-            stat = Libcore.os.stat(mFile.getPath());
+            stat = Os.stat(mFile.getPath());
             if (mFile.canRead()) {
                 BufferedInputStream str = null;
                 try {
                     str = new BufferedInputStream(
                             new FileInputStream(mFile), 16*1024);
                     map = XmlUtils.readMapXml(str);
-                } catch (XmlPullParserException e) {
-                    Log.w(TAG, "getSharedPreferences", e);
-                } catch (FileNotFoundException e) {
-                    Log.w(TAG, "getSharedPreferences", e);
-                } catch (IOException e) {
+                } catch (XmlPullParserException | IOException e) {
                     Log.w(TAG, "getSharedPreferences", e);
                 } finally {
                     IoUtils.closeQuietly(str);
                 }
             }
         } catch (ErrnoException e) {
+            /* ignore */
         }
-        mLoaded = true;
-        if (map != null) {
-            mMap = map;
-            mStatTimestamp = stat.st_mtime;
-            mStatSize = stat.st_size;
-        } else {
-            mMap = new HashMap<String, Object>();
+
+        synchronized (SharedPreferencesImpl.this) {
+            mLoaded = true;
+            if (map != null) {
+                mMap = map;
+                mStatTimestamp = stat.st_mtime;
+                mStatSize = stat.st_size;
+            } else {
+                mMap = new HashMap<>();
+            }
+            notifyAll();
         }
-        notifyAll();
     }
 
-    private static File makeBackupFile(File prefsFile) {
+    static File makeBackupFile(File prefsFile) {
         return new File(prefsFile.getPath() + ".bak");
     }
 
@@ -173,7 +173,7 @@ final class SharedPreferencesImpl implements SharedPreferences {
              * violation, but we explicitly want this one.
              */
             BlockGuard.getThreadPolicy().onReadFromDisk();
-            stat = Libcore.os.stat(mFile.getPath());
+            stat = Os.stat(mFile.getPath());
         } catch (ErrnoException e) {
             return true;
         }
@@ -218,7 +218,8 @@ final class SharedPreferencesImpl implements SharedPreferences {
         }
     }
 
-    public String getString(String key, String defValue) {
+    @Nullable
+    public String getString(String key, @Nullable String defValue) {
         synchronized (this) {
             awaitLoadedLocked();
             String v = (String)mMap.get(key);
@@ -226,7 +227,8 @@ final class SharedPreferencesImpl implements SharedPreferences {
         }
     }
 
-    public Set<String> getStringSet(String key, Set<String> defValues) {
+    @Nullable
+    public Set<String> getStringSet(String key, @Nullable Set<String> defValues) {
         synchronized (this) {
             awaitLoadedLocked();
             Set<String> v = (Set<String>) mMap.get(key);
@@ -304,13 +306,13 @@ final class SharedPreferencesImpl implements SharedPreferences {
         private final Map<String, Object> mModified = Maps.newHashMap();
         private boolean mClear = false;
 
-        public Editor putString(String key, String value) {
+        public Editor putString(String key, @Nullable String value) {
             synchronized (this) {
                 mModified.put(key, value);
                 return this;
             }
         }
-        public Editor putStringSet(String key, Set<String> values) {
+        public Editor putStringSet(String key, @Nullable Set<String> values) {
             synchronized (this) {
                 mModified.put(key,
                         (values == null) ? null : new HashSet<String>(values));
@@ -421,13 +423,15 @@ final class SharedPreferencesImpl implements SharedPreferences {
                     for (Map.Entry<String, Object> e : mModified.entrySet()) {
                         String k = e.getKey();
                         Object v = e.getValue();
-                        if (v == this) {  // magic value for a removal mutation
+                        // "this" is the magic value for a removal mutation. In addition,
+                        // setting a value to "null" for a given key is specified to be
+                        // equivalent to calling remove on that key.
+                        if (v == this || v == null) {
                             if (!mMap.containsKey(k)) {
                                 continue;
                             }
                             mMap.remove(k);
                         } else {
-                            boolean isSame = false;
                             if (mMap.containsKey(k)) {
                                 Object existingValue = mMap.get(k);
                                 if (existingValue != null && existingValue.equals(v)) {
@@ -598,7 +602,7 @@ final class SharedPreferencesImpl implements SharedPreferences {
             str.close();
             ContextImpl.setFilePermissionsFromMode(mFile.getPath(), mMode, 0);
             try {
-                final StructStat stat = Libcore.os.stat(mFile.getPath());
+                final StructStat stat = Os.stat(mFile.getPath());
                 synchronized (this) {
                     mStatTimestamp = stat.st_mtime;
                     mStatSize = stat.st_size;

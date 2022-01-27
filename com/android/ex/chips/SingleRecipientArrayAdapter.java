@@ -17,47 +17,35 @@
 package com.android.ex.chips;
 
 import android.content.Context;
-import android.text.util.Rfc822Tokenizer;
-import android.view.LayoutInflater;
+import android.graphics.drawable.StateListDrawable;
 import android.view.View;
 import android.view.ViewGroup;
 import android.widget.ArrayAdapter;
-import android.widget.ImageView;
-import android.widget.TextView;
+
+import com.android.ex.chips.DropdownChipLayouter.AdapterType;
 
 class SingleRecipientArrayAdapter extends ArrayAdapter<RecipientEntry> {
-    private int mLayoutId;
+    private final DropdownChipLayouter mDropdownChipLayouter;
+    private final StateListDrawable mDeleteDrawable;
 
-    private final LayoutInflater mLayoutInflater;
+    public SingleRecipientArrayAdapter(Context context, RecipientEntry entry,
+        DropdownChipLayouter dropdownChipLayouter) {
+        this(context, entry, dropdownChipLayouter, null);
+    }
 
-    public SingleRecipientArrayAdapter(Context context, int resourceId, RecipientEntry entry) {
-        super(context, resourceId, new RecipientEntry[] {
-            entry
-        });
-        mLayoutInflater = LayoutInflater.from(context);
-        mLayoutId = resourceId;
+    public SingleRecipientArrayAdapter(Context context, RecipientEntry entry,
+            DropdownChipLayouter dropdownChipLayouter, StateListDrawable deleteDrawable) {
+        super(context,
+                dropdownChipLayouter.getAlternateItemLayoutResId(AdapterType.SINGLE_RECIPIENT),
+                new RecipientEntry[] { entry });
+
+        mDropdownChipLayouter = dropdownChipLayouter;
+        mDeleteDrawable = deleteDrawable;
     }
 
     @Override
     public View getView(int position, View convertView, ViewGroup parent) {
-        if (convertView == null) {
-            convertView = newView();
-        }
-        bindView(convertView, getItem(position));
-        return convertView;
-    }
-
-    private View newView() {
-        return mLayoutInflater.inflate(mLayoutId, null);
-    }
-
-    private static void bindView(View view, RecipientEntry entry) {
-        TextView display = (TextView) view.findViewById(android.R.id.title);
-        ImageView imageView = (ImageView) view.findViewById(android.R.id.icon);
-        display.setText(entry.getDisplayName());
-        display.setVisibility(View.VISIBLE);
-        imageView.setVisibility(View.VISIBLE);
-        TextView destination = (TextView) view.findViewById(android.R.id.text1);
-        destination.setText(Rfc822Tokenizer.tokenize(entry.getDestination())[0].getAddress());
+        return mDropdownChipLayouter.bindView(convertView, parent, getItem(position), position,
+                AdapterType.SINGLE_RECIPIENT, null, mDeleteDrawable);
     }
 }

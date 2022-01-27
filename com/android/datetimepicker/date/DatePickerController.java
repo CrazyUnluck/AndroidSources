@@ -17,12 +17,14 @@
 package com.android.datetimepicker.date;
 
 import com.android.datetimepicker.date.DatePickerDialog.OnDateChangedListener;
-import com.android.datetimepicker.date.SimpleMonthAdapter.CalendarDay;
+import com.android.datetimepicker.date.MonthAdapter.CalendarDay;
+
+import java.util.Calendar;
 
 /**
  * Controller class to communicate among the various components of the date picker dialog.
  */
-interface DatePickerController {
+public interface DatePickerController {
 
     void onYearSelected(int year);
 
@@ -39,6 +41,10 @@ interface DatePickerController {
     int getMinYear();
 
     int getMaxYear();
+
+    Calendar getMinDate();
+
+    Calendar getMaxDate();
 
     void tryVibrate();
 }

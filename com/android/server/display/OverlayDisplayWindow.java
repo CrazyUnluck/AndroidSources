@@ -60,12 +60,13 @@ final class OverlayDisplayWindow implements DumpUtils.Dump {
 
     private final Context mContext;
     private final String mName;
-    private final int mWidth;
-    private final int mHeight;
-    private final int mDensityDpi;
+    private int mWidth;
+    private int mHeight;
+    private int mDensityDpi;
     private final int mGravity;
+    private final boolean mSecure;
     private final Listener mListener;
-    private final String mTitle;
+    private String mTitle;
 
     private final DisplayManager mDisplayManager;
     private final WindowManager mWindowManager;
@@ -92,17 +93,13 @@ final class OverlayDisplayWindow implements DumpUtils.Dump {
     private float mLiveScale = 1.0f;
 
     public OverlayDisplayWindow(Context context, String name,
-            int width, int height, int densityDpi, int gravity, Listener listener) {
+            int width, int height, int densityDpi, int gravity, boolean secure,
+            Listener listener) {
         mContext = context;
         mName = name;
-        mWidth = width;
-        mHeight = height;
-        mDensityDpi = densityDpi;
         mGravity = gravity;
+        mSecure = secure;
         mListener = listener;
-        mTitle = context.getResources().getString(
-                com.android.internal.R.string.display_manager_overlay_display_title,
-                mName, mWidth, mHeight, mDensityDpi);
 
         mDisplayManager = (DisplayManager)context.getSystemService(
                 Context.DISPLAY_SERVICE);
@@ -111,6 +108,8 @@ final class OverlayDisplayWindow implements DumpUtils.Dump {
 
         mDefaultDisplay = mWindowManager.getDefaultDisplay();
         updateDefaultDisplayInfo();
+
+        resize(width, height, densityDpi, false /* doLayout */);
 
         createWindow();
     }
@@ -138,6 +137,26 @@ final class OverlayDisplayWindow implements DumpUtils.Dump {
         }
     }
 
+    public void resize(int width, int height, int densityDpi) {
+        resize(width, height, densityDpi, true /* doLayout */);
+    }
+
+    private void resize(int width, int height, int densityDpi, boolean doLayout) {
+        mWidth = width;
+        mHeight = height;
+        mDensityDpi = densityDpi;
+        mTitle = mContext.getResources().getString(
+                com.android.internal.R.string.display_manager_overlay_display_title,
+                mName, mWidth, mHeight, mDensityDpi);
+        if (mSecure) {
+            mTitle += mContext.getResources().getString(
+                    com.android.internal.R.string.display_manager_overlay_display_secure_suffix);
+        }
+        if (doLayout) {
+            relayout();
+        }
+    }
+
     public void relayout() {
         if (mWindowVisible) {
             updateWindowParams();
@@ -146,7 +165,7 @@ final class OverlayDisplayWindow implements DumpUtils.Dump {
     }
 
     @Override
-    public void dump(PrintWriter pw) {
+    public void dump(PrintWriter pw, String prefix) {
         pw.println("mWindowVisible=" + mWindowVisible);
         pw.println("mWindowX=" + mWindowX);
         pw.println("mWindowY=" + mWindowY);
@@ -197,6 +216,9 @@ final class OverlayDisplayWindow implements DumpUtils.Dump {
                 | WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE
                 | WindowManager.LayoutParams.FLAG_NOT_TOUCH_MODAL
                 | WindowManager.LayoutParams.FLAG_HARDWARE_ACCELERATED;
+        if (mSecure) {
+            mWindowParams.flags |= WindowManager.LayoutParams.FLAG_SECURE;
+        }
         if (DISABLE_MOVE_AND_RESIZE) {
             mWindowParams.flags |= WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE;
         }
@@ -272,6 +294,7 @@ final class OverlayDisplayWindow implements DumpUtils.Dump {
             if (displayId == mDefaultDisplay.getDisplayId()) {
                 if (updateDefaultDisplayInfo()) {
                     relayout();
+                    mListener.onStateChanged(mDefaultDisplayInfo.state);
                 } else {
                     dismiss();
                 }
@@ -291,7 +314,9 @@ final class OverlayDisplayWindow implements DumpUtils.Dump {
         @Override
         public void onSurfaceTextureAvailable(SurfaceTexture surfaceTexture,
                 int width, int height) {
-            mListener.onWindowCreated(surfaceTexture, mDefaultDisplayInfo.refreshRate);
+            mListener.onWindowCreated(surfaceTexture,
+                    mDefaultDisplayInfo.getMode().getRefreshRate(),
+                    mDefaultDisplayInfo.presentationDeadlineNanos, mDefaultDisplayInfo.state);
         }
 
         @Override
@@ -360,7 +385,9 @@ final class OverlayDisplayWindow implements DumpUtils.Dump {
      * Watches for significant changes in the overlay display window lifecycle.
      */
     public interface Listener {
-        public void onWindowCreated(SurfaceTexture surfaceTexture, float refreshRate);
+        public void onWindowCreated(SurfaceTexture surfaceTexture,
+                float refreshRate, long presentationDeadlineNanos, int state);
         public void onWindowDestroyed();
+        public void onStateChanged(int state);
     }
 }

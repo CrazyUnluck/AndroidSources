@@ -16,12 +16,15 @@
 
 package android.bluetooth;
 
+import android.Manifest;
+import android.annotation.RequiresPermission;
 import android.annotation.SdkConstant;
 import android.annotation.SdkConstant.SdkConstantType;
 import android.content.ComponentName;
 import android.content.Context;
 import android.content.Intent;
 import android.content.ServiceConnection;
+import android.media.AudioManager;
 import android.os.IBinder;
 import android.os.ParcelUuid;
 import android.os.RemoteException;
@@ -90,6 +93,11 @@ public final class BluetoothA2dp implements BluetoothProfile {
     public static final String ACTION_PLAYING_STATE_CHANGED =
         "android.bluetooth.a2dp.profile.action.PLAYING_STATE_CHANGED";
 
+    /** @hide */
+    @SdkConstant(SdkConstantType.BROADCAST_INTENT_ACTION)
+    public static final String ACTION_AVRCP_CONNECTION_STATE_CHANGED =
+        "android.bluetooth.a2dp.profile.action.AVRCP_CONNECTION_STATE_CHANGED";
+
     /**
      * A2DP sink device is streaming music. This state can be one of
      * {@link #EXTRA_STATE} or {@link #EXTRA_PREVIOUS_STATE} of
@@ -128,9 +136,7 @@ public final class BluetoothA2dp implements BluetoothProfile {
                             try {
                                 if (mService == null) {
                                     if (VDBG) Log.d(TAG,"Binding service...");
-                                    if (!mContext.bindService(new Intent(IBluetoothA2dp.class.getName()), mConnection, 0)) {
-                                        Log.e(TAG, "Could not bind to Bluetooth A2DP Service");
-                                    }
+                                    doBind();
                                 }
                             } catch (Exception re) {
                                 Log.e(TAG,"",re);
@@ -157,9 +163,19 @@ public final class BluetoothA2dp implements BluetoothProfile {
             }
         }
 
-        if (!context.bindService(new Intent(IBluetoothA2dp.class.getName()), mConnection, 0)) {
-            Log.e(TAG, "Could not bind to Bluetooth A2DP Service");
+        doBind();
+    }
+
+    boolean doBind() {
+        Intent intent = new Intent(IBluetoothA2dp.class.getName());
+        ComponentName comp = intent.resolveSystemService(mContext.getPackageManager(), 0);
+        intent.setComponent(comp);
+        if (comp == null || !mContext.bindServiceAsUser(intent, mConnection, 0,
+                android.os.Process.myUserHandle())) {
+            Log.e(TAG, "Could not bind to Bluetooth A2DP Service with " + intent);
+            return false;
         }
+        return true;
     }
 
     /*package*/ void close() {
@@ -186,7 +202,8 @@ public final class BluetoothA2dp implements BluetoothProfile {
     }
 
     public void finalize() {
-        close();
+        // The empty finalize needs to be kept or the
+        // cts signature tests would fail.
     }
     /**
      * Initiate connection to a profile of the remote bluetooth device.
@@ -365,6 +382,7 @@ public final class BluetoothA2dp implements BluetoothProfile {
      * @return priority of the device
      * @hide
      */
+    @RequiresPermission(Manifest.permission.BLUETOOTH)
     public int getPriority(BluetoothDevice device) {
         if (VDBG) log("getPriority(" + device + ")");
         if (mService != null && isEnabled()
@@ -378,6 +396,73 @@ public final class BluetoothA2dp implements BluetoothProfile {
         }
         if (mService == null) Log.w(TAG, "Proxy not attached to service");
         return BluetoothProfile.PRIORITY_OFF;
+    }
+
+    /**
+     * Checks if Avrcp device supports the absolute volume feature.
+     *
+     * @return true if device supports absolute volume
+     * @hide
+     */
+    public boolean isAvrcpAbsoluteVolumeSupported() {
+        if (DBG) Log.d(TAG, "isAvrcpAbsoluteVolumeSupported");
+        if (mService != null && isEnabled()) {
+            try {
+                return mService.isAvrcpAbsoluteVolumeSupported();
+            } catch (RemoteException e) {
+                Log.e(TAG, "Error talking to BT service in isAvrcpAbsoluteVolumeSupported()", e);
+                return false;
+            }
+        }
+        if (mService == null) Log.w(TAG, "Proxy not attached to service");
+        return false;
+    }
+
+    /**
+     * Tells remote device to adjust volume. Only if absolute volume is
+     * supported. Uses the following values:
+     * <ul>
+     * <li>{@link AudioManager#ADJUST_LOWER}</li>
+     * <li>{@link AudioManager#ADJUST_RAISE}</li>
+     * <li>{@link AudioManager#ADJUST_MUTE}</li>
+     * <li>{@link AudioManager#ADJUST_UNMUTE}</li>
+     * </ul>
+     *
+     * @param direction One of the supported adjust values.
+     * @hide
+     */
+    public void adjustAvrcpAbsoluteVolume(int direction) {
+        if (DBG) Log.d(TAG, "adjustAvrcpAbsoluteVolume");
+        if (mService != null && isEnabled()) {
+            try {
+                mService.adjustAvrcpAbsoluteVolume(direction);
+                return;
+            } catch (RemoteException e) {
+                Log.e(TAG, "Error talking to BT service in adjustAvrcpAbsoluteVolume()", e);
+                return;
+            }
+        }
+        if (mService == null) Log.w(TAG, "Proxy not attached to service");
+    }
+
+    /**
+     * Tells remote device to set an absolute volume. Only if absolute volume is supported
+     *
+     * @param volume Absolute volume to be set on AVRCP side
+     * @hide
+     */
+    public void setAvrcpAbsoluteVolume(int volume) {
+        if (DBG) Log.d(TAG, "setAvrcpAbsoluteVolume");
+        if (mService != null && isEnabled()) {
+            try {
+                mService.setAvrcpAbsoluteVolume(volume);
+                return;
+            } catch (RemoteException e) {
+                Log.e(TAG, "Error talking to BT service in setAvrcpAbsoluteVolume()", e);
+                return;
+            }
+        }
+        if (mService == null) Log.w(TAG, "Proxy not attached to service");
     }
 
     /**
@@ -446,7 +531,7 @@ public final class BluetoothA2dp implements BluetoothProfile {
         }
     }
 
-    private ServiceConnection mConnection = new ServiceConnection() {
+    private final ServiceConnection mConnection = new ServiceConnection() {
         public void onServiceConnected(ComponentName className, IBinder service) {
             if (DBG) Log.d(TAG, "Proxy object connected");
             mService = IBluetoothA2dp.Stub.asInterface(service);

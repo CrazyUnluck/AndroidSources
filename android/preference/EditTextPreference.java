@@ -49,9 +49,10 @@ public class EditTextPreference extends DialogPreference {
     private EditText mEditText;
     
     private String mText;
-    
-    public EditTextPreference(Context context, AttributeSet attrs, int defStyle) {
-        super(context, attrs, defStyle);
+    private boolean mTextSet;
+
+    public EditTextPreference(Context context, AttributeSet attrs, int defStyleAttr, int defStyleRes) {
+        super(context, attrs, defStyleAttr, defStyleRes);
         
         mEditText = new EditText(context, attrs);
         
@@ -65,6 +66,10 @@ public class EditTextPreference extends DialogPreference {
          * We reset the enabled state.
          */
         mEditText.setEnabled(true);
+    }
+
+    public EditTextPreference(Context context, AttributeSet attrs, int defStyleAttr) {
+        this(context, attrs, defStyleAttr, 0);
     }
 
     public EditTextPreference(Context context, AttributeSet attrs) {
@@ -81,15 +86,16 @@ public class EditTextPreference extends DialogPreference {
      * @param text The text to save
      */
     public void setText(String text) {
-        final boolean wasBlocking = shouldDisableDependents();
-        
-        mText = text;
-        
-        persistString(text);
-        
-        final boolean isBlocking = shouldDisableDependents(); 
-        if (isBlocking != wasBlocking) {
-            notifyDependencyChange(isBlocking);
+        // Always persist/notify the first time.
+        final boolean changed = !TextUtils.equals(mText, text);
+        if (changed || !mTextSet) {
+            mText = text;
+            mTextSet = true;
+            persistString(text);
+            if(changed) {
+                notifyDependencyChange(shouldDisableDependents());
+                notifyChanged();
+            }
         }
     }
     

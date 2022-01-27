@@ -11,7 +11,7 @@
  * array elements to those that also provide an atomic conditional update
  * operation of the form:
  *
- *  <pre> {@code boolean compareAndSet(expectedValue, updateValue);}</pre>
+ * <pre> {@code boolean compareAndSet(expectedValue, updateValue);}</pre>
  *
  * <p>This method (which varies in argument types across different
  * classes) atomically sets a variable to the {@code updateValue} if it
@@ -38,7 +38,7 @@
  * {@code AtomicInteger} provide atomic increment methods.  One
  * application is to generate sequence numbers, as in:
  *
- *  <pre> {@code
+ * <pre> {@code
  * class Sequencer {
  *   private final AtomicLong sequenceNumber
  *     = new AtomicLong(0);
@@ -53,30 +53,31 @@
  * <pre> {@code long transform(long input)}</pre>
  *
  * write your utility method as follows:
- *  <pre> {@code
- * boolean getAndTransform(AtomicLong var) {
- *   while (true) {
- *     long current = var.get();
- *     long next = transform(current);
- *     if (var.compareAndSet(current, next))
- *         return current;
- *   }
+ * <pre> {@code
+ * long getAndTransform(AtomicLong var) {
+ *   long prev, next;
+ *   do {
+ *     prev = var.get();
+ *     next = transform(prev);
+ *   } while (!var.compareAndSet(prev, next));
+ *   return prev; // return next; for transformAndGet
  * }}</pre>
  *
  * <p>The memory effects for accesses and updates of atomics generally
  * follow the rules for volatiles, as stated in
- * <a href="http://java.sun.com/docs/books/jls/"> The Java Language
- * Specification, Third Edition (17.4 Memory Model)</a>:
+ * <a href="https://docs.oracle.com/javase/specs/jls/se8/html/jls-17.html#jls-17.4">
+ * Chapter 17 of
+ * <cite>The Java&trade; Language Specification</cite></a>:
  *
  * <ul>
  *
- *   <li> {@code get} has the memory effects of reading a
+ *   <li>{@code get} has the memory effects of reading a
  * {@code volatile} variable.
  *
- *   <li> {@code set} has the memory effects of writing (assigning) a
+ *   <li>{@code set} has the memory effects of writing (assigning) a
  * {@code volatile} variable.
  *
- *   <li> {@code lazySet} has the memory effects of writing (assigning)
+ *   <li>{@code lazySet} has the memory effects of writing (assigning)
  *   a {@code volatile} variable except that it permits reorderings with
  *   subsequent (but not previous) memory actions that do not themselves
  *   impose reordering constraints with ordinary non-{@code volatile}
@@ -90,7 +91,7 @@
  *   with respect to previous or subsequent reads and writes of any
  *   variables other than the target of the {@code weakCompareAndSet}.
  *
- *   <li> {@code compareAndSet}
+ *   <li>{@code compareAndSet}
  *   and all other read-and-update operations such as {@code getAndIncrement}
  *   have the memory effects of both reading and
  *   writing {@code volatile} variables.
@@ -122,13 +123,12 @@
  * semantics for their array elements, which is not supported for
  * ordinary arrays.
  *
- * <a name="Spurious">
- * <p>The atomic classes also support method {@code weakCompareAndSet},
- * which has limited applicability.  On some platforms, the weak version
- * may be more efficient than {@code compareAndSet} in the normal case,
- * but differs in that any given invocation of the
- * {@code weakCompareAndSet} method may return {@code false}
- * <em>spuriously</em> (that is, for no apparent reason)</a>.  A
+ * <p id="weakCompareAndSet">The atomic classes also support method
+ * {@code weakCompareAndSet}, which has limited applicability.  On some
+ * platforms, the weak version may be more efficient than {@code
+ * compareAndSet} in the normal case, but differs in that any given
+ * invocation of the {@code weakCompareAndSet} method may return {@code
+ * false} <em>spuriously</em> (that is, for no apparent reason).  A
  * {@code false} return means only that the operation may be retried if
  * desired, relying on the guarantee that repeated invocation when the
  * variable holds {@code expectedValue} and no other thread is also
@@ -164,7 +164,7 @@
  *
  * <p>Atomic classes are not general purpose replacements for
  * {@code java.lang.Integer} and related classes.  They do <em>not</em>
- * define methods such as {@code hashCode} and
+ * define methods such as {@code equals}, {@code hashCode} and
  * {@code compareTo}.  (Because atomic variables are expected to be
  * mutated, they are poor choices for hash table keys.)  Additionally,
  * classes are provided only for those types that are commonly useful in

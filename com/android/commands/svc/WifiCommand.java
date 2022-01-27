@@ -19,8 +19,6 @@ package com.android.commands.svc;
 import android.os.ServiceManager;
 import android.os.RemoteException;
 import android.net.wifi.IWifiManager;
-import android.net.IConnectivityManager;
-import android.net.ConnectivityManager;
 import android.content.Context;
 
 public class WifiCommand extends Svc.Command {
@@ -36,9 +34,7 @@ public class WifiCommand extends Svc.Command {
         return shortHelp() + "\n"
                 + "\n"
                 + "usage: svc wifi [enable|disable]\n"
-                + "         Turn Wi-Fi on or off.\n\n"
-                + "       svc wifi prefer\n"
-                + "          Set Wi-Fi as the preferred data network\n";
+                + "         Turn Wi-Fi on or off.\n\n";
     }
 
     public void run(String[] args) {
@@ -51,15 +47,6 @@ public class WifiCommand extends Svc.Command {
             } else if ("disable".equals(args[1])) {
                 flag = false;
                 validCommand = true;
-            } else if ("prefer".equals(args[1])) {
-                IConnectivityManager connMgr =
-                        IConnectivityManager.Stub.asInterface(ServiceManager.getService(Context.CONNECTIVITY_SERVICE));
-                try {
-                    connMgr.setNetworkPreference(ConnectivityManager.TYPE_WIFI);
-                } catch (RemoteException e) {
-                    System.err.println("Failed to set preferred network: " + e);
-                }
-                return;
             }
             if (validCommand) {
                 IWifiManager wifiMgr

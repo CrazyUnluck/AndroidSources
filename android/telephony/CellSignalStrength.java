@@ -16,26 +16,24 @@
 
 package android.telephony;
 
-import android.os.Parcel;
-import android.os.Parcelable;
-
 /**
  * Abstract base class for cell phone signal strength related information.
  */
 public abstract class CellSignalStrength {
 
-    /** @hide */
     public static final int SIGNAL_STRENGTH_NONE_OR_UNKNOWN = 0;
-    /** @hide */
+
     public static final int SIGNAL_STRENGTH_POOR = 1;
-    /** @hide */
+
     public static final int SIGNAL_STRENGTH_MODERATE = 2;
-    /** @hide */
+
     public static final int SIGNAL_STRENGTH_GOOD = 3;
-    /** @hide */
+
     public static final int SIGNAL_STRENGTH_GREAT = 4;
+
     /** @hide */
     public static final int NUM_SIGNAL_STRENGTH_BINS = 5;
+
     /** @hide */
     public static final String[] SIGNAL_STRENGTH_NAMES = {
         "none", "poor", "moderate", "good", "great"
@@ -50,6 +48,12 @@ public abstract class CellSignalStrength {
 
     /**
      * Get signal level as an int from 0..4
+     * <p>
+     * @see SIGNAL_STRENGTH_NONE_OR_UNKNOWN
+     * @see SIGNAL_STRENGTH_POOR
+     * @see SIGNAL_STRENGTH_MODERATE
+     * @see SIGNAL_STRENGTH_GOOD
+     * @see SIGNAL_STRENGTH_GREAT
      */
     public abstract int getLevel();
 

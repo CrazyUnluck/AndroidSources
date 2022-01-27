@@ -16,9 +16,9 @@
 
 /**
  * @hide
- * <p>The Renderscript vertex program, also known as a vertex shader, describes a stage in
+ * <p>The RenderScript vertex program, also known as a vertex shader, describes a stage in
  * the graphics pipeline responsible for manipulating geometric data in a user-defined way.
- * The object is constructed by providing the Renderscript system with the following data:</p>
+ * The object is constructed by providing the RenderScript system with the following data:</p>
  * <ul>
  *   <li>Element describing its varying inputs or attributes</li>
  *   <li>GLSL shader string that defines the body of the program</li>
@@ -28,7 +28,7 @@
  * <p>Once the program is created, you bind it to the graphics context, RenderScriptGL, and it will be used for
  * all subsequent draw calls until you bind a new program. If the program has constant inputs,
  * the user needs to bind an allocation containing those inputs. The allocation's type must match
- * the one provided during creation. The Renderscript library then does all the necessary plumbing
+ * the one provided during creation. The RenderScript library then does all the necessary plumbing
  * to send those constants to the graphics hardware. Varying inputs to the shader, such as position, normal,
  * and texture coordinates are matched by name between the input Element and the Mesh object being drawn.
  * The signatures don't have to be exact or in any strict order. As long as the input name in the shader
@@ -37,10 +37,6 @@
  *
  **/
 package android.renderscript;
-
-
-import android.graphics.Matrix;
-import android.util.Log;
 
 
 /**
@@ -53,7 +49,7 @@ import android.util.Log;
  **/
 public class ProgramVertex extends Program {
 
-    ProgramVertex(int id, RenderScript rs) {
+    ProgramVertex(long id, RenderScript rs) {
         super(id, rs);
     }
 
@@ -126,7 +122,7 @@ public class ProgramVertex extends Program {
          */
         public ProgramVertex create() {
             mRS.validate();
-            int[] tmp = new int[(mInputCount + mOutputCount + mConstantCount + mTextureCount) * 2];
+            long[] tmp = new long[(mInputCount + mOutputCount + mConstantCount + mTextureCount) * 2];
             String[] texNames = new String[mTextureCount];
             int idx = 0;
 
@@ -148,7 +144,7 @@ public class ProgramVertex extends Program {
                 texNames[i] = mTextureNames[i];
             }
 
-            int id = mRS.nProgramVertexCreate(mShader, texNames, tmp);
+            long id = mRS.nProgramVertexCreate(mShader, texNames, tmp);
             ProgramVertex pv = new ProgramVertex(id, mRS);
             initProgram(pv);
             return pv;

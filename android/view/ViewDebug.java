@@ -16,6 +16,7 @@
 
 package android.view;
 
+import android.annotation.NonNull;
 import android.content.Context;
 import android.content.res.Resources;
 import android.graphics.Bitmap;
@@ -26,6 +27,7 @@ import android.os.Handler;
 import android.os.RemoteException;
 import android.util.DisplayMetrics;
 import android.util.Log;
+import android.util.TypedValue;
 
 import java.io.BufferedOutputStream;
 import java.io.BufferedWriter;
@@ -74,6 +76,12 @@ public class ViewDebug {
      * @hide
      */
     public static final boolean DEBUG_DRAG = false;
+
+    /**
+     * Enables detailed logging of task positioning operations.
+     * @hide
+     */
+    public static final boolean DEBUG_POSITIONING = false;
 
     /**
      * This annotation can be used to mark fields and methods to be dumped by
@@ -180,6 +188,22 @@ public class ViewDebug {
          * @return the category as String
          */
         String category() default "";
+
+        /**
+         * Indicates whether or not to format an {@code int} or {@code byte} value as a hex string.
+         *
+         * @return true if the supported values should be formatted as a hex string.
+         */
+        boolean formatToHexString() default false;
+
+        /**
+         * Indicates whether or not the key to value mappings are held in adjacent indices.
+         *
+         * Note: Applies only to fields and methods that return String[].
+         *
+         * @return true if the key to value mappings are held in adjacent indices.
+         */
+        boolean hasAdjacentMapping() default false;
     }
 
     /**
@@ -299,6 +323,7 @@ public class ViewDebug {
 
     private static final String REMOTE_COMMAND_CAPTURE = "CAPTURE";
     private static final String REMOTE_COMMAND_DUMP = "DUMP";
+    private static final String REMOTE_COMMAND_DUMP_THEME = "DUMP_THEME";
     private static final String REMOTE_COMMAND_INVALIDATE = "INVALIDATE";
     private static final String REMOTE_COMMAND_REQUEST_LAYOUT = "REQUEST_LAYOUT";
     private static final String REMOTE_PROFILE = "PROFILE";
@@ -414,6 +439,8 @@ public class ViewDebug {
 
         if (REMOTE_COMMAND_DUMP.equalsIgnoreCase(command)) {
             dump(view, false, true, clientStream);
+        } else if (REMOTE_COMMAND_DUMP_THEME.equalsIgnoreCase(command)) {
+            dumpTheme(view, clientStream);
         } else if (REMOTE_COMMAND_CAPTURE_LAYERS.equalsIgnoreCase(command)) {
             captureLayers(view, new DataOutputStream(clientStream));
         } else {
@@ -507,76 +534,76 @@ public class ViewDebug {
 
         long durationMeasure =
                 (root || (view.mPrivateFlags & View.PFLAG_MEASURED_DIMENSION_SET) != 0)
-                ? profileViewOperation(view, new ViewOperation<Void>() {
-                            public Void[] pre() {
-                                forceLayout(view);
-                                return null;
-                            }
+                        ? profileViewOperation(view, new ViewOperation<Void>() {
+                    public Void[] pre() {
+                        forceLayout(view);
+                        return null;
+                    }
 
-                            private void forceLayout(View view) {
-                                view.forceLayout();
-                                if (view instanceof ViewGroup) {
-                                    ViewGroup group = (ViewGroup) view;
-                                    final int count = group.getChildCount();
-                                    for (int i = 0; i < count; i++) {
-                                        forceLayout(group.getChildAt(i));
-                                    }
-                                }
+                    private void forceLayout(View view) {
+                        view.forceLayout();
+                        if (view instanceof ViewGroup) {
+                            ViewGroup group = (ViewGroup) view;
+                            final int count = group.getChildCount();
+                            for (int i = 0; i < count; i++) {
+                                forceLayout(group.getChildAt(i));
                             }
+                        }
+                    }
 
-                            public void run(Void... data) {
-                                view.measure(view.mOldWidthMeasureSpec, view.mOldHeightMeasureSpec);
-                            }
+                    public void run(Void... data) {
+                        view.measure(view.mOldWidthMeasureSpec, view.mOldHeightMeasureSpec);
+                    }
 
-                            public void post(Void... data) {
-                            }
-                        })
+                    public void post(Void... data) {
+                    }
+                })
                         : 0;
         long durationLayout =
                 (root || (view.mPrivateFlags & View.PFLAG_LAYOUT_REQUIRED) != 0)
-                ? profileViewOperation(view, new ViewOperation<Void>() {
-                            public Void[] pre() {
-                                return null;
-                            }
+                        ? profileViewOperation(view, new ViewOperation<Void>() {
+                    public Void[] pre() {
+                        return null;
+                    }
 
-                            public void run(Void... data) {
-                                view.layout(view.mLeft, view.mTop, view.mRight, view.mBottom);
-                            }
+                    public void run(Void... data) {
+                        view.layout(view.mLeft, view.mTop, view.mRight, view.mBottom);
+                    }
 
-                            public void post(Void... data) {
-                            }
-                        }) : 0;
+                    public void post(Void... data) {
+                    }
+                }) : 0;
         long durationDraw =
                 (root || !view.willNotDraw() || (view.mPrivateFlags & View.PFLAG_DRAWN) != 0)
-                ? profileViewOperation(view, new ViewOperation<Object>() {
-                            public Object[] pre() {
-                                final DisplayMetrics metrics =
-                                        (view != null && view.getResources() != null) ?
-                                                view.getResources().getDisplayMetrics() : null;
-                                final Bitmap bitmap = metrics != null ?
-                                        Bitmap.createBitmap(metrics, metrics.widthPixels,
-                                                metrics.heightPixels, Bitmap.Config.RGB_565) : null;
-                                final Canvas canvas = bitmap != null ? new Canvas(bitmap) : null;
-                                return new Object[] {
-                                        bitmap, canvas
-                                };
-                            }
+                        ? profileViewOperation(view, new ViewOperation<Object>() {
+                    public Object[] pre() {
+                        final DisplayMetrics metrics =
+                                (view != null && view.getResources() != null) ?
+                                        view.getResources().getDisplayMetrics() : null;
+                        final Bitmap bitmap = metrics != null ?
+                                Bitmap.createBitmap(metrics, metrics.widthPixels,
+                                        metrics.heightPixels, Bitmap.Config.RGB_565) : null;
+                        final Canvas canvas = bitmap != null ? new Canvas(bitmap) : null;
+                        return new Object[] {
+                                bitmap, canvas
+                        };
+                    }
 
-                            public void run(Object... data) {
-                                if (data[1] != null) {
-                                    view.draw((Canvas) data[1]);
-                                }
-                            }
+                    public void run(Object... data) {
+                        if (data[1] != null) {
+                            view.draw((Canvas) data[1]);
+                        }
+                    }
 
-                            public void post(Object... data) {
-                                if (data[1] != null) {
-                                    ((Canvas) data[1]).setBitmap(null);
-                                }
-                                if (data[0] != null) {
-                                    ((Bitmap) data[0]).recycle();
-                                }
-                            }
-                        }) : 0;
+                    public void post(Object... data) {
+                        if (data[1] != null) {
+                            ((Canvas) data[1]).setBitmap(null);
+                        }
+                        if (data[0] != null) {
+                            ((Bitmap) data[0]).recycle();
+                        }
+                    }
+                }) : 0;
         out.write(String.valueOf(durationMeasure));
         out.write(' ');
         out.write(String.valueOf(durationLayout));
@@ -643,12 +670,12 @@ public class ViewDebug {
             } catch (RemoteException e) {
                 // Ignore
             }
-    
+
             clientStream.writeInt(outRect.width());
             clientStream.writeInt(outRect.height());
-    
+
             captureViewLayer(root, clientStream, true);
-            
+
             clientStream.write(2);
         } finally {
             clientStream.close();
@@ -666,19 +693,19 @@ public class ViewDebug {
             if (id != View.NO_ID) {
                 name = resolveId(view.getContext(), id).toString();
             }
-    
+
             clientStream.write(1);
             clientStream.writeUTF(name);
             clientStream.writeByte(localVisible ? 1 : 0);
-    
+
             int[] position = new int[2];
             // XXX: Should happen on the UI thread
             view.getLocationInWindow(position);
-    
+
             clientStream.writeInt(position[0]);
             clientStream.writeInt(position[1]);
             clientStream.flush();
-    
+
             Bitmap b = performViewCapture(view, true);
             if (b != null) {
                 ByteArrayOutputStream arrayOut = new ByteArrayOutputStream(b.getWidth() *
@@ -697,6 +724,11 @@ public class ViewDebug {
             for (int i = 0; i < count; i++) {
                 captureViewLayer(group.getChildAt(i), clientStream, localVisible);
             }
+        }
+
+        if (view.mOverlay != null) {
+            ViewGroup overlayContainer = view.getOverlay().mOverlayViewGroup;
+            captureViewLayer(overlayContainer, clientStream, localVisible);
         }
     }
 
@@ -743,7 +775,7 @@ public class ViewDebug {
         }
     }
 
-    private static Bitmap performViewCapture(final View captureView, final boolean skpiChildren) {
+    private static Bitmap performViewCapture(final View captureView, final boolean skipChildren) {
         if (captureView != null) {
             final CountDownLatch latch = new CountDownLatch(1);
             final Bitmap[] cache = new Bitmap[1];
@@ -752,7 +784,7 @@ public class ViewDebug {
                 public void run() {
                     try {
                         cache[0] = captureView.createSnapshot(
-                                Bitmap.Config.ARGB_8888, 0, skpiChildren);
+                                Bitmap.Config.ARGB_8888, 0, skipChildren);
                     } catch (OutOfMemoryError e) {
                         Log.w("View", "Out of memory for bitmap");
                     } finally {
@@ -769,12 +801,13 @@ public class ViewDebug {
                 Thread.currentThread().interrupt();
             }
         }
-        
+
         return null;
     }
 
     /**
      * Dumps the view hierarchy starting from the given view.
+     * @deprecated See {@link #dumpv2(View, ByteArrayOutputStream)} below.
      * @hide
      */
     public static void dump(View root, boolean skipChildren, boolean includeProperties,
@@ -799,6 +832,91 @@ public class ViewDebug {
         }
     }
 
+    /**
+     * Dumps the view hierarchy starting from the given view.
+     * Rather than using reflection, it uses View's encode method to obtain all the properties.
+     * @hide
+     */
+    public static void dumpv2(@NonNull final View view, @NonNull ByteArrayOutputStream out)
+            throws InterruptedException {
+        final ViewHierarchyEncoder encoder = new ViewHierarchyEncoder(out);
+        final CountDownLatch latch = new CountDownLatch(1);
+
+        view.post(new Runnable() {
+            @Override
+            public void run() {
+                view.encode(encoder);
+                latch.countDown();
+            }
+        });
+
+        latch.await(2, TimeUnit.SECONDS);
+        encoder.endStream();
+    }
+
+    /**
+     * Dumps the theme attributes from the given View.
+     * @hide
+     */
+    public static void dumpTheme(View view, OutputStream clientStream) throws IOException {
+        BufferedWriter out = null;
+        try {
+            out = new BufferedWriter(new OutputStreamWriter(clientStream, "utf-8"), 32 * 1024);
+            String[] attributes = getStyleAttributesDump(view.getContext().getResources(),
+                    view.getContext().getTheme());
+            if (attributes != null) {
+                for (int i = 0; i < attributes.length; i += 2) {
+                    if (attributes[i] != null) {
+                        out.write(attributes[i] + "\n");
+                        out.write(attributes[i + 1] + "\n");
+                    }
+                }
+            }
+            out.write("DONE.");
+            out.newLine();
+        } catch (Exception e) {
+            android.util.Log.w("View", "Problem dumping View Theme:", e);
+        } finally {
+            if (out != null) {
+                out.close();
+            }
+        }
+    }
+
+    /**
+     * Gets the style attributes from the {@link Resources.Theme}. For debugging only.
+     *
+     * @param resources Resources to resolve attributes from.
+     * @param theme Theme to dump.
+     * @return a String array containing pairs of adjacent Theme attribute data: name followed by
+     * its value.
+     *
+     * @hide
+     */
+    private static String[] getStyleAttributesDump(Resources resources, Resources.Theme theme) {
+        TypedValue outValue = new TypedValue();
+        String nullString = "null";
+        int i = 0;
+        int[] attributes = theme.getAllAttributes();
+        String[] data = new String[attributes.length * 2];
+        for (int attributeId : attributes) {
+            try {
+                data[i] = resources.getResourceName(attributeId);
+                data[i + 1] = theme.resolveAttribute(attributeId, outValue, true) ?
+                        outValue.coerceToString().toString() :  nullString;
+                i += 2;
+
+                // attempt to replace reference data with its name
+                if (outValue.type == TypedValue.TYPE_REFERENCE) {
+                    data[i - 1] = resources.getResourceName(outValue.resourceId);
+                }
+            } catch (Resources.NotFoundException e) {
+                // ignore resources we can't resolve
+            }
+        }
+        return data;
+    }
+
     private static View findView(ViewGroup group, String className, int hashCode) {
         if (isRequestedView(group, className, hashCode)) {
             return group;
@@ -815,6 +933,13 @@ public class ViewDebug {
             } else if (isRequestedView(view, className, hashCode)) {
                 return view;
             }
+            if (view.mOverlay != null) {
+                final View found = findView((ViewGroup) view.mOverlay.mOverlayViewGroup,
+                        className, hashCode);
+                if (found != null) {
+                    return found;
+                }
+            }
             if (view instanceof HierarchyHandler) {
                 final View found = ((HierarchyHandler)view)
                         .findHierarchyView(className, hashCode);
@@ -823,12 +948,19 @@ public class ViewDebug {
                 }
             }
         }
-
         return null;
     }
 
     private static boolean isRequestedView(View view, String className, int hashCode) {
-        return view.getClass().getName().equals(className) && view.hashCode() == hashCode;
+        if (view.hashCode() == hashCode) {
+            String viewClassName = view.getClass().getName();
+            if (className.equals("ViewOverlay")) {
+                return viewClassName.equals("android.view.ViewOverlay$OverlayViewGroup");
+            } else {
+                return className.equals(viewClassName);
+            }
+        }
+        return false;
     }
 
     private static void dumpViewHierarchy(Context context, ViewGroup group,
@@ -850,6 +982,12 @@ public class ViewDebug {
             } else {
                 dumpView(context, view, out, level + 1, includeProperties);
             }
+            if (view.mOverlay != null) {
+                ViewOverlay overlay = view.getOverlay();
+                ViewGroup overlayContainer = overlay.mOverlayViewGroup;
+                dumpViewHierarchy(context, overlayContainer, out, level + 2, skipChildren,
+                        includeProperties);
+            }
         }
         if (group instanceof HierarchyHandler) {
             ((HierarchyHandler)group).dumpViewHierarchyWithProperties(out, level + 1);
@@ -863,7 +1001,11 @@ public class ViewDebug {
             for (int i = 0; i < level; i++) {
                 out.write(' ');
             }
-            out.write(view.getClass().getName());
+            String className = view.getClass().getName();
+            if (className.equals("android.view.ViewOverlay$OverlayViewGroup")) {
+                className = "ViewOverlay";
+            }
+            out.write(className);
             out.write('@');
             out.write(Integer.toHexString(view.hashCode()));
             out.write(' ');
@@ -893,21 +1035,22 @@ public class ViewDebug {
             return fields;
         }
 
-        final ArrayList<Field> foundFields = new ArrayList<Field>();
-        fields = klass.getDeclaredFields();
-
-        int count = fields.length;
-        for (int i = 0; i < count; i++) {
-            final Field field = fields[i];
-            if (field.isAnnotationPresent(ExportedProperty.class)) {
-                field.setAccessible(true);
-                foundFields.add(field);
-                sAnnotations.put(field, field.getAnnotation(ExportedProperty.class));
+        try {
+            final Field[] declaredFields = klass.getDeclaredFieldsUnchecked(false);
+            final ArrayList<Field> foundFields = new ArrayList<Field>();
+            for (final Field field : declaredFields) {
+              // Fields which can't be resolved have a null type.
+              if (field.getType() != null && field.isAnnotationPresent(ExportedProperty.class)) {
+                  field.setAccessible(true);
+                  foundFields.add(field);
+                  sAnnotations.put(field, field.getAnnotation(ExportedProperty.class));
+              }
             }
+            fields = foundFields.toArray(new Field[foundFields.size()]);
+            map.put(klass, fields);
+        } catch (NoClassDefFoundError e) {
+            throw new AssertionError(e);
         }
-
-        fields = foundFields.toArray(new Field[foundFields.size()]);
-        map.put(klass, fields);
 
         return fields;
     }
@@ -927,12 +1070,18 @@ public class ViewDebug {
             return methods;
         }
 
-        final ArrayList<Method> foundMethods = new ArrayList<Method>();
-        methods = klass.getDeclaredMethods();
+        methods = klass.getDeclaredMethodsUnchecked(false);
 
-        int count = methods.length;
-        for (int i = 0; i < count; i++) {
-            final Method method = methods[i];
+        final ArrayList<Method> foundMethods = new ArrayList<Method>();
+        for (final Method method : methods) {
+            // Ensure the method return and parameter types can be resolved.
+            try {
+                method.getReturnType();
+                method.getParameterTypes();
+            } catch (NoClassDefFoundError e) {
+                continue;
+            }
+
             if (method.getParameterTypes().length == 0 &&
                     method.isAnnotationPresent(ExportedProperty.class) &&
                     method.getReturnType() != Void.class) {
@@ -979,10 +1128,10 @@ public class ViewDebug {
 
         final View view = (View) object;
         Callable<Object> callable = new Callable<Object>() {
-                @Override
-                public Object call() throws IllegalAccessException, InvocationTargetException {
-                    return method.invoke(view, (Object[]) null);
-                }
+            @Override
+            public Object call() throws IllegalAccessException, InvocationTargetException {
+                return method.invoke(view, (Object[]) null);
+            }
         };
         FutureTask<Object> future = new FutureTask<Object>(callable);
         // Try to use the handler provided by the view
@@ -1012,11 +1161,14 @@ public class ViewDebug {
         }
     }
 
+    private static String formatIntToHexString(int value) {
+        return "0x" + Integer.toHexString(value).toUpperCase();
+    }
+
     private static void exportMethods(Context context, Object view, BufferedWriter out,
             Class<?> klass, String prefix) throws IOException {
 
         final Method[] methods = getExportedPropertyMethods(klass);
-
         int count = methods.length;
         for (int i = 0; i < count; i++) {
             final Method method = methods[i];
@@ -1029,7 +1181,6 @@ public class ViewDebug {
                         property.category().length() != 0 ? property.category() + ":" : "";
 
                 if (returnType == int.class) {
-
                     if (property.resolveId() && context != null) {
                         final int id = (Integer) methodValue;
                         methodValue = resolveId(context, id);
@@ -1068,8 +1219,20 @@ public class ViewDebug {
 
                     exportUnrolledArray(context, out, property, array, valuePrefix, suffix);
 
-                    // Probably want to return here, same as for fields.
-                    return;
+                    continue;
+                } else if (returnType == String[].class) {
+                    final String[] array = (String[]) methodValue;
+                    if (property.hasAdjacentMapping() && array != null) {
+                        for (int j = 0; j < array.length; j += 2) {
+                            if (array[j] != null) {
+                                writeEntry(out, categoryPrefix + prefix, array[j], "()",
+                                        array[j + 1] == null ? "null" : array[j + 1]);
+                            }
+
+                        }
+                    }
+
+                    continue;
                 } else if (!returnType.isPrimitive()) {
                     if (property.deepExport()) {
                         dumpViewProperties(context, methodValue, out, prefix + property.prefix());
@@ -1131,6 +1294,15 @@ public class ViewDebug {
                                 fieldValue = intValue;
                             }
                         }
+
+                        if (property.formatToHexString()) {
+                            fieldValue = field.get(view);
+                            if (type == int.class) {
+                                fieldValue = formatIntToHexString((Integer) fieldValue);
+                            } else if (type == byte.class) {
+                                fieldValue = "0x" + Byte.toHexString((Byte) fieldValue, true);
+                            }
+                        }
                     }
                 } else if (type == int[].class) {
                     final int[] array = (int[]) field.get(view);
@@ -1139,8 +1311,19 @@ public class ViewDebug {
 
                     exportUnrolledArray(context, out, property, array, valuePrefix, suffix);
 
-                    // We exit here!
-                    return;
+                    continue;
+                } else if (type == String[].class) {
+                    final String[] array = (String[]) field.get(view);
+                    if (property.hasAdjacentMapping() && array != null) {
+                        for (int j = 0; j < array.length; j += 2) {
+                            if (array[j] != null) {
+                                writeEntry(out, categoryPrefix + prefix, array[j], "",
+                                        array[j + 1] == null ? "null" : array[j + 1]);
+                            }
+                        }
+                    }
+
+                    continue;
                 } else if (!type.isPrimitive()) {
                     if (property.deepExport()) {
                         dumpViewProperties(context, field.get(view), out, prefix +
@@ -1181,7 +1364,7 @@ public class ViewDebug {
             final boolean test = maskResult == flagMapping.equals();
             if ((test && ifTrue) || (!test && !ifTrue)) {
                 final String name = flagMapping.name();
-                final String value = "0x" + Integer.toHexString(maskResult);
+                final String value = formatIntToHexString(maskResult);
                 writeEntry(out, prefix, name, "", value);
             }
         }
@@ -1247,7 +1430,7 @@ public class ViewDebug {
                 fieldValue = resources.getResourceTypeName(id) + '/' +
                         resources.getResourceEntryName(id);
             } catch (Resources.NotFoundException e) {
-                fieldValue = "id/0x" + Integer.toHexString(id);
+                fieldValue = "id/" + formatIntToHexString(id);
             }
         } else {
             fieldValue = "NO_ID";
@@ -1364,13 +1547,13 @@ public class ViewDebug {
                     }
                     sb.append("; ");
                 }
-              } catch (IllegalAccessException e) {
-                  //Exception IllegalAccess, it is OK here
-                  //we simply ignore this method
-              } catch (InvocationTargetException e) {
-                  //Exception InvocationTarget, it is OK here
-                  //we simply ignore this method
-              }
+            } catch (IllegalAccessException e) {
+                //Exception IllegalAccess, it is OK here
+                //we simply ignore this method
+            } catch (InvocationTargetException e) {
+                //Exception InvocationTarget, it is OK here
+                //we simply ignore this method
+            }
         }
         return sb.toString();
     }
@@ -1474,7 +1657,7 @@ public class ViewDebug {
         final Field f = p.getClass().getField(param);
         if (f.getType() != int.class) {
             throw new RuntimeException("Only integer layout parameters can be set. Field "
-                        + param + " is of type " + f.getType().getSimpleName());
+                    + param + " is of type " + f.getType().getSimpleName());
         }
 
         f.set(p, Integer.valueOf(value));

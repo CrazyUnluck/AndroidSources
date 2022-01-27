@@ -16,22 +16,15 @@
 
 package android.renderscript;
 
-import java.lang.reflect.Field;
-
 import android.content.Context;
-import android.graphics.PixelFormat;
-import android.graphics.Bitmap;
-import android.graphics.BitmapFactory;
 import android.graphics.SurfaceTexture;
-import android.util.Log;
 import android.view.Surface;
 import android.view.SurfaceHolder;
-import android.view.SurfaceView;
 
 /**
  * @hide
  * @deprecated in API 16
- * The Graphics derivitive of Renderscript.  Extends the basic context to add a
+ * The Graphics derivitive of RenderScript.  Extends the basic context to add a
  * root script which is the display window for graphical output.  When the
  * system needs to update the display the currently bound root script will be
  * called.  This script is expected to issue the rendering commands to repaint
@@ -39,8 +32,8 @@ import android.view.SurfaceView;
  *
  * <div class="special reference">
  * <h3>Developer Guides</h3>
- * <p>For more information about creating an application that uses Renderscript, read the
- * <a href="{@docRoot}guide/topics/renderscript/index.html">Renderscript</a> developer guide.</p>
+ * <p>For more information about creating an application that uses RenderScript, read the
+ * <a href="{@docRoot}guide/topics/renderscript/index.html">RenderScript</a> developer guide.</p>
  * </div>
  **/
 public class RenderScriptGL extends RenderScript {
@@ -184,9 +177,9 @@ public class RenderScriptGL extends RenderScript {
 
         mWidth = 0;
         mHeight = 0;
-        mDev = nDeviceCreate();
+        long device = nDeviceCreate();
         int dpi = ctx.getResources().getDisplayMetrics().densityDpi;
-        mContext = nContextCreateGL(mDev, 0, sdkVersion,
+        mContext = nContextCreateGL(device, 0, sdkVersion,
                                     mSurfaceConfig.mColorMin, mSurfaceConfig.mColorPref,
                                     mSurfaceConfig.mAlphaMin, mSurfaceConfig.mAlphaPref,
                                     mSurfaceConfig.mDepthMin, mSurfaceConfig.mDepthPref,
@@ -232,9 +225,13 @@ public class RenderScriptGL extends RenderScript {
         validate();
         //android.util.Log.v("rs", "set surface " + sur + " w=" + w + ", h=" + h);
 
+        Surface s = null;
+        if (sur != null) {
+            s = new Surface(sur);
+        }
         mWidth = w;
         mHeight = h;
-        nContextSetSurfaceTexture(w, h, sur);
+        nContextSetSurface(w, h, s);
     }
 
     /**
@@ -286,7 +283,7 @@ public class RenderScriptGL extends RenderScript {
      */
     public void bindRootScript(Script s) {
         validate();
-        nContextBindRootScript(safeID(s));
+        nContextBindRootScript((int)safeID(s));
     }
 
     /**
@@ -298,7 +295,7 @@ public class RenderScriptGL extends RenderScript {
      */
     public void bindProgramStore(ProgramStore p) {
         validate();
-        nContextBindProgramStore(safeID(p));
+        nContextBindProgramStore((int)safeID(p));
     }
 
     /**
@@ -310,7 +307,7 @@ public class RenderScriptGL extends RenderScript {
      */
     public void bindProgramFragment(ProgramFragment p) {
         validate();
-        nContextBindProgramFragment(safeID(p));
+        nContextBindProgramFragment((int)safeID(p));
     }
 
     /**
@@ -322,7 +319,7 @@ public class RenderScriptGL extends RenderScript {
      */
     public void bindProgramRaster(ProgramRaster p) {
         validate();
-        nContextBindProgramRaster(safeID(p));
+        nContextBindProgramRaster((int)safeID(p));
     }
 
     /**
@@ -334,7 +331,7 @@ public class RenderScriptGL extends RenderScript {
      */
     public void bindProgramVertex(ProgramVertex p) {
         validate();
-        nContextBindProgramVertex(safeID(p));
+        nContextBindProgramVertex((int)safeID(p));
     }
 
 }

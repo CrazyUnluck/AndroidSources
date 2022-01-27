@@ -21,11 +21,18 @@ import android.app.Dialog;
 import android.content.Context;
 import android.content.DialogInterface;
 import android.os.Bundle;
+import android.support.annotation.IntDef;
+import android.support.annotation.NonNull;
+import android.support.annotation.Nullable;
+import android.support.annotation.StyleRes;
 import android.view.LayoutInflater;
 import android.view.View;
 import android.view.ViewGroup;
 import android.view.Window;
 import android.view.WindowManager;
+
+import java.lang.annotation.Retention;
+import java.lang.annotation.RetentionPolicy;
 
 /**
  * Static library support version of the framework's {@link android.app.DialogFragment}.
@@ -36,6 +43,11 @@ import android.view.WindowManager;
  */
 public class DialogFragment extends Fragment
         implements DialogInterface.OnCancelListener, DialogInterface.OnDismissListener {
+
+    /** @hide */
+    @IntDef({STYLE_NORMAL, STYLE_NO_TITLE, STYLE_NO_FRAME, STYLE_NO_INPUT})
+    @Retention(RetentionPolicy.SOURCE)
+    private @interface DialogStyle {}
 
     /**
      * Style for {@link #setStyle(int, int)}: a basic,
@@ -98,7 +110,7 @@ public class DialogFragment extends Fragment
      * @param theme Optional custom theme.  If 0, an appropriate theme (based
      * on the style) will be selected for you.
      */
-    public void setStyle(int style, int theme) {
+    public void setStyle(@DialogStyle int style, @StyleRes int theme) {
         mStyle = style;
         if (mStyle == STYLE_NO_FRAME || mStyle == STYLE_NO_INPUT) {
             mTheme = android.R.style.Theme_Panel;
@@ -195,6 +207,7 @@ public class DialogFragment extends Fragment
         return mDialog;
     }
 
+    @StyleRes
     public int getTheme() {
         return mTheme;
     }
@@ -249,8 +262,8 @@ public class DialogFragment extends Fragment
     }
 
     @Override
-    public void onAttach(Activity activity) {
-        super.onAttach(activity);
+    public void onAttach(Context context) {
+        super.onAttach(context);
         if (!mShownByMe) {
             // If not explicitly shown through our API, take this as an
             // indication that the dialog is no longer dismissed.
@@ -270,7 +283,7 @@ public class DialogFragment extends Fragment
     }
 
     @Override
-    public void onCreate(Bundle savedInstanceState) {
+    public void onCreate(@Nullable Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
 
         mShowsDialog = mContainerId == 0;
@@ -282,7 +295,6 @@ public class DialogFragment extends Fragment
             mShowsDialog = savedInstanceState.getBoolean(SAVED_SHOWS_DIALOG, mShowsDialog);
             mBackStackId = savedInstanceState.getInt(SAVED_BACK_STACK_ID, -1);
         }
-        
     }
 
     /** @hide */
@@ -293,22 +305,29 @@ public class DialogFragment extends Fragment
         }
 
         mDialog = onCreateDialog(savedInstanceState);
-        switch (mStyle) {
-            case STYLE_NO_INPUT:
-                mDialog.getWindow().addFlags(
-                        WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE |
-                        WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE);
-                // fall through...
-            case STYLE_NO_FRAME:
-            case STYLE_NO_TITLE:
-                mDialog.requestWindowFeature(Window.FEATURE_NO_TITLE);
-        }
+
         if (mDialog != null) {
+            setupDialog(mDialog, mStyle);
+
             return (LayoutInflater) mDialog.getContext().getSystemService(
                     Context.LAYOUT_INFLATER_SERVICE);
         }
-        return (LayoutInflater) mActivity.getSystemService(
+        return (LayoutInflater) mHost.getContext().getSystemService(
                 Context.LAYOUT_INFLATER_SERVICE);
+    }
+
+    /** @hide */
+    public void setupDialog(Dialog dialog, int style) {
+        switch (style) {
+            case STYLE_NO_INPUT:
+                dialog.getWindow().addFlags(
+                        WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE |
+                                WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE);
+                // fall through...
+            case STYLE_NO_FRAME:
+            case STYLE_NO_TITLE:
+                dialog.requestWindowFeature(Window.FEATURE_NO_TITLE);
+        }
     }
     
     /**
@@ -333,6 +352,7 @@ public class DialogFragment extends Fragment
      * 
      * @return Return a new Dialog instance to be displayed by the Fragment.
      */
+    @NonNull
     public Dialog onCreateDialog(Bundle savedInstanceState) {
         return new Dialog(getActivity(), getTheme());
     }
@@ -361,11 +381,15 @@ public class DialogFragment extends Fragment
         View view = getView();
         if (view != null) {
             if (view.getParent() != null) {
-                throw new IllegalStateException("DialogFragment can not be attached to a container view");
+                throw new IllegalStateException(
+                        "DialogFragment can not be attached to a container view");
             }
             mDialog.setContentView(view);
         }
-        mDialog.setOwnerActivity(getActivity());
+        final Activity activity = getActivity();
+        if (activity != null) {
+            mDialog.setOwnerActivity(activity);
+        }
         mDialog.setCancelable(mCancelable);
         mDialog.setOnCancelListener(this);
         mDialog.setOnDismissListener(this);
@@ -380,6 +404,7 @@ public class DialogFragment extends Fragment
     @Override
     public void onStart() {
         super.onStart();
+
         if (mDialog != null) {
             mViewDestroyed = false;
             mDialog.show();

@@ -19,9 +19,9 @@ package com.android.server;
 import android.content.Context;
 import android.os.Binder;
 import android.os.Environment;
-import android.os.FileUtils;
 import android.os.StatFs;
 import android.os.SystemClock;
+import android.os.storage.StorageManager;
 
 import java.io.File;
 import java.io.FileDescriptor;
@@ -79,6 +79,10 @@ public class DiskStatsService extends Binder {
         reportFreeSpace(Environment.getDataDirectory(), "Data", pw);
         reportFreeSpace(Environment.getDownloadCacheDirectory(), "Cache", pw);
         reportFreeSpace(new File("/system"), "System", pw);
+
+        if (StorageManager.isFileEncryptedNativeOnly()) {
+            pw.println("File-based Encryption: true");
+        }
 
         // TODO: Read /proc/yaffs and report interesting values;
         // add configurable (through args) performance test parameters.

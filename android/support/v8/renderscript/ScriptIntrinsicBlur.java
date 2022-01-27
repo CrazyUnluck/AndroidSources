@@ -29,8 +29,10 @@ import android.util.Log;
 public class ScriptIntrinsicBlur extends ScriptIntrinsic {
     private final float[] mValues = new float[9];
     private Allocation mInput;
+    // API level for the intrinsic
+    private static final int INTRINSIC_API_LEVEL = 19;
 
-    protected ScriptIntrinsicBlur(int id, RenderScript rs) {
+    protected ScriptIntrinsicBlur(long id, RenderScript rs) {
         super(id, rs);
     }
 
@@ -38,25 +40,29 @@ public class ScriptIntrinsicBlur extends ScriptIntrinsic {
      * Create an intrinsic for applying a blur to an allocation. The
      * default radius is 5.0.
      *
-     * Supported elements types are {@link Element#U8_4}
+     * Supported elements types are {@link Element#U8},
+     * {@link Element#U8_4}.
      *
-     * @param rs The Renderscript context
+     * @param rs The RenderScript context
      * @param e Element type for inputs and outputs
      *
      * @return ScriptIntrinsicBlur
      */
     public static ScriptIntrinsicBlur create(RenderScript rs, Element e) {
-        if (rs.isNative) {
-            RenderScriptThunker rst = (RenderScriptThunker) rs;
-            return ScriptIntrinsicBlurThunker.create(rs, e);
-        }
-        if ((e != Element.U8_4(rs)) && e != (Element.U8(rs))) {
+        if ((!e.isCompatible(Element.U8_4(rs))) && (!e.isCompatible(Element.U8(rs)))) {
             throw new RSIllegalArgumentException("Unsuported element type.");
         }
-        int id = rs.nScriptIntrinsicCreate(5, e.getID(rs));
-        ScriptIntrinsicBlur sib = new ScriptIntrinsicBlur(id, rs);
-        sib.setRadius(5.f);
-        return sib;
+        long id;
+        boolean mUseIncSupp = rs.isUseNative() &&
+                              android.os.Build.VERSION.SDK_INT < INTRINSIC_API_LEVEL;
+
+        id = rs.nScriptIntrinsicCreate(5, e.getID(rs), mUseIncSupp);
+
+        ScriptIntrinsicBlur si = new ScriptIntrinsicBlur(id, rs);
+        si.setIncSupp(mUseIncSupp);
+        si.setRadius(5.f);
+
+        return si;
     }
 
     /**
@@ -92,7 +98,7 @@ public class ScriptIntrinsicBlur extends ScriptIntrinsic {
      *             type.
      */
     public void forEach(Allocation aout) {
-        forEach(0, null, aout, null);
+        forEach(0, (Allocation) null, aout, null);
     }
 
     /**

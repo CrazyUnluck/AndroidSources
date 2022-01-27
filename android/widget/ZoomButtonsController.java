@@ -32,7 +32,6 @@ import android.view.MotionEvent;
 import android.view.View;
 import android.view.ViewConfiguration;
 import android.view.ViewGroup;
-import android.view.ViewParent;
 import android.view.ViewRootImpl;
 import android.view.WindowManager;
 import android.view.View.OnClickListener;
@@ -404,7 +403,7 @@ public class ZoomButtonsController implements View.OnTouchListener {
             // No longer care about configuration changes
             mContext.unregisterReceiver(mConfigurationChangedReceiver);
 
-            mWindowManager.removeView(mContainer);
+            mWindowManager.removeViewImmediate(mContainer);
             mHandler.removeCallbacks(mPostedVisibleInitializer);
 
             if (mCallback != null) {
@@ -491,7 +490,7 @@ public class ZoomButtonsController implements View.OnTouchListener {
                     setVisible(false);
                     return true;
                 }
-                
+
             } else {
                 dismissControlsDelayed(ZOOM_CONTROLS_TIMEOUT);
             }
@@ -503,7 +502,7 @@ public class ZoomButtonsController implements View.OnTouchListener {
 
             ViewRootImpl viewRoot = mOwnerView.getViewRootImpl();
             if (viewRoot != null) {
-                viewRoot.dispatchKey(event);
+                viewRoot.dispatchInputEvent(event);
             }
 
             // We gave the key to the owner, don't let the container handle this key

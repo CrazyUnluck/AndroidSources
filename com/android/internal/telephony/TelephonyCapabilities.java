@@ -45,7 +45,10 @@ public class TelephonyCapabilities {
      * otherwise.
      */
     public static boolean supportsEcm(Phone phone) {
-        return (phone.getPhoneType() == PhoneConstants.PHONE_TYPE_CDMA);
+        Rlog.d(LOG_TAG, "supportsEcm: Phone type = " + phone.getPhoneType() +
+                  " Ims Phone = " + phone.getImsPhone());
+        return (phone.getPhoneType() == PhoneConstants.PHONE_TYPE_CDMA ||
+                phone.getImsPhone() != null);
     }
 
     /**
@@ -70,12 +73,12 @@ public class TelephonyCapabilities {
     }
 
     /**
-     * Return true if the current phone can retrieve the voice message count.
-     *
-     * Currently this is assumed to be true on CDMA phones and false otherwise.
+     * Return true if the current phone supports voice message count.
+     * and the count is available
+     * Both CDMA and GSM phones support voice message count
      */
     public static boolean supportsVoiceMessageCount(Phone phone) {
-        return (phone.getPhoneType() == PhoneConstants.PHONE_TYPE_CDMA);
+        return (phone.getVoiceMessageCount() != -1);
     }
 
     /**
@@ -136,7 +139,8 @@ public class TelephonyCapabilities {
      */
     public static boolean supportsHoldAndUnhold(Phone phone) {
         return ((phone.getPhoneType() == PhoneConstants.PHONE_TYPE_GSM)
-                || (phone.getPhoneType() == PhoneConstants.PHONE_TYPE_SIP));
+                || (phone.getPhoneType() == PhoneConstants.PHONE_TYPE_SIP)
+                || (phone.getPhoneType() == PhoneConstants.PHONE_TYPE_IMS));
     }
 
     /**

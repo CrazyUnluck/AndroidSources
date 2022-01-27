@@ -17,7 +17,9 @@
 package com.android.server.display;
 
 import android.graphics.Rect;
+import android.hardware.display.DisplayViewport;
 import android.os.IBinder;
+import android.view.Display;
 import android.view.Surface;
 import android.view.SurfaceControl;
 
@@ -33,6 +35,7 @@ import java.io.PrintWriter;
 abstract class DisplayDevice {
     private final DisplayAdapter mDisplayAdapter;
     private final IBinder mDisplayToken;
+    private final String mUniqueId;
 
     // The display device does not manage these properties itself, they are set by
     // the display manager service.  The display device shouldn't really be looking at these.
@@ -45,9 +48,14 @@ abstract class DisplayDevice {
     // within a transaction from performTraversalInTransactionLocked.
     private Surface mCurrentSurface;
 
-    public DisplayDevice(DisplayAdapter displayAdapter, IBinder displayToken) {
+    // DEBUG STATE: Last device info which was written to the log, or null if none.
+    // Do not use for any other purpose.
+    DisplayDeviceInfo mDebugLastLoggedDeviceInfo;
+
+    public DisplayDevice(DisplayAdapter displayAdapter, IBinder displayToken, String uniqueId) {
         mDisplayAdapter = displayAdapter;
         mDisplayToken = displayToken;
+        mUniqueId = uniqueId;
     }
 
     /**
@@ -79,6 +87,13 @@ abstract class DisplayDevice {
     }
 
     /**
+     * Returns the unique id of the display device.
+     */
+    public final String getUniqueId() {
+        return mUniqueId;
+    }
+
+    /**
      * Gets information about the display device.
      *
      * The information returned should not change between calls unless the display
@@ -106,15 +121,21 @@ abstract class DisplayDevice {
     }
 
     /**
-     * Blanks the display, if supported.
+     * Sets the display state, if supported.
+     *
+     * @param state The new display state.
+     * @param brightness The new display brightness.
+     * @return A runnable containing work to be deferred until after we have
+     * exited the critical section, or null if none.
      */
-    public void blankLocked() {
+    public Runnable requestDisplayStateLocked(int state, int brightness) {
+        return null;
     }
 
     /**
-     * Unblanks the display, if supported.
+     * Sets the mode, if supported.
      */
-    public void unblankLocked() {
+    public void requestColorTransformAndModeInTransactionLocked(int colorTransformId, int modeId) {
     }
 
     /**
@@ -203,6 +224,7 @@ abstract class DisplayDevice {
      */
     public void dumpLocked(PrintWriter pw) {
         pw.println("mAdapter=" + mDisplayAdapter.getName());
+        pw.println("mUniqueId=" + mUniqueId);
         pw.println("mDisplayToken=" + mDisplayToken);
         pw.println("mCurrentLayerStack=" + mCurrentLayerStack);
         pw.println("mCurrentOrientation=" + mCurrentOrientation);

@@ -26,8 +26,17 @@ import android.net.Uri;
 import android.os.Binder;
 import android.os.Bundle;
 import android.os.IBinder;
+import android.os.ParcelFileDescriptor;
+import android.os.Process;
 import android.os.UserHandle;
 import android.text.TextUtils;
+
+import java.io.FileInputStream;
+import java.io.IOException;
+import java.io.InputStream;
+import java.io.OutputStream;
+
+import libcore.io.IoUtils;
 
 /**
  * This class is a command line utility for manipulating content. A client
@@ -109,6 +118,12 @@ public class Content {
         + "  <METHOD> is the name of a provider-defined method\n"
         + "  <ARG> is an optional string argument\n"
         + "  <BINDING> is like --bind above, typed data of the form <KEY>:{b,s,i,l,f,d}:<VAL>\n"
+        + "\n"
+        + "usage: adb shell content read --uri <URI> [--user <USER_ID>]\n"
+        + "  Example:\n"
+        + "  # cat default ringtone to a file, then pull to host\n"
+        + "  adb shell 'content read --uri content://settings/system/ringtone >"
+                + " /mnt/sdcard/tmp.ogg' && adb pull /mnt/sdcard/tmp.ogg\n"
         + "\n";
 
     private static class Parser {
@@ -117,6 +132,7 @@ public class Content {
         private static final String ARGUMENT_UPDATE = "update";
         private static final String ARGUMENT_QUERY = "query";
         private static final String ARGUMENT_CALL = "call";
+        private static final String ARGUMENT_READ = "read";
         private static final String ARGUMENT_WHERE = "--where";
         private static final String ARGUMENT_BIND = "--bind";
         private static final String ARGUMENT_URI = "--uri";
@@ -154,6 +170,8 @@ public class Content {
                     return parseQueryCommand();
                 } else if (ARGUMENT_CALL.equals(operation)) {
                     return parseCallCommand();
+                } else if (ARGUMENT_READ.equals(operation)) {
+                    return parseReadCommand();
                 } else {
                     throw new IllegalArgumentException("Unsupported operation: " + operation);
                 }
@@ -166,7 +184,7 @@ public class Content {
 
         private InsertCommand parseInsertCommand() {
             Uri uri = null;
-            int userId = UserHandle.USER_OWNER;
+            int userId = UserHandle.USER_SYSTEM;
             ContentValues values = new ContentValues();
             for (String argument; (argument = mTokenizer.nextArg()) != null;) {
                 if (ARGUMENT_URI.equals(argument)) {
@@ -192,7 +210,7 @@ public class Content {
 
         private DeleteCommand parseDeleteCommand() {
             Uri uri = null;
-            int userId = UserHandle.USER_OWNER;
+            int userId = UserHandle.USER_SYSTEM;
             String where = null;
             for (String argument; (argument = mTokenizer.nextArg())!= null;) {
                 if (ARGUMENT_URI.equals(argument)) {
@@ -214,7 +232,7 @@ public class Content {
 
         private UpdateCommand parseUpdateCommand() {
             Uri uri = null;
-            int userId = UserHandle.USER_OWNER;
+            int userId = UserHandle.USER_SYSTEM;
             String where = null;
             ContentValues values = new ContentValues();
             for (String argument; (argument = mTokenizer.nextArg())!= null;) {
@@ -243,7 +261,7 @@ public class Content {
 
         public CallCommand parseCallCommand() {
             String method = null;
-            int userId = UserHandle.USER_OWNER;
+            int userId = UserHandle.USER_SYSTEM;
             String arg = null;
             Uri uri = null;
             ContentValues values = new ContentValues();
@@ -273,9 +291,28 @@ public class Content {
             return new CallCommand(uri, userId, method, arg, values);
         }
 
+        private ReadCommand parseReadCommand() {
+            Uri uri = null;
+            int userId = UserHandle.USER_SYSTEM;
+            for (String argument; (argument = mTokenizer.nextArg())!= null;) {
+                if (ARGUMENT_URI.equals(argument)) {
+                    uri = Uri.parse(argumentValueRequired(argument));
+                } else if (ARGUMENT_USER.equals(argument)) {
+                    userId = Integer.parseInt(argumentValueRequired(argument));
+                } else {
+                    throw new IllegalArgumentException("Unsupported argument: " + argument);
+                }
+            }
+            if (uri == null) {
+                throw new IllegalArgumentException("Content provider URI not specified."
+                        + " Did you specify --uri argument?");
+            }
+            return new ReadCommand(uri, userId);
+        }
+
         public QueryCommand parseQueryCommand() {
             Uri uri = null;
-            int userId = UserHandle.USER_OWNER;
+            int userId = UserHandle.USER_SYSTEM;
             String[] projection = null;
             String sort = null;
             String where = null;
@@ -390,6 +427,22 @@ public class Content {
             }
         }
 
+        public static String resolveCallingPackage() {
+            switch (Process.myUid()) {
+                case Process.ROOT_UID: {
+                    return "root";
+                }
+
+                case Process.SHELL_UID: {
+                    return "com.android.shell";
+                }
+
+                default: {
+                    return null;
+                }
+            }
+        }
+
         protected abstract void onExecute(IContentProvider provider) throws Exception;
     }
 
@@ -403,7 +456,7 @@ public class Content {
 
         @Override
         public void onExecute(IContentProvider provider) throws Exception {
-            provider.insert(null, mUri, mContentValues);
+            provider.insert(resolveCallingPackage(), mUri, mContentValues);
         }
     }
 
@@ -417,7 +470,7 @@ public class Content {
 
         @Override
         public void onExecute(IContentProvider provider) throws Exception {
-            provider.delete(null, mUri, mWhere, null);
+            provider.delete(resolveCallingPackage(), mUri, mWhere, null);
         }
     }
 
@@ -458,6 +511,31 @@ public class Content {
         }
     }
 
+    private static class ReadCommand extends Command {
+        public ReadCommand(Uri uri, int userId) {
+            super(uri, userId);
+        }
+
+        @Override
+        public void onExecute(IContentProvider provider) throws Exception {
+            final ParcelFileDescriptor fd = provider.openFile(null, mUri, "r", null, null);
+            copy(new FileInputStream(fd.getFileDescriptor()), System.out);
+        }
+
+        private static void copy(InputStream is, OutputStream os) throws IOException {
+            final byte[] buffer = new byte[8 * 1024];
+            int read;
+            try {
+                while ((read = is.read(buffer)) > -1) {
+                    os.write(buffer, 0, read);
+                }
+            } finally {
+                IoUtils.closeQuietly(is);
+                IoUtils.closeQuietly(os);
+            }
+        }
+    }
+
     private static class QueryCommand extends DeleteCommand {
         final String[] mProjection;
         final String mSortOrder;
@@ -471,7 +549,8 @@ public class Content {
 
         @Override
         public void onExecute(IContentProvider provider) throws Exception {
-            Cursor cursor = provider.query(null, mUri, mProjection, mWhere, null, mSortOrder, null);
+            Cursor cursor = provider.query(resolveCallingPackage(), mUri, mProjection, mWhere,
+                    null, mSortOrder, null);
             if (cursor == null) {
                 System.out.println("No result found.");
                 return;
@@ -498,7 +577,7 @@ public class Content {
                                     columnValue = String.valueOf(cursor.getFloat(columnIndex));
                                     break;
                                 case Cursor.FIELD_TYPE_INTEGER:
-                                    columnValue = String.valueOf(cursor.getInt(columnIndex));
+                                    columnValue = String.valueOf(cursor.getLong(columnIndex));
                                     break;
                                 case Cursor.FIELD_TYPE_STRING:
                                     columnValue = cursor.getString(columnIndex);
@@ -533,7 +612,7 @@ public class Content {
 
         @Override
         public void onExecute(IContentProvider provider) throws Exception {
-            provider.update(null, mUri, mContentValues, mWhere, null);
+            provider.update(resolveCallingPackage(), mUri, mContentValues, mWhere, null);
         }
     }
 

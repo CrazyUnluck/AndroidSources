@@ -49,6 +49,31 @@ public class CellBroadcastMessage implements Parcelable {
     private final long mDeliveryTime;
     private boolean mIsRead;
 
+    /**
+     * Indicates the subId
+     *
+     * @hide
+     */
+    private int mSubId = 0;
+
+    /**
+     * set Subscription information
+     *
+     * @hide
+     */
+    public void setSubId(int subId) {
+        mSubId = subId;
+    }
+
+    /**
+     * get Subscription information
+     *
+     * @hide
+     */
+    public int getSubId() {
+        return mSubId;
+    }
+
     public CellBroadcastMessage(SmsCbMessage message) {
         mSmsCbMessage = message;
         mDeliveryTime = System.currentTimeMillis();
@@ -65,6 +90,7 @@ public class CellBroadcastMessage implements Parcelable {
         mSmsCbMessage = new SmsCbMessage(in);
         mDeliveryTime = in.readLong();
         mIsRead = (in.readInt() != 0);
+        mSubId = in.readInt();
     }
 
     /** Parcelable: no special flags. */
@@ -78,6 +104,7 @@ public class CellBroadcastMessage implements Parcelable {
         mSmsCbMessage.writeToParcel(out, flags);
         out.writeLong(mDeliveryTime);
         out.writeInt(mIsRead ? 1 : 0);
+        out.writeInt(mSubId);
     }
 
     public static final Parcelable.Creator<CellBroadcastMessage> CREATOR
@@ -146,7 +173,7 @@ public class CellBroadcastMessage implements Parcelable {
                 Telephony.CellBroadcasts.ETWS_WARNING_TYPE);
         if (etwsWarningTypeColumn != -1 && !cursor.isNull(etwsWarningTypeColumn)) {
             int warningType = cursor.getInt(etwsWarningTypeColumn);
-            etwsInfo = new SmsCbEtwsInfo(warningType, false, false, null);
+            etwsInfo = new SmsCbEtwsInfo(warningType, false, false, false, null);
         } else {
             etwsInfo = null;
         }

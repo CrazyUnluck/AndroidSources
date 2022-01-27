@@ -31,9 +31,8 @@ import android.util.Slog;
 import java.io.PrintWriter;
 import java.util.ArrayList;
 import java.util.HashMap;
-import java.util.HashSet;
 
-class ContentProviderRecord {
+final class ContentProviderRecord {
     final ActivityManagerService service;
     public final ProviderInfo info;
     final int uid;
@@ -140,6 +139,10 @@ class ContentProviderRecord {
         return (externalProcessTokenToHandle != null || externalProcessNoHandleCount > 0);
     }
 
+    public boolean hasConnectionOrHandle() {
+        return !connections.isEmpty() || hasExternalProcessHandles();
+    }
+
     void dump(PrintWriter pw, String prefix, boolean full) {
         if (full) {
             pw.print(prefix); pw.print("package=");
@@ -167,8 +170,16 @@ class ContentProviderRecord {
         }
         if (full) {
             if (hasExternalProcessHandles()) {
-                pw.print(prefix); pw.print("externals=");
-                        pw.println(externalProcessTokenToHandle.size());
+                pw.print(prefix); pw.print("externals:");
+                if (externalProcessTokenToHandle != null) {
+                    pw.print(" w/token=");
+                    pw.print(externalProcessTokenToHandle.size());
+                }
+                if (externalProcessNoHandleCount > 0) {
+                    pw.print(" notoken=");
+                    pw.print(externalProcessNoHandleCount);
+                }
+                pw.println();
             }
         } else {
             if (connections.size() > 0 || externalProcessNoHandleCount > 0) {

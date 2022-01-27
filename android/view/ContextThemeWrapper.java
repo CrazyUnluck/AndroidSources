@@ -16,37 +16,68 @@
 
 package android.view;
 
+import android.annotation.StyleRes;
 import android.content.Context;
 import android.content.ContextWrapper;
+import android.content.res.AssetManager;
 import android.content.res.Configuration;
 import android.content.res.Resources;
-import android.os.Build;
 
 /**
- * A ContextWrapper that allows you to modify the theme from what is in the 
- * wrapped context. 
+ * A context wrapper that allows you to modify or replace the theme of the
+ * wrapped context.
  */
 public class ContextThemeWrapper extends ContextWrapper {
-    private Context mBase;
     private int mThemeResource;
     private Resources.Theme mTheme;
     private LayoutInflater mInflater;
     private Configuration mOverrideConfiguration;
     private Resources mResources;
 
+    /**
+     * Creates a new context wrapper with no theme and no base context.
+     * <p>
+     * <stong>Note:</strong> A base context <strong>must</strong> be attached
+     * using {@link #attachBaseContext(Context)} before calling any other
+     * method on the newly constructed context wrapper.
+     */
     public ContextThemeWrapper() {
         super(null);
     }
-    
-    public ContextThemeWrapper(Context base, int themeres) {
+
+    /**
+     * Creates a new context wrapper with the specified theme.
+     * <p>
+     * The specified theme will be applied on top of the base context's theme.
+     * Any attributes not explicitly defined in the theme identified by
+     * <var>themeResId</var> will retain their original values.
+     *
+     * @param base the base context
+     * @param themeResId the resource ID of the theme to be applied on top of
+     *                   the base context's theme
+     */
+    public ContextThemeWrapper(Context base, @StyleRes int themeResId) {
         super(base);
-        mBase = base;
-        mThemeResource = themeres;
+        mThemeResource = themeResId;
     }
 
-    @Override protected void attachBaseContext(Context newBase) {
+    /**
+     * Creates a new context wrapper with the specified theme.
+     * <p>
+     * Unlike {@link #ContextThemeWrapper(Context, int)}, the theme passed to
+     * this constructor will completely replace the base context's theme.
+     *
+     * @param base the base context
+     * @param theme the theme against which resources should be inflated
+     */
+    public ContextThemeWrapper(Context base, Resources.Theme theme) {
+        super(base);
+        mTheme = theme;
+    }
+
+    @Override
+    protected void attachBaseContext(Context newBase) {
         super.attachBaseContext(newBase);
-        mBase = newBase;
     }
 
     /**
@@ -57,11 +88,12 @@ public class ContextThemeWrapper extends ContextWrapper {
      * information.
      *
      * <p>This method can only be called once, and must be called before any
-     * calls to {@link #getResources()} are made.
+     * calls to {@link #getResources()} or {@link #getAssets()} are made.
      */
     public void applyOverrideConfiguration(Configuration overrideConfiguration) {
         if (mResources != null) {
-            throw new IllegalStateException("getResources() has already been called");
+            throw new IllegalStateException(
+                    "getResources() or getAssets() has already been called");
         }
         if (mOverrideConfiguration != null) {
             throw new IllegalStateException("Override configuration has already been set");
@@ -69,33 +101,54 @@ public class ContextThemeWrapper extends ContextWrapper {
         mOverrideConfiguration = new Configuration(overrideConfiguration);
     }
 
+    /**
+     * Used by ActivityThread to apply the overridden configuration to onConfigurationChange
+     * callbacks.
+     * @hide
+     */
+    public Configuration getOverrideConfiguration() {
+        return mOverrideConfiguration;
+    }
+
+    @Override
+    public AssetManager getAssets() {
+        // Ensure we're returning assets with the correct configuration.
+        return getResourcesInternal().getAssets();
+    }
+
     @Override
     public Resources getResources() {
-        if (mResources != null) {
-            return mResources;
+        return getResourcesInternal();
+    }
+
+    private Resources getResourcesInternal() {
+        if (mResources == null) {
+            if (mOverrideConfiguration == null) {
+                mResources = super.getResources();
+            } else {
+                final Context resContext = createConfigurationContext(mOverrideConfiguration);
+                mResources = resContext.getResources();
+            }
         }
-        if (mOverrideConfiguration == null) {
-            mResources = super.getResources();
-            return mResources;
-        } else {
-            Context resc = createConfigurationContext(mOverrideConfiguration);
-            mResources = resc.getResources();
-            return mResources;
+        return mResources;
+    }
+
+    @Override
+    public void setTheme(int resid) {
+        if (mThemeResource != resid) {
+            mThemeResource = resid;
+            initializeTheme();
         }
     }
-    
-    @Override public void setTheme(int resid) {
-        mThemeResource = resid;
-        initializeTheme();
-    }
-    
+
     /** @hide */
     @Override
     public int getThemeResId() {
         return mThemeResource;
     }
 
-    @Override public Resources.Theme getTheme() {
+    @Override
+    public Resources.Theme getTheme() {
         if (mTheme != null) {
             return mTheme;
         }
@@ -107,36 +160,37 @@ public class ContextThemeWrapper extends ContextWrapper {
         return mTheme;
     }
 
-    @Override public Object getSystemService(String name) {
+    @Override
+    public Object getSystemService(String name) {
         if (LAYOUT_INFLATER_SERVICE.equals(name)) {
             if (mInflater == null) {
-                mInflater = LayoutInflater.from(mBase).cloneInContext(this);
+                mInflater = LayoutInflater.from(getBaseContext()).cloneInContext(this);
             }
             return mInflater;
         }
-        return mBase.getSystemService(name);
+        return getBaseContext().getSystemService(name);
     }
-    
+
     /**
      * Called by {@link #setTheme} and {@link #getTheme} to apply a theme
-     * resource to the current Theme object.  Can override to change the
-     * default (simple) behavior.  This method will not be called in multiple
+     * resource to the current Theme object. May be overridden to change the
+     * default (simple) behavior. This method will not be called in multiple
      * threads simultaneously.
      *
-     * @param theme The Theme object being modified.
-     * @param resid The theme style resource being applied to <var>theme</var>.
-     * @param first Set to true if this is the first time a style is being
-     *              applied to <var>theme</var>.
+     * @param theme the theme being modified
+     * @param resId the style resource being applied to <var>theme</var>
+     * @param first {@code true} if this is the first time a style is being
+     *              applied to <var>theme</var>
      */
-    protected void onApplyThemeResource(Resources.Theme theme, int resid, boolean first) {
-        theme.applyStyle(resid, true);
+    protected void onApplyThemeResource(Resources.Theme theme, int resId, boolean first) {
+        theme.applyStyle(resId, true);
     }
 
     private void initializeTheme() {
         final boolean first = mTheme == null;
         if (first) {
             mTheme = getResources().newTheme();
-            Resources.Theme theme = mBase.getTheme();
+            final Resources.Theme theme = getBaseContext().getTheme();
             if (theme != null) {
                 mTheme.setTo(theme);
             }

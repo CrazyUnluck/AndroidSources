@@ -37,15 +37,19 @@ public final class RemoteDisplay {
     private final CloseGuard mGuard = CloseGuard.get();
     private final Listener mListener;
     private final Handler mHandler;
+    private final String mOpPackageName;
 
-    private int mPtr;
+    private long mPtr;
 
-    private native int nativeListen(String iface);
-    private native void nativeDispose(int ptr);
+    private native long nativeListen(String iface, String opPackageName);
+    private native void nativeDispose(long ptr);
+    private native void nativePause(long ptr);
+    private native void nativeResume(long ptr);
 
-    private RemoteDisplay(Listener listener, Handler handler) {
+    private RemoteDisplay(Listener listener, Handler handler, String opPackageName) {
         mListener = listener;
         mHandler = handler;
+        mOpPackageName = opPackageName;
     }
 
     @Override
@@ -64,7 +68,8 @@ public final class RemoteDisplay {
      * @param listener The listener to invoke when displays are connected or disconnected.
      * @param handler The handler on which to invoke the listener.
      */
-    public static RemoteDisplay listen(String iface, Listener listener, Handler handler) {
+    public static RemoteDisplay listen(String iface, Listener listener, Handler handler,
+            String opPackageName) {
         if (iface == null) {
             throw new IllegalArgumentException("iface must not be null");
         }
@@ -75,7 +80,7 @@ public final class RemoteDisplay {
             throw new IllegalArgumentException("handler must not be null");
         }
 
-        RemoteDisplay display = new RemoteDisplay(listener, handler);
+        RemoteDisplay display = new RemoteDisplay(listener, handler, opPackageName);
         display.startListening(iface);
         return display;
     }
@@ -85,6 +90,14 @@ public final class RemoteDisplay {
      */
     public void dispose() {
         dispose(false);
+    }
+
+    public void pause() {
+        nativePause(mPtr);
+    }
+
+    public void resume() {
+        nativeResume(mPtr);
     }
 
     private void dispose(boolean finalized) {
@@ -103,7 +116,7 @@ public final class RemoteDisplay {
     }
 
     private void startListening(String iface) {
-        mPtr = nativeListen(iface);
+        mPtr = nativeListen(iface, mOpPackageName);
         if (mPtr == 0) {
             throw new IllegalStateException("Could not start listening for "
                     + "remote display connection on \"" + iface + "\"");
@@ -113,11 +126,11 @@ public final class RemoteDisplay {
 
     // Called from native.
     private void notifyDisplayConnected(final Surface surface,
-            final int width, final int height, final int flags) {
+            final int width, final int height, final int flags, final int session) {
         mHandler.post(new Runnable() {
             @Override
             public void run() {
-                mListener.onDisplayConnected(surface, width, height, flags);
+                mListener.onDisplayConnected(surface, width, height, flags, session);
             }
         });
     }
@@ -146,7 +159,8 @@ public final class RemoteDisplay {
      * Listener invoked when the remote display connection changes state.
      */
     public interface Listener {
-        void onDisplayConnected(Surface surface, int width, int height, int flags);
+        void onDisplayConnected(Surface surface,
+                int width, int height, int flags, int session);
         void onDisplayDisconnected();
         void onDisplayError(int error);
     }

@@ -16,21 +16,15 @@
 
 package android.renderscript;
 
-import android.content.Context;
 import android.content.res.Resources;
-import android.util.Log;
 
 import java.io.File;
 import java.io.IOException;
 import java.io.InputStream;
-import java.util.Map.Entry;
-import java.util.HashMap;
-
-import java.lang.reflect.Field;
-import java.lang.reflect.Modifier;
 
 /**
- *
+ * The superclass for all user-defined scripts. This is only
+ * intended to be used by the generated derived classes.
  **/
 public class ScriptC extends Script {
     private static final String TAG = "ScriptC";
@@ -44,7 +38,16 @@ public class ScriptC extends Script {
     protected ScriptC(int id, RenderScript rs) {
         super(id, rs);
     }
-
+    /**
+     * Only intended for use by the generated derived classes.
+     *
+     * @param id
+     * @param rs
+     *
+     */
+    protected ScriptC(long id, RenderScript rs) {
+        super(id, rs);
+    }
     /**
      * Only intended for use by the generated derived classes.
      *
@@ -55,7 +58,7 @@ public class ScriptC extends Script {
      */
     protected ScriptC(RenderScript rs, Resources resources, int resourceID) {
         super(0, rs);
-        int id = internalCreate(rs, resources, resourceID);
+        long id = internalCreate(rs, resources, resourceID);
         if (id == 0) {
             throw new RSRuntimeException("Loading of ScriptC script failed.");
         }
@@ -63,13 +66,25 @@ public class ScriptC extends Script {
     }
 
     /**
-     * Name of the file that holds the object cache.
+     * Only intended for use by the generated derived classes.
+     *
+     * @param rs
      */
-    private static final String CACHE_PATH = "com.android.renderscript.cache";
+    protected ScriptC(RenderScript rs, String resName, byte[] bitcode32, byte[] bitcode64) {
+        super(0, rs);
+        long id = 0;
+        if (RenderScript.sPointerSize == 4) {
+            id = internalStringCreate(rs, resName, bitcode32);
+        } else {
+            id = internalStringCreate(rs, resName, bitcode64);
+        }
+        if (id == 0) {
+            throw new RSRuntimeException("Loading of ScriptC script failed.");
+        }
+        setID(id);
+    }
 
-    static String mCachePath;
-
-    private static synchronized int internalCreate(RenderScript rs, Resources resources, int resourceID) {
+    private static synchronized long internalCreate(RenderScript rs, Resources resources, int resourceID) {
         byte[] pgm;
         int pgmLength;
         InputStream is = resources.openRawResource(resourceID);
@@ -100,13 +115,12 @@ public class ScriptC extends Script {
 
         String resName = resources.getResourceEntryName(resourceID);
 
-        // Create the RS cache path if we haven't done so already.
-        if (mCachePath == null) {
-            File f = new File(rs.mCacheDir, CACHE_PATH);
-            mCachePath = f.getAbsolutePath();
-            f.mkdirs();
-        }
         //        Log.v(TAG, "Create script for resource = " + resName);
-        return rs.nScriptCCreate(resName, mCachePath, pgm, pgmLength);
+        return rs.nScriptCCreate(resName, RenderScript.getCachePath(), pgm, pgmLength);
+    }
+
+    private static synchronized long internalStringCreate(RenderScript rs, String resName, byte[] bitcode) {
+        //        Log.v(TAG, "Create script for resource = " + resName);
+        return rs.nScriptCCreate(resName, RenderScript.getCachePath(), bitcode, bitcode.length);
     }
 }

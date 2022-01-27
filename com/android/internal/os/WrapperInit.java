@@ -19,15 +19,13 @@ package com.android.internal.os;
 import android.os.Process;
 import android.util.Slog;
 
+import dalvik.system.VMRuntime;
 import java.io.DataOutputStream;
 import java.io.FileDescriptor;
 import java.io.FileOutputStream;
 import java.io.IOException;
 
 import libcore.io.IoUtils;
-import libcore.io.Libcore;
-
-import dalvik.system.Zygote;
 
 /**
  * Startup class for the wrapper process.
@@ -65,7 +63,8 @@ public class WrapperInit {
             // wrapper that it directly forked).
             if (fdNum != 0) {
                 try {
-                    FileDescriptor fd = ZygoteInit.createFileDescriptor(fdNum);
+                    FileDescriptor fd = new FileDescriptor();
+                    fd.setInt$(fdNum);
                     DataOutputStream os = new DataOutputStream(new FileOutputStream(fd));
                     os.writeInt(Process.myPid());
                     os.close();
@@ -95,12 +94,23 @@ public class WrapperInit {
      * @param niceName The nice name for the application, or null if none.
      * @param targetSdkVersion The target SDK version for the app.
      * @param pipeFd The pipe to which the application's pid should be written, or null if none.
-     * @param args Arguments for {@link RuntimeInit.main}.
+     * @param args Arguments for {@link RuntimeInit#main}.
      */
     public static void execApplication(String invokeWith, String niceName,
-            int targetSdkVersion, FileDescriptor pipeFd, String[] args) {
+            int targetSdkVersion, String instructionSet, FileDescriptor pipeFd,
+            String[] args) {
         StringBuilder command = new StringBuilder(invokeWith);
-        command.append(" /system/bin/app_process /system/bin --application");
+
+        final String appProcess;
+        if (VMRuntime.is64BitInstructionSet(instructionSet)) {
+            appProcess = "/system/bin/app_process64";
+        } else {
+            appProcess = "/system/bin/app_process32";
+        }
+        command.append(' ');
+        command.append(appProcess);
+
+        command.append(" /system/bin --application");
         if (niceName != null) {
             command.append(" '--nice-name=").append(niceName).append("'");
         }
@@ -108,24 +118,6 @@ public class WrapperInit {
         command.append(pipeFd != null ? pipeFd.getInt$() : 0);
         command.append(' ');
         command.append(targetSdkVersion);
-        Zygote.appendQuotedShellArgs(command, args);
-        Zygote.execShell(command.toString());
-    }
-
-    /**
-     * Executes a standalone application with a wrapper command.
-     * This method never returns.
-     *
-     * @param invokeWith The wrapper command.
-     * @param classPath The class path.
-     * @param className The class name to invoke.
-     * @param args Arguments for the main() method of the specified class.
-     */
-    public static void execStandalone(String invokeWith, String classPath, String className,
-            String[] args) {
-        StringBuilder command = new StringBuilder(invokeWith);
-        command.append(" /system/bin/dalvikvm -classpath '").append(classPath);
-        command.append("' ").append(className);
         Zygote.appendQuotedShellArgs(command, args);
         Zygote.execShell(command.toString());
     }

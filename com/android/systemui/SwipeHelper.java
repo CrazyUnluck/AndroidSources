@@ -19,18 +19,22 @@ package com.android.systemui;
 import android.animation.Animator;
 import android.animation.AnimatorListenerAdapter;
 import android.animation.ObjectAnimator;
-import android.animation.Animator.AnimatorListener;
 import android.animation.ValueAnimator;
 import android.animation.ValueAnimator.AnimatorUpdateListener;
+import android.content.Context;
 import android.graphics.RectF;
 import android.os.Handler;
 import android.util.Log;
-import android.view.accessibility.AccessibilityEvent;
-import android.view.animation.LinearInterpolator;
 import android.view.MotionEvent;
 import android.view.VelocityTracker;
 import android.view.View;
 import android.view.ViewConfiguration;
+import android.view.accessibility.AccessibilityEvent;
+
+import com.android.systemui.classifier.FalsingManager;
+import com.android.systemui.statusbar.FlingAnimationUtils;
+
+import java.util.HashMap;
 
 public class SwipeHelper implements Gefingerpoken {
     static final String TAG = "com.android.systemui.SwipeHelper";
@@ -44,51 +48,62 @@ public class SwipeHelper implements Gefingerpoken {
     public static final int X = 0;
     public static final int Y = 1;
 
-    private static LinearInterpolator sLinearInterpolator = new LinearInterpolator();
-
     private float SWIPE_ESCAPE_VELOCITY = 100f; // dp/sec
     private int DEFAULT_ESCAPE_ANIMATION_DURATION = 200; // ms
     private int MAX_ESCAPE_ANIMATION_DURATION = 400; // ms
-    private int MAX_DISMISS_VELOCITY = 2000; // dp/sec
+    private int MAX_DISMISS_VELOCITY = 4000; // dp/sec
     private static final int SNAP_ANIM_LEN = SLOW_ANIMATIONS ? 1000 : 150; // ms
 
-    public static float ALPHA_FADE_START = 0f; // fraction of thumbnail width
-                                                 // where fade starts
-    static final float ALPHA_FADE_END = 0.5f; // fraction of thumbnail width
-                                              // beyond which alpha->0
-    private float mMinAlpha = 0f;
+    static final float SWIPE_PROGRESS_FADE_END = 0.5f; // fraction of thumbnail width
+                                              // beyond which swipe progress->0
+    private float mMinSwipeProgress = 0f;
+    private float mMaxSwipeProgress = 1f;
 
+    private FlingAnimationUtils mFlingAnimationUtils;
     private float mPagingTouchSlop;
     private Callback mCallback;
     private Handler mHandler;
     private int mSwipeDirection;
     private VelocityTracker mVelocityTracker;
+    private FalsingManager mFalsingManager;
 
     private float mInitialTouchPos;
+    private float mPerpendicularInitialTouchPos;
     private boolean mDragging;
+    private boolean mSnappingChild;
     private View mCurrView;
-    private View mCurrAnimView;
     private boolean mCanCurrViewBeDimissed;
     private float mDensityScale;
+    private float mTranslation = 0;
 
     private boolean mLongPressSent;
-    private View.OnLongClickListener mLongPressListener;
+    private LongPressListener mLongPressListener;
     private Runnable mWatchLongPress;
     private long mLongPressTimeout;
 
-    public SwipeHelper(int swipeDirection, Callback callback, float densityScale,
-            float pagingTouchSlop) {
+    final private int[] mTmpPos = new int[2];
+    private int mFalsingThreshold;
+    private boolean mTouchAboveFalsingThreshold;
+    private boolean mDisableHwLayers;
+
+    private HashMap<View, Animator> mDismissPendingMap = new HashMap<>();
+
+    public SwipeHelper(int swipeDirection, Callback callback, Context context) {
         mCallback = callback;
         mHandler = new Handler();
         mSwipeDirection = swipeDirection;
         mVelocityTracker = VelocityTracker.obtain();
-        mDensityScale = densityScale;
-        mPagingTouchSlop = pagingTouchSlop;
+        mDensityScale =  context.getResources().getDisplayMetrics().density;
+        mPagingTouchSlop = ViewConfiguration.get(context).getScaledPagingTouchSlop();
 
         mLongPressTimeout = (long) (ViewConfiguration.getLongPressTimeout() * 1.5f); // extra long-press!
+        mFalsingThreshold = context.getResources().getDimensionPixelSize(
+                R.dimen.swipe_helper_falsing_threshold);
+        mFalsingManager = FalsingManager.getInstance(context);
+        mFlingAnimationUtils = new FlingAnimationUtils(context, getMaxEscapeAnimDuration() / 1000f);
     }
 
-    public void setLongPressListener(View.OnLongClickListener listener) {
+    public void setLongPressListener(LongPressListener listener) {
         mLongPressListener = listener;
     }
 
@@ -100,11 +115,19 @@ public class SwipeHelper implements Gefingerpoken {
         mPagingTouchSlop = pagingTouchSlop;
     }
 
+    public void setDisableHardwareLayers(boolean disableHwLayers) {
+        mDisableHwLayers = disableHwLayers;
+    }
+
     private float getPos(MotionEvent ev) {
         return mSwipeDirection == X ? ev.getX() : ev.getY();
     }
 
-    private float getTranslation(View v) {
+    private float getPerpendicularPos(MotionEvent ev) {
+        return mSwipeDirection == X ? ev.getY() : ev.getX();
+    }
+
+    protected float getTranslation(View v) {
         return mSwipeDirection == X ? v.getTranslationX() : v.getTranslationY();
     }
 
@@ -113,9 +136,9 @@ public class SwipeHelper implements Gefingerpoken {
                 vt.getYVelocity();
     }
 
-    private ObjectAnimator createTranslationAnimation(View v, float newPos) {
+    protected ObjectAnimator createTranslationAnimation(View v, float newPos) {
         ObjectAnimator anim = ObjectAnimator.ofFloat(v,
-                mSwipeDirection == X ? "translationX" : "translationY", newPos);
+                mSwipeDirection == X ? View.TRANSLATION_X : View.TRANSLATION_Y, newPos);
         return anim;
     }
 
@@ -124,7 +147,19 @@ public class SwipeHelper implements Gefingerpoken {
                 vt.getXVelocity();
     }
 
-    private void setTranslation(View v, float translate) {
+    protected Animator getViewTranslationAnimator(View v, float target,
+            AnimatorUpdateListener listener) {
+        ObjectAnimator anim = createTranslationAnimation(v, target);
+        if (listener != null) {
+            anim.addUpdateListener(listener);
+        }
+        return anim;
+    }
+
+    protected void setTranslation(View v, float translate) {
+        if (v == null) {
+            return;
+        }
         if (mSwipeDirection == X) {
             v.setTranslationX(translate);
         } else {
@@ -132,37 +167,48 @@ public class SwipeHelper implements Gefingerpoken {
         }
     }
 
-    private float getSize(View v) {
+    protected float getSize(View v) {
         return mSwipeDirection == X ? v.getMeasuredWidth() :
                 v.getMeasuredHeight();
     }
 
-    public void setMinAlpha(float minAlpha) {
-        mMinAlpha = minAlpha;
+    public void setMinSwipeProgress(float minSwipeProgress) {
+        mMinSwipeProgress = minSwipeProgress;
     }
 
-    private float getAlphaForOffset(View view) {
+    public void setMaxSwipeProgress(float maxSwipeProgress) {
+        mMaxSwipeProgress = maxSwipeProgress;
+    }
+
+    private float getSwipeProgressForOffset(View view, float translation) {
         float viewSize = getSize(view);
-        final float fadeSize = ALPHA_FADE_END * viewSize;
-        float result = 1.0f;
-        float pos = getTranslation(view);
-        if (pos >= viewSize * ALPHA_FADE_START) {
-            result = 1.0f - (pos - viewSize * ALPHA_FADE_START) / fadeSize;
-        } else if (pos < viewSize * (1.0f - ALPHA_FADE_START)) {
-            result = 1.0f + (viewSize * ALPHA_FADE_START + pos) / fadeSize;
-        }
-        return Math.max(mMinAlpha, result);
+        float result = Math.abs(translation / viewSize);
+        return Math.min(Math.max(mMinSwipeProgress, result), mMaxSwipeProgress);
     }
 
-    private void updateAlphaFromOffset(View animView, boolean dismissable) {
-        if (FADE_OUT_DURING_SWIPE && dismissable) {
-            float alpha = getAlphaForOffset(animView);
-            if (alpha != 0f && alpha != 1f) {
-                animView.setLayerType(View.LAYER_TYPE_HARDWARE, null);
-            } else {
-                animView.setLayerType(View.LAYER_TYPE_NONE, null);
+    private float getSwipeAlpha(float progress) {
+        return Math.min(0, Math.max(1, progress / SWIPE_PROGRESS_FADE_END));
+    }
+
+    private void updateSwipeProgressFromOffset(View animView, boolean dismissable) {
+        updateSwipeProgressFromOffset(animView, dismissable, getTranslation(animView));
+    }
+
+    private void updateSwipeProgressFromOffset(View animView, boolean dismissable,
+            float translation) {
+        float swipeProgress = getSwipeProgressForOffset(animView, translation);
+        if (!mCallback.updateSwipeProgress(animView, dismissable, swipeProgress)) {
+            if (FADE_OUT_DURING_SWIPE && dismissable) {
+                float alpha = swipeProgress;
+                if (!mDisableHwLayers) {
+                    if (alpha != 0f && alpha != 1f) {
+                        animView.setLayerType(View.LAYER_TYPE_HARDWARE, null);
+                    } else {
+                        animView.setLayerType(View.LAYER_TYPE_NONE, null);
+                    }
+                }
+                animView.setAlpha(getSwipeAlpha(swipeProgress));
             }
-            animView.setAlpha(getAlphaForOffset(animView));
         }
         invalidateGlobalRegion(animView);
     }
@@ -203,21 +249,25 @@ public class SwipeHelper implements Gefingerpoken {
         }
     }
 
-    public boolean onInterceptTouchEvent(MotionEvent ev) {
+    public boolean onInterceptTouchEvent(final MotionEvent ev) {
         final int action = ev.getAction();
 
         switch (action) {
             case MotionEvent.ACTION_DOWN:
+                mTouchAboveFalsingThreshold = false;
                 mDragging = false;
+                mSnappingChild = false;
                 mLongPressSent = false;
-                mCurrView = mCallback.getChildAtPosition(ev);
                 mVelocityTracker.clear();
+                mCurrView = mCallback.getChildAtPosition(ev);
+
                 if (mCurrView != null) {
-                    mCurrAnimView = mCallback.getChildContentView(mCurrView);
+                    onDownUpdate(mCurrView);
                     mCanCurrViewBeDimissed = mCallback.canChildBeDismissed(mCurrView);
                     mVelocityTracker.addMovement(ev);
                     mInitialTouchPos = getPos(ev);
-
+                    mPerpendicularInitialTouchPos = getPerpendicularPos(ev);
+                    mTranslation = getTranslation(mCurrView);
                     if (mLongPressListener != null) {
                         if (mWatchLongPress == null) {
                             mWatchLongPress = new Runnable() {
@@ -225,15 +275,18 @@ public class SwipeHelper implements Gefingerpoken {
                                 public void run() {
                                     if (mCurrView != null && !mLongPressSent) {
                                         mLongPressSent = true;
-                                        mCurrView.sendAccessibilityEvent(AccessibilityEvent.TYPE_VIEW_LONG_CLICKED);
-                                        mLongPressListener.onLongClick(mCurrView);
+                                        mCurrView.sendAccessibilityEvent(
+                                                AccessibilityEvent.TYPE_VIEW_LONG_CLICKED);
+                                        mCurrView.getLocationOnScreen(mTmpPos);
+                                        final int x = (int) ev.getRawX() - mTmpPos[0];
+                                        final int y = (int) ev.getRawY() - mTmpPos[1];
+                                        mLongPressListener.onLongPress(mCurrView, x, y);
                                     }
                                 }
                             };
                         }
                         mHandler.postDelayed(mWatchLongPress, mLongPressTimeout);
                     }
-
                 }
                 break;
 
@@ -241,91 +294,232 @@ public class SwipeHelper implements Gefingerpoken {
                 if (mCurrView != null && !mLongPressSent) {
                     mVelocityTracker.addMovement(ev);
                     float pos = getPos(ev);
+                    float perpendicularPos = getPerpendicularPos(ev);
                     float delta = pos - mInitialTouchPos;
-                    if (Math.abs(delta) > mPagingTouchSlop) {
+                    float deltaPerpendicular = perpendicularPos - mPerpendicularInitialTouchPos;
+                    if (Math.abs(delta) > mPagingTouchSlop
+                            && Math.abs(delta) > Math.abs(deltaPerpendicular)) {
                         mCallback.onBeginDrag(mCurrView);
                         mDragging = true;
-                        mInitialTouchPos = getPos(ev) - getTranslation(mCurrAnimView);
-
+                        mInitialTouchPos = getPos(ev);
+                        mTranslation = getTranslation(mCurrView);
                         removeLongPressCallback();
                     }
                 }
-
                 break;
 
             case MotionEvent.ACTION_UP:
             case MotionEvent.ACTION_CANCEL:
+                final boolean captured = (mDragging || mLongPressSent);
                 mDragging = false;
                 mCurrView = null;
-                mCurrAnimView = null;
                 mLongPressSent = false;
                 removeLongPressCallback();
+                if (captured) return true;
                 break;
         }
-        return mDragging;
+        return mDragging || mLongPressSent;
     }
 
     /**
      * @param view The view to be dismissed
      * @param velocity The desired pixels/second speed at which the view should move
+     * @param useAccelerateInterpolator Should an accelerating Interpolator be used
      */
-    public void dismissChild(final View view, float velocity) {
-        final View animView = mCallback.getChildContentView(view);
-        final boolean canAnimViewBeDismissed = mCallback.canChildBeDismissed(view);
-        float newPos;
+    public void dismissChild(final View view, float velocity, boolean useAccelerateInterpolator) {
+        dismissChild(view, velocity, null /* endAction */, 0 /* delay */,
+                useAccelerateInterpolator, 0 /* fixedDuration */, false /* isDismissAll */);
+    }
 
-        if (velocity < 0
-                || (velocity == 0 && getTranslation(animView) < 0)
-                // if we use the Menu to dismiss an item in landscape, animate up
-                || (velocity == 0 && getTranslation(animView) == 0 && mSwipeDirection == Y)) {
+    /**
+     * @param view The view to be dismissed
+     * @param velocity The desired pixels/second speed at which the view should move
+     * @param endAction The action to perform at the end
+     * @param delay The delay after which we should start
+     * @param useAccelerateInterpolator Should an accelerating Interpolator be used
+     * @param fixedDuration If not 0, this exact duration will be taken
+     */
+    public void dismissChild(final View animView, float velocity, final Runnable endAction,
+            long delay, boolean useAccelerateInterpolator, long fixedDuration,
+            boolean isDismissAll) {
+        final boolean canBeDismissed = mCallback.canChildBeDismissed(animView);
+        float newPos;
+        boolean isLayoutRtl = animView.getLayoutDirection() == View.LAYOUT_DIRECTION_RTL;
+
+        // if we use the Menu to dismiss an item in landscape, animate up
+        boolean animateUpForMenu = velocity == 0 && (getTranslation(animView) == 0 || isDismissAll)
+                && mSwipeDirection == Y;
+        // if the language is rtl we prefer swiping to the left
+        boolean animateLeftForRtl = velocity == 0 && (getTranslation(animView) == 0 || isDismissAll)
+                && isLayoutRtl;
+        boolean animateLeft = velocity < 0
+                || (velocity == 0 && getTranslation(animView) < 0 && !isDismissAll);
+
+        if (animateLeft || animateLeftForRtl || animateUpForMenu) {
             newPos = -getSize(animView);
         } else {
             newPos = getSize(animView);
         }
-        int duration = MAX_ESCAPE_ANIMATION_DURATION;
-        if (velocity != 0) {
-            duration = Math.min(duration,
-                                (int) (Math.abs(newPos - getTranslation(animView)) * 1000f / Math
-                                        .abs(velocity)));
+        long duration;
+        if (fixedDuration == 0) {
+            duration = MAX_ESCAPE_ANIMATION_DURATION;
+            if (velocity != 0) {
+                duration = Math.min(duration,
+                        (int) (Math.abs(newPos - getTranslation(animView)) * 1000f / Math
+                                .abs(velocity))
+                );
+            } else {
+                duration = DEFAULT_ESCAPE_ANIMATION_DURATION;
+            }
         } else {
-            duration = DEFAULT_ESCAPE_ANIMATION_DURATION;
+            duration = fixedDuration;
         }
 
-        animView.setLayerType(View.LAYER_TYPE_HARDWARE, null);
-        ObjectAnimator anim = createTranslationAnimation(animView, newPos);
-        anim.setInterpolator(sLinearInterpolator);
-        anim.setDuration(duration);
-        anim.addListener(new AnimatorListenerAdapter() {
-            public void onAnimationEnd(Animator animation) {
-                mCallback.onChildDismissed(view);
-                animView.setLayerType(View.LAYER_TYPE_NONE, null);
-            }
-        });
-        anim.addUpdateListener(new AnimatorUpdateListener() {
+        if (!mDisableHwLayers) {
+            animView.setLayerType(View.LAYER_TYPE_HARDWARE, null);
+        }
+        AnimatorUpdateListener updateListener = new AnimatorUpdateListener() {
             public void onAnimationUpdate(ValueAnimator animation) {
-                updateAlphaFromOffset(animView, canAnimViewBeDismissed);
+                onTranslationUpdate(animView, (float) animation.getAnimatedValue(), canBeDismissed);
+            }
+        };
+
+        Animator anim = getViewTranslationAnimator(animView, newPos, updateListener);
+        if (anim == null) {
+            return;
+        }
+        if (useAccelerateInterpolator) {
+            anim.setInterpolator(Interpolators.FAST_OUT_LINEAR_IN);
+            anim.setDuration(duration);
+        } else {
+            mFlingAnimationUtils.applyDismissing(anim, getTranslation(animView),
+                    newPos, velocity, getSize(animView));
+        }
+        if (delay > 0) {
+            anim.setStartDelay(delay);
+        }
+        anim.addListener(new AnimatorListenerAdapter() {
+            private boolean mCancelled;
+
+            public void onAnimationCancel(Animator animation) {
+                mCancelled = true;
+            }
+
+            public void onAnimationEnd(Animator animation) {
+                updateSwipeProgressFromOffset(animView, canBeDismissed);
+                mDismissPendingMap.remove(animView);
+                if (!mCancelled) {
+                    mCallback.onChildDismissed(animView);
+                }
+                if (endAction != null) {
+                    endAction.run();
+                }
+                if (!mDisableHwLayers) {
+                    animView.setLayerType(View.LAYER_TYPE_NONE, null);
+                }
             }
         });
+
+        prepareDismissAnimation(animView, anim);
+        mDismissPendingMap.put(animView, anim);
         anim.start();
     }
 
-    public void snapChild(final View view, float velocity) {
-        final View animView = mCallback.getChildContentView(view);
-        final boolean canAnimViewBeDismissed = mCallback.canChildBeDismissed(animView);
-        ObjectAnimator anim = createTranslationAnimation(animView, 0);
+    /**
+     * Called to update the dismiss animation.
+     */
+    protected void prepareDismissAnimation(View view, Animator anim) {
+        // Do nothing
+    }
+
+    public void snapChild(final View animView, final float targetLeft, float velocity) {
+        final boolean canBeDismissed = mCallback.canChildBeDismissed(animView);
+        AnimatorUpdateListener updateListener = new AnimatorUpdateListener() {
+            public void onAnimationUpdate(ValueAnimator animation) {
+                onTranslationUpdate(animView, (float) animation.getAnimatedValue(), canBeDismissed);
+            }
+        };
+
+        Animator anim = getViewTranslationAnimator(animView, targetLeft, updateListener);
+        if (anim == null) {
+            return;
+        }
         int duration = SNAP_ANIM_LEN;
         anim.setDuration(duration);
-        anim.addUpdateListener(new AnimatorUpdateListener() {
-            public void onAnimationUpdate(ValueAnimator animation) {
-                updateAlphaFromOffset(animView, canAnimViewBeDismissed);
-            }
-        });
         anim.addListener(new AnimatorListenerAdapter() {
             public void onAnimationEnd(Animator animator) {
-                updateAlphaFromOffset(animView, canAnimViewBeDismissed);
+                mSnappingChild = false;
+                updateSwipeProgressFromOffset(animView, canBeDismissed);
+                mCallback.onChildSnappedBack(animView, targetLeft);
             }
         });
+        prepareSnapBackAnimation(animView, anim);
+        mSnappingChild = true;
         anim.start();
+    }
+
+    /**
+     * Called to update the snap back animation.
+     */
+    protected void prepareSnapBackAnimation(View view, Animator anim) {
+        // Do nothing
+    }
+
+    /**
+     * Called when there's a down event.
+     */
+    public void onDownUpdate(View currView) {
+        // Do nothing
+    }
+
+    /**
+     * Called on a move event.
+     */
+    protected void onMoveUpdate(View view, float totalTranslation, float delta) {
+        // Do nothing
+    }
+
+    /**
+     * Called in {@link AnimatorUpdateListener#onAnimationUpdate(ValueAnimator)} when the current
+     * view is being animated to dismiss or snap.
+     */
+    public void onTranslationUpdate(View animView, float value, boolean canBeDismissed) {
+        updateSwipeProgressFromOffset(animView, canBeDismissed, value);
+    }
+
+    private void snapChildInstantly(final View view) {
+        final boolean canAnimViewBeDismissed = mCallback.canChildBeDismissed(view);
+        setTranslation(view, 0);
+        updateSwipeProgressFromOffset(view, canAnimViewBeDismissed);
+    }
+
+    /**
+     * Called when a view is updated to be non-dismissable, if the view was being dismissed before
+     * the update this will handle snapping it back into place.
+     *
+     * @param view the view to snap if necessary.
+     * @param animate whether to animate the snap or not.
+     * @param targetLeft the target to snap to.
+     */
+    public void snapChildIfNeeded(final View view, boolean animate, float targetLeft) {
+        if ((mDragging && mCurrView == view) || mSnappingChild) {
+            return;
+        }
+        boolean needToSnap = false;
+        Animator dismissPendingAnim = mDismissPendingMap.get(view);
+        if (dismissPendingAnim != null) {
+            needToSnap = true;
+            dismissPendingAnim.cancel();
+        } else if (getTranslation(view) != 0) {
+            needToSnap = true;
+        }
+        if (needToSnap) {
+            if (animate) {
+                snapChild(view, targetLeft, 0.0f /* velocity */);
+            } else {
+                snapChildInstantly(view);
+            }
+        }
     }
 
     public boolean onTouchEvent(MotionEvent ev) {
@@ -334,10 +528,19 @@ public class SwipeHelper implements Gefingerpoken {
         }
 
         if (!mDragging) {
-            // We are not doing anything, make sure the long press callback
-            // is not still ticking like a bomb waiting to go off.
-            removeLongPressCallback();
-            return false;
+            if (mCallback.getChildAtPosition(ev) != null) {
+
+                // We are dragging directly over a card, make sure that we also catch the gesture
+                // even if nobody else wants the touch event.
+                onInterceptTouchEvent(ev);
+                return true;
+            } else {
+
+                // We are not doing anything, make sure the long press callback
+                // is not still ticking like a bomb waiting to go off.
+                removeLongPressCallback();
+                return false;
+            }
         }
 
         mVelocityTracker.addMovement(ev);
@@ -347,66 +550,146 @@ public class SwipeHelper implements Gefingerpoken {
             case MotionEvent.ACTION_MOVE:
                 if (mCurrView != null) {
                     float delta = getPos(ev) - mInitialTouchPos;
+                    float absDelta = Math.abs(delta);
+                    if (absDelta >= getFalsingThreshold()) {
+                        mTouchAboveFalsingThreshold = true;
+                    }
                     // don't let items that can't be dismissed be dragged more than
                     // maxScrollDistance
                     if (CONSTRAIN_SWIPE && !mCallback.canChildBeDismissed(mCurrView)) {
-                        float size = getSize(mCurrAnimView);
-                        float maxScrollDistance = 0.15f * size;
-                        if (Math.abs(delta) >= size) {
+                        float size = getSize(mCurrView);
+                        float maxScrollDistance = 0.25f * size;
+                        if (absDelta >= size) {
                             delta = delta > 0 ? maxScrollDistance : -maxScrollDistance;
                         } else {
                             delta = maxScrollDistance * (float) Math.sin((delta/size)*(Math.PI/2));
                         }
                     }
-                    setTranslation(mCurrAnimView, delta);
 
-                    updateAlphaFromOffset(mCurrAnimView, mCanCurrViewBeDimissed);
+                    setTranslation(mCurrView, mTranslation + delta);
+                    updateSwipeProgressFromOffset(mCurrView, mCanCurrViewBeDimissed);
+                    onMoveUpdate(mCurrView, mTranslation + delta, delta);
                 }
                 break;
             case MotionEvent.ACTION_UP:
             case MotionEvent.ACTION_CANCEL:
-                if (mCurrView != null) {
-                    float maxVelocity = MAX_DISMISS_VELOCITY * mDensityScale;
-                    mVelocityTracker.computeCurrentVelocity(1000 /* px/sec */, maxVelocity);
-                    float escapeVelocity = SWIPE_ESCAPE_VELOCITY * mDensityScale;
-                    float velocity = getVelocity(mVelocityTracker);
-                    float perpendicularVelocity = getPerpendicularVelocity(mVelocityTracker);
+                if (mCurrView == null) {
+                    break;
+                }
+                mVelocityTracker.computeCurrentVelocity(1000 /* px/sec */, getMaxVelocity());
+                float velocity = getVelocity(mVelocityTracker);
 
-                    // Decide whether to dismiss the current view
-                    boolean childSwipedFarEnough = DISMISS_IF_SWIPED_FAR_ENOUGH &&
-                            Math.abs(getTranslation(mCurrAnimView)) > 0.4 * getSize(mCurrAnimView);
-                    boolean childSwipedFastEnough = (Math.abs(velocity) > escapeVelocity) &&
-                            (Math.abs(velocity) > Math.abs(perpendicularVelocity)) &&
-                            (velocity > 0) == (getTranslation(mCurrAnimView) > 0);
-
-                    boolean dismissChild = mCallback.canChildBeDismissed(mCurrView) &&
-                            (childSwipedFastEnough || childSwipedFarEnough);
-
-                    if (dismissChild) {
+                if (!handleUpEvent(ev, mCurrView, velocity, getTranslation(mCurrView))) {
+                    if (isDismissGesture(ev)) {
                         // flingadingy
-                        dismissChild(mCurrView, childSwipedFastEnough ? velocity : 0f);
+                        dismissChild(mCurrView, velocity,
+                                !swipedFastEnough() /* useAccelerateInterpolator */);
                     } else {
                         // snappity
                         mCallback.onDragCancelled(mCurrView);
-                        snapChild(mCurrView, velocity);
+                        snapChild(mCurrView, 0 /* leftTarget */, velocity);
                     }
+                    mCurrView = null;
                 }
+                mDragging = false;
                 break;
         }
         return true;
     }
 
+    private int getFalsingThreshold() {
+        float factor = mCallback.getFalsingThresholdFactor();
+        return (int) (mFalsingThreshold * factor);
+    }
+
+    private float getMaxVelocity() {
+        return MAX_DISMISS_VELOCITY * mDensityScale;
+    }
+
+    protected float getEscapeVelocity() {
+        return getUnscaledEscapeVelocity() * mDensityScale;
+    }
+
+    protected float getUnscaledEscapeVelocity() {
+        return SWIPE_ESCAPE_VELOCITY;
+    }
+
+    protected long getMaxEscapeAnimDuration() {
+        return MAX_ESCAPE_ANIMATION_DURATION;
+    }
+
+    protected boolean swipedFarEnough() {
+        float translation = getTranslation(mCurrView);
+        return DISMISS_IF_SWIPED_FAR_ENOUGH && Math.abs(translation) > 0.4 * getSize(mCurrView);
+    }
+
+    protected boolean isDismissGesture(MotionEvent ev) {
+        boolean falsingDetected = mCallback.isAntiFalsingNeeded();
+        if (mFalsingManager.isClassiferEnabled()) {
+            falsingDetected = falsingDetected && mFalsingManager.isFalseTouch();
+        } else {
+            falsingDetected = falsingDetected && !mTouchAboveFalsingThreshold;
+        }
+        return !falsingDetected && (swipedFastEnough() || swipedFarEnough())
+                && ev.getActionMasked() == MotionEvent.ACTION_UP
+                && mCallback.canChildBeDismissed(mCurrView);
+    }
+
+    protected boolean swipedFastEnough() {
+        float velocity = getVelocity(mVelocityTracker);
+        float translation = getTranslation(mCurrView);
+        boolean ret = (Math.abs(velocity) > getEscapeVelocity())
+                && (velocity > 0) == (translation > 0);
+        return ret;
+    }
+
+    protected boolean handleUpEvent(MotionEvent ev, View animView, float velocity,
+            float translation) {
+        return false;
+    }
+
     public interface Callback {
         View getChildAtPosition(MotionEvent ev);
 
-        View getChildContentView(View v);
-
         boolean canChildBeDismissed(View v);
+
+        boolean isAntiFalsingNeeded();
 
         void onBeginDrag(View v);
 
         void onChildDismissed(View v);
 
         void onDragCancelled(View v);
+
+        /**
+         * Called when the child is snapped to a position.
+         *
+         * @param animView the view that was snapped.
+         * @param targetLeft the left position the view was snapped to.
+         */
+        void onChildSnappedBack(View animView, float targetLeft);
+
+        /**
+         * Updates the swipe progress on a child.
+         *
+         * @return if true, prevents the default alpha fading.
+         */
+        boolean updateSwipeProgress(View animView, boolean dismissable, float swipeProgress);
+
+        /**
+         * @return The factor the falsing threshold should be multiplied with
+         */
+        float getFalsingThresholdFactor();
+    }
+
+    /**
+     * Equivalent to View.OnLongClickListener with coordinates
+     */
+    public interface LongPressListener {
+        /**
+         * Equivalent to {@link View.OnLongClickListener#onLongClick(View)} with coordinates
+         * @return whether the longpress was handled
+         */
+        boolean onLongPress(View v, int x, int y);
     }
 }

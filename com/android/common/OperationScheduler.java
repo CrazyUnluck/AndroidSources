@@ -17,11 +17,10 @@
 package com.android.common;
 
 import android.content.SharedPreferences;
-import android.net.http.AndroidHttpClient;
 import android.text.format.Time;
 
 import java.util.Map;
-import java.util.TreeSet;
+import java.util.TreeMap;
 
 /**
  * Tracks the success/failure history of a particular network operation in
@@ -31,7 +30,7 @@ import java.util.TreeSet;
  *
  * <p>This class does not directly perform or invoke any operations,
  * it only keeps track of the schedule.  Somebody else needs to call
- * {@link #getNextTimeMillis()} as appropriate and do the actual work.
+ * {@link #getNextTimeMillis} as appropriate and do the actual work.
  */
 public class OperationScheduler {
     /** Tunable parameter options for {@link #getNextTimeMillis}. */
@@ -249,7 +248,7 @@ public class OperationScheduler {
 
     /**
      * Forbid any operations until after a certain (absolute) time.
-     * Limited by {@link #Options.maxMoratoriumMillis}.
+     * Limited by {@link Options#maxMoratoriumMillis}.
      *
      * @param millis wall clock time ({@link System#currentTimeMillis()})
      * when operations should be allowed again; 0 to remove moratorium
@@ -263,7 +262,7 @@ public class OperationScheduler {
     /**
      * Forbid any operations until after a certain time, as specified in
      * the format used by the HTTP "Retry-After" header.
-     * Limited by {@link #Options.maxMoratoriumMillis}.
+     * Limited by {@link Options#maxMoratoriumMillis}.
      *
      * @param retryAfter moratorium time in HTTP format
      * @return true if a time was successfully parsed
@@ -275,7 +274,7 @@ public class OperationScheduler {
             return true;
         } catch (NumberFormatException nfe) {
             try {
-                setMoratoriumTimeMillis(AndroidHttpClient.parseDate(retryAfter));
+                setMoratoriumTimeMillis(LegacyHttpDateTime.parse(retryAfter));
                 return true;
             } catch (IllegalArgumentException iae) {
                 return false;
@@ -285,7 +284,7 @@ public class OperationScheduler {
 
     /**
      * Enable or disable all operations.  When disabled, all calls to
-     * {@link #getNextTimeMillis()} return {@link Long#MAX_VALUE}.
+     * {@link #getNextTimeMillis} return {@link Long#MAX_VALUE}.
      * Commonly used when data network availability goes up and down.
      *
      * @param enabled if operations can be performed
@@ -356,16 +355,23 @@ public class OperationScheduler {
      */
     public String toString() {
         StringBuilder out = new StringBuilder("[OperationScheduler:");
-        for (String key : new TreeSet<String>(mStorage.getAll().keySet())) {  // Sort keys
+        TreeMap<String, Object> copy = new TreeMap<String, Object>(mStorage.getAll());  // Sort keys
+        for (Map.Entry<String, Object> e : copy.entrySet()) {
+            String key = e.getKey();
             if (key.startsWith(PREFIX)) {
                 if (key.endsWith("TimeMillis")) {
                     Time time = new Time();
-                    time.set(mStorage.getLong(key, 0));
+                    time.set((Long) e.getValue());
                     out.append(" ").append(key.substring(PREFIX.length(), key.length() - 10));
                     out.append("=").append(time.format("%Y-%m-%d/%H:%M:%S"));
                 } else {
                     out.append(" ").append(key.substring(PREFIX.length()));
-                    out.append("=").append(mStorage.getAll().get(key).toString());
+                    Object v = e.getValue();
+                    if (v == null) {
+                        out.append("=(null)");
+                    } else {
+                        out.append("=").append(v.toString());
+                    }
                 }
             }
         }

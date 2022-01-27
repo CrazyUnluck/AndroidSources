@@ -16,13 +16,23 @@
 
 package android.app;
 
-import com.android.internal.app.ActionBarImpl;
-import com.android.internal.policy.PolicyManager;
+import com.android.internal.R;
+import com.android.internal.app.WindowDecorActionBar;
+import com.android.internal.policy.PhoneWindow;
 
+import android.annotation.CallSuper;
+import android.annotation.DrawableRes;
+import android.annotation.IdRes;
+import android.annotation.LayoutRes;
+import android.annotation.NonNull;
+import android.annotation.Nullable;
+import android.annotation.StringRes;
+import android.annotation.StyleRes;
 import android.content.ComponentName;
 import android.content.Context;
 import android.content.ContextWrapper;
 import android.content.DialogInterface;
+import android.content.pm.ApplicationInfo;
 import android.graphics.drawable.Drawable;
 import android.net.Uri;
 import android.os.Bundle;
@@ -41,6 +51,7 @@ import android.view.LayoutInflater;
 import android.view.Menu;
 import android.view.MenuItem;
 import android.view.MotionEvent;
+import android.view.SearchEvent;
 import android.view.View;
 import android.view.View.OnCreateContextMenuListener;
 import android.view.ViewGroup;
@@ -78,15 +89,18 @@ import java.lang.ref.WeakReference;
  * </div>
  */
 public class Dialog implements DialogInterface, Window.Callback,
-        KeyEvent.Callback, OnCreateContextMenuListener {
+        KeyEvent.Callback, OnCreateContextMenuListener, Window.OnWindowDismissedCallback {
     private static final String TAG = "Dialog";
     private Activity mOwnerActivity;
-    
+
+    private final WindowManager mWindowManager;
+
     final Context mContext;
-    final WindowManager mWindowManager;
-    Window mWindow;
+    final Window mWindow;
+
     View mDecor;
-    private ActionBarImpl mActionBar;
+
+    private ActionBar mActionBar;
     /**
      * This field should be made private, so it is hidden from the SDK.
      * {@hide}
@@ -110,62 +124,69 @@ public class Dialog implements DialogInterface, Window.Callback,
     private static final int CANCEL = 0x44;
     private static final int SHOW = 0x45;
 
-    private Handler mListenersHandler;
+    private final Handler mListenersHandler;
+
+    private SearchEvent mSearchEvent;
 
     private ActionMode mActionMode;
 
-    private final Runnable mDismissAction = new Runnable() {
-        public void run() {
-            dismissDialog();
-        }
-    };
+    private int mActionModeTypeStarting = ActionMode.TYPE_PRIMARY;
+
+    private final Runnable mDismissAction = this::dismissDialog;
 
     /**
-     * Create a Dialog window that uses the default dialog frame style.
-     * 
-     * @param context The Context the Dialog is to run it.  In particular, it
-     *                uses the window manager and theme in this context to
-     *                present its UI.
+     * Creates a dialog window that uses the default dialog theme.
+     * <p>
+     * The supplied {@code context} is used to obtain the window manager and
+     * base theme used to present the dialog.
+     *
+     * @param context the context in which the dialog should run
+     * @see android.R.styleable#Theme_dialogTheme
      */
-    public Dialog(Context context) {
+    public Dialog(@NonNull Context context) {
         this(context, 0, true);
     }
 
     /**
-     * Create a Dialog window that uses a custom dialog style.
-     * 
-     * @param context The Context in which the Dialog should run. In particular, it
-     *                uses the window manager and theme from this context to
-     *                present its UI.
-     * @param theme A style resource describing the theme to use for the 
-     * window. See <a href="{@docRoot}guide/topics/resources/available-resources.html#stylesandthemes">Style 
-     * and Theme Resources</a> for more information about defining and using 
-     * styles.  This theme is applied on top of the current theme in 
-     * <var>context</var>.  If 0, the default dialog theme will be used.
+     * Creates a dialog window that uses a custom dialog style.
+     * <p>
+     * The supplied {@code context} is used to obtain the window manager and
+     * base theme used to present the dialog.
+     * <p>
+     * The supplied {@code theme} is applied on top of the context's theme. See
+     * <a href="{@docRoot}guide/topics/resources/available-resources.html#stylesandthemes">
+     * Style and Theme Resources</a> for more information about defining and
+     * using styles.
+     *
+     * @param context the context in which the dialog should run
+     * @param themeResId a style resource describing the theme to use for the
+     *              window, or {@code 0} to use the default dialog theme
      */
-    public Dialog(Context context, int theme) {
-        this(context, theme, true);
+    public Dialog(@NonNull Context context, @StyleRes int themeResId) {
+        this(context, themeResId, true);
     }
 
-    Dialog(Context context, int theme, boolean createContextThemeWrapper) {
+    Dialog(@NonNull Context context, @StyleRes int themeResId, boolean createContextThemeWrapper) {
         if (createContextThemeWrapper) {
-            if (theme == 0) {
-                TypedValue outValue = new TypedValue();
-                context.getTheme().resolveAttribute(com.android.internal.R.attr.dialogTheme,
-                        outValue, true);
-                theme = outValue.resourceId;
+            if (themeResId == 0) {
+                final TypedValue outValue = new TypedValue();
+                context.getTheme().resolveAttribute(R.attr.dialogTheme, outValue, true);
+                themeResId = outValue.resourceId;
             }
-            mContext = new ContextThemeWrapper(context, theme);
+            mContext = new ContextThemeWrapper(context, themeResId);
         } else {
             mContext = context;
         }
 
-        mWindowManager = (WindowManager)context.getSystemService(Context.WINDOW_SERVICE);
-        Window w = PolicyManager.makeNewWindow(mContext);
+        mWindowManager = (WindowManager) context.getSystemService(Context.WINDOW_SERVICE);
+
+        final Window w = new PhoneWindow(mContext);
         mWindow = w;
         w.setCallback(this);
+        w.setOnWindowDismissedCallback(this);
         w.setWindowManager(mWindowManager, null, null);
         w.setGravity(Gravity.CENTER);
+
         mListenersHandler = new ListenersHandler(this);
     }
 
@@ -174,15 +195,15 @@ public class Dialog implements DialogInterface, Window.Callback,
      * @hide
      */
     @Deprecated
-    protected Dialog(Context context, boolean cancelable,
-            Message cancelCallback) {
+    protected Dialog(@NonNull Context context, boolean cancelable,
+            @Nullable Message cancelCallback) {
         this(context);
         mCancelable = cancelable;
         mCancelMessage = cancelCallback;
     }
 
-    protected Dialog(Context context, boolean cancelable,
-            OnCancelListener cancelListener) {
+    protected Dialog(@NonNull Context context, boolean cancelable,
+            @Nullable OnCancelListener cancelListener) {
         this(context);
         mCancelable = cancelable;
         setOnCancelListener(cancelListener);
@@ -193,7 +214,7 @@ public class Dialog implements DialogInterface, Window.Callback,
      * 
      * @return Context The Context used by the Dialog.
      */
-    public final Context getContext() {
+    public final @NonNull Context getContext() {
         return mContext;
     }
 
@@ -202,7 +223,7 @@ public class Dialog implements DialogInterface, Window.Callback,
      *
      * @return The ActionBar attached to the dialog or null if no ActionBar is present.
      */
-    public ActionBar getActionBar() {
+    public @Nullable ActionBar getActionBar() {
         return mActionBar;
     }
 
@@ -212,7 +233,7 @@ public class Dialog implements DialogInterface, Window.Callback,
      * 
      * @param activity The Activity that owns this dialog.
      */
-    public final void setOwnerActivity(Activity activity) {
+    public final void setOwnerActivity(@NonNull Activity activity) {
         mOwnerActivity = activity;
         
         getWindow().setVolumeControlStream(mOwnerActivity.getVolumeControlStream());
@@ -226,7 +247,7 @@ public class Dialog implements DialogInterface, Window.Callback,
      * 
      * @return The Activity that owns this Dialog.
      */
-    public final Activity getOwnerActivity() {
+    public final @Nullable Activity getOwnerActivity() {
         return mOwnerActivity;
     }
     
@@ -235,6 +256,18 @@ public class Dialog implements DialogInterface, Window.Callback,
      */
     public boolean isShowing() {
         return mShowing;
+    }
+
+    /**
+     * Forces immediate creation of the dialog.
+     * <p>
+     * Note that you should not override this method to perform dialog creation.
+     * Rather, override {@link #onCreate(Bundle)}.
+     */
+    public void create() {
+        if (!mCreated) {
+            dispatchOnCreate(null);
+        }
     }
 
     /**
@@ -264,7 +297,10 @@ public class Dialog implements DialogInterface, Window.Callback,
         mDecor = mWindow.getDecorView();
 
         if (mActionBar == null && mWindow.hasFeature(Window.FEATURE_ACTION_BAR)) {
-            mActionBar = new ActionBarImpl(this);
+            final ApplicationInfo info = mContext.getApplicationInfo();
+            mWindow.setDefaultIcon(info.icon);
+            mWindow.setDefaultLogo(info.logo);
+            mActionBar = new WindowDecorActionBar(this);
         }
 
         WindowManager.LayoutParams l = mWindow.getAttributes();
@@ -277,13 +313,10 @@ public class Dialog implements DialogInterface, Window.Callback,
             l = nl;
         }
 
-        try {
-            mWindowManager.addView(mDecor, l);
-            mShowing = true;
-    
-            sendShowMessage();
-        } finally {
-        }
+        mWindowManager.addView(mDecor, l);
+        mShowing = true;
+
+        sendShowMessage();
     }
     
     /**
@@ -301,6 +334,7 @@ public class Dialog implements DialogInterface, Window.Callback,
      * method to do cleanup when the dialog is dismissed, instead implement
      * that in {@link #onStop}.
      */
+    @Override
     public void dismiss() {
         if (Looper.myLooper() == mHandler.getLooper()) {
             dismissDialog();
@@ -320,7 +354,7 @@ public class Dialog implements DialogInterface, Window.Callback,
         }
 
         try {
-            mWindowManager.removeView(mDecor);
+            mWindowManager.removeViewImmediate(mDecor);
         } finally {
             if (mActionMode != null) {
                 mActionMode.finish();
@@ -329,7 +363,7 @@ public class Dialog implements DialogInterface, Window.Callback,
             mWindow.closeAllPanels();
             onStop();
             mShowing = false;
-            
+
             sendDismissMessage();
         }
     }
@@ -348,7 +382,7 @@ public class Dialog implements DialogInterface, Window.Callback,
         }
     }
 
-    // internal method to make sure mcreated is set properly without requiring
+    // internal method to make sure mCreated is set properly without requiring
     // users to call through to super in onCreate
     void dispatchOnCreate(Bundle savedInstanceState) {
         if (!mCreated) {
@@ -360,7 +394,7 @@ public class Dialog implements DialogInterface, Window.Callback,
     /**
      * Similar to {@link Activity#onCreate}, you should initialize your dialog
      * in this method, including calling {@link #setContentView}.
-     * @param savedInstanceState If this dialog is being reinitalized after a
+     * @param savedInstanceState If this dialog is being reinitialized after a
      *     the hosting activity was previously shut down, holds the result from
      *     the most recent call to {@link #onSaveInstanceState}, or null if this
      *     is the first time.
@@ -393,7 +427,7 @@ public class Dialog implements DialogInterface, Window.Callback,
      * state.
      * @return A bundle with the state of the dialog.
      */
-    public Bundle onSaveInstanceState() {
+    public @NonNull Bundle onSaveInstanceState() {
         Bundle bundle = new Bundle();
         bundle.putBoolean(DIALOG_SHOWING_TAG, mShowing);
         if (mCreated) {
@@ -412,7 +446,7 @@ public class Dialog implements DialogInterface, Window.Callback,
      * @param savedInstanceState The state of the dialog previously saved by
      *     {@link #onSaveInstanceState()}.
      */
-    public void onRestoreInstanceState(Bundle savedInstanceState) {
+    public void onRestoreInstanceState(@NonNull Bundle savedInstanceState) {
         final Bundle dialogHierarchyState = savedInstanceState.getBundle(DIALOG_HIERARCHY_TAG);
         if (dialogHierarchyState == null) {
             // dialog has never been shown, or onCreated, nothing to restore.
@@ -433,7 +467,7 @@ public class Dialog implements DialogInterface, Window.Callback,
      * @return Window The current window, or null if the activity is not
      *         visual.
      */
-    public Window getWindow() {
+    public @Nullable Window getWindow() {
         return mWindow;
     }
 
@@ -446,18 +480,19 @@ public class Dialog implements DialogInterface, Window.Callback,
      * @see #getWindow
      * @see android.view.Window#getCurrentFocus
      */
-    public View getCurrentFocus() {
+    public @Nullable View getCurrentFocus() {
         return mWindow != null ? mWindow.getCurrentFocus() : null;
     }
 
     /**
-     * Finds a view that was identified by the id attribute from the XML that
-     * was processed in {@link #onStart}.
+     * Finds a child view with the given identifier. Returns null if the
+     * specified child view does not exist or the dialog has not yet been fully
+     * created (for example, via {@link #show()} or {@link #create()}).
      *
      * @param id the identifier of the view to find
-     * @return The view if found or null otherwise.
+     * @return The view with the given id or null.
      */
-    public View findViewById(int id) {
+    public @Nullable View findViewById(@IdRes int id) {
         return mWindow.findViewById(id);
     }
 
@@ -467,30 +502,30 @@ public class Dialog implements DialogInterface, Window.Callback,
      * 
      * @param layoutResID Resource ID to be inflated.
      */
-    public void setContentView(int layoutResID) {
+    public void setContentView(@LayoutRes int layoutResID) {
         mWindow.setContentView(layoutResID);
     }
 
     /**
      * Set the screen content to an explicit view.  This view is placed
      * directly into the screen's view hierarchy.  It can itself be a complex
-     * view hierarhcy.
+     * view hierarchy.
      * 
      * @param view The desired content to display.
      */
-    public void setContentView(View view) {
+    public void setContentView(@NonNull View view) {
         mWindow.setContentView(view);
     }
 
     /**
      * Set the screen content to an explicit view.  This view is placed
      * directly into the screen's view hierarchy.  It can itself be a complex
-     * view hierarhcy.
+     * view hierarchy.
      * 
      * @param view The desired content to display.
      * @param params Layout parameters for the view.
      */
-    public void setContentView(View view, ViewGroup.LayoutParams params) {
+    public void setContentView(@NonNull View view, @Nullable ViewGroup.LayoutParams params) {
         mWindow.setContentView(view, params);
     }
 
@@ -501,7 +536,7 @@ public class Dialog implements DialogInterface, Window.Callback,
      * @param view The desired content to display.
      * @param params Layout parameters for the view.
      */
-    public void addContentView(View view, ViewGroup.LayoutParams params) {
+    public void addContentView(@NonNull View view, @Nullable ViewGroup.LayoutParams params) {
         mWindow.addContentView(view, params);
     }
 
@@ -510,7 +545,7 @@ public class Dialog implements DialogInterface, Window.Callback,
      * 
      * @param title The new text to display in the title.
      */
-    public void setTitle(CharSequence title) {
+    public void setTitle(@Nullable CharSequence title) {
         mWindow.setTitle(title);
         mWindow.getAttributes().setTitle(title);
     }
@@ -521,7 +556,7 @@ public class Dialog implements DialogInterface, Window.Callback,
      *
      * @param titleId the title's text resource identifier
      */
-    public void setTitle(int titleId) {
+    public void setTitle(@StringRes int titleId) {
         setTitle(mContext.getText(titleId));
     }
 
@@ -536,7 +571,8 @@ public class Dialog implements DialogInterface, Window.Callback,
      * @see #onKeyUp
      * @see android.view.KeyEvent
      */
-    public boolean onKeyDown(int keyCode, KeyEvent event) {
+    @Override
+    public boolean onKeyDown(int keyCode, @NonNull KeyEvent event) {
         if (keyCode == KeyEvent.KEYCODE_BACK) {
             event.startTracking();
             return true;
@@ -550,7 +586,8 @@ public class Dialog implements DialogInterface, Window.Callback,
      * KeyEvent.Callback.onKeyLongPress()}: always returns false (doesn't handle
      * the event).
      */
-    public boolean onKeyLongPress(int keyCode, KeyEvent event) {
+    @Override
+    public boolean onKeyLongPress(int keyCode, @NonNull KeyEvent event) {
         return false;
     }
 
@@ -563,7 +600,8 @@ public class Dialog implements DialogInterface, Window.Callback,
      * @see #onKeyDown
      * @see KeyEvent
      */
-    public boolean onKeyUp(int keyCode, KeyEvent event) {
+    @Override
+    public boolean onKeyUp(int keyCode, @NonNull KeyEvent event) {
         if (keyCode == KeyEvent.KEYCODE_BACK && event.isTracking()
                 && !event.isCanceled()) {
             onBackPressed();
@@ -577,7 +615,8 @@ public class Dialog implements DialogInterface, Window.Callback,
      * KeyEvent.Callback.onKeyMultiple()}: always returns false (doesn't handle
      * the event).
      */
-    public boolean onKeyMultiple(int keyCode, int repeatCount, KeyEvent event) {
+    @Override
+    public boolean onKeyMultiple(int keyCode, int repeatCount, @NonNull KeyEvent event) {
         return false;
     }
     
@@ -602,7 +641,7 @@ public class Dialog implements DialogInterface, Window.Callback,
      * @param event Description of the key event.
      * @return True if the key shortcut was handled.
      */
-    public boolean onKeyShortcut(int keyCode, KeyEvent event) {
+    public boolean onKeyShortcut(int keyCode, @NonNull KeyEvent event) {
         return false;
     }
 
@@ -616,7 +655,7 @@ public class Dialog implements DialogInterface, Window.Callback,
      *         The default implementation will cancel the dialog when a touch
      *         happens outside of the window bounds.
      */
-    public boolean onTouchEvent(MotionEvent event) {
+    public boolean onTouchEvent(@NonNull MotionEvent event) {
         if (mCancelable && mShowing && mWindow.shouldCloseOnTouch(mContext, event)) {
             cancel();
             return true;
@@ -639,7 +678,7 @@ public class Dialog implements DialogInterface, Window.Callback,
      * @return Return true if you have consumed the event, false if you haven't.
      * The default implementation always returns false.
      */
-    public boolean onTrackballEvent(MotionEvent event) {
+    public boolean onTrackballEvent(@NonNull MotionEvent event) {
         return false;
     }
 
@@ -668,38 +707,50 @@ public class Dialog implements DialogInterface, Window.Callback,
      * @return Return true if you have consumed the event, false if you haven't.
      * The default implementation always returns false.
      */
-    public boolean onGenericMotionEvent(MotionEvent event) {
+    public boolean onGenericMotionEvent(@NonNull MotionEvent event) {
         return false;
     }
 
+    @Override
     public void onWindowAttributesChanged(WindowManager.LayoutParams params) {
         if (mDecor != null) {
             mWindowManager.updateViewLayout(mDecor, params);
         }
     }
 
+    @Override
     public void onContentChanged() {
     }
-    
+
+    @Override
     public void onWindowFocusChanged(boolean hasFocus) {
     }
 
+    @Override
     public void onAttachedToWindow() {
     }
-    
+
+    @Override
     public void onDetachedFromWindow() {
     }
-    
+
+    /** @hide */
+    @Override
+    public void onWindowDismissed(boolean finishTask) {
+        dismiss();
+    }
+
     /**
-     * Called to process key events.  You can override this to intercept all 
-     * key events before they are dispatched to the window.  Be sure to call 
+     * Called to process key events.  You can override this to intercept all
+     * key events before they are dispatched to the window.  Be sure to call
      * this implementation for key events that should be handled normally.
-     * 
+     *
      * @param event The key event.
-     * 
+     *
      * @return boolean Return true if this event was consumed.
      */
-    public boolean dispatchKeyEvent(KeyEvent event) {
+    @Override
+    public boolean dispatchKeyEvent(@NonNull KeyEvent event) {
         if ((mOnKeyListener != null) && (mOnKeyListener.onKey(this, event.getKeyCode(), event))) {
             return true;
         }
@@ -719,7 +770,8 @@ public class Dialog implements DialogInterface, Window.Callback,
      * @param event The key shortcut event.
      * @return True if this event was consumed.
      */
-    public boolean dispatchKeyShortcutEvent(KeyEvent event) {
+    @Override
+    public boolean dispatchKeyShortcutEvent(@NonNull KeyEvent event) {
         if (mWindow.superDispatchKeyShortcutEvent(event)) {
             return true;
         }
@@ -736,7 +788,8 @@ public class Dialog implements DialogInterface, Window.Callback,
      * 
      * @return boolean Return true if this event was consumed.
      */
-    public boolean dispatchTouchEvent(MotionEvent ev) {
+    @Override
+    public boolean dispatchTouchEvent(@NonNull MotionEvent ev) {
         if (mWindow.superDispatchTouchEvent(ev)) {
             return true;
         }
@@ -753,7 +806,8 @@ public class Dialog implements DialogInterface, Window.Callback,
      * 
      * @return boolean Return true if this event was consumed.
      */
-    public boolean dispatchTrackballEvent(MotionEvent ev) {
+    @Override
+    public boolean dispatchTrackballEvent(@NonNull MotionEvent ev) {
         if (mWindow.superDispatchTrackballEvent(ev)) {
             return true;
         }
@@ -770,14 +824,16 @@ public class Dialog implements DialogInterface, Window.Callback,
      *
      * @return boolean Return true if this event was consumed.
      */
-    public boolean dispatchGenericMotionEvent(MotionEvent ev) {
+    @Override
+    public boolean dispatchGenericMotionEvent(@NonNull MotionEvent ev) {
         if (mWindow.superDispatchGenericMotionEvent(ev)) {
             return true;
         }
         return onGenericMotionEvent(ev);
     }
 
-    public boolean dispatchPopulateAccessibilityEvent(AccessibilityEvent event) {
+    @Override
+    public boolean dispatchPopulateAccessibilityEvent(@NonNull AccessibilityEvent event) {
         event.setClassName(getClass().getName());
         event.setPackageName(mContext.getPackageName());
 
@@ -792,6 +848,7 @@ public class Dialog implements DialogInterface, Window.Callback,
     /**
      * @see Activity#onCreatePanelView(int)
      */
+    @Override
     public View onCreatePanelView(int featureId) {
         return null;
     }
@@ -799,7 +856,8 @@ public class Dialog implements DialogInterface, Window.Callback,
     /**
      * @see Activity#onCreatePanelMenu(int, Menu)
      */
-    public boolean onCreatePanelMenu(int featureId, Menu menu) {
+    @Override
+    public boolean onCreatePanelMenu(int featureId, @NonNull Menu menu) {
         if (featureId == Window.FEATURE_OPTIONS_PANEL) {
             return onCreateOptionsMenu(menu);
         }
@@ -810,10 +868,10 @@ public class Dialog implements DialogInterface, Window.Callback,
     /**
      * @see Activity#onPreparePanel(int, View, Menu)
      */
+    @Override
     public boolean onPreparePanel(int featureId, View view, Menu menu) {
         if (featureId == Window.FEATURE_OPTIONS_PANEL && menu != null) {
-            boolean goforit = onPrepareOptionsMenu(menu);
-            return goforit && menu.hasVisibleItems();
+            return onPrepareOptionsMenu(menu) && menu.hasVisibleItems();
         }
         return true;
     }
@@ -821,6 +879,7 @@ public class Dialog implements DialogInterface, Window.Callback,
     /**
      * @see Activity#onMenuOpened(int, Menu)
      */
+    @Override
     public boolean onMenuOpened(int featureId, Menu menu) {
         if (featureId == Window.FEATURE_ACTION_BAR) {
             mActionBar.dispatchMenuVisibilityChanged(true);
@@ -831,6 +890,7 @@ public class Dialog implements DialogInterface, Window.Callback,
     /**
      * @see Activity#onMenuItemSelected(int, MenuItem)
      */
+    @Override
     public boolean onMenuItemSelected(int featureId, MenuItem item) {
         return false;
     }
@@ -838,6 +898,7 @@ public class Dialog implements DialogInterface, Window.Callback,
     /**
      * @see Activity#onPanelClosed(int, Menu)
      */
+    @Override
     public void onPanelClosed(int featureId, Menu menu) {
         if (featureId == Window.FEATURE_ACTION_BAR) {
             mActionBar.dispatchMenuVisibilityChanged(false);
@@ -852,7 +913,7 @@ public class Dialog implements DialogInterface, Window.Callback,
      * @see Activity#onCreateOptionsMenu(Menu)
      * @see #getOwnerActivity()
      */
-    public boolean onCreateOptionsMenu(Menu menu) {
+    public boolean onCreateOptionsMenu(@NonNull Menu menu) {
         return true;
     }
 
@@ -864,87 +925,104 @@ public class Dialog implements DialogInterface, Window.Callback,
      * @see Activity#onPrepareOptionsMenu(Menu)
      * @see #getOwnerActivity()
      */
-    public boolean onPrepareOptionsMenu(Menu menu) {
+    public boolean onPrepareOptionsMenu(@NonNull Menu menu) {
         return true;
     }
 
     /**
      * @see Activity#onOptionsItemSelected(MenuItem)
      */
-    public boolean onOptionsItemSelected(MenuItem item) {
+    public boolean onOptionsItemSelected(@NonNull MenuItem item) {
         return false;
     }
 
     /**
      * @see Activity#onOptionsMenuClosed(Menu)
      */
-    public void onOptionsMenuClosed(Menu menu) {
+    public void onOptionsMenuClosed(@NonNull Menu menu) {
     }
 
     /**
      * @see Activity#openOptionsMenu()
      */
     public void openOptionsMenu() {
-        mWindow.openPanel(Window.FEATURE_OPTIONS_PANEL, null);
+        if (mWindow.hasFeature(Window.FEATURE_OPTIONS_PANEL)) {
+            mWindow.openPanel(Window.FEATURE_OPTIONS_PANEL, null);
+        }
     }
-    
+
     /**
      * @see Activity#closeOptionsMenu()
      */
     public void closeOptionsMenu() {
-        mWindow.closePanel(Window.FEATURE_OPTIONS_PANEL);
+        if (mWindow.hasFeature(Window.FEATURE_OPTIONS_PANEL)) {
+            mWindow.closePanel(Window.FEATURE_OPTIONS_PANEL);
+        }
     }
 
     /**
      * @see Activity#invalidateOptionsMenu()
      */
     public void invalidateOptionsMenu() {
-        mWindow.invalidatePanelMenu(Window.FEATURE_OPTIONS_PANEL);
+        if (mWindow.hasFeature(Window.FEATURE_OPTIONS_PANEL)) {
+            mWindow.invalidatePanelMenu(Window.FEATURE_OPTIONS_PANEL);
+        }
     }
 
     /**
      * @see Activity#onCreateContextMenu(ContextMenu, View, ContextMenuInfo)
      */
+    @Override
     public void onCreateContextMenu(ContextMenu menu, View v, ContextMenuInfo menuInfo) {
     }
 
     /**
      * @see Activity#registerForContextMenu(View)
      */
-    public void registerForContextMenu(View view) {
+    public void registerForContextMenu(@NonNull View view) {
         view.setOnCreateContextMenuListener(this);
     }
     
     /**
      * @see Activity#unregisterForContextMenu(View)
      */
-    public void unregisterForContextMenu(View view) {
+    public void unregisterForContextMenu(@NonNull View view) {
         view.setOnCreateContextMenuListener(null);
     }
     
     /**
      * @see Activity#openContextMenu(View)
      */
-    public void openContextMenu(View view) {
+    public void openContextMenu(@NonNull View view) {
         view.showContextMenu();
     }
 
     /**
      * @see Activity#onContextItemSelected(MenuItem)
      */
-    public boolean onContextItemSelected(MenuItem item) {
+    public boolean onContextItemSelected(@NonNull MenuItem item) {
         return false;
     }
-    
+
     /**
      * @see Activity#onContextMenuClosed(Menu)
      */
-    public void onContextMenuClosed(Menu menu) {
+    public void onContextMenuClosed(@NonNull Menu menu) {
     }
-    
+
     /**
      * This hook is called when the user signals the desire to start a search.
      */
+    @Override
+    public boolean onSearchRequested(@NonNull SearchEvent searchEvent) {
+        mSearchEvent = searchEvent;
+        return onSearchRequested();
+    }
+
+    /**
+     * This hook is called when the user signals the desire to start a search.
+     */
+    @Override
     public boolean onSearchRequested() {
         final SearchManager searchManager = (SearchManager) mContext
                 .getSystemService(Context.SEARCH_SERVICE);
@@ -960,11 +1038,33 @@ public class Dialog implements DialogInterface, Window.Callback,
         }
     }
 
+    /**
+     * During the onSearchRequested() callbacks, this function will return the
+     * {@link SearchEvent} that triggered the callback, if it exists.
+     *
+     * @return SearchEvent The SearchEvent that triggered the {@link
+     *                    #onSearchRequested} callback.
+     */
+    public final @Nullable SearchEvent getSearchEvent() {
+        return mSearchEvent;
+    }
+
+    @Override
     public ActionMode onWindowStartingActionMode(ActionMode.Callback callback) {
-        if (mActionBar != null) {
+        if (mActionBar != null && mActionModeTypeStarting == ActionMode.TYPE_PRIMARY) {
             return mActionBar.startActionMode(callback);
         }
         return null;
+    }
+
+    @Override
+    public ActionMode onWindowStartingActionMode(ActionMode.Callback callback, int type) {
+        try {
+            mActionModeTypeStarting = type;
+            return onWindowStartingActionMode(callback);
+        } finally {
+            mActionModeTypeStarting = ActionMode.TYPE_PRIMARY;
+        }
     }
 
     /**
@@ -973,6 +1073,8 @@ public class Dialog implements DialogInterface, Window.Callback,
      * Note that if you override this method you should always call through
      * to the superclass implementation by calling super.onActionModeStarted(mode).
      */
+    @Override
+    @CallSuper
     public void onActionModeStarted(ActionMode mode) {
         mActionMode = mode;
     }
@@ -983,6 +1085,8 @@ public class Dialog implements DialogInterface, Window.Callback,
      * Note that if you override this method you should always call through
      * to the superclass implementation by calling super.onActionModeFinished(mode).
      */
+    @Override
+    @CallSuper
     public void onActionModeFinished(ActionMode mode) {
         if (mode == mActionMode) {
             mActionMode = null;
@@ -1039,7 +1143,7 @@ public class Dialog implements DialogInterface, Window.Callback,
      * Convenience for calling
      * {@link android.view.Window#setFeatureDrawableResource}.
      */
-    public final void setFeatureDrawableResource(int featureId, int resId) {
+    public final void setFeatureDrawableResource(int featureId, @DrawableRes int resId) {
         getWindow().setFeatureDrawableResource(featureId, resId);
     }
 
@@ -1047,7 +1151,7 @@ public class Dialog implements DialogInterface, Window.Callback,
      * Convenience for calling
      * {@link android.view.Window#setFeatureDrawableUri}.
      */
-    public final void setFeatureDrawableUri(int featureId, Uri uri) {
+    public final void setFeatureDrawableUri(int featureId, @Nullable Uri uri) {
         getWindow().setFeatureDrawableUri(featureId, uri);
     }
 
@@ -1055,7 +1159,7 @@ public class Dialog implements DialogInterface, Window.Callback,
      * Convenience for calling
      * {@link android.view.Window#setFeatureDrawable(int, Drawable)}.
      */
-    public final void setFeatureDrawable(int featureId, Drawable drawable) {
+    public final void setFeatureDrawable(int featureId, @Nullable Drawable drawable) {
         getWindow().setFeatureDrawable(featureId, drawable);
     }
 
@@ -1067,7 +1171,7 @@ public class Dialog implements DialogInterface, Window.Callback,
         getWindow().setFeatureDrawableAlpha(featureId, alpha);
     }
 
-    public LayoutInflater getLayoutInflater() {
+    public @NonNull LayoutInflater getLayoutInflater() {
         return getWindow().getLayoutInflater();
     }
 
@@ -1099,6 +1203,7 @@ public class Dialog implements DialogInterface, Window.Callback,
      * Cancel the dialog.  This is essentially the same as calling {@link #dismiss()}, but it will
      * also call your {@link DialogInterface.OnCancelListener} (if registered).
      */
+    @Override
     public void cancel() {
         if (!mCanceled && mCancelMessage != null) {
             mCanceled = true;
@@ -1119,7 +1224,7 @@ public class Dialog implements DialogInterface, Window.Callback,
      * 
      * @param listener The {@link DialogInterface.OnCancelListener} to use.
      */
-    public void setOnCancelListener(final OnCancelListener listener) {
+    public void setOnCancelListener(@Nullable OnCancelListener listener) {
         if (mCancelAndDismissTaken != null) {
             throw new IllegalStateException(
                     "OnCancelListener is already taken by "
@@ -1137,7 +1242,7 @@ public class Dialog implements DialogInterface, Window.Callback,
      * @param msg The msg to send when the dialog is canceled.
      * @see #setOnCancelListener(android.content.DialogInterface.OnCancelListener)
      */
-    public void setCancelMessage(final Message msg) {
+    public void setCancelMessage(@Nullable Message msg) {
         mCancelMessage = msg;
     }
 
@@ -1145,7 +1250,7 @@ public class Dialog implements DialogInterface, Window.Callback,
      * Set a listener to be invoked when the dialog is dismissed.
      * @param listener The {@link DialogInterface.OnDismissListener} to use.
      */
-    public void setOnDismissListener(final OnDismissListener listener) {
+    public void setOnDismissListener(@Nullable OnDismissListener listener) {
         if (mCancelAndDismissTaken != null) {
             throw new IllegalStateException(
                     "OnDismissListener is already taken by "
@@ -1162,7 +1267,7 @@ public class Dialog implements DialogInterface, Window.Callback,
      * Sets a listener to be invoked when the dialog is shown.
      * @param listener The {@link DialogInterface.OnShowListener} to use.
      */
-    public void setOnShowListener(OnShowListener listener) {
+    public void setOnShowListener(@Nullable OnShowListener listener) {
         if (listener != null) {
             mShowMessage = mListenersHandler.obtainMessage(SHOW, listener);
         } else {
@@ -1174,13 +1279,13 @@ public class Dialog implements DialogInterface, Window.Callback,
      * Set a message to be sent when the dialog is dismissed.
      * @param msg The msg to send when the dialog is dismissed.
      */
-    public void setDismissMessage(final Message msg) {
+    public void setDismissMessage(@Nullable Message msg) {
         mDismissMessage = msg;
     }
 
     /** @hide */
-    public boolean takeCancelAndDismissListeners(String msg, final OnCancelListener cancel,
-            final OnDismissListener dismiss) {
+    public boolean takeCancelAndDismissListeners(@Nullable String msg,
+            @Nullable OnCancelListener cancel, @Nullable OnDismissListener dismiss) {
         if (mCancelAndDismissTaken != null) {
             mCancelAndDismissTaken = null;
         } else if (mCancelMessage != null || mDismissMessage != null) {
@@ -1214,15 +1319,15 @@ public class Dialog implements DialogInterface, Window.Callback,
     /**
      * Sets the callback that will be called if a key is dispatched to the dialog.
      */
-    public void setOnKeyListener(final OnKeyListener onKeyListener) {
+    public void setOnKeyListener(@Nullable OnKeyListener onKeyListener) {
         mOnKeyListener = onKeyListener;
     }
 
     private static final class ListenersHandler extends Handler {
-        private WeakReference<DialogInterface> mDialog;
+        private final WeakReference<DialogInterface> mDialog;
 
         public ListenersHandler(Dialog dialog) {
-            mDialog = new WeakReference<DialogInterface>(dialog);
+            mDialog = new WeakReference<>(dialog);
         }
 
         @Override

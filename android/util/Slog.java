@@ -16,11 +16,6 @@
 
 package android.util;
 
-import com.android.internal.os.RuntimeInit;
-
-import java.io.PrintWriter;
-import java.io.StringWriter;
-
 /**
  * @hide
  */
@@ -76,6 +71,49 @@ public final class Slog {
     public static int e(String tag, String msg, Throwable tr) {
         return Log.println_native(Log.LOG_ID_SYSTEM, Log.ERROR, tag,
                 msg + '\n' + Log.getStackTraceString(tr));
+    }
+
+    /**
+     * Like {@link Log#wtf(String, String)}, but will never cause the caller to crash, and
+     * will always be handled asynchronously.  Primarily for use by coding running within
+     * the system process.
+     */
+    public static int wtf(String tag, String msg) {
+        return Log.wtf(Log.LOG_ID_SYSTEM, tag, msg, null, false, true);
+    }
+
+    /**
+     * Like {@link #wtf(String, String)}, but does not output anything to the log.
+     */
+    public static void wtfQuiet(String tag, String msg) {
+        Log.wtfQuiet(Log.LOG_ID_SYSTEM, tag, msg, true);
+    }
+
+    /**
+     * Like {@link Log#wtfStack(String, String)}, but will never cause the caller to crash, and
+     * will always be handled asynchronously.  Primarily for use by coding running within
+     * the system process.
+     */
+    public static int wtfStack(String tag, String msg) {
+        return Log.wtf(Log.LOG_ID_SYSTEM, tag, msg, null, true, true);
+    }
+
+    /**
+     * Like {@link Log#wtf(String, Throwable)}, but will never cause the caller to crash,
+     * and will always be handled asynchronously.  Primarily for use by coding running within
+     * the system process.
+     */
+    public static int wtf(String tag, Throwable tr) {
+        return Log.wtf(Log.LOG_ID_SYSTEM, tag, tr.getMessage(), tr, false, true);
+    }
+
+    /**
+     * Like {@link Log#wtf(String, String, Throwable)}, but will never cause the caller to crash,
+     * and will always be handled asynchronously.  Primarily for use by coding running within
+     * the system process.
+     */
+    public static int wtf(String tag, String msg, Throwable tr) {
+        return Log.wtf(Log.LOG_ID_SYSTEM, tag, msg, tr, false, true);
     }
 
     public static int println(int priority, String tag, String msg) {

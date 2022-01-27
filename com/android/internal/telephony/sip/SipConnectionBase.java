@@ -23,6 +23,7 @@ import com.android.internal.telephony.PhoneConstants;
 import com.android.internal.telephony.UUSInfo;
 
 import android.os.SystemClock;
+import android.telephony.DisconnectCause;
 import android.telephony.Rlog;
 import android.telephony.PhoneNumberUtils;
 
@@ -31,8 +32,6 @@ abstract class SipConnectionBase extends Connection {
     private static final boolean DBG = true;
     private static final boolean VDBG = false; // STOPSHIP if true
 
-    private String mPostDialString;      // outgoing calls only
-    private int mNextPostDialChar;       // index into postDialString
     /*
      * These time/timespan values are based on System.currentTimeMillis(),
      * i.e., "wall clock" time.
@@ -51,11 +50,9 @@ abstract class SipConnectionBase extends Connection {
     private long mHoldingStartTime;  // The time when the Connection last transitioned
                             // into HOLDING
 
-    private DisconnectCause mCause = DisconnectCause.NOT_DISCONNECTED;
-    private PostDialState mPostDialState = PostDialState.NOT_STARTED;
-
     SipConnectionBase(String dialString) {
-        if (DBG) log("SipConnectionBase: ctor dialString=" + dialString);
+        super(PhoneConstants.PHONE_TYPE_SIP);
+        if (DBG) log("SipConnectionBase: ctor dialString=" + SipPhone.hidePii(dialString));
         mPostDialString = PhoneNumberUtils.extractPostDialPortion(dialString);
 
         mCreateTime = System.currentTimeMillis();
@@ -128,21 +125,14 @@ abstract class SipConnectionBase extends Connection {
         return dur;
     }
 
-    @Override
-    public DisconnectCause getDisconnectCause() {
-        if (VDBG) log("getDisconnectCause: ret=" + mCause);
-        return mCause;
-    }
-
-    void setDisconnectCause(DisconnectCause cause) {
+    void setDisconnectCause(int cause) {
         if (DBG) log("setDisconnectCause: prev=" + mCause + " new=" + cause);
         mCause = cause;
     }
 
     @Override
-    public PostDialState getPostDialState() {
-        if (VDBG) log("getPostDialState: ret=" + mPostDialState);
-        return mPostDialState;
+    public String getVendorDisconnectCause() {
+      return null;
     }
 
     @Override
@@ -162,19 +152,6 @@ abstract class SipConnectionBase extends Connection {
 
     protected abstract Phone getPhone();
 
-    @Override
-    public String getRemainingPostDialString() {
-        if (mPostDialState == PostDialState.CANCELLED
-            || mPostDialState == PostDialState.COMPLETE
-            || mPostDialString == null
-            || mPostDialString.length() <= mNextPostDialChar) {
-            if (DBG) log("getRemaingPostDialString: ret empty string");
-            return "";
-        }
-
-        return mPostDialString.substring(mNextPostDialChar);
-    }
-
     private void log(String msg) {
         Rlog.d(LOG_TAG, msg);
     }
@@ -191,5 +168,30 @@ abstract class SipConnectionBase extends Connection {
         // FIXME: what's this for SIP?
         if (VDBG) log("getUUSInfo: ? ret=null");
         return null;
+    }
+
+    @Override
+    public int getPreciseDisconnectCause() {
+        return 0;
+    }
+
+    @Override
+    public long getHoldingStartTime() {
+        return mHoldingStartTime;
+    }
+
+    @Override
+    public long getConnectTimeReal() {
+        return mConnectTimeReal;
+    }
+
+    @Override
+    public Connection getOrigConnection() {
+        return null;
+    }
+
+    @Override
+    public boolean isMultiparty() {
+        return false;
     }
 }

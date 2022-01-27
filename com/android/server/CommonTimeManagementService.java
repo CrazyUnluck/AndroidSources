@@ -18,7 +18,6 @@ package com.android.server;
 
 import java.io.FileDescriptor;
 import java.io.PrintWriter;
-import java.net.InetAddress;
 
 import android.content.BroadcastReceiver;
 import android.content.Context;
@@ -26,10 +25,8 @@ import android.content.Intent;
 import android.content.IntentFilter;
 import android.content.pm.PackageManager;
 import android.net.ConnectivityManager;
-import android.net.IConnectivityManager;
 import android.net.INetworkManagementEventObserver;
 import android.net.InterfaceConfiguration;
-import android.net.NetworkInfo;
 import android.os.Binder;
 import android.os.CommonTimeConfig;
 import android.os.Handler;
@@ -39,6 +36,8 @@ import android.os.RemoteException;
 import android.os.ServiceManager;
 import android.os.SystemProperties;
 import android.util.Log;
+
+import com.android.server.net.BaseNetworkObserver;
 
 /**
  * @hide
@@ -104,9 +103,7 @@ class CommonTimeManagementService extends Binder {
     /*
      * Callback handler implementations.
      */
-    private INetworkManagementEventObserver mIfaceObserver =
-        new INetworkManagementEventObserver.Stub() {
-
+    private INetworkManagementEventObserver mIfaceObserver = new BaseNetworkObserver() {
         public void interfaceStatusChanged(String iface, boolean up) {
             reevaluateServiceState();
         }
@@ -119,9 +116,6 @@ class CommonTimeManagementService extends Binder {
         public void interfaceRemoved(String iface) {
             reevaluateServiceState();
         }
-        public void limitReached(String limitName, String iface) { }
-
-        public void interfaceClassDataActivityChanged(String label, boolean active) {}
     };
 
     private BroadcastReceiver mConnectivityMangerObserver = new BroadcastReceiver() {
@@ -153,7 +147,7 @@ class CommonTimeManagementService extends Binder {
         mContext = context;
     }
 
-    void systemReady() {
+    void systemRunning() {
         if (ServiceManager.checkService(CommonTimeConfig.SERVICE_NAME) == null) {
             Log.i(TAG, "No common time service detected on this platform.  " +
                        "Common time services will be unavailable.");

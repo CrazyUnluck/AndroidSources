@@ -16,19 +16,28 @@
 
 package android.media;
 
-import android.util.AndroidRuntimeException;
-import android.util.Log;
 import java.io.File;
 import java.io.FileDescriptor;
-import android.os.ParcelFileDescriptor;
 import java.lang.ref.WeakReference;
+
+import android.app.ActivityThread;
+import android.app.AppOpsManager;
 import android.content.Context;
 import android.content.res.AssetFileDescriptor;
-import java.io.IOException;
-
 import android.os.Handler;
+import android.os.IBinder;
 import android.os.Looper;
 import android.os.Message;
+import android.os.ParcelFileDescriptor;
+import android.os.Process;
+import android.os.RemoteException;
+import android.os.ServiceManager;
+import android.util.AndroidRuntimeException;
+import android.util.Log;
+
+import com.android.internal.app.IAppOpsCallback;
+import com.android.internal.app.IAppOpsService;
+
 
 /**
  * The SoundPool class manages and plays audio resources for applications.
@@ -102,24 +111,29 @@ import android.os.Message;
  * another level, a new SoundPool is created, sounds are loaded, and play
  * resumes.</p>
  */
-public class SoundPool
-{
+public class SoundPool {
     static { System.loadLibrary("soundpool"); }
-
-    private final static String TAG = "SoundPool";
-    private final static boolean DEBUG = false;
-
-    private int mNativeContext; // accessed by native methods
-
-    private EventHandler mEventHandler;
-    private OnLoadCompleteListener mOnLoadCompleteListener;
-
-    private final Object mLock;
 
     // SoundPool messages
     //
     // must match SoundPool.h
     private static final int SAMPLE_LOADED = 1;
+
+    private final static String TAG = "SoundPool";
+    private final static boolean DEBUG = Log.isLoggable(TAG, Log.DEBUG);
+
+    private long mNativeContext; // accessed by native methods
+
+    private EventHandler mEventHandler;
+    private SoundPool.OnLoadCompleteListener mOnLoadCompleteListener;
+    private boolean mHasAppOpsPlayAudio;
+
+    private final Object mLock;
+    private final AudioAttributes mAttributes;
+    private final IAppOpsService mAppOps;
+    private final IAppOpsCallback mAppOpsCallback;
+
+    private static IAudioService sService;
 
     /**
      * Constructor. Constructs a SoundPool object with the following
@@ -133,15 +147,62 @@ public class SoundPool
      * @param srcQuality the sample-rate converter quality. Currently has no
      *                   effect. Use 0 for the default.
      * @return a SoundPool object, or null if creation failed
+     * @deprecated use {@link SoundPool.Builder} instead to create and configure a
+     *     SoundPool instance
      */
     public SoundPool(int maxStreams, int streamType, int srcQuality) {
+        this(maxStreams,
+                new AudioAttributes.Builder().setInternalLegacyStreamType(streamType).build());
+    }
 
+    private SoundPool(int maxStreams, AudioAttributes attributes) {
         // do native setup
-        if (native_setup(new WeakReference(this), maxStreams, streamType, srcQuality) != 0) {
+        if (native_setup(new WeakReference<SoundPool>(this), maxStreams, attributes) != 0) {
             throw new RuntimeException("Native setup failed");
         }
         mLock = new Object();
+        mAttributes = attributes;
+        IBinder b = ServiceManager.getService(Context.APP_OPS_SERVICE);
+        mAppOps = IAppOpsService.Stub.asInterface(b);
+        // initialize mHasAppOpsPlayAudio
+        updateAppOpsPlayAudio();
+        // register a callback to monitor whether the OP_PLAY_AUDIO is still allowed
+        mAppOpsCallback = new IAppOpsCallback.Stub() {
+            public void opChanged(int op, int uid, String packageName) {
+                synchronized (mLock) {
+                    if (op == AppOpsManager.OP_PLAY_AUDIO) {
+                        updateAppOpsPlayAudio();
+                    }
+                }
+            }
+        };
+        try {
+            mAppOps.startWatchingMode(AppOpsManager.OP_PLAY_AUDIO,
+                    ActivityThread.currentPackageName(), mAppOpsCallback);
+        } catch (RemoteException e) {
+            mHasAppOpsPlayAudio = false;
+        }
     }
+
+    /**
+     * Release the SoundPool resources.
+     *
+     * Release all memory and native resources used by the SoundPool
+     * object. The SoundPool can no longer be used and the reference
+     * should be set to null.
+     */
+    public final void release() {
+        try {
+            mAppOps.stopWatchingMode(mAppOpsCallback);
+        } catch (RemoteException e) {
+            // nothing to do here, the SoundPool is being released anyway
+        }
+        native_release();
+    }
+
+    private native final void native_release();
+
+    protected void finalize() { release(); }
 
     /**
      * Load the sound from the specified path.
@@ -151,17 +212,12 @@ public class SoundPool
      *                 a value of 1 for future compatibility.
      * @return a sound ID. This value can be used to play or unload the sound.
      */
-    public int load(String path, int priority)
-    {
-        // pass network streams to player
-        if (path.startsWith("http:"))
-            return _load(path, priority);
-
-        // try local path
+    public int load(String path, int priority) {
         int id = 0;
         try {
             File f = new File(path);
-            ParcelFileDescriptor fd = ParcelFileDescriptor.open(f, ParcelFileDescriptor.MODE_READ_ONLY);
+            ParcelFileDescriptor fd = ParcelFileDescriptor.open(f,
+                    ParcelFileDescriptor.MODE_READ_ONLY);
             if (fd != null) {
                 id = _load(fd.getFileDescriptor(), 0, f.length(), priority);
                 fd.close();
@@ -239,10 +295,6 @@ public class SoundPool
         return _load(fd, offset, length, priority);
     }
 
-    private native final int _load(String uri, int priority);
-
-    private native final int _load(FileDescriptor fd, long offset, long length, int priority);
-
     /**
      * Unload a sound from a sound ID.
      *
@@ -279,8 +331,13 @@ public class SoundPool
      * @param rate playback rate (1.0 = normal playback, range 0.5 to 2.0)
      * @return non-zero streamID if successful, zero if failed
      */
-    public native final int play(int soundID, float leftVolume, float rightVolume,
-            int priority, int loop, float rate);
+    public final int play(int soundID, float leftVolume, float rightVolume,
+            int priority, int loop, float rate) {
+        if (isRestricted()) {
+            leftVolume = rightVolume = 0;
+        }
+        return _play(soundID, leftVolume, rightVolume, priority, loop, rate);
+    }
 
     /**
      * Pause a playback stream.
@@ -350,8 +407,12 @@ public class SoundPool
      * @param leftVolume left volume value (range = 0.0 to 1.0)
      * @param rightVolume right volume value (range = 0.0 to 1.0)
      */
-    public native final void setVolume(int streamID,
-            float leftVolume, float rightVolume);
+    public final void setVolume(int streamID, float leftVolume, float rightVolume) {
+        if (isRestricted()) {
+            return;
+        }
+        _setVolume(streamID, leftVolume, rightVolume);
+    }
 
     /**
      * Similar, except set volume of all channels to same value.
@@ -400,17 +461,12 @@ public class SoundPool
      */
     public native final void setRate(int streamID, float rate);
 
-    /**
-     * Interface definition for a callback to be invoked when all the
-     * sounds are loaded.
-     */
-    public interface OnLoadCompleteListener
-    {
+    public interface OnLoadCompleteListener {
         /**
          * Called when a sound has completed loading.
          *
          * @param soundPool SoundPool object from the load() method
-         * @param soundPool the sample ID of the sound loaded.
+         * @param sampleId the sample ID of the sound loaded.
          * @param status the status of the load operation (0 = success)
          */
         public void onLoadComplete(SoundPool soundPool, int sampleId, int status);
@@ -419,16 +475,15 @@ public class SoundPool
     /**
      * Sets the callback hook for the OnLoadCompleteListener.
      */
-    public void setOnLoadCompleteListener(OnLoadCompleteListener listener)
-    {
+    public void setOnLoadCompleteListener(OnLoadCompleteListener listener) {
         synchronized(mLock) {
             if (listener != null) {
                 // setup message handler
                 Looper looper;
                 if ((looper = Looper.myLooper()) != null) {
-                    mEventHandler = new EventHandler(this, looper);
+                    mEventHandler = new EventHandler(looper);
                 } else if ((looper = Looper.getMainLooper()) != null) {
-                    mEventHandler = new EventHandler(this, looper);
+                    mEventHandler = new EventHandler(looper);
                 } else {
                     mEventHandler = null;
                 }
@@ -439,13 +494,77 @@ public class SoundPool
         }
     }
 
-    private class EventHandler extends Handler
+    private static IAudioService getService()
     {
-        private SoundPool mSoundPool;
+        if (sService != null) {
+            return sService;
+        }
+        IBinder b = ServiceManager.getService(Context.AUDIO_SERVICE);
+        sService = IAudioService.Stub.asInterface(b);
+        return sService;
+    }
 
-        public EventHandler(SoundPool soundPool, Looper looper) {
+    private boolean isRestricted() {
+        IAudioService service = getService();
+        boolean cameraSoundForced = false;
+
+        try {
+            cameraSoundForced = service.isCameraSoundForced();
+        } catch (RemoteException e) {
+            Log.e(TAG, "Cannot access AudioService in isRestricted()");
+        }
+
+        if (cameraSoundForced &&
+                ((mAttributes.getAllFlags() & AudioAttributes.FLAG_AUDIBILITY_ENFORCED) != 0)
+// FIXME: should also check usage when set properly by camera app
+//                && (mAttributes.getUsage() == AudioAttributes.USAGE_ASSISTANCE_SONIFICATION)
+                ) {
+            return false;
+        }
+
+        if ((mAttributes.getAllFlags() & AudioAttributes.FLAG_BYPASS_INTERRUPTION_POLICY) != 0) {
+            return false;
+        }
+        return !mHasAppOpsPlayAudio;
+    }
+
+    private void updateAppOpsPlayAudio() {
+        try {
+            final int mode = mAppOps.checkAudioOperation(AppOpsManager.OP_PLAY_AUDIO,
+                    mAttributes.getUsage(),
+                    Process.myUid(), ActivityThread.currentPackageName());
+            mHasAppOpsPlayAudio = (mode == AppOpsManager.MODE_ALLOWED);
+        } catch (RemoteException e) {
+            mHasAppOpsPlayAudio = false;
+        }
+    }
+
+    private native final int _load(FileDescriptor fd, long offset, long length, int priority); 
+
+    private native final int native_setup(Object weakRef, int maxStreams,
+            Object/*AudioAttributes*/ attributes);
+
+    private native final int _play(int soundID, float leftVolume, float rightVolume,
+            int priority, int loop, float rate);
+
+    private native final void _setVolume(int streamID, float leftVolume, float rightVolume);
+
+    // post event from native code to message handler
+    @SuppressWarnings("unchecked")
+    private static void postEventFromNative(Object ref, int msg, int arg1, int arg2, Object obj) {
+        SoundPool soundPool = ((WeakReference<SoundPool>) ref).get();
+        if (soundPool == null)
+            return;
+
+        if (soundPool.mEventHandler != null) {
+            Message m = soundPool.mEventHandler.obtainMessage(msg, arg1, arg2, obj);
+            soundPool.mEventHandler.sendMessage(m);
+        }
+    }
+
+    private final class EventHandler extends Handler {
+        public EventHandler(Looper looper) {
             super(looper);
-            mSoundPool = soundPool;
         }
 
         @Override
@@ -455,7 +574,7 @@ public class SoundPool
                 if (DEBUG) Log.d(TAG, "Sample " + msg.arg1 + " loaded");
                 synchronized(mLock) {
                     if (mOnLoadCompleteListener != null) {
-                        mOnLoadCompleteListener.onLoadComplete(mSoundPool, msg.arg1, msg.arg2);
+                        mOnLoadCompleteListener.onLoadComplete(SoundPool.this, msg.arg1, msg.arg2);
                     }
                 }
                 break;
@@ -466,29 +585,59 @@ public class SoundPool
         }
     }
 
-    // post event from native code to message handler
-    private static void postEventFromNative(Object weakRef, int msg, int arg1, int arg2, Object obj)
-    {
-        SoundPool soundPool = (SoundPool)((WeakReference)weakRef).get();
-        if (soundPool == null)
-            return;
+    /**
+     * Builder class for {@link SoundPool} objects.
+     */
+    public static class Builder {
+        private int mMaxStreams = 1;
+        private AudioAttributes mAudioAttributes;
 
-        if (soundPool.mEventHandler != null) {
-            Message m = soundPool.mEventHandler.obtainMessage(msg, arg1, arg2, obj);
-            soundPool.mEventHandler.sendMessage(m);
+        /**
+         * Constructs a new Builder with the defaults format values.
+         * If not provided, the maximum number of streams is 1 (see {@link #setMaxStreams(int)} to
+         * change it), and the audio attributes have a usage value of
+         * {@link AudioAttributes#USAGE_MEDIA} (see {@link #setAudioAttributes(AudioAttributes)} to
+         * change them).
+         */
+        public Builder() {
+        }
+
+        /**
+         * Sets the maximum of number of simultaneous streams that can be played simultaneously.
+         * @param maxStreams a value equal to 1 or greater.
+         * @return the same Builder instance
+         * @throws IllegalArgumentException
+         */
+        public Builder setMaxStreams(int maxStreams) throws IllegalArgumentException {
+            if (maxStreams <= 0) {
+                throw new IllegalArgumentException(
+                        "Strictly positive value required for the maximum number of streams");
+            }
+            mMaxStreams = maxStreams;
+            return this;
+        }
+
+        /**
+         * Sets the {@link AudioAttributes}. For examples, game applications will use attributes
+         * built with usage information set to {@link AudioAttributes#USAGE_GAME}.
+         * @param attributes a non-null
+         * @return
+         */
+        public Builder setAudioAttributes(AudioAttributes attributes)
+                throws IllegalArgumentException {
+            if (attributes == null) {
+                throw new IllegalArgumentException("Invalid null AudioAttributes");
+            }
+            mAudioAttributes = attributes;
+            return this;
+        }
+
+        public SoundPool build() {
+            if (mAudioAttributes == null) {
+                mAudioAttributes = new AudioAttributes.Builder()
+                        .setUsage(AudioAttributes.USAGE_MEDIA).build();
+            }
+            return new SoundPool(mMaxStreams, mAudioAttributes);
         }
     }
-
-    /**
-     * Release the SoundPool resources.
-     *
-     * Release all memory and native resources used by the SoundPool
-     * object. The SoundPool can no longer be used and the reference
-     * should be set to null.
-     */
-    public native final void release();
-
-    private native final int native_setup(Object weakRef, int maxStreams, int streamType, int srcQuality);
-
-    protected void finalize() { release(); }
 }

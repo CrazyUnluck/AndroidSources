@@ -28,16 +28,13 @@ import android.os.Build;
 import android.util.Base64;
 import android.util.Log;
 
-import com.android.ex.photo.PhotoViewActivity;
-import com.android.ex.photo.loaders.PhotoBitmapLoader.BitmapResult;
+import com.android.ex.photo.PhotoViewController;
+import com.android.ex.photo.loaders.PhotoBitmapLoaderInterface.BitmapResult;
 
 import java.io.ByteArrayInputStream;
-import java.io.ByteArrayOutputStream;
 import java.io.FileNotFoundException;
 import java.io.IOException;
 import java.io.InputStream;
-import java.net.MalformedURLException;
-import java.net.URL;
 import java.util.regex.Pattern;
 
 
@@ -68,10 +65,10 @@ public class ImageUtils {
         if (Build.VERSION.SDK_INT >= 11) {
             sUseImageSize = ImageSize.NORMAL;
         } else {
-            if (PhotoViewActivity.sMemoryClass >= MIN_NORMAL_CLASS) {
+            if (PhotoViewController.sMemoryClass >= MIN_NORMAL_CLASS) {
                 // We have plenty of memory; use full sized photos
                 sUseImageSize = ImageSize.NORMAL;
-            } else if (PhotoViewActivity.sMemoryClass >= MIN_SMALL_CLASS) {
+            } else if (PhotoViewController.sMemoryClass >= MIN_SMALL_CLASS) {
                 // We have slight less memory; use smaller sized photos
                 sUseImageSize = ImageSize.SMALL;
             } else {
@@ -92,31 +89,24 @@ public class ImageUtils {
      * Create a bitmap from a local URI
      *
      * @param resolver The ContentResolver
-     * @param uri The local URI
-     * @param maxSize The maximum size (either width or height)
-     *
+     * @param uri      The local URI
+     * @param maxSize  The maximum size (either width or height)
      * @return The new bitmap or null
      */
-    public static BitmapResult createLocalBitmap(ContentResolver resolver, Uri uri, int maxSize) {
-        // TODO: make this method not download the image for both getImageBounds and decodeStream
-        BitmapResult result = new BitmapResult();
-        InputStream inputStream = null;
+    public static BitmapResult createLocalBitmap(final ContentResolver resolver, final Uri uri,
+            final int maxSize) {
+        final BitmapResult result = new BitmapResult();
+        final InputStreamFactory factory = createInputStreamFactory(resolver, uri);
         try {
-            final BitmapFactory.Options opts = new BitmapFactory.Options();
-            final Point bounds = getImageBounds(resolver, uri);
-            inputStream = openInputStream(resolver, uri);
-            if (bounds == null || inputStream == null) {
+            final Point bounds = getImageBounds(factory);
+            if (bounds == null) {
                 result.status = BitmapResult.STATUS_EXCEPTION;
                 return result;
             }
+
+            final BitmapFactory.Options opts = new BitmapFactory.Options();
             opts.inSampleSize = Math.max(bounds.x / maxSize, bounds.y / maxSize);
-
-            final Bitmap decodedBitmap = decodeStream(inputStream, null, opts);
-
-            // Correct thumbnail orientation as necessary
-            // TODO: Fix rotation if it's actually a problem
-            //return rotateBitmap(resolver, uri, decodedBitmap);
-            result.bitmap = decodedBitmap;
+            result.bitmap = decodeStream(factory, null, opts);
             result.status = BitmapResult.STATUS_SUCCESS;
             return result;
 
@@ -128,13 +118,6 @@ public class ImageUtils {
             // Do nothing - the photo will appear to be missing
         } catch (SecurityException exception) {
             result.status = BitmapResult.STATUS_EXCEPTION;
-        } finally {
-            try {
-                if (inputStream != null) {
-                    inputStream.close();
-                }
-            } catch (IOException ignore) {
-            }
         }
         return result;
     }
@@ -144,46 +127,41 @@ public class ImageUtils {
      * BitmapFactory.Options)} that returns {@code null} on {@link
      * OutOfMemoryError}.
      *
-     * @param is The input stream that holds the raw data to be decoded into a
-     *           bitmap.
+     * @param factory    Used to create input streams that holds the raw data to be decoded into a
+     *                   bitmap.
      * @param outPadding If not null, return the padding rect for the bitmap if
      *                   it exists, otherwise set padding to [-1,-1,-1,-1]. If
      *                   no bitmap is returned (null) then padding is
      *                   unchanged.
-     * @param opts null-ok; Options that control downsampling and whether the
-     *             image should be completely decoded, or just is size returned.
+     * @param opts       null-ok; Options that control downsampling and whether the
+     *                   image should be completely decoded, or just is size returned.
      * @return The decoded bitmap, or null if the image data could not be
-     *         decoded, or, if opts is non-null, if opts requested only the
-     *         size be returned (in opts.outWidth and opts.outHeight)
+     * decoded, or, if opts is non-null, if opts requested only the
+     * size be returned (in opts.outWidth and opts.outHeight)
      */
-    public static Bitmap decodeStream(InputStream is, Rect outPadding, BitmapFactory.Options opts) {
-        ByteArrayOutputStream out = null;
-        InputStream byteStream = null;
+    public static Bitmap decodeStream(final InputStreamFactory factory, final Rect outPadding,
+            final BitmapFactory.Options opts) throws FileNotFoundException {
+        InputStream is = null;
         try {
-            out = new ByteArrayOutputStream();
-            final byte[] buffer = new byte[4096];
-            int n = is.read(buffer);
-            while (n >= 0) {
-                out.write(buffer, 0, n);
-                n = is.read(buffer);
+            // Determine the orientation for this image
+            is = factory.createInputStream();
+            final int orientation = Exif.getOrientation(is, -1);
+            if (is != null) {
+                is.close();
             }
 
-            final byte[] bitmapBytes = out.toByteArray();
+            // Decode the bitmap
+            is = factory.createInputStream();
+            final Bitmap originalBitmap = BitmapFactory.decodeStream(is, outPadding, opts);
 
-            // Determine the orientation for this image
-            final int orientation = Exif.getOrientation(bitmapBytes);
-
-            // Create an InputStream from this byte array
-            byteStream = new ByteArrayInputStream(bitmapBytes);
-
-            final Bitmap originalBitmap = BitmapFactory.decodeStream(byteStream, outPadding, opts);
-
-            if (byteStream != null && originalBitmap == null && !opts.inJustDecodeBounds) {
+            if (is != null && originalBitmap == null && !opts.inJustDecodeBounds) {
                 Log.w(TAG, "ImageUtils#decodeStream(InputStream, Rect, Options): "
                         + "Image bytes cannot be decoded into a Bitmap");
                 throw new UnsupportedOperationException(
                         "Image bytes cannot be decoded into a Bitmap.");
             }
+
+            // Rotate the Bitmap based on the orientation
             if (originalBitmap != null && orientation != 0) {
                 final Matrix matrix = new Matrix();
                 matrix.postRotate(orientation);
@@ -198,16 +176,9 @@ public class ImageUtils {
             Log.e(TAG, "ImageUtils#decodeStream(InputStream, Rect, Options) threw an IOE", ioe);
             return null;
         } finally {
-            if (out != null) {
+            if (is != null) {
                 try {
-                    out.close();
-                } catch (IOException e) {
-                    // Do nothing
-                }
-            }
-            if (byteStream != null) {
-                try {
-                    byteStream.close();
+                    is.close();
                 } catch (IOException e) {
                     // Do nothing
                 }
@@ -218,74 +189,92 @@ public class ImageUtils {
     /**
      * Gets the image bounds
      *
-     * @param resolver The ContentResolver
-     * @param uri The uri
+     * @param factory Used to create the InputStream.
      *
      * @return The image bounds
      */
-    private static Point getImageBounds(ContentResolver resolver, Uri uri)
+    private static Point getImageBounds(final InputStreamFactory factory)
             throws IOException {
         final BitmapFactory.Options opts = new BitmapFactory.Options();
-        InputStream inputStream = null;
-        String scheme = uri.getScheme();
-        try {
-            opts.inJustDecodeBounds = true;
-            inputStream = openInputStream(resolver, uri);
-            if (inputStream == null) {
-                return null;
-            }
-            decodeStream(inputStream, null, opts);
+        opts.inJustDecodeBounds = true;
+        decodeStream(factory, null, opts);
 
-            return new Point(opts.outWidth, opts.outHeight);
-        } finally {
-            try {
-                if (inputStream != null) {
-                    inputStream.close();
+        return new Point(opts.outWidth, opts.outHeight);
+    }
+
+    private static InputStreamFactory createInputStreamFactory(final ContentResolver resolver,
+            final Uri uri) {
+        final String scheme = uri.getScheme();
+        if ("data".equals(scheme)) {
+            return new DataInputStreamFactory(resolver, uri);
+        }
+        return new BaseInputStreamFactory(resolver, uri);
+    }
+
+    /**
+     * Utility class for when an InputStream needs to be read multiple times. For example, one pass
+     * may load EXIF orientation, and the second pass may do the actual Bitmap decode.
+     */
+    public interface InputStreamFactory {
+
+        /**
+         * Create a new InputStream. The caller of this method must be able to read the input
+         * stream starting from the beginning.
+         * @return
+         */
+        InputStream createInputStream() throws FileNotFoundException;
+    }
+
+    private static class BaseInputStreamFactory implements InputStreamFactory {
+        protected final ContentResolver mResolver;
+        protected final Uri mUri;
+
+        public BaseInputStreamFactory(final ContentResolver resolver, final Uri uri) {
+            mResolver = resolver;
+            mUri = uri;
+        }
+
+        @Override
+        public InputStream createInputStream() throws FileNotFoundException {
+            return mResolver.openInputStream(mUri);
+        }
+    }
+
+    private static class DataInputStreamFactory extends BaseInputStreamFactory {
+        private byte[] mData;
+
+        public DataInputStreamFactory(final ContentResolver resolver, final Uri uri) {
+            super(resolver, uri);
+        }
+
+        @Override
+        public InputStream createInputStream() throws FileNotFoundException {
+            if (mData == null) {
+                mData = parseDataUri(mUri);
+                if (mData == null) {
+                    return super.createInputStream();
                 }
-            } catch (IOException ignore) {
             }
+            return new ByteArrayInputStream(mData);
         }
-    }
 
-    private static InputStream openInputStream(ContentResolver resolver, Uri uri) throws
-            FileNotFoundException {
-        String scheme = uri.getScheme();
-        if ("http".equals(scheme) || "https".equals(scheme)) {
+        private byte[] parseDataUri(final Uri uri) {
+            final String ssp = uri.getSchemeSpecificPart();
             try {
-                return new URL(uri.toString()).openStream();
-            } catch (MalformedURLException e) {
-                // Fall-back to the previous behaviour, just in case
-                Log.w(TAG, "Could not convert the uri to url: " + uri.toString());
-                return resolver.openInputStream(uri);
-            } catch (IOException e) {
-                Log.w(TAG, "Could not open input stream for uri: " + uri.toString());
+                if (ssp.startsWith(BASE64_URI_PREFIX)) {
+                    final String base64 = ssp.substring(BASE64_URI_PREFIX.length());
+                    return Base64.decode(base64, Base64.URL_SAFE);
+                } else if (BASE64_IMAGE_URI_PATTERN.matcher(ssp).matches()){
+                    final String base64 = ssp.substring(
+                            ssp.indexOf(BASE64_URI_PREFIX) + BASE64_URI_PREFIX.length());
+                    return Base64.decode(base64, Base64.DEFAULT);
+                } else {
+                    return null;
+                }
+            } catch (IllegalArgumentException ex) {
+                Log.e(TAG, "Mailformed data URI: " + ex);
                 return null;
             }
-        } else if ("data".equals(scheme)) {
-            byte[] data = parseDataUri(uri);
-            if (data != null) {
-                return new ByteArrayInputStream(data);
-            }
-        }
-        return resolver.openInputStream(uri);
-    }
-
-    private static byte[] parseDataUri(Uri uri) {
-        String ssp = uri.getSchemeSpecificPart();
-        try {
-            if (ssp.startsWith(BASE64_URI_PREFIX)) {
-                String base64 = ssp.substring(BASE64_URI_PREFIX.length());
-                return Base64.decode(base64, Base64.URL_SAFE);
-            } else if (BASE64_IMAGE_URI_PATTERN.matcher(ssp).matches()){
-                String base64 = ssp.substring(
-                        ssp.indexOf(BASE64_URI_PREFIX) + BASE64_URI_PREFIX.length());
-                return Base64.decode(base64, Base64.DEFAULT);
-            } else {
-                return null;
-            }
-        } catch (IllegalArgumentException ex) {
-            Log.e(TAG, "Mailformed data URI: " + ex);
-            return null;
         }
     }
 }

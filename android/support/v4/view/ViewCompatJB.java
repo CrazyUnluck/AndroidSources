@@ -23,7 +23,7 @@ import android.view.ViewParent;
 /**
  * Jellybean-specific View API access
  */
-public class ViewCompatJB {
+class ViewCompatJB {
 
     public static boolean hasTransientState(View view) {
         return view.hasTransientState();
@@ -68,5 +68,25 @@ public class ViewCompatJB {
 
     public static ViewParent getParentForAccessibility(View view) {
         return view.getParentForAccessibility();
+    }
+
+    public static int getMinimumWidth(View view) {
+        return view.getMinimumWidth();
+    }
+
+    public static int getMinimumHeight(View view) {
+        return view.getMinimumHeight();
+    }
+
+    public static void requestApplyInsets(View view) {
+        view.requestFitSystemWindows();
+    }
+
+    public static boolean getFitsSystemWindows(View view) {
+        return view.getFitsSystemWindows();
+    }
+
+    public static boolean hasOverlappingRendering(View view) {
+        return view.hasOverlappingRendering();
     }
 }

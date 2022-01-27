@@ -16,11 +16,16 @@
 
 package android.graphics.drawable;
 
+import com.android.internal.R;
+
 import org.xmlpull.v1.XmlPullParser;
 import org.xmlpull.v1.XmlPullParserException;
 
+import android.annotation.NonNull;
+import android.annotation.Nullable;
 import android.content.res.Resources;
 import android.content.res.TypedArray;
+import android.content.res.Resources.Theme;
 import android.graphics.*;
 import android.view.Gravity;
 import android.util.AttributeSet;
@@ -45,258 +50,191 @@ import java.io.IOException;
  * @attr ref android.R.styleable#ClipDrawable_gravity
  * @attr ref android.R.styleable#ClipDrawable_drawable
  */
-public class ClipDrawable extends Drawable implements Drawable.Callback {
-    private ClipState mClipState;
-    private final Rect mTmpRect = new Rect();
-
+public class ClipDrawable extends DrawableWrapper {
     public static final int HORIZONTAL = 1;
     public static final int VERTICAL = 2;
-    
+
+    private static final int MAX_LEVEL = 10000;
+
+    private final Rect mTmpRect = new Rect();
+
+    private ClipState mState;
+
     ClipDrawable() {
-        this(null, null);
+        this(new ClipState(null, null), null);
     }
 
     /**
-     * @param orientation Bitwise-or of {@link #HORIZONTAL} and/or {@link #VERTICAL}
+     * Creates a new clip drawable with the specified gravity and orientation.
+     *
+     * @param drawable the drawable to clip
+     * @param gravity gravity constant (see {@link Gravity} used to position
+     *                the clipped drawable within the parent container
+     * @param orientation bitwise-or of {@link #HORIZONTAL} and/or
+     *                   {@link #VERTICAL}
      */
     public ClipDrawable(Drawable drawable, int gravity, int orientation) {
-        this(null, null);
+        this(new ClipState(null, null), null);
 
-        mClipState.mDrawable = drawable;
-        mClipState.mGravity = gravity;
-        mClipState.mOrientation = orientation;
+        mState.mGravity = gravity;
+        mState.mOrientation = orientation;
 
-        if (drawable != null) {
-            drawable.setCallback(this);
-        }
+        setDrawable(drawable);
     }
 
     @Override
-    public void inflate(Resources r, XmlPullParser parser, AttributeSet attrs)
+    public void inflate(@NonNull Resources r, @NonNull XmlPullParser parser,
+            @NonNull AttributeSet attrs, @Nullable Theme theme)
             throws XmlPullParserException, IOException {
-        super.inflate(r, parser, attrs);
+        final TypedArray a = obtainAttributes(r, theme, attrs, R.styleable.ClipDrawable);
 
-        int type;
+        // Inflation will advance the XmlPullParser and AttributeSet.
+        super.inflate(r, parser, attrs, theme);
 
-        TypedArray a = r.obtainAttributes(attrs, com.android.internal.R.styleable.ClipDrawable);
-
-        int orientation = a.getInt(
-                com.android.internal.R.styleable.ClipDrawable_clipOrientation,
-                HORIZONTAL);
-        int g = a.getInt(com.android.internal.R.styleable.ClipDrawable_gravity, Gravity.LEFT);
-        Drawable dr = a.getDrawable(com.android.internal.R.styleable.ClipDrawable_drawable);
-
+        updateStateFromTypedArray(a);
+        verifyRequiredAttributes(a);
         a.recycle();
+    }
 
-        final int outerDepth = parser.getDepth();
-        while ((type = parser.next()) != XmlPullParser.END_DOCUMENT
-                && (type != XmlPullParser.END_TAG || parser.getDepth() > outerDepth)) {
-            if (type != XmlPullParser.START_TAG) {
-                continue;
+    @Override
+    public void applyTheme(@NonNull Theme t) {
+        super.applyTheme(t);
+
+        final ClipState state = mState;
+        if (state == null) {
+            return;
+        }
+
+        if (state.mThemeAttrs != null) {
+            final TypedArray a = t.resolveAttributes(state.mThemeAttrs, R.styleable.ClipDrawable);
+            try {
+                updateStateFromTypedArray(a);
+                verifyRequiredAttributes(a);
+            } catch (XmlPullParserException e) {
+                rethrowAsRuntimeException(e);
+            } finally {
+                a.recycle();
             }
-            dr = Drawable.createFromXmlInner(r, parser, attrs);
-        }
-
-        if (dr == null) {
-            throw new IllegalArgumentException("No drawable specified for <clip>");
-        }
-
-        mClipState.mDrawable = dr;
-        mClipState.mOrientation = orientation;
-        mClipState.mGravity = g;
-
-        dr.setCallback(this);
-    }
-
-    // overrides from Drawable.Callback
-
-    public void invalidateDrawable(Drawable who) {
-        final Callback callback = getCallback();
-        if (callback != null) {
-            callback.invalidateDrawable(this);
         }
     }
 
-    public void scheduleDrawable(Drawable who, Runnable what, long when) {
-        final Callback callback = getCallback();
-        if (callback != null) {
-            callback.scheduleDrawable(this, what, when);
+    private void verifyRequiredAttributes(@NonNull TypedArray a) throws XmlPullParserException {
+        // If we're not waiting on a theme, verify required attributes.
+        if (getDrawable() == null && (mState.mThemeAttrs == null
+                || mState.mThemeAttrs[R.styleable.ClipDrawable_drawable] == 0)) {
+            throw new XmlPullParserException(a.getPositionDescription()
+                    + ": <clip> tag requires a 'drawable' attribute or "
+                    + "child tag defining a drawable");
         }
     }
 
-    public void unscheduleDrawable(Drawable who, Runnable what) {
-        final Callback callback = getCallback();
-        if (callback != null) {
-            callback.unscheduleDrawable(this, what);
+    private void updateStateFromTypedArray(@NonNull TypedArray a) {
+        final ClipState state = mState;
+        if (state == null) {
+            return;
         }
-    }
 
-    // overrides from Drawable
+        // Account for any configuration changes.
+        state.mChangingConfigurations |= a.getChangingConfigurations();
 
-    @Override
-    public int getChangingConfigurations() {
-        return super.getChangingConfigurations()
-                | mClipState.mChangingConfigurations
-                | mClipState.mDrawable.getChangingConfigurations();
-    }
+        // Extract the theme attributes, if any.
+        state.mThemeAttrs = a.extractThemeAttrs();
 
-    @Override
-    public boolean getPadding(Rect padding) {
-        // XXX need to adjust padding!
-        return mClipState.mDrawable.getPadding(padding);
-    }
-
-    @Override
-    public boolean setVisible(boolean visible, boolean restart) {
-        mClipState.mDrawable.setVisible(visible, restart);
-        return super.setVisible(visible, restart);
-    }
-
-    @Override
-    public void setAlpha(int alpha) {
-        mClipState.mDrawable.setAlpha(alpha);
-    }
-
-    @Override
-    public void setColorFilter(ColorFilter cf) {
-        mClipState.mDrawable.setColorFilter(cf);
-    }
-
-    @Override
-    public int getOpacity() {
-        return mClipState.mDrawable.getOpacity();
-    }
-
-    @Override
-    public boolean isStateful() {
-        return mClipState.mDrawable.isStateful();
-    }
-
-    @Override
-    protected boolean onStateChange(int[] state) {
-        return mClipState.mDrawable.setState(state);
+        state.mOrientation = a.getInt(
+                R.styleable.ClipDrawable_clipOrientation, state.mOrientation);
+        state.mGravity = a.getInt(
+                R.styleable.ClipDrawable_gravity, state.mGravity);
     }
 
     @Override
     protected boolean onLevelChange(int level) {
-        mClipState.mDrawable.setLevel(level);
+        super.onLevelChange(level);
         invalidateSelf();
         return true;
     }
 
     @Override
-    protected void onBoundsChange(Rect bounds) {
-        mClipState.mDrawable.setBounds(bounds);
+    public int getOpacity() {
+        final Drawable dr = getDrawable();
+        final int opacity = dr.getOpacity();
+        if (opacity == PixelFormat.TRANSPARENT || dr.getLevel() == 0) {
+            return PixelFormat.TRANSPARENT;
+        }
+
+        final int level = getLevel();
+        if (level >= MAX_LEVEL) {
+            return dr.getOpacity();
+        }
+
+        // Some portion of non-transparent drawable is showing.
+        return PixelFormat.TRANSLUCENT;
     }
 
     @Override
     public void draw(Canvas canvas) {
-        
-        if (mClipState.mDrawable.getLevel() == 0) {
+        final Drawable dr = getDrawable();
+        if (dr.getLevel() == 0) {
             return;
         }
 
         final Rect r = mTmpRect;
         final Rect bounds = getBounds();
-        int level = getLevel();
+        final int level = getLevel();
+
         int w = bounds.width();
-        final int iw = 0; //mClipState.mDrawable.getIntrinsicWidth();
-        if ((mClipState.mOrientation & HORIZONTAL) != 0) {
-            w -= (w - iw) * (10000 - level) / 10000;
+        final int iw = 0; //mState.mDrawable.getIntrinsicWidth();
+        if ((mState.mOrientation & HORIZONTAL) != 0) {
+            w -= (w - iw) * (MAX_LEVEL - level) / MAX_LEVEL;
         }
+
         int h = bounds.height();
-        final int ih = 0; //mClipState.mDrawable.getIntrinsicHeight();
-        if ((mClipState.mOrientation & VERTICAL) != 0) {
-            h -= (h - ih) * (10000 - level) / 10000;
+        final int ih = 0; //mState.mDrawable.getIntrinsicHeight();
+        if ((mState.mOrientation & VERTICAL) != 0) {
+            h -= (h - ih) * (MAX_LEVEL - level) / MAX_LEVEL;
         }
+
         final int layoutDirection = getLayoutDirection();
-        Gravity.apply(mClipState.mGravity, w, h, bounds, r, layoutDirection);
+        Gravity.apply(mState.mGravity, w, h, bounds, r, layoutDirection);
 
         if (w > 0 && h > 0) {
             canvas.save();
             canvas.clipRect(r);
-            mClipState.mDrawable.draw(canvas);
+            dr.draw(canvas);
             canvas.restore();
         }
     }
 
     @Override
-    public int getIntrinsicWidth() {
-        return mClipState.mDrawable.getIntrinsicWidth();
+    DrawableWrapperState mutateConstantState() {
+        mState = new ClipState(mState, null);
+        return mState;
     }
 
-    @Override
-    public int getIntrinsicHeight() {
-        return mClipState.mDrawable.getIntrinsicHeight();
-    }
+    static final class ClipState extends DrawableWrapper.DrawableWrapperState {
+        private int[] mThemeAttrs;
 
-    @Override
-    public ConstantState getConstantState() {
-        if (mClipState.canConstantState()) {
-            mClipState.mChangingConfigurations = getChangingConfigurations();
-            return mClipState;
-        }
-        return null;
-    }
+        int mOrientation = HORIZONTAL;
+        int mGravity = Gravity.LEFT;
 
-    /** @hide */
-    @Override
-    public void setLayoutDirection(int layoutDirection) {
-        mClipState.mDrawable.setLayoutDirection(layoutDirection);
-        super.setLayoutDirection(layoutDirection);
-    }
+        ClipState(ClipState orig, Resources res) {
+            super(orig, res);
 
-    final static class ClipState extends ConstantState {
-        Drawable mDrawable;
-        int mChangingConfigurations;
-        int mOrientation;
-        int mGravity;
-
-        private boolean mCheckedConstantState;
-        private boolean mCanConstantState;
-
-        ClipState(ClipState orig, ClipDrawable owner, Resources res) {
             if (orig != null) {
-                if (res != null) {
-                    mDrawable = orig.mDrawable.getConstantState().newDrawable(res);
-                } else {
-                    mDrawable = orig.mDrawable.getConstantState().newDrawable();
-                }
-                mDrawable.setCallback(owner);
-                mDrawable.setLayoutDirection(orig.mDrawable.getLayoutDirection());
                 mOrientation = orig.mOrientation;
                 mGravity = orig.mGravity;
-                mCheckedConstantState = mCanConstantState = true;
             }
-        }
-
-        @Override
-        public Drawable newDrawable() {
-            return new ClipDrawable(this, null);
         }
 
         @Override
         public Drawable newDrawable(Resources res) {
             return new ClipDrawable(this, res);
         }
-
-        @Override
-        public int getChangingConfigurations() {
-            return mChangingConfigurations;
-        }
-
-        boolean canConstantState() {
-            if (!mCheckedConstantState) {
-                mCanConstantState = mDrawable.getConstantState() != null;
-                mCheckedConstantState = true;
-            }
-
-            return mCanConstantState;
-        }
     }
 
     private ClipDrawable(ClipState state, Resources res) {
-        mClipState = new ClipState(state, this, res);
+        super(state, res);
+
+        mState = state;
     }
 }
 

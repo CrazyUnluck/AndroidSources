@@ -16,35 +16,38 @@
 
 package android.renderscript;
 
-import java.lang.reflect.Field;
-import android.util.Log;
-
 /**
- * <p>The most basic data type. An element represents one cell of a memory allocation.
- * Element is the basic data type of Renderscript. An element can be of two forms: Basic elements or Complex forms.
- * Examples of basic elements are:</p>
- * <ul>
- *  <li>Single float value</li>
- *  <li>4 element float vector</li>
- *  <li>single RGB-565 color</li>
- *  <li>single unsigned int 16</li>
- * </ul>
- * <p>Complex elements contain a list of sub-elements and names that
- * represents a structure of data. The fields can be accessed by name
- * from a script or shader. The memory layout is defined and ordered. Data
- * alignment is determined by the most basic primitive type. i.e. a float4
- * vector will be aligned to sizeof(float) and not sizeof(float4). The
- * ordering of elements in memory will be the order in which they were added
- * with each component aligned as necessary. No re-ordering will be done.</p>
+ * <p>An Element represents one item within an {@link
+ * android.renderscript.Allocation}.  An Element is roughly equivalent to a C
+ * type in a RenderScript kernel. Elements may be basic or complex. Some basic
+ * elements are</p> <ul> <li>A single float value (equivalent to a float in a
+ * kernel)</li> <li>A four-element float vector (equivalent to a float4 in a
+ * kernel)</li> <li>An unsigned 32-bit integer (equivalent to an unsigned int in
+ * a kernel)</li> <li>A single signed 8-bit integer (equivalent to a char in a
+ * kernel)</li> </ul> <p>A complex element is roughly equivalent to a C struct
+ * and contains a number of basic or complex Elements. From Java code, a complex
+ * element contains a list of sub-elements and names that represents a
+ * particular data structure. Structs used in RS scripts are available to Java
+ * code by using the {@code ScriptField_structname} class that is reflected from
+ * a particular script.</p>
  *
- * <p>The primary source of elements are from scripts. A script that exports a
- * bind point for a data structure generates a Renderscript element to represent the
- * data exported by the script. The other common source of elements is from bitmap formats.</p>
+ * <p>Basic Elements are comprised of a {@link
+ * android.renderscript.Element.DataType} and a {@link
+ * android.renderscript.Element.DataKind}. The DataType encodes C type
+ * information of an Element, while the DataKind encodes how that Element should
+ * be interpreted by a {@link android.renderscript.Sampler}. Note that {@link
+ * android.renderscript.Allocation} objects with DataKind {@link
+ * android.renderscript.Element.DataKind#USER} cannot be used as input for a
+ * {@link android.renderscript.Sampler}. In general, {@link
+ * android.renderscript.Allocation} objects that are intended for use with a
+ * {@link android.renderscript.Sampler} should use bitmap-derived Elements such
+ * as {@link android.renderscript.Element#RGBA_8888} or {@link
+ * android.renderscript#Element.A_8}.</p>
  *
  * <div class="special reference">
  * <h3>Developer Guides</h3>
- * <p>For more information about creating an application that uses Renderscript, read the
- * <a href="{@docRoot}guide/topics/renderscript/index.html">Renderscript</a> developer guide.</p>
+ * <p>For more information about creating an application that uses RenderScript, read the
+ * <a href="{@docRoot}guide/topics/renderscript/index.html">RenderScript</a> developer guide.</p>
  * </div>
  **/
 public class Element extends BaseObj {
@@ -111,11 +114,12 @@ public class Element extends BaseObj {
      * MATRIX the three matrix types contain FLOAT_32 elements and are treated
      * as 32 bits for alignment purposes.
      *
-     * RS_* objects.  32 bit opaque handles.
+     * RS_* objects:  opaque handles with implementation dependent
+     * sizes.
      */
     public enum DataType {
         NONE (0, 0),
-        //FLOAT_16 (1, 2),
+        FLOAT_16 (1, 2),
         FLOAT_32 (2, 4),
         FLOAT_64 (3, 8),
         SIGNED_8 (4, 1),
@@ -137,23 +141,31 @@ public class Element extends BaseObj {
         MATRIX_3X3 (17, 36),
         MATRIX_2X2 (18, 16),
 
-        RS_ELEMENT (1000, 4),
-        RS_TYPE (1001, 4),
-        RS_ALLOCATION (1002, 4),
-        RS_SAMPLER (1003, 4),
-        RS_SCRIPT (1004, 4),
-        RS_MESH (1005, 4),
-        RS_PROGRAM_FRAGMENT (1006, 4),
-        RS_PROGRAM_VERTEX (1007, 4),
-        RS_PROGRAM_RASTER (1008, 4),
-        RS_PROGRAM_STORE (1009, 4),
-        RS_FONT (1010, 4);
+        RS_ELEMENT (1000),
+        RS_TYPE (1001),
+        RS_ALLOCATION (1002),
+        RS_SAMPLER (1003),
+        RS_SCRIPT (1004),
+        RS_MESH (1005),
+        RS_PROGRAM_FRAGMENT (1006),
+        RS_PROGRAM_VERTEX (1007),
+        RS_PROGRAM_RASTER (1008),
+        RS_PROGRAM_STORE (1009),
+        RS_FONT (1010);
 
         int mID;
         int mSize;
         DataType(int id, int size) {
             mID = id;
             mSize = size;
+        }
+
+        DataType(int id) {
+            mID = id;
+            mSize = 4;
+            if (RenderScript.sPointerSize == 8) {
+                mSize = 32;
+            }
         }
     }
 
@@ -299,8 +311,12 @@ public class Element extends BaseObj {
      * @return Element
      */
     public static Element BOOLEAN(RenderScript rs) {
-        if(rs.mElement_BOOLEAN == null) {
-            rs.mElement_BOOLEAN = createUser(rs, DataType.BOOLEAN);
+        if (rs.mElement_BOOLEAN == null) {
+            synchronized (rs) {
+                if (rs.mElement_BOOLEAN == null) {
+                    rs.mElement_BOOLEAN = createUser(rs, DataType.BOOLEAN);
+                }
+            }
         }
         return rs.mElement_BOOLEAN;
     }
@@ -313,8 +329,12 @@ public class Element extends BaseObj {
      * @return Element
      */
     public static Element U8(RenderScript rs) {
-        if(rs.mElement_U8 == null) {
-            rs.mElement_U8 = createUser(rs, DataType.UNSIGNED_8);
+        if (rs.mElement_U8 == null) {
+            synchronized (rs) {
+                if (rs.mElement_U8 == null) {
+                    rs.mElement_U8 = createUser(rs, DataType.UNSIGNED_8);
+                }
+            }
         }
         return rs.mElement_U8;
     }
@@ -327,401 +347,683 @@ public class Element extends BaseObj {
      * @return Element
      */
     public static Element I8(RenderScript rs) {
-        if(rs.mElement_I8 == null) {
-            rs.mElement_I8 = createUser(rs, DataType.SIGNED_8);
+        if (rs.mElement_I8 == null) {
+            synchronized (rs) {
+                if (rs.mElement_I8 == null) {
+                    rs.mElement_I8 = createUser(rs, DataType.SIGNED_8);
+                }
+            }
         }
         return rs.mElement_I8;
     }
 
     public static Element U16(RenderScript rs) {
-        if(rs.mElement_U16 == null) {
-            rs.mElement_U16 = createUser(rs, DataType.UNSIGNED_16);
+        if (rs.mElement_U16 == null) {
+            synchronized (rs) {
+                if (rs.mElement_U16 == null) {
+                    rs.mElement_U16 = createUser(rs, DataType.UNSIGNED_16);
+                }
+            }
         }
         return rs.mElement_U16;
     }
 
     public static Element I16(RenderScript rs) {
-        if(rs.mElement_I16 == null) {
-            rs.mElement_I16 = createUser(rs, DataType.SIGNED_16);
+        if (rs.mElement_I16 == null) {
+            synchronized (rs) {
+                if (rs.mElement_I16 == null) {
+                    rs.mElement_I16 = createUser(rs, DataType.SIGNED_16);
+                }
+            }
         }
         return rs.mElement_I16;
     }
 
     public static Element U32(RenderScript rs) {
-        if(rs.mElement_U32 == null) {
-            rs.mElement_U32 = createUser(rs, DataType.UNSIGNED_32);
+        if (rs.mElement_U32 == null) {
+            synchronized (rs) {
+                if (rs.mElement_U32 == null) {
+                    rs.mElement_U32 = createUser(rs, DataType.UNSIGNED_32);
+                }
+            }
         }
         return rs.mElement_U32;
     }
 
     public static Element I32(RenderScript rs) {
-        if(rs.mElement_I32 == null) {
-            rs.mElement_I32 = createUser(rs, DataType.SIGNED_32);
+        if (rs.mElement_I32 == null) {
+            synchronized (rs) {
+                if (rs.mElement_I32 == null) {
+                    rs.mElement_I32 = createUser(rs, DataType.SIGNED_32);
+                }
+            }
         }
         return rs.mElement_I32;
     }
 
     public static Element U64(RenderScript rs) {
-        if(rs.mElement_U64 == null) {
-            rs.mElement_U64 = createUser(rs, DataType.UNSIGNED_64);
+        if (rs.mElement_U64 == null) {
+            synchronized (rs) {
+                if (rs.mElement_U64 == null) {
+                    rs.mElement_U64 = createUser(rs, DataType.UNSIGNED_64);
+                }
+            }
         }
         return rs.mElement_U64;
     }
 
     public static Element I64(RenderScript rs) {
-        if(rs.mElement_I64 == null) {
-            rs.mElement_I64 = createUser(rs, DataType.SIGNED_64);
+        if (rs.mElement_I64 == null) {
+            synchronized (rs) {
+                if (rs.mElement_I64 == null) {
+                    rs.mElement_I64 = createUser(rs, DataType.SIGNED_64);
+                }
+            }
         }
         return rs.mElement_I64;
     }
 
+    public static Element F16(RenderScript rs) {
+        if (rs.mElement_F16 == null) {
+            synchronized (rs) {
+                if (rs.mElement_F16 == null) {
+                    rs.mElement_F16 = createUser(rs, DataType.FLOAT_16);
+                }
+            }
+        }
+        return rs.mElement_F16;
+    }
+
     public static Element F32(RenderScript rs) {
-        if(rs.mElement_F32 == null) {
-            rs.mElement_F32 = createUser(rs, DataType.FLOAT_32);
+        if (rs.mElement_F32 == null) {
+            synchronized (rs) {
+                if (rs.mElement_F32 == null) {
+                    rs.mElement_F32 = createUser(rs, DataType.FLOAT_32);
+                }
+            }
         }
         return rs.mElement_F32;
     }
 
     public static Element F64(RenderScript rs) {
-        if(rs.mElement_F64 == null) {
-            rs.mElement_F64 = createUser(rs, DataType.FLOAT_64);
+        if (rs.mElement_F64 == null) {
+            synchronized (rs) {
+                if (rs.mElement_F64 == null) {
+                    rs.mElement_F64 = createUser(rs, DataType.FLOAT_64);
+                }
+            }
         }
         return rs.mElement_F64;
     }
 
     public static Element ELEMENT(RenderScript rs) {
-        if(rs.mElement_ELEMENT == null) {
-            rs.mElement_ELEMENT = createUser(rs, DataType.RS_ELEMENT);
+        if (rs.mElement_ELEMENT == null) {
+            synchronized (rs) {
+                if (rs.mElement_ELEMENT == null) {
+                    rs.mElement_ELEMENT = createUser(rs, DataType.RS_ELEMENT);
+                }
+            }
         }
         return rs.mElement_ELEMENT;
     }
 
     public static Element TYPE(RenderScript rs) {
-        if(rs.mElement_TYPE == null) {
-            rs.mElement_TYPE = createUser(rs, DataType.RS_TYPE);
+        if (rs.mElement_TYPE == null) {
+            synchronized (rs) {
+                if (rs.mElement_TYPE == null) {
+                    rs.mElement_TYPE = createUser(rs, DataType.RS_TYPE);
+                }
+            }
         }
         return rs.mElement_TYPE;
     }
 
     public static Element ALLOCATION(RenderScript rs) {
-        if(rs.mElement_ALLOCATION == null) {
-            rs.mElement_ALLOCATION = createUser(rs, DataType.RS_ALLOCATION);
+        if (rs.mElement_ALLOCATION == null) {
+            synchronized (rs) {
+                if (rs.mElement_ALLOCATION == null) {
+                    rs.mElement_ALLOCATION = createUser(rs, DataType.RS_ALLOCATION);
+                }
+            }
         }
         return rs.mElement_ALLOCATION;
     }
 
     public static Element SAMPLER(RenderScript rs) {
-        if(rs.mElement_SAMPLER == null) {
-            rs.mElement_SAMPLER = createUser(rs, DataType.RS_SAMPLER);
+        if (rs.mElement_SAMPLER == null) {
+            synchronized (rs) {
+                if (rs.mElement_SAMPLER == null) {
+                    rs.mElement_SAMPLER = createUser(rs, DataType.RS_SAMPLER);
+                }
+            }
         }
         return rs.mElement_SAMPLER;
     }
 
     public static Element SCRIPT(RenderScript rs) {
-        if(rs.mElement_SCRIPT == null) {
-            rs.mElement_SCRIPT = createUser(rs, DataType.RS_SCRIPT);
+        if (rs.mElement_SCRIPT == null) {
+            synchronized (rs) {
+                if (rs.mElement_SCRIPT == null) {
+                    rs.mElement_SCRIPT = createUser(rs, DataType.RS_SCRIPT);
+                }
+            }
         }
         return rs.mElement_SCRIPT;
     }
 
     public static Element MESH(RenderScript rs) {
-        if(rs.mElement_MESH == null) {
-            rs.mElement_MESH = createUser(rs, DataType.RS_MESH);
+        if (rs.mElement_MESH == null) {
+            synchronized (rs) {
+                if (rs.mElement_MESH == null) {
+                    rs.mElement_MESH = createUser(rs, DataType.RS_MESH);
+                }
+            }
         }
         return rs.mElement_MESH;
     }
 
     public static Element PROGRAM_FRAGMENT(RenderScript rs) {
-        if(rs.mElement_PROGRAM_FRAGMENT == null) {
-            rs.mElement_PROGRAM_FRAGMENT = createUser(rs, DataType.RS_PROGRAM_FRAGMENT);
+        if (rs.mElement_PROGRAM_FRAGMENT == null) {
+            synchronized (rs) {
+                if (rs.mElement_PROGRAM_FRAGMENT == null) {
+                    rs.mElement_PROGRAM_FRAGMENT = createUser(rs, DataType.RS_PROGRAM_FRAGMENT);
+                }
+            }
         }
         return rs.mElement_PROGRAM_FRAGMENT;
     }
 
     public static Element PROGRAM_VERTEX(RenderScript rs) {
-        if(rs.mElement_PROGRAM_VERTEX == null) {
-            rs.mElement_PROGRAM_VERTEX = createUser(rs, DataType.RS_PROGRAM_VERTEX);
+        if (rs.mElement_PROGRAM_VERTEX == null) {
+            synchronized (rs) {
+                if (rs.mElement_PROGRAM_VERTEX == null) {
+                    rs.mElement_PROGRAM_VERTEX = createUser(rs, DataType.RS_PROGRAM_VERTEX);
+                }
+            }
         }
         return rs.mElement_PROGRAM_VERTEX;
     }
 
     public static Element PROGRAM_RASTER(RenderScript rs) {
-        if(rs.mElement_PROGRAM_RASTER == null) {
-            rs.mElement_PROGRAM_RASTER = createUser(rs, DataType.RS_PROGRAM_RASTER);
+        if (rs.mElement_PROGRAM_RASTER == null) {
+            synchronized (rs) {
+                if (rs.mElement_PROGRAM_RASTER == null) {
+                    rs.mElement_PROGRAM_RASTER = createUser(rs, DataType.RS_PROGRAM_RASTER);
+                }
+            }
         }
         return rs.mElement_PROGRAM_RASTER;
     }
 
     public static Element PROGRAM_STORE(RenderScript rs) {
-        if(rs.mElement_PROGRAM_STORE == null) {
-            rs.mElement_PROGRAM_STORE = createUser(rs, DataType.RS_PROGRAM_STORE);
+        if (rs.mElement_PROGRAM_STORE == null) {
+            synchronized (rs) {
+                if (rs.mElement_PROGRAM_STORE == null) {
+                    rs.mElement_PROGRAM_STORE = createUser(rs, DataType.RS_PROGRAM_STORE);
+                }
+            }
         }
         return rs.mElement_PROGRAM_STORE;
     }
 
     public static Element FONT(RenderScript rs) {
-        if(rs.mElement_FONT == null) {
-            rs.mElement_FONT = createUser(rs, DataType.RS_FONT);
+        if (rs.mElement_FONT == null) {
+            synchronized (rs) {
+                if (rs.mElement_FONT == null) {
+                    rs.mElement_FONT = createUser(rs, DataType.RS_FONT);
+                }
+            }
         }
         return rs.mElement_FONT;
     }
 
-
     public static Element A_8(RenderScript rs) {
-        if(rs.mElement_A_8 == null) {
-            rs.mElement_A_8 = createPixel(rs, DataType.UNSIGNED_8, DataKind.PIXEL_A);
+        if (rs.mElement_A_8 == null) {
+            synchronized (rs) {
+                if (rs.mElement_A_8 == null) {
+                    rs.mElement_A_8 = createPixel(rs, DataType.UNSIGNED_8, DataKind.PIXEL_A);
+                }
+            }
         }
         return rs.mElement_A_8;
     }
 
     public static Element RGB_565(RenderScript rs) {
-        if(rs.mElement_RGB_565 == null) {
-            rs.mElement_RGB_565 = createPixel(rs, DataType.UNSIGNED_5_6_5, DataKind.PIXEL_RGB);
+        if (rs.mElement_RGB_565 == null) {
+            synchronized (rs) {
+                if (rs.mElement_RGB_565 == null) {
+                    rs.mElement_RGB_565 = createPixel(rs, DataType.UNSIGNED_5_6_5, DataKind.PIXEL_RGB);
+                }
+            }
         }
         return rs.mElement_RGB_565;
     }
 
     public static Element RGB_888(RenderScript rs) {
-        if(rs.mElement_RGB_888 == null) {
-            rs.mElement_RGB_888 = createPixel(rs, DataType.UNSIGNED_8, DataKind.PIXEL_RGB);
+        if (rs.mElement_RGB_888 == null) {
+            synchronized (rs) {
+                if (rs.mElement_RGB_888 == null) {
+                    rs.mElement_RGB_888 = createPixel(rs, DataType.UNSIGNED_8, DataKind.PIXEL_RGB);
+                }
+            }
         }
         return rs.mElement_RGB_888;
     }
 
     public static Element RGBA_5551(RenderScript rs) {
-        if(rs.mElement_RGBA_5551 == null) {
-            rs.mElement_RGBA_5551 = createPixel(rs, DataType.UNSIGNED_5_5_5_1, DataKind.PIXEL_RGBA);
+        if (rs.mElement_RGBA_5551 == null) {
+            synchronized (rs) {
+                if (rs.mElement_RGBA_5551 == null) {
+                    rs.mElement_RGBA_5551 = createPixel(rs, DataType.UNSIGNED_5_5_5_1, DataKind.PIXEL_RGBA);
+                }
+            }
         }
         return rs.mElement_RGBA_5551;
     }
 
     public static Element RGBA_4444(RenderScript rs) {
-        if(rs.mElement_RGBA_4444 == null) {
-            rs.mElement_RGBA_4444 = createPixel(rs, DataType.UNSIGNED_4_4_4_4, DataKind.PIXEL_RGBA);
+        if (rs.mElement_RGBA_4444 == null) {
+            synchronized (rs) {
+                if (rs.mElement_RGBA_4444 == null) {
+                    rs.mElement_RGBA_4444 = createPixel(rs, DataType.UNSIGNED_4_4_4_4, DataKind.PIXEL_RGBA);
+                }
+            }
         }
         return rs.mElement_RGBA_4444;
     }
 
     public static Element RGBA_8888(RenderScript rs) {
-        if(rs.mElement_RGBA_8888 == null) {
-            rs.mElement_RGBA_8888 = createPixel(rs, DataType.UNSIGNED_8, DataKind.PIXEL_RGBA);
+        if (rs.mElement_RGBA_8888 == null) {
+            synchronized (rs) {
+                if (rs.mElement_RGBA_8888 == null) {
+                    rs.mElement_RGBA_8888 = createPixel(rs, DataType.UNSIGNED_8, DataKind.PIXEL_RGBA);
+                }
+            }
         }
         return rs.mElement_RGBA_8888;
     }
 
+    public static Element F16_2(RenderScript rs) {
+        if (rs.mElement_HALF_2 == null) {
+            synchronized (rs) {
+                if (rs.mElement_HALF_2 == null) {
+                    rs.mElement_HALF_2 = createVector(rs, DataType.FLOAT_16, 2);
+                }
+            }
+        }
+        return rs.mElement_HALF_2;
+    }
+
+    public static Element F16_3(RenderScript rs) {
+        if (rs.mElement_HALF_3 == null) {
+            synchronized (rs) {
+                if (rs.mElement_HALF_3 == null) {
+                    rs.mElement_HALF_3 = createVector(rs, DataType.FLOAT_16, 3);
+                }
+            }
+        }
+        return rs.mElement_HALF_3;
+    }
+
+    public static Element F16_4(RenderScript rs) {
+        if (rs.mElement_HALF_4 == null) {
+            synchronized (rs) {
+                if (rs.mElement_HALF_4 == null) {
+                    rs.mElement_HALF_4 = createVector(rs, DataType.FLOAT_16, 4);
+                }
+            }
+        }
+        return rs.mElement_HALF_4;
+    }
+
     public static Element F32_2(RenderScript rs) {
-        if(rs.mElement_FLOAT_2 == null) {
-            rs.mElement_FLOAT_2 = createVector(rs, DataType.FLOAT_32, 2);
+        if (rs.mElement_FLOAT_2 == null) {
+            synchronized (rs) {
+                if (rs.mElement_FLOAT_2 == null) {
+                    rs.mElement_FLOAT_2 = createVector(rs, DataType.FLOAT_32, 2);
+                }
+            }
         }
         return rs.mElement_FLOAT_2;
     }
 
     public static Element F32_3(RenderScript rs) {
-        if(rs.mElement_FLOAT_3 == null) {
-            rs.mElement_FLOAT_3 = createVector(rs, DataType.FLOAT_32, 3);
+        if (rs.mElement_FLOAT_3 == null) {
+            synchronized (rs) {
+                if (rs.mElement_FLOAT_3 == null) {
+                    rs.mElement_FLOAT_3 = createVector(rs, DataType.FLOAT_32, 3);
+                }
+            }
         }
         return rs.mElement_FLOAT_3;
     }
 
     public static Element F32_4(RenderScript rs) {
-        if(rs.mElement_FLOAT_4 == null) {
-            rs.mElement_FLOAT_4 = createVector(rs, DataType.FLOAT_32, 4);
+        if (rs.mElement_FLOAT_4 == null) {
+            synchronized (rs) {
+                if (rs.mElement_FLOAT_4 == null) {
+                    rs.mElement_FLOAT_4 = createVector(rs, DataType.FLOAT_32, 4);
+                }
+            }
         }
         return rs.mElement_FLOAT_4;
     }
 
     public static Element F64_2(RenderScript rs) {
-        if(rs.mElement_DOUBLE_2 == null) {
-            rs.mElement_DOUBLE_2 = createVector(rs, DataType.FLOAT_64, 2);
+        if (rs.mElement_DOUBLE_2 == null) {
+            synchronized (rs) {
+                if (rs.mElement_DOUBLE_2 == null) {
+                    rs.mElement_DOUBLE_2 = createVector(rs, DataType.FLOAT_64, 2);
+                }
+            }
         }
         return rs.mElement_DOUBLE_2;
     }
 
     public static Element F64_3(RenderScript rs) {
-        if(rs.mElement_DOUBLE_3 == null) {
-            rs.mElement_DOUBLE_3 = createVector(rs, DataType.FLOAT_64, 3);
+        if (rs.mElement_DOUBLE_3 == null) {
+            synchronized (rs) {
+                if (rs.mElement_DOUBLE_3 == null) {
+                    rs.mElement_DOUBLE_3 = createVector(rs, DataType.FLOAT_64, 3);
+                }
+            }
         }
         return rs.mElement_DOUBLE_3;
     }
 
     public static Element F64_4(RenderScript rs) {
-        if(rs.mElement_DOUBLE_4 == null) {
-            rs.mElement_DOUBLE_4 = createVector(rs, DataType.FLOAT_64, 4);
+        if (rs.mElement_DOUBLE_4 == null) {
+            synchronized (rs) {
+                if (rs.mElement_DOUBLE_4 == null) {
+                    rs.mElement_DOUBLE_4 = createVector(rs, DataType.FLOAT_64, 4);
+                }
+            }
         }
         return rs.mElement_DOUBLE_4;
     }
 
     public static Element U8_2(RenderScript rs) {
-        if(rs.mElement_UCHAR_2 == null) {
-            rs.mElement_UCHAR_2 = createVector(rs, DataType.UNSIGNED_8, 2);
+        if (rs.mElement_UCHAR_2 == null) {
+            synchronized (rs) {
+                if (rs.mElement_UCHAR_2 == null) {
+                    rs.mElement_UCHAR_2 = createVector(rs, DataType.UNSIGNED_8, 2);
+                }
+            }
         }
         return rs.mElement_UCHAR_2;
     }
 
     public static Element U8_3(RenderScript rs) {
-        if(rs.mElement_UCHAR_3 == null) {
-            rs.mElement_UCHAR_3 = createVector(rs, DataType.UNSIGNED_8, 3);
+        if (rs.mElement_UCHAR_3 == null) {
+            synchronized (rs) {
+                if (rs.mElement_UCHAR_3 == null) {
+                    rs.mElement_UCHAR_3 = createVector(rs, DataType.UNSIGNED_8, 3);
+                }
+            }
         }
         return rs.mElement_UCHAR_3;
     }
 
     public static Element U8_4(RenderScript rs) {
-        if(rs.mElement_UCHAR_4 == null) {
-            rs.mElement_UCHAR_4 = createVector(rs, DataType.UNSIGNED_8, 4);
+        if (rs.mElement_UCHAR_4 == null) {
+            synchronized (rs) {
+                if (rs.mElement_UCHAR_4 == null) {
+                    rs.mElement_UCHAR_4 = createVector(rs, DataType.UNSIGNED_8, 4);
+                }
+            }
         }
         return rs.mElement_UCHAR_4;
     }
 
     public static Element I8_2(RenderScript rs) {
-        if(rs.mElement_CHAR_2 == null) {
-            rs.mElement_CHAR_2 = createVector(rs, DataType.SIGNED_8, 2);
+        if (rs.mElement_CHAR_2 == null) {
+            synchronized (rs) {
+                if (rs.mElement_CHAR_2 == null) {
+                    rs.mElement_CHAR_2 = createVector(rs, DataType.SIGNED_8, 2);
+                }
+            }
         }
         return rs.mElement_CHAR_2;
     }
 
     public static Element I8_3(RenderScript rs) {
-        if(rs.mElement_CHAR_3 == null) {
-            rs.mElement_CHAR_3 = createVector(rs, DataType.SIGNED_8, 3);
+        if (rs.mElement_CHAR_3 == null) {
+            synchronized (rs) {
+                if (rs.mElement_CHAR_3 == null) {
+                    rs.mElement_CHAR_3 = createVector(rs, DataType.SIGNED_8, 3);
+                }
+            }
         }
         return rs.mElement_CHAR_3;
     }
 
     public static Element I8_4(RenderScript rs) {
-        if(rs.mElement_CHAR_4 == null) {
-            rs.mElement_CHAR_4 = createVector(rs, DataType.SIGNED_8, 4);
+        if (rs.mElement_CHAR_4 == null) {
+            synchronized (rs) {
+                if (rs.mElement_CHAR_4 == null) {
+                    rs.mElement_CHAR_4 = createVector(rs, DataType.SIGNED_8, 4);
+                }
+            }
         }
         return rs.mElement_CHAR_4;
     }
 
     public static Element U16_2(RenderScript rs) {
-        if(rs.mElement_USHORT_2 == null) {
-            rs.mElement_USHORT_2 = createVector(rs, DataType.UNSIGNED_16, 2);
+        if (rs.mElement_USHORT_2 == null) {
+            synchronized (rs) {
+                if (rs.mElement_USHORT_2 == null) {
+                    rs.mElement_USHORT_2 = createVector(rs, DataType.UNSIGNED_16, 2);
+                }
+            }
         }
         return rs.mElement_USHORT_2;
     }
 
     public static Element U16_3(RenderScript rs) {
-        if(rs.mElement_USHORT_3 == null) {
-            rs.mElement_USHORT_3 = createVector(rs, DataType.UNSIGNED_16, 3);
+        if (rs.mElement_USHORT_3 == null) {
+            synchronized (rs) {
+                if (rs.mElement_USHORT_3 == null) {
+                    rs.mElement_USHORT_3 = createVector(rs, DataType.UNSIGNED_16, 3);
+                }
+            }
         }
         return rs.mElement_USHORT_3;
     }
 
     public static Element U16_4(RenderScript rs) {
-        if(rs.mElement_USHORT_4 == null) {
-            rs.mElement_USHORT_4 = createVector(rs, DataType.UNSIGNED_16, 4);
+        if (rs.mElement_USHORT_4 == null) {
+            synchronized (rs) {
+                if (rs.mElement_USHORT_4 == null) {
+                    rs.mElement_USHORT_4 = createVector(rs, DataType.UNSIGNED_16, 4);
+                }
+            }
         }
         return rs.mElement_USHORT_4;
     }
 
     public static Element I16_2(RenderScript rs) {
-        if(rs.mElement_SHORT_2 == null) {
-            rs.mElement_SHORT_2 = createVector(rs, DataType.SIGNED_16, 2);
+        if (rs.mElement_SHORT_2 == null) {
+            synchronized (rs) {
+                if (rs.mElement_SHORT_2 == null) {
+                    rs.mElement_SHORT_2 = createVector(rs, DataType.SIGNED_16, 2);
+                }
+            }
         }
         return rs.mElement_SHORT_2;
     }
 
     public static Element I16_3(RenderScript rs) {
-        if(rs.mElement_SHORT_3 == null) {
-            rs.mElement_SHORT_3 = createVector(rs, DataType.SIGNED_16, 3);
+        if (rs.mElement_SHORT_3 == null) {
+            synchronized (rs) {
+                if (rs.mElement_SHORT_3 == null) {
+                    rs.mElement_SHORT_3 = createVector(rs, DataType.SIGNED_16, 3);
+                }
+            }
         }
         return rs.mElement_SHORT_3;
     }
 
     public static Element I16_4(RenderScript rs) {
-        if(rs.mElement_SHORT_4 == null) {
-            rs.mElement_SHORT_4 = createVector(rs, DataType.SIGNED_16, 4);
+        if (rs.mElement_SHORT_4 == null) {
+            synchronized (rs) {
+                if (rs.mElement_SHORT_4 == null) {
+                    rs.mElement_SHORT_4 = createVector(rs, DataType.SIGNED_16, 4);
+                }
+            }
         }
         return rs.mElement_SHORT_4;
     }
 
     public static Element U32_2(RenderScript rs) {
-        if(rs.mElement_UINT_2 == null) {
-            rs.mElement_UINT_2 = createVector(rs, DataType.UNSIGNED_32, 2);
+        if (rs.mElement_UINT_2 == null) {
+            synchronized (rs) {
+                if (rs.mElement_UINT_2 == null) {
+                    rs.mElement_UINT_2 = createVector(rs, DataType.UNSIGNED_32, 2);
+                }
+            }
         }
         return rs.mElement_UINT_2;
     }
 
     public static Element U32_3(RenderScript rs) {
-        if(rs.mElement_UINT_3 == null) {
-            rs.mElement_UINT_3 = createVector(rs, DataType.UNSIGNED_32, 3);
+        if (rs.mElement_UINT_3 == null) {
+            synchronized (rs) {
+                if (rs.mElement_UINT_3 == null) {
+                    rs.mElement_UINT_3 = createVector(rs, DataType.UNSIGNED_32, 3);
+                }
+            }
         }
         return rs.mElement_UINT_3;
     }
 
     public static Element U32_4(RenderScript rs) {
-        if(rs.mElement_UINT_4 == null) {
-            rs.mElement_UINT_4 = createVector(rs, DataType.UNSIGNED_32, 4);
+        if (rs.mElement_UINT_4 == null) {
+            synchronized (rs) {
+                if (rs.mElement_UINT_4 == null) {
+                    rs.mElement_UINT_4 = createVector(rs, DataType.UNSIGNED_32, 4);
+                }
+            }
         }
         return rs.mElement_UINT_4;
     }
 
     public static Element I32_2(RenderScript rs) {
-        if(rs.mElement_INT_2 == null) {
-            rs.mElement_INT_2 = createVector(rs, DataType.SIGNED_32, 2);
+        if (rs.mElement_INT_2 == null) {
+            synchronized (rs) {
+                if (rs.mElement_INT_2 == null) {
+                    rs.mElement_INT_2 = createVector(rs, DataType.SIGNED_32, 2);
+                }
+            }
         }
         return rs.mElement_INT_2;
     }
 
     public static Element I32_3(RenderScript rs) {
-        if(rs.mElement_INT_3 == null) {
-            rs.mElement_INT_3 = createVector(rs, DataType.SIGNED_32, 3);
+        if (rs.mElement_INT_3 == null) {
+            synchronized (rs) {
+                if (rs.mElement_INT_3 == null) {
+                    rs.mElement_INT_3 = createVector(rs, DataType.SIGNED_32, 3);
+                }
+            }
         }
         return rs.mElement_INT_3;
     }
 
     public static Element I32_4(RenderScript rs) {
-        if(rs.mElement_INT_4 == null) {
-            rs.mElement_INT_4 = createVector(rs, DataType.SIGNED_32, 4);
+        if (rs.mElement_INT_4 == null) {
+            synchronized (rs) {
+                if (rs.mElement_INT_4 == null) {
+                    rs.mElement_INT_4 = createVector(rs, DataType.SIGNED_32, 4);
+                }
+            }
         }
         return rs.mElement_INT_4;
     }
 
     public static Element U64_2(RenderScript rs) {
-        if(rs.mElement_ULONG_2 == null) {
-            rs.mElement_ULONG_2 = createVector(rs, DataType.UNSIGNED_64, 2);
+        if (rs.mElement_ULONG_2 == null) {
+            synchronized (rs) {
+                if (rs.mElement_ULONG_2 == null) {
+                    rs.mElement_ULONG_2 = createVector(rs, DataType.UNSIGNED_64, 2);
+                }
+            }
         }
         return rs.mElement_ULONG_2;
     }
 
     public static Element U64_3(RenderScript rs) {
-        if(rs.mElement_ULONG_3 == null) {
-            rs.mElement_ULONG_3 = createVector(rs, DataType.UNSIGNED_64, 3);
+        if (rs.mElement_ULONG_3 == null) {
+            synchronized (rs) {
+                if (rs.mElement_ULONG_3 == null) {
+                    rs.mElement_ULONG_3 = createVector(rs, DataType.UNSIGNED_64, 3);
+                }
+            }
         }
         return rs.mElement_ULONG_3;
     }
 
     public static Element U64_4(RenderScript rs) {
-        if(rs.mElement_ULONG_4 == null) {
-            rs.mElement_ULONG_4 = createVector(rs, DataType.UNSIGNED_64, 4);
+        if (rs.mElement_ULONG_4 == null) {
+            synchronized (rs) {
+                if (rs.mElement_ULONG_4 == null) {
+                    rs.mElement_ULONG_4 = createVector(rs, DataType.UNSIGNED_64, 4);
+                }
+            }
         }
         return rs.mElement_ULONG_4;
     }
 
     public static Element I64_2(RenderScript rs) {
-        if(rs.mElement_LONG_2 == null) {
-            rs.mElement_LONG_2 = createVector(rs, DataType.SIGNED_64, 2);
+        if (rs.mElement_LONG_2 == null) {
+            synchronized (rs) {
+                if (rs.mElement_LONG_2 == null) {
+                    rs.mElement_LONG_2 = createVector(rs, DataType.SIGNED_64, 2);
+                }
+            }
         }
         return rs.mElement_LONG_2;
     }
 
     public static Element I64_3(RenderScript rs) {
-        if(rs.mElement_LONG_3 == null) {
-            rs.mElement_LONG_3 = createVector(rs, DataType.SIGNED_64, 3);
+        if (rs.mElement_LONG_3 == null) {
+            synchronized (rs) {
+                if (rs.mElement_LONG_3 == null) {
+                    rs.mElement_LONG_3 = createVector(rs, DataType.SIGNED_64, 3);
+                }
+            }
         }
         return rs.mElement_LONG_3;
     }
 
     public static Element I64_4(RenderScript rs) {
-        if(rs.mElement_LONG_4 == null) {
-            rs.mElement_LONG_4 = createVector(rs, DataType.SIGNED_64, 4);
+        if (rs.mElement_LONG_4 == null) {
+            synchronized (rs) {
+                if (rs.mElement_LONG_4 == null) {
+                    rs.mElement_LONG_4 = createVector(rs, DataType.SIGNED_64, 4);
+                }
+            }
         }
         return rs.mElement_LONG_4;
     }
 
+    public static Element YUV(RenderScript rs) {
+        if (rs.mElement_YUV == null) {
+            synchronized (rs) {
+                if (rs.mElement_YUV == null) {
+                    rs.mElement_YUV = createPixel(rs, DataType.UNSIGNED_8, DataKind.PIXEL_YUV);
+                }
+            }
+        }
+        return rs.mElement_YUV;
+    }
+
     public static Element MATRIX_4X4(RenderScript rs) {
-        if(rs.mElement_MATRIX_4X4 == null) {
-            rs.mElement_MATRIX_4X4 = createUser(rs, DataType.MATRIX_4X4);
+        if (rs.mElement_MATRIX_4X4 == null) {
+            synchronized (rs) {
+                if (rs.mElement_MATRIX_4X4 == null) {
+                    rs.mElement_MATRIX_4X4 = createUser(rs, DataType.MATRIX_4X4);
+                }
+            }
         }
         return rs.mElement_MATRIX_4X4;
     }
@@ -733,20 +1035,28 @@ public class Element extends BaseObj {
     }
 
     public static Element MATRIX_3X3(RenderScript rs) {
-        if(rs.mElement_MATRIX_3X3 == null) {
-            rs.mElement_MATRIX_3X3 = createUser(rs, DataType.MATRIX_3X3);
+        if (rs.mElement_MATRIX_3X3 == null) {
+            synchronized (rs) {
+                if (rs.mElement_MATRIX_3X3 == null) {
+                    rs.mElement_MATRIX_3X3 = createUser(rs, DataType.MATRIX_3X3);
+                }
+            }
         }
         return rs.mElement_MATRIX_3X3;
     }
 
     public static Element MATRIX_2X2(RenderScript rs) {
-        if(rs.mElement_MATRIX_2X2 == null) {
-            rs.mElement_MATRIX_2X2 = createUser(rs, DataType.MATRIX_2X2);
+        if (rs.mElement_MATRIX_2X2 == null) {
+            synchronized (rs) {
+                if (rs.mElement_MATRIX_2X2 == null) {
+                    rs.mElement_MATRIX_2X2 = createUser(rs, DataType.MATRIX_2X2);
+                }
+            }
         }
         return rs.mElement_MATRIX_2X2;
     }
 
-    Element(int id, RenderScript rs, Element[] e, String[] n, int[] as) {
+    Element(long id, RenderScript rs, Element[] e, String[] n, int[] as) {
         super(id, rs);
         mSize = 0;
         mVectorSize = 1;
@@ -761,9 +1071,10 @@ public class Element extends BaseObj {
             mSize += mElements[ct].mSize * mArraySizes[ct];
         }
         updateVisibleSubElements();
+        guard.open("destroy");
     }
 
-    Element(int id, RenderScript rs, DataType dt, DataKind dk, boolean norm, int size) {
+    Element(long id, RenderScript rs, DataType dt, DataKind dk, boolean norm, int size) {
         super(id, rs);
         if ((dt != DataType.UNSIGNED_5_6_5) &&
             (dt != DataType.UNSIGNED_4_4_4_4) &&
@@ -780,9 +1091,10 @@ public class Element extends BaseObj {
         mKind = dk;
         mNormalized = norm;
         mVectorSize = size;
+        guard.open("destroy");
     }
 
-    Element(int id, RenderScript rs) {
+    Element(long id, RenderScript rs) {
         super(id, rs);
     }
 
@@ -816,7 +1128,7 @@ public class Element extends BaseObj {
             mArraySizes = new int[numSubElements];
             mOffsetInBytes = new int[numSubElements];
 
-            int[] subElementIds = new int[numSubElements];
+            long[] subElementIds = new long[numSubElements];
             mRS.nElementGetSubElements(getID(mRS), subElementIds, mElementNames, mArraySizes);
             for(int i = 0; i < numSubElements; i ++) {
                 mElements[i] = new Element(subElementIds[i], mRS);
@@ -840,7 +1152,7 @@ public class Element extends BaseObj {
         DataKind dk = DataKind.USER;
         boolean norm = false;
         int vecSize = 1;
-        int id = rs.nElementCreate(dt.mID, dk.mID, norm, vecSize);
+        long id = rs.nElementCreate(dt.mID, dk.mID, norm, vecSize);
         return new Element(id, rs, dt, dk, norm, vecSize);
     }
 
@@ -864,6 +1176,7 @@ public class Element extends BaseObj {
 
         switch (dt) {
         // Support only primitive integer/float/boolean types as vectors.
+        case FLOAT_16:
         case FLOAT_32:
         case FLOAT_64:
         case SIGNED_8:
@@ -877,7 +1190,7 @@ public class Element extends BaseObj {
         case BOOLEAN: {
             DataKind dk = DataKind.USER;
             boolean norm = false;
-            int id = rs.nElementCreate(dt.mID, dk.mID, norm, size);
+            long id = rs.nElementCreate(dt.mID, dk.mID, norm, size);
             return new Element(id, rs, dt, dk, norm, size);
         }
 
@@ -948,7 +1261,7 @@ public class Element extends BaseObj {
         }
 
         boolean norm = true;
-        int id = rs.nElementCreate(dt.mID, dk.mID, norm, size);
+        long id = rs.nElementCreate(dt.mID, dk.mID, norm, size);
         return new Element(id, rs, dt, dk, norm, size);
     }
 
@@ -1075,11 +1388,11 @@ public class Element extends BaseObj {
             java.lang.System.arraycopy(mElementNames, 0, sin, 0, mCount);
             java.lang.System.arraycopy(mArraySizes, 0, asin, 0, mCount);
 
-            int[] ids = new int[ein.length];
+            long[] ids = new long[ein.length];
             for (int ct = 0; ct < ein.length; ct++ ) {
                 ids[ct] = ein[ct].getID(mRS);
             }
-            int id = mRS.nElementCreate2(ids, sin, asin);
+            long id = mRS.nElementCreate2(ids, sin, asin);
             return new Element(id, mRS, ein, sin, asin);
         }
     }

@@ -23,6 +23,7 @@ import java.io.UnsupportedEncodingException;
 import java.nio.BufferUnderflowException;
 import java.nio.ByteBuffer;
 import java.nio.ByteOrder;
+import java.util.Arrays;
 import java.util.Collection;
 import java.util.HashMap;
 import java.util.regex.Matcher;
@@ -52,26 +53,29 @@ public class EventLog {
     private static HashMap<String, Integer> sTagCodes = null;
     private static HashMap<Integer, String> sTagNames = null;
 
-    /** A previously logged event read from the logs. */
+    /** A previously logged event read from the logs. Instances are thread safe. */
     public static final class Event {
         private final ByteBuffer mBuffer;
 
-        // Layout of event log entry received from kernel.
+        // Layout of event log entry received from Android logger.
+        //  see system/core/include/log/logger.h
         private static final int LENGTH_OFFSET = 0;
+        private static final int HEADER_SIZE_OFFSET = 2;
         private static final int PROCESS_OFFSET = 4;
         private static final int THREAD_OFFSET = 8;
         private static final int SECONDS_OFFSET = 12;
         private static final int NANOSECONDS_OFFSET = 16;
 
-        private static final int PAYLOAD_START = 20;
-        private static final int TAG_OFFSET = 20;
-        private static final int DATA_START = 24;
+        // Layout for event log v1 format, v2 and v3 use HEADER_SIZE_OFFSET
+        private static final int V1_PAYLOAD_START = 20;
+        private static final int DATA_OFFSET = 4;
 
         // Value types
         private static final byte INT_TYPE    = 0;
         private static final byte LONG_TYPE   = 1;
         private static final byte STRING_TYPE = 2;
         private static final byte LIST_TYPE   = 3;
+        private static final byte FLOAT_TYPE = 4;
 
         /** @param data containing event, read from the system */
         /*package*/ Event(byte[] data) {
@@ -97,14 +101,22 @@ public class EventLog {
 
         /** @return the type tag code of the entry */
         public int getTag() {
-            return mBuffer.getInt(TAG_OFFSET);
+            int offset = mBuffer.getShort(HEADER_SIZE_OFFSET);
+            if (offset == 0) {
+                offset = V1_PAYLOAD_START;
+            }
+            return mBuffer.getInt(offset);
         }
 
-        /** @return one of Integer, Long, String, null, or Object[] of same. */
+        /** @return one of Integer, Long, Float, String, null, or Object[] of same. */
         public synchronized Object getData() {
             try {
-                mBuffer.limit(PAYLOAD_START + mBuffer.getShort(LENGTH_OFFSET));
-                mBuffer.position(DATA_START);  // Just after the tag.
+                int offset = mBuffer.getShort(HEADER_SIZE_OFFSET);
+                if (offset == 0) {
+                    offset = V1_PAYLOAD_START;
+                }
+                mBuffer.limit(offset + mBuffer.getShort(LENGTH_OFFSET));
+                mBuffer.position(offset + DATA_OFFSET); // Just after the tag.
                 return decodeObject();
             } catch (IllegalArgumentException e) {
                 Log.wtf(TAG, "Illegal entry payload: tag=" + getTag(), e);
@@ -120,10 +132,13 @@ public class EventLog {
             byte type = mBuffer.get();
             switch (type) {
             case INT_TYPE:
-                return (Integer) mBuffer.getInt();
+                return mBuffer.getInt();
 
             case LONG_TYPE:
-                return (Long) mBuffer.getLong();
+                return mBuffer.getLong();
+
+            case FLOAT_TYPE:
+                return mBuffer.getFloat();
 
             case STRING_TYPE:
                 try {
@@ -147,6 +162,17 @@ public class EventLog {
                 throw new IllegalArgumentException("Unknown entry type: " + type);
             }
         }
+
+        /** @hide */
+        public static Event fromBytes(byte[] data) {
+            return new Event(data);
+        }
+
+        /** @hide */
+        public byte[] getBytes() {
+            byte[] bytes = mBuffer.array();
+            return Arrays.copyOf(bytes, bytes.length);
+        }
     }
 
     // We assume that the native methods deal with any concurrency issues.
@@ -166,6 +192,14 @@ public class EventLog {
      * @return The number of bytes written
      */
     public static native int writeEvent(int tag, long value);
+
+    /**
+     * Record an event log message.
+     * @param tag The event type tag code
+     * @param value A value to log
+     * @return The number of bytes written
+     */
+    public static native int writeEvent(int tag, float value);
 
     /**
      * Record an event log message.

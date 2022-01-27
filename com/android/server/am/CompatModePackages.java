@@ -1,8 +1,28 @@
+/*
+ * Copyright (C) 2014 The Android Open Source Project
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *      http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
 package com.android.server.am;
+
+import static com.android.server.am.ActivityManagerDebugConfig.*;
+import static com.android.server.am.ActivityStackSupervisor.PRESERVE_WINDOWS;
 
 import java.io.File;
 import java.io.FileInputStream;
 import java.io.FileOutputStream;
+import java.nio.charset.StandardCharsets;
 import java.util.HashMap;
 import java.util.Iterator;
 import java.util.Map;
@@ -15,20 +35,20 @@ import com.android.internal.util.FastXmlSerializer;
 
 import android.app.ActivityManager;
 import android.app.AppGlobals;
-import android.content.pm.ActivityInfo;
 import android.content.pm.ApplicationInfo;
 import android.content.pm.IPackageManager;
 import android.content.res.CompatibilityInfo;
 import android.os.Handler;
+import android.os.Looper;
 import android.os.Message;
 import android.os.RemoteException;
 import android.util.AtomicFile;
 import android.util.Slog;
 import android.util.Xml;
 
-public class CompatModePackages {
-    private final String TAG = ActivityManagerService.TAG;
-    private final boolean DEBUG_CONFIGURATION = ActivityManagerService.DEBUG_CONFIGURATION;
+public final class CompatModePackages {
+    private static final String TAG = TAG_WITH_CLASS_NAME ? "CompatModePackages" : TAG_AM;
+    private static final String TAG_CONFIGURATION = TAG + POSTFIX_CONFIGURATION;
 
     private final ActivityManagerService mService;
     private final AtomicFile mFile;
@@ -37,37 +57,49 @@ public class CompatModePackages {
     public static final int COMPAT_FLAG_DONT_ASK = 1<<0;
     // Compatibility state: compatibility mode is enabled.
     public static final int COMPAT_FLAG_ENABLED = 1<<1;
+    // Unsupported zoom state: don't warn the user about unsupported zoom mode.
+    public static final int UNSUPPORTED_ZOOM_FLAG_DONT_NOTIFY = 1<<2;
 
     private final HashMap<String, Integer> mPackages = new HashMap<String, Integer>();
 
     private static final int MSG_WRITE = ActivityManagerService.FIRST_COMPAT_MODE_MSG;
 
-    private final Handler mHandler = new Handler() {
-        @Override public void handleMessage(Message msg) {
+    private final CompatHandler mHandler;
+
+    private final class CompatHandler extends Handler {
+        public CompatHandler(Looper looper) {
+            super(looper, null, true);
+        }
+
+        @Override
+        public void handleMessage(Message msg) {
             switch (msg.what) {
                 case MSG_WRITE:
                     saveCompatModes();
-                    break;
-                default:
-                    super.handleMessage(msg);
                     break;
             }
         }
     };
 
-    public CompatModePackages(ActivityManagerService service, File systemDir) {
+    public CompatModePackages(ActivityManagerService service, File systemDir, Handler handler) {
         mService = service;
         mFile = new AtomicFile(new File(systemDir, "packages-compat.xml"));
+        mHandler = new CompatHandler(handler.getLooper());
 
         FileInputStream fis = null;
         try {
             fis = mFile.openRead();
             XmlPullParser parser = Xml.newPullParser();
-            parser.setInput(fis, null);
+            parser.setInput(fis, StandardCharsets.UTF_8.name());
             int eventType = parser.getEventType();
-            while (eventType != XmlPullParser.START_TAG) {
+            while (eventType != XmlPullParser.START_TAG &&
+                    eventType != XmlPullParser.END_DOCUMENT) {
                 eventType = parser.next();
             }
+            if (eventType == XmlPullParser.END_DOCUMENT) {
+                return;
+            }
+
             String tagName = parser.getName();
             if ("compat-packages".equals(tagName)) {
                 eventType = parser.next();
@@ -117,6 +149,24 @@ public class CompatModePackages {
         return flags != null ? flags : 0;
     }
 
+    public void handlePackageDataClearedLocked(String packageName) {
+        // User has explicitly asked to clear all associated data.
+        removePackage(packageName);
+    }
+
+    public void handlePackageUninstalledLocked(String packageName) {
+        // Clear settings when app is uninstalled since this is an explicit
+        // signal from the user to remove the app and all associated data.
+        removePackage(packageName);
+    }
+
+    private void removePackage(String packageName) {
+        if (mPackages.containsKey(packageName)) {
+            mPackages.remove(packageName);
+            scheduleWrite();
+        }
+    }
+
     public void handlePackageAddedLocked(String packageName, boolean updated) {
         ApplicationInfo ai = null;
         try {
@@ -135,11 +185,15 @@ public class CompatModePackages {
             // any current settings for it.
             if (!mayCompat && mPackages.containsKey(packageName)) {
                 mPackages.remove(packageName);
-                mHandler.removeMessages(MSG_WRITE);
-                Message msg = mHandler.obtainMessage(MSG_WRITE);
-                mHandler.sendMessageDelayed(msg, 10000);
+                scheduleWrite();
             }
         }
+    }
+
+    private void scheduleWrite() {
+        mHandler.removeMessages(MSG_WRITE);
+        Message msg = mHandler.obtainMessage(MSG_WRITE);
+        mHandler.sendMessageDelayed(msg, 10000);
     }
 
     public CompatibilityInfo compatibilityInfoForPackageLocked(ApplicationInfo ai) {
@@ -166,7 +220,7 @@ public class CompatModePackages {
     }
 
     public boolean getFrontActivityAskCompatModeLocked() {
-        ActivityRecord r = mService.mMainStack.topRunningActivityLocked(null);
+        ActivityRecord r = mService.getFocusedStack().topRunningActivityLocked();
         if (r == null) {
             return false;
         }
@@ -177,8 +231,12 @@ public class CompatModePackages {
         return (getPackageFlags(packageName)&COMPAT_FLAG_DONT_ASK) == 0;
     }
 
+    public boolean getPackageNotifyUnsupportedZoomLocked(String packageName) {
+        return (getPackageFlags(packageName)&UNSUPPORTED_ZOOM_FLAG_DONT_NOTIFY) == 0;
+    }
+
     public void setFrontActivityAskCompatModeLocked(boolean ask) {
-        ActivityRecord r = mService.mMainStack.topRunningActivityLocked(null);
+        ActivityRecord r = mService.getFocusedStack().topRunningActivityLocked();
         if (r != null) {
             setPackageAskCompatModeLocked(r.packageName, ask);
         }
@@ -193,14 +251,26 @@ public class CompatModePackages {
             } else {
                 mPackages.remove(packageName);
             }
-            mHandler.removeMessages(MSG_WRITE);
-            Message msg = mHandler.obtainMessage(MSG_WRITE);
-            mHandler.sendMessageDelayed(msg, 10000);
+            scheduleWrite();
+        }
+    }
+
+    public void setPackageNotifyUnsupportedZoomLocked(String packageName, boolean notify) {
+        final int curFlags = getPackageFlags(packageName);
+        final int newFlags = notify ? (curFlags&~UNSUPPORTED_ZOOM_FLAG_DONT_NOTIFY) :
+                (curFlags|UNSUPPORTED_ZOOM_FLAG_DONT_NOTIFY);
+        if (curFlags != newFlags) {
+            if (newFlags != 0) {
+                mPackages.put(packageName, newFlags);
+            } else {
+                mPackages.remove(packageName);
+            }
+            scheduleWrite();
         }
     }
 
     public int getFrontActivityScreenCompatModeLocked() {
-        ActivityRecord r = mService.mMainStack.topRunningActivityLocked(null);
+        ActivityRecord r = mService.getFocusedStack().topRunningActivityLocked();
         if (r == null) {
             return ActivityManager.COMPAT_MODE_UNKNOWN;
         }
@@ -208,7 +278,7 @@ public class CompatModePackages {
     }
 
     public void setFrontActivityScreenCompatModeLocked(int mode) {
-        ActivityRecord r = mService.mMainStack.topRunningActivityLocked(null);
+        ActivityRecord r = mService.getFocusedStack().topRunningActivityLocked();
         if (r == null) {
             Slog.w(TAG, "setFrontActivityScreenCompatMode failed: no top activity");
             return;
@@ -291,34 +361,20 @@ public class CompatModePackages {
             // Need to get compatibility info in new state.
             ci = compatibilityInfoForPackageLocked(ai);
 
-            mHandler.removeMessages(MSG_WRITE);
-            Message msg = mHandler.obtainMessage(MSG_WRITE);
-            mHandler.sendMessageDelayed(msg, 10000);
+            scheduleWrite();
 
-            ActivityRecord starting = mService.mMainStack.topRunningActivityLocked(null);
-
-            // All activities that came from the package must be
-            // restarted as if there was a config change.
-            for (int i=mService.mMainStack.mHistory.size()-1; i>=0; i--) {
-                ActivityRecord a = (ActivityRecord)mService.mMainStack.mHistory.get(i);
-                if (a.info.packageName.equals(packageName)) {
-                    a.forceNewConfig = true;
-                    if (starting != null && a == starting && a.visible) {
-                        a.startFreezingScreenLocked(starting.app,
-                                ActivityInfo.CONFIG_SCREEN_LAYOUT);
-                    }
-                }
-            }
+            final ActivityStack stack = mService.getFocusedStack();
+            ActivityRecord starting = stack.restartPackage(packageName);
 
             // Tell all processes that loaded this package about the change.
             for (int i=mService.mLruProcesses.size()-1; i>=0; i--) {
                 ProcessRecord app = mService.mLruProcesses.get(i);
-                if (!app.pkgList.contains(packageName)) {
+                if (!app.pkgList.containsKey(packageName)) {
                     continue;
                 }
                 try {
                     if (app.thread != null) {
-                        if (DEBUG_CONFIGURATION) Slog.v(TAG, "Sending to proc "
+                        if (DEBUG_CONFIGURATION) Slog.v(TAG_CONFIGURATION, "Sending to proc "
                                 + app.processName + " new compat " + ci);
                         app.thread.updatePackageCompatibilityInfo(packageName, ci);
                     }
@@ -327,10 +383,10 @@ public class CompatModePackages {
             }
 
             if (starting != null) {
-                mService.mMainStack.ensureActivityConfigurationLocked(starting, 0);
+                stack.ensureActivityConfigurationLocked(starting, 0, false);
                 // And we need to make sure at this point that all other activities
                 // are made visible with the correct configuration.
-                mService.mMainStack.ensureActivitiesVisibleLocked(starting, 0);
+                stack.ensureActivitiesVisibleLocked(starting, 0, !PRESERVE_WINDOWS);
             }
         }
     }
@@ -346,7 +402,7 @@ public class CompatModePackages {
         try {
             fos = mFile.startWrite();
             XmlSerializer out = new FastXmlSerializer();
-            out.setOutput(fos, "utf-8");
+            out.setOutput(fos, StandardCharsets.UTF_8.name());
             out.startDocument(null, true);
             out.setFeature("http://xmlpull.org/v1/doc/features.html#indent-output", true);
             out.startTag(null, "compat-packages");

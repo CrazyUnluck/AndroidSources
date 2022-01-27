@@ -16,8 +16,12 @@
 package com.android.internal.widget;
 
 import com.android.internal.R;
-import com.android.internal.view.menu.ActionMenuPresenter;
-import com.android.internal.view.menu.ActionMenuView;
+
+import android.util.TypedValue;
+import android.view.ContextThemeWrapper;
+import android.view.MotionEvent;
+import android.widget.ActionMenuPresenter;
+import android.widget.ActionMenuView;
 
 import android.animation.Animator;
 import android.animation.AnimatorSet;
@@ -32,30 +36,50 @@ import android.view.ViewGroup;
 import android.view.animation.DecelerateInterpolator;
 
 public abstract class AbsActionBarView extends ViewGroup {
+    private static final TimeInterpolator sAlphaInterpolator = new DecelerateInterpolator();
+
+    private static final int FADE_DURATION = 200;
+
+    protected final VisibilityAnimListener mVisAnimListener = new VisibilityAnimListener();
+
+    /** Context against which to inflate popup menus. */
+    protected final Context mPopupContext;
+
     protected ActionMenuView mMenuView;
     protected ActionMenuPresenter mActionMenuPresenter;
-    protected ActionBarContainer mSplitView;
+    protected ViewGroup mSplitView;
     protected boolean mSplitActionBar;
     protected boolean mSplitWhenNarrow;
     protected int mContentHeight;
 
     protected Animator mVisibilityAnim;
-    protected final VisibilityAnimListener mVisAnimListener = new VisibilityAnimListener();
 
-    private static final TimeInterpolator sAlphaInterpolator = new DecelerateInterpolator();
-
-    private static final int FADE_DURATION = 200;
+    private boolean mEatingTouch;
+    private boolean mEatingHover;
 
     public AbsActionBarView(Context context) {
-        super(context);
+        this(context, null);
     }
 
     public AbsActionBarView(Context context, AttributeSet attrs) {
-        super(context, attrs);
+        this(context, attrs, 0);
     }
 
-    public AbsActionBarView(Context context, AttributeSet attrs, int defStyle) {
-        super(context, attrs, defStyle);
+    public AbsActionBarView(Context context, AttributeSet attrs, int defStyleAttr) {
+        this(context, attrs, defStyleAttr, 0);
+    }
+
+    public AbsActionBarView(
+            Context context, AttributeSet attrs, int defStyleAttr, int defStyleRes) {
+        super(context, attrs, defStyleAttr, defStyleRes);
+
+        final TypedValue tv = new TypedValue();
+        if (context.getTheme().resolveAttribute(R.attr.actionBarPopupTheme, tv, true)
+                && tv.resourceId != 0) {
+            mPopupContext = new ContextThemeWrapper(context, tv.resourceId);
+        } else {
+            mPopupContext = context;
+        }
     }
 
     @Override
@@ -69,7 +93,7 @@ public abstract class AbsActionBarView extends ViewGroup {
         setContentHeight(a.getLayoutDimension(R.styleable.ActionBar_height, 0));
         a.recycle();
         if (mSplitWhenNarrow) {
-            setSplitActionBar(getContext().getResources().getBoolean(
+            setSplitToolbar(getContext().getResources().getBoolean(
                     com.android.internal.R.bool.split_action_bar_is_narrow));
         }
         if (mActionMenuPresenter != null) {
@@ -77,11 +101,62 @@ public abstract class AbsActionBarView extends ViewGroup {
         }
     }
 
+    @Override
+    public boolean onTouchEvent(MotionEvent ev) {
+        // ActionBarViews always eat touch events, but should still respect the touch event dispatch
+        // contract. If the normal View implementation doesn't want the events, we'll just silently
+        // eat the rest of the gesture without reporting the events to the default implementation
+        // since that's what it expects.
+
+        final int action = ev.getActionMasked();
+        if (action == MotionEvent.ACTION_DOWN) {
+            mEatingTouch = false;
+        }
+
+        if (!mEatingTouch) {
+            final boolean handled = super.onTouchEvent(ev);
+            if (action == MotionEvent.ACTION_DOWN && !handled) {
+                mEatingTouch = true;
+            }
+        }
+
+        if (action == MotionEvent.ACTION_UP || action == MotionEvent.ACTION_CANCEL) {
+            mEatingTouch = false;
+        }
+
+        return true;
+    }
+
+    @Override
+    public boolean onHoverEvent(MotionEvent ev) {
+        // Same deal as onTouchEvent() above. Eat all hover events, but still
+        // respect the touch event dispatch contract.
+
+        final int action = ev.getActionMasked();
+        if (action == MotionEvent.ACTION_HOVER_ENTER) {
+            mEatingHover = false;
+        }
+
+        if (!mEatingHover) {
+            final boolean handled = super.onHoverEvent(ev);
+            if (action == MotionEvent.ACTION_HOVER_ENTER && !handled) {
+                mEatingHover = true;
+            }
+        }
+
+        if (action == MotionEvent.ACTION_HOVER_EXIT
+                || action == MotionEvent.ACTION_CANCEL) {
+            mEatingHover = false;
+        }
+
+        return true;
+    }
+
     /**
      * Sets whether the bar should be split right now, no questions asked.
      * @param split true if the bar should split
      */
-    public void setSplitActionBar(boolean split) {
+    public void setSplitToolbar(boolean split) {
         mSplitActionBar = split;
     }
 
@@ -95,9 +170,6 @@ public abstract class AbsActionBarView extends ViewGroup {
 
     public void setContentHeight(int height) {
         mContentHeight = height;
-        if (mMenuView != null) {
-            mMenuView.setMaxItemHeight(mContentHeight);
-        }
         requestLayout();
     }
 
@@ -105,7 +177,7 @@ public abstract class AbsActionBarView extends ViewGroup {
         return mContentHeight;
     }
 
-    public void setSplitView(ActionBarContainer splitView) {
+    public void setSplitView(ViewGroup splitView) {
         mSplitView = splitView;
     }
 
@@ -119,10 +191,11 @@ public abstract class AbsActionBarView extends ViewGroup {
         return getVisibility();
     }
 
-    public void animateToVisibility(int visibility) {
+    public Animator setupAnimatorToVisibility(int visibility, long duration) {
         if (mVisibilityAnim != null) {
             mVisibilityAnim.cancel();
         }
+
         if (visibility == VISIBLE) {
             if (getVisibility() != VISIBLE) {
                 setAlpha(0);
@@ -130,36 +203,41 @@ public abstract class AbsActionBarView extends ViewGroup {
                     mMenuView.setAlpha(0);
                 }
             }
-            ObjectAnimator anim = ObjectAnimator.ofFloat(this, "alpha", 1);
-            anim.setDuration(FADE_DURATION);
+            ObjectAnimator anim = ObjectAnimator.ofFloat(this, View.ALPHA, 1);
+            anim.setDuration(duration);
             anim.setInterpolator(sAlphaInterpolator);
             if (mSplitView != null && mMenuView != null) {
                 AnimatorSet set = new AnimatorSet();
-                ObjectAnimator splitAnim = ObjectAnimator.ofFloat(mMenuView, "alpha", 1);
-                splitAnim.setDuration(FADE_DURATION);
+                ObjectAnimator splitAnim = ObjectAnimator.ofFloat(mMenuView, View.ALPHA, 1);
+                splitAnim.setDuration(duration);
                 set.addListener(mVisAnimListener.withFinalVisibility(visibility));
                 set.play(anim).with(splitAnim);
-                set.start();
+                return set;
             } else {
                 anim.addListener(mVisAnimListener.withFinalVisibility(visibility));
-                anim.start();
+                return anim;
             }
         } else {
-            ObjectAnimator anim = ObjectAnimator.ofFloat(this, "alpha", 0);
-            anim.setDuration(FADE_DURATION);
+            ObjectAnimator anim = ObjectAnimator.ofFloat(this, View.ALPHA, 0);
+            anim.setDuration(duration);
             anim.setInterpolator(sAlphaInterpolator);
             if (mSplitView != null && mMenuView != null) {
                 AnimatorSet set = new AnimatorSet();
-                ObjectAnimator splitAnim = ObjectAnimator.ofFloat(mMenuView, "alpha", 0);
-                splitAnim.setDuration(FADE_DURATION);
+                ObjectAnimator splitAnim = ObjectAnimator.ofFloat(mMenuView, View.ALPHA, 0);
+                splitAnim.setDuration(duration);
                 set.addListener(mVisAnimListener.withFinalVisibility(visibility));
                 set.play(anim).with(splitAnim);
-                set.start();
+                return set;
             } else {
                 anim.addListener(mVisAnimListener.withFinalVisibility(visibility));
-                anim.start();
+                return anim;
             }
         }
+    }
+
+    public void animateToVisibility(int visibility) {
+        Animator anim = setupAnimatorToVisibility(visibility, FADE_DURATION);
+        anim.start();
     }
 
     @Override
@@ -201,8 +279,19 @@ public abstract class AbsActionBarView extends ViewGroup {
         return false;
     }
 
+    public boolean isOverflowMenuShowPending() {
+        if (mActionMenuPresenter != null) {
+            return mActionMenuPresenter.isOverflowMenuShowPending();
+        }
+        return false;
+    }
+
     public boolean isOverflowReserved() {
         return mActionMenuPresenter != null && mActionMenuPresenter.isOverflowReserved();
+    }
+
+    public boolean canShowOverflowMenu() {
+        return isOverflowReserved() && getVisibility() == VISIBLE;
     }
 
     public void dismissPopupMenus() {

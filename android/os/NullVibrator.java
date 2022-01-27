@@ -16,7 +16,7 @@
 
 package android.os;
 
-import android.util.Log;
+import android.media.AudioAttributes;
 
 /**
  * Vibrator implementation that does nothing.
@@ -38,31 +38,22 @@ public class NullVibrator extends Vibrator {
         return false;
     }
 
+    /**
+     * @hide
+     */
     @Override
-    public void vibrate(long milliseconds) {
+    public void vibrate(int uid, String opPkg, long milliseconds, AudioAttributes attributes) {
     }
 
+    /**
+     * @hide
+     */
     @Override
-    public void vibrate(long[] pattern, int repeat) {
+    public void vibrate(int uid, String opPkg, long[] pattern, int repeat,
+            AudioAttributes attributes) {
         if (repeat >= pattern.length) {
             throw new ArrayIndexOutOfBoundsException();
         }
-    }
-
-    /**
-     * @hide
-     */
-    @Override
-    public void vibrate(int owningUid, String owningPackage, long milliseconds) {
-        vibrate(milliseconds);
-    }
-
-    /**
-     * @hide
-     */
-    @Override
-    public void vibrate(int owningUid, String owningPackage, long[] pattern, int repeat) {
-        vibrate(pattern, repeat);
     }
 
     @Override

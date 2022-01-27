@@ -17,6 +17,7 @@
 package org.json;
 
 import java.util.Arrays;
+import java.util.Collection;
 import java.util.Collections;
 import java.util.List;
 import junit.framework.TestCase;
@@ -136,7 +137,7 @@ public class JSONArrayTest extends TestCase {
 
     public void testNulls() throws JSONException {
         JSONArray array = new JSONArray();
-        array.put(3, null);
+        array.put(3, (Collection) null);
         array.put(0, JSONObject.NULL);
         assertEquals(4, array.length());
         assertEquals("[null,null,null,null]", array.toString());
@@ -178,7 +179,7 @@ public class JSONArrayTest extends TestCase {
      */
     public void testParseNullYieldsJSONObjectNull() throws JSONException {
         JSONArray array = new JSONArray("[\"null\",null]");
-        array.put(null);
+        array.put((Collection) null);
         assertEquals("null", array.get(0));
         assertEquals(JSONObject.NULL, array.get(1));
         try {
@@ -296,7 +297,7 @@ public class JSONArrayTest extends TestCase {
 
     public void testJoin() throws JSONException {
         JSONArray array = new JSONArray();
-        array.put(null);
+        array.put((Collection) null);
         assertEquals("null", array.join(" & "));
         array.put("\"");
         assertEquals("null & \"\\\"\"", array.join(" & "));
@@ -345,7 +346,7 @@ public class JSONArrayTest extends TestCase {
 
         JSONArray values = new JSONArray();
         values.put(5.5d);
-        values.put(null);
+        values.put((Collection) null);
 
         // null values are stripped!
         JSONObject object = values.toJSONObject(keys);
@@ -537,5 +538,30 @@ public class JSONArrayTest extends TestCase {
             fail();
         } catch (JSONException e) {
         }
+    }
+
+    public void test_remove() throws Exception {
+        JSONArray a = new JSONArray();
+        assertEquals(null, a.remove(-1));
+        assertEquals(null, a.remove(0));
+
+        a.put("hello");
+        assertEquals(null, a.remove(-1));
+        assertEquals(null, a.remove(1));
+        assertEquals("hello", a.remove(0));
+        assertEquals(null, a.remove(0));
+    }
+
+    enum MyEnum { A, B, C; }
+
+    // https://code.google.com/p/android/issues/detail?id=62539
+    public void testEnums() throws Exception {
+        // This works because it's in java.* and any class in there falls back to toString.
+        JSONArray a1 = new JSONArray(java.lang.annotation.RetentionPolicy.values());
+        assertEquals("[\"SOURCE\",\"CLASS\",\"RUNTIME\"]", a1.toString());
+
+        // This doesn't because it's not.
+        JSONArray a2 = new JSONArray(MyEnum.values());
+        assertEquals("[null,null,null]", a2.toString());
     }
 }

@@ -16,16 +16,8 @@
 
 package android.renderscript;
 
-import java.io.Writer;
-import java.util.ArrayList;
-import java.util.concurrent.Semaphore;
-
 import android.content.Context;
-import android.os.Handler;
-import android.os.Message;
 import android.util.AttributeSet;
-import android.util.Log;
-import android.view.Surface;
 import android.view.SurfaceHolder;
 import android.view.SurfaceView;
 
@@ -36,8 +28,8 @@ import android.view.SurfaceView;
  *
  * <div class="special reference">
  * <h3>Developer Guides</h3>
- * <p>For more information about creating an application that uses Renderscript, read the
- * <a href="{@docRoot}guide/topics/renderscript/index.html">Renderscript</a> developer guide.</p>
+ * <p>For more information about creating an application that uses RenderScript, read the
+ * <a href="{@docRoot}guide/topics/renderscript/index.html">RenderScript</a> developer guide.</p>
  * </div>
  */
 public class RSSurfaceView extends SurfaceView implements SurfaceHolder.Callback {

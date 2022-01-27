@@ -21,6 +21,8 @@ import android.view.View;
 import android.view.ViewGroup;
 import android.widget.BaseAdapter;
 
+import java.util.ArrayList;
+
 /**
  * A general purpose adapter that is composed of multiple cursors. It just
  * appends them in the order they are added.
@@ -52,11 +54,14 @@ public abstract class CompositeCursorAdapter extends BaseAdapter {
         public boolean getHasHeader() {
             return hasHeader;
         }
+
+        public boolean isEmpty() {
+            return count == 0;
+        }
     }
 
     private final Context mContext;
-    private Partition[] mPartitions;
-    private int mSize = 0;
+    private ArrayList<Partition> mPartitions;
     private int mCount = 0;
     private boolean mCacheValid = true;
     private boolean mNotificationsEnabled = true;
@@ -68,7 +73,7 @@ public abstract class CompositeCursorAdapter extends BaseAdapter {
 
     public CompositeCursorAdapter(Context context, int initialCapacity) {
         mContext = context;
-        mPartitions = new Partition[INITIAL_CAPACITY];
+        mPartitions = new ArrayList<Partition>();
     }
 
     public Context getContext() {
@@ -85,26 +90,23 @@ public abstract class CompositeCursorAdapter extends BaseAdapter {
     }
 
     public void addPartition(Partition partition) {
-        if (mSize >= mPartitions.length) {
-            int newCapacity = mSize + 2;
-            Partition[] newAdapters = new Partition[newCapacity];
-            System.arraycopy(mPartitions, 0, newAdapters, 0, mSize);
-            mPartitions = newAdapters;
-        }
-        mPartitions[mSize++] = partition;
+        mPartitions.add(partition);
+        invalidate();
+        notifyDataSetChanged();
+    }
+
+    public void addPartition(int location, Partition partition) {
+        mPartitions.add(location, partition);
         invalidate();
         notifyDataSetChanged();
     }
 
     public void removePartition(int partitionIndex) {
-        Cursor cursor = mPartitions[partitionIndex].cursor;
+        Cursor cursor = mPartitions.get(partitionIndex).cursor;
         if (cursor != null && !cursor.isClosed()) {
             cursor.close();
         }
-
-        System.arraycopy(mPartitions, partitionIndex + 1, mPartitions, partitionIndex,
-                mSize - partitionIndex - 1);
-        mSize--;
+        mPartitions.remove(partitionIndex);
         invalidate();
         notifyDataSetChanged();
     }
@@ -112,9 +114,12 @@ public abstract class CompositeCursorAdapter extends BaseAdapter {
     /**
      * Removes cursors for all partitions.
      */
+    // TODO: Is this really what this is supposed to do? Just remove the cursors? Not close them?
+    // Not remove the partitions themselves? Isn't this leaking?
+
     public void clearPartitions() {
-        for (int i = 0; i < mSize; i++) {
-            mPartitions[i].cursor = null;
+        for (Partition partition : mPartitions) {
+            partition.cursor = null;
         }
         invalidate();
         notifyDataSetChanged();
@@ -124,33 +129,29 @@ public abstract class CompositeCursorAdapter extends BaseAdapter {
      * Closes all cursors and removes all partitions.
      */
     public void close() {
-        for (int i = 0; i < mSize; i++) {
-            Cursor cursor = mPartitions[i].cursor;
+        for (Partition partition : mPartitions) {
+            Cursor cursor = partition.cursor;
             if (cursor != null && !cursor.isClosed()) {
                 cursor.close();
-                mPartitions[i].cursor = null;
             }
         }
-        mSize = 0;
+        mPartitions.clear();
         invalidate();
         notifyDataSetChanged();
     }
 
     public void setHasHeader(int partitionIndex, boolean flag) {
-        mPartitions[partitionIndex].hasHeader = flag;
+        mPartitions.get(partitionIndex).hasHeader = flag;
         invalidate();
     }
 
     public void setShowIfEmpty(int partitionIndex, boolean flag) {
-        mPartitions[partitionIndex].showIfEmpty = flag;
+        mPartitions.get(partitionIndex).showIfEmpty = flag;
         invalidate();
     }
 
     public Partition getPartition(int partitionIndex) {
-        if (partitionIndex >= mSize) {
-            throw new ArrayIndexOutOfBoundsException(partitionIndex);
-        }
-        return mPartitions[partitionIndex];
+        return mPartitions.get(partitionIndex);
     }
 
     protected void invalidate() {
@@ -158,7 +159,7 @@ public abstract class CompositeCursorAdapter extends BaseAdapter {
     }
 
     public int getPartitionCount() {
-        return mSize;
+        return mPartitions.size();
     }
 
     protected void ensureCacheValid() {
@@ -167,15 +168,20 @@ public abstract class CompositeCursorAdapter extends BaseAdapter {
         }
 
         mCount = 0;
-        for (int i = 0; i < mSize; i++) {
-            Cursor cursor = mPartitions[i].cursor;
-            int count = cursor != null ? cursor.getCount() : 0;
-            if (mPartitions[i].hasHeader) {
-                if (count != 0 || mPartitions[i].showIfEmpty) {
+        for (Partition partition : mPartitions) {
+            Cursor cursor = partition.cursor;
+            int count;
+            if (cursor == null || cursor.isClosed()) {
+                count = 0;
+            } else {
+                count = cursor.getCount();
+            }
+            if (partition.hasHeader) {
+                if (count != 0 || partition.showIfEmpty) {
                     count++;
                 }
             }
-            mPartitions[i].count = count;
+            partition.count = count;
             mCount += count;
         }
 
@@ -186,7 +192,7 @@ public abstract class CompositeCursorAdapter extends BaseAdapter {
      * Returns true if the specified partition was configured to have a header.
      */
     public boolean hasHeader(int partition) {
-        return mPartitions[partition].hasHeader;
+        return mPartitions.get(partition).hasHeader;
     }
 
     /**
@@ -201,21 +207,21 @@ public abstract class CompositeCursorAdapter extends BaseAdapter {
      * Returns the cursor for the given partition
      */
     public Cursor getCursor(int partition) {
-        return mPartitions[partition].cursor;
+        return mPartitions.get(partition).cursor;
     }
 
     /**
      * Changes the cursor for an individual partition.
      */
     public void changeCursor(int partition, Cursor cursor) {
-        Cursor prevCursor = mPartitions[partition].cursor;
+        Cursor prevCursor = mPartitions.get(partition).cursor;
         if (prevCursor != cursor) {
             if (prevCursor != null && !prevCursor.isClosed()) {
                 prevCursor.close();
             }
-            mPartitions[partition].cursor = cursor;
-            if (cursor != null) {
-                mPartitions[partition].idColumnIndex = cursor.getColumnIndex("_id");
+            mPartitions.get(partition).cursor = cursor;
+            if (cursor != null && !cursor.isClosed()) {
+                mPartitions.get(partition).idColumnIndex = cursor.getColumnIndex("_id");
             }
             invalidate();
             notifyDataSetChanged();
@@ -226,8 +232,8 @@ public abstract class CompositeCursorAdapter extends BaseAdapter {
      * Returns true if the specified partition has no cursor or an empty cursor.
      */
     public boolean isPartitionEmpty(int partition) {
-        Cursor cursor = mPartitions[partition].cursor;
-        return cursor == null || cursor.getCount() == 0;
+        Cursor cursor = mPartitions.get(partition).cursor;
+        return cursor == null || cursor.isClosed() || cursor.getCount() == 0;
     }
 
     /**
@@ -236,8 +242,8 @@ public abstract class CompositeCursorAdapter extends BaseAdapter {
     public int getPartitionForPosition(int position) {
         ensureCacheValid();
         int start = 0;
-        for (int i = 0; i < mSize; i++) {
-            int end = start + mPartitions[i].count;
+        for (int i = 0, n = mPartitions.size(); i < n; i++) {
+            int end = start + mPartitions.get(i).count;
             if (position >= start && position < end) {
                 return i;
             }
@@ -253,11 +259,11 @@ public abstract class CompositeCursorAdapter extends BaseAdapter {
     public int getOffsetInPartition(int position) {
         ensureCacheValid();
         int start = 0;
-        for (int i = 0; i < mSize; i++) {
-            int end = start + mPartitions[i].count;
+        for (Partition partition : mPartitions) {
+            int end = start + partition.count;
             if (position >= start && position < end) {
                 int offset = position - start;
-                if (mPartitions[i].hasHeader) {
+                if (partition.hasHeader) {
                     offset--;
                 }
                 return offset;
@@ -274,7 +280,7 @@ public abstract class CompositeCursorAdapter extends BaseAdapter {
         ensureCacheValid();
         int position = 0;
         for (int i = 0; i < partition; i++) {
-            position += mPartitions[i].count;
+            position += mPartitions.get(i).count;
         }
         return position;
     }
@@ -305,14 +311,18 @@ public abstract class CompositeCursorAdapter extends BaseAdapter {
     public int getItemViewType(int position) {
         ensureCacheValid();
         int start = 0;
-        for (int i = 0; i < mSize; i++) {
-            int end = start  + mPartitions[i].count;
+        for (int i = 0, n = mPartitions.size(); i < n; i++) {
+            int end = start  + mPartitions.get(i).count;
             if (position >= start && position < end) {
                 int offset = position - start;
-                if (mPartitions[i].hasHeader && offset == 0) {
-                    return IGNORE_ITEM_VIEW_TYPE;
+                if (mPartitions.get(i).hasHeader) {
+                    offset--;
                 }
-                return getItemViewType(i, position);
+                if (offset == -1) {
+                    return IGNORE_ITEM_VIEW_TYPE;
+                } else {
+                    return getItemViewType(i, offset);
+                }
             }
             start = end;
         }
@@ -323,22 +333,22 @@ public abstract class CompositeCursorAdapter extends BaseAdapter {
     public View getView(int position, View convertView, ViewGroup parent) {
         ensureCacheValid();
         int start = 0;
-        for (int i = 0; i < mSize; i++) {
-            int end = start + mPartitions[i].count;
+        for (int i = 0, n = mPartitions.size(); i < n; i++) {
+            int end = start + mPartitions.get(i).count;
             if (position >= start && position < end) {
                 int offset = position - start;
-                if (mPartitions[i].hasHeader) {
+                if (mPartitions.get(i).hasHeader) {
                     offset--;
                 }
                 View view;
                 if (offset == -1) {
-                    view = getHeaderView(i, mPartitions[i].cursor, convertView, parent);
+                    view = getHeaderView(i, mPartitions.get(i).cursor, convertView, parent);
                 } else {
-                    if (!mPartitions[i].cursor.moveToPosition(offset)) {
+                    if (!mPartitions.get(i).cursor.moveToPosition(offset)) {
                         throw new IllegalStateException("Couldn't move cursor to position "
                                 + offset);
                     }
-                    view = getView(i, mPartitions[i].cursor, offset, convertView, parent);
+                    view = getView(i, mPartitions.get(i).cursor, offset, convertView, parent);
                 }
                 if (view == null) {
                     throw new NullPointerException("View should not be null, partition: " + i
@@ -412,18 +422,20 @@ public abstract class CompositeCursorAdapter extends BaseAdapter {
     public Object getItem(int position) {
         ensureCacheValid();
         int start = 0;
-        for (int i = 0; i < mSize; i++) {
-            int end = start + mPartitions[i].count;
+        for (Partition mPartition : mPartitions) {
+            int end = start + mPartition.count;
             if (position >= start && position < end) {
                 int offset = position - start;
-                if (mPartitions[i].hasHeader) {
+                if (mPartition.hasHeader) {
                     offset--;
                 }
                 if (offset == -1) {
                     return null;
                 }
-                Cursor cursor = mPartitions[i].cursor;
-                cursor.moveToPosition(offset);
+                Cursor cursor = mPartition.cursor;
+                if (cursor == null || cursor.isClosed() || !cursor.moveToPosition(offset)) {
+                    return null;
+                }
                 return cursor;
             }
             start = end;
@@ -438,25 +450,25 @@ public abstract class CompositeCursorAdapter extends BaseAdapter {
     public long getItemId(int position) {
         ensureCacheValid();
         int start = 0;
-        for (int i = 0; i < mSize; i++) {
-            int end = start + mPartitions[i].count;
+        for (Partition mPartition : mPartitions) {
+            int end = start + mPartition.count;
             if (position >= start && position < end) {
                 int offset = position - start;
-                if (mPartitions[i].hasHeader) {
+                if (mPartition.hasHeader) {
                     offset--;
                 }
                 if (offset == -1) {
                     return 0;
                 }
-                if (mPartitions[i].idColumnIndex == -1) {
+                if (mPartition.idColumnIndex == -1) {
                     return 0;
                 }
 
-                Cursor cursor = mPartitions[i].cursor;
+                Cursor cursor = mPartition.cursor;
                 if (cursor == null || cursor.isClosed() || !cursor.moveToPosition(offset)) {
                     return 0;
                 }
-                return cursor.getLong(mPartitions[i].idColumnIndex);
+                return cursor.getLong(mPartition.idColumnIndex);
             }
             start = end;
         }
@@ -469,8 +481,8 @@ public abstract class CompositeCursorAdapter extends BaseAdapter {
      */
     @Override
     public boolean areAllItemsEnabled() {
-        for (int i = 0; i < mSize; i++) {
-            if (mPartitions[i].hasHeader) {
+        for (Partition mPartition : mPartitions) {
+            if (mPartition.hasHeader) {
                 return false;
             }
         }
@@ -484,11 +496,11 @@ public abstract class CompositeCursorAdapter extends BaseAdapter {
     public boolean isEnabled(int position) {
         ensureCacheValid();
         int start = 0;
-        for (int i = 0; i < mSize; i++) {
-            int end = start + mPartitions[i].count;
+        for (int i = 0, n = mPartitions.size(); i < n; i++) {
+            int end = start + mPartitions.get(i).count;
             if (position >= start && position < end) {
                 int offset = position - start;
-                if (mPartitions[i].hasHeader && offset == 0) {
+                if (mPartitions.get(i).hasHeader && offset == 0) {
                     return false;
                 } else {
                     return isEnabled(i, offset);

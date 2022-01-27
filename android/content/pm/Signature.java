@@ -22,28 +22,49 @@ import android.os.Parcelable;
 import com.android.internal.util.ArrayUtils;
 
 import java.io.ByteArrayInputStream;
+import java.io.InputStream;
 import java.lang.ref.SoftReference;
 import java.security.PublicKey;
 import java.security.cert.Certificate;
+import java.security.cert.CertificateEncodingException;
 import java.security.cert.CertificateException;
 import java.security.cert.CertificateFactory;
+import java.security.cert.X509Certificate;
 import java.util.Arrays;
 
 /**
- * Opaque, immutable representation of a signature associated with an
+ * Opaque, immutable representation of a signing certificate associated with an
  * application package.
+ * <p>
+ * This class name is slightly misleading, since it's not actually a signature.
  */
 public class Signature implements Parcelable {
     private final byte[] mSignature;
     private int mHashCode;
     private boolean mHaveHashCode;
     private SoftReference<String> mStringRef;
+    private Certificate[] mCertificateChain;
 
     /**
      * Create Signature from an existing raw byte array.
      */
     public Signature(byte[] signature) {
         mSignature = signature.clone();
+        mCertificateChain = null;
+    }
+
+    /**
+     * Create signature from a certificate chain. Used for backward
+     * compatibility.
+     *
+     * @throws CertificateEncodingException
+     * @hide
+     */
+    public Signature(Certificate[] certificateChain) throws CertificateEncodingException {
+        mSignature = certificateChain[0].getEncoded();
+        if (certificateChain.length > 1) {
+            mCertificateChain = Arrays.copyOfRange(certificateChain, 1, certificateChain.length);
+        }
     }
 
     private static final int parseHexDigit(int nibble) {
@@ -156,6 +177,29 @@ public class Signature implements Parcelable {
         return cert.getPublicKey();
     }
 
+    /**
+     * Used for compatibility code that needs to check the certificate chain
+     * during upgrades.
+     *
+     * @throws CertificateEncodingException
+     * @hide
+     */
+    public Signature[] getChainSignatures() throws CertificateEncodingException {
+        if (mCertificateChain == null) {
+            return new Signature[] { this };
+        }
+
+        Signature[] chain = new Signature[1 + mCertificateChain.length];
+        chain[0] = this;
+
+        int i = 1;
+        for (Certificate c : mCertificateChain) {
+            chain[i++] = new Signature(c.getEncoded());
+        }
+
+        return chain;
+    }
+
     @Override
     public boolean equals(Object obj) {
         try {
@@ -207,6 +251,56 @@ public class Signature implements Parcelable {
      * @hide
      */
     public static boolean areExactMatch(Signature[] a, Signature[] b) {
-        return ArrayUtils.containsAll(a, b) && ArrayUtils.containsAll(b, a);
+        return (a.length == b.length) && ArrayUtils.containsAll(a, b)
+                && ArrayUtils.containsAll(b, a);
+    }
+
+    /**
+     * Test if given {@link Signature} sets are effectively equal. In rare
+     * cases, certificates can have slightly malformed encoding which causes
+     * exact-byte checks to fail.
+     * <p>
+     * To identify effective equality, we bounce the certificates through an
+     * decode/encode pass before doing the exact-byte check. To reduce attack
+     * surface area, we only allow a byte size delta of a few bytes.
+     *
+     * @throws CertificateException if the before/after length differs
+     *             substantially, usually a signal of something fishy going on.
+     * @hide
+     */
+    public static boolean areEffectiveMatch(Signature[] a, Signature[] b)
+            throws CertificateException {
+        final CertificateFactory cf = CertificateFactory.getInstance("X.509");
+
+        final Signature[] aPrime = new Signature[a.length];
+        for (int i = 0; i < a.length; i++) {
+            aPrime[i] = bounce(cf, a[i]);
+        }
+        final Signature[] bPrime = new Signature[b.length];
+        for (int i = 0; i < b.length; i++) {
+            bPrime[i] = bounce(cf, b[i]);
+        }
+
+        return areExactMatch(aPrime, bPrime);
+    }
+
+    /**
+     * Bounce the given {@link Signature} through a decode/encode cycle.
+     *
+     * @throws CertificateException if the before/after length differs
+     *             substantially, usually a signal of something fishy going on.
+     * @hide
+     */
+    public static Signature bounce(CertificateFactory cf, Signature s) throws CertificateException {
+        final InputStream is = new ByteArrayInputStream(s.mSignature);
+        final X509Certificate cert = (X509Certificate) cf.generateCertificate(is);
+        final Signature sPrime = new Signature(cert.getEncoded());
+
+        if (Math.abs(sPrime.mSignature.length - s.mSignature.length) > 2) {
+            throw new CertificateException("Bounced cert length looks fishy; before "
+                    + s.mSignature.length + ", after " + sPrime.mSignature.length);
+        }
+
+        return sPrime;
     }
 }

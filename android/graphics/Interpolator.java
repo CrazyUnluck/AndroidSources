@@ -147,17 +147,18 @@ public class Interpolator {
     @Override
     protected void finalize() throws Throwable {
         nativeDestructor(native_instance);
+        native_instance = 0;  // Other finalizers can still call us.
     }
     
     private int mValueCount;
     private int mFrameCount;
-    private final int native_instance;
+    private long native_instance;
 
-    private static native int  nativeConstructor(int valueCount, int frameCount);
-    private static native void nativeDestructor(int native_instance);
-    private static native void nativeReset(int native_instance, int valueCount, int frameCount);
-    private static native void nativeSetKeyFrame(int native_instance, int index, int msec, float[] values, float[] blend);
-    private static native void nativeSetRepeatMirror(int native_instance, float repeatCount, boolean mirror);
-    private static native int  nativeTimeToValues(int native_instance, int msec, float[] values);
+    private static native long nativeConstructor(int valueCount, int frameCount);
+    private static native void nativeDestructor(long native_instance);
+    private static native void nativeReset(long native_instance, int valueCount, int frameCount);
+    private static native void nativeSetKeyFrame(long native_instance, int index, int msec, float[] values, float[] blend);
+    private static native void nativeSetRepeatMirror(long native_instance, float repeatCount, boolean mirror);
+    private static native int  nativeTimeToValues(long native_instance, int msec, float[] values);
 }
 

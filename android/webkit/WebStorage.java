@@ -16,6 +16,8 @@
 
 package android.webkit;
 
+import android.annotation.SystemApi;
+
 import java.util.Map;
 
 /**
@@ -41,12 +43,9 @@ public class WebStorage {
      * See
      * {@link WebChromeClient#onExceededDatabaseQuota} and
      * {@link WebChromeClient#onReachedMaxAppCacheSize}.
+     * @deprecated This class is obsolete and no longer used.
      */
-    // We primarily want this to allow us to call back the sleeping WebCore
-    // thread from outside the WebViewCore class (as the native call is
-    // private). It is imperative that the setDatabaseQuota method is
-    // executed after a decision to either allow or deny new quota is made,
-    // otherwise the WebCore thread will remain asleep.
+    @Deprecated
     public interface QuotaUpdater {
         /**
          * Provides a new quota, specified in bytes.
@@ -68,21 +67,11 @@ public class WebStorage {
         private long mUsage = 0;
 
         /** @hide */
+        @SystemApi
         protected Origin(String origin, long quota, long usage) {
             mOrigin = origin;
             mQuota = quota;
             mUsage = usage;
-        }
-
-        /** @hide */
-        protected Origin(String origin, long quota) {
-            mOrigin = origin;
-            mQuota = quota;
-        }
-
-        /** @hide */
-        protected Origin(String origin) {
-            mOrigin = origin;
         }
 
         /**
@@ -213,5 +202,6 @@ public class WebStorage {
      * way to call createHandler() and createUIHandler(), so it would not work).
      * @hide
      */
+    @SystemApi
     public WebStorage() {}
 }

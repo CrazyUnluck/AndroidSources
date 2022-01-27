@@ -28,7 +28,7 @@ import android.os.Build;
  * Helper for accessing features in {@link ConnectivityManager} introduced after
  * API level 16 in a backwards compatible fashion.
  */
-public class ConnectivityManagerCompat {
+public final class ConnectivityManagerCompat {
 
     interface ConnectivityManagerCompatImpl {
         boolean isActiveNetworkMetered(ConnectivityManager cm);
@@ -108,10 +108,16 @@ public class ConnectivityManagerCompat {
      * {@link ConnectivityManager#CONNECTIVITY_ACTION} broadcast. This obtains
      * the current state from {@link ConnectivityManager} instead of using the
      * potentially-stale value from
-     * {@link ConnectivityManager#EXTRA_NETWORK_INFO}.
+     * {@link ConnectivityManager#EXTRA_NETWORK_INFO}. May be {@code null}.
      */
     public static NetworkInfo getNetworkInfoFromBroadcast(ConnectivityManager cm, Intent intent) {
         final NetworkInfo info = intent.getParcelableExtra(ConnectivityManager.EXTRA_NETWORK_INFO);
-        return cm.getNetworkInfo(info.getType());
+        if (info != null) {
+            return cm.getNetworkInfo(info.getType());
+        } else {
+            return null;
+        }
     }
+
+    private ConnectivityManagerCompat() {}
 }

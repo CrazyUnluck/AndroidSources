@@ -16,6 +16,7 @@
 
 package android.text;
 
+import android.annotation.Nullable;
 import android.view.View;
 
 import static android.text.TextDirectionHeuristics.FIRSTSTRONG_LTR;
@@ -25,8 +26,12 @@ import java.util.Locale;
 /**
  * Utility class for formatting text for display in a potentially opposite-directionality context
  * without garbling. The directionality of the context is set at formatter creation and the
- * directionality of the text can be either estimated or passed in when known. Provides the
- * following functionality:
+ * directionality of the text can be either estimated or passed in when known.
+ *
+ * <p>To support versions lower than {@link android.os.Build.VERSION_CODES#JELLY_BEAN_MR2},
+ * you can use the support library's {@link android.support.v4.text.BidiFormatter} class.
+ *
+ * <p>These APIs provides the following functionality:
  * <p>
  * 1. Bidi Wrapping
  * When text in one language is mixed into a document in another, opposite-directionality language,
@@ -169,7 +174,7 @@ public final class BidiFormatter {
 
         /**
          * Specifies whether the BidiFormatter to be built should also "reset" directionality before
-         * a string being bidi-wrapped, not just after it. The default is false.
+         * a string being bidi-wrapped, not just after it. The default is true.
          */
         public Builder stereoReset(boolean stereoReset) {
             if (stereoReset) {
@@ -192,17 +197,13 @@ public final class BidiFormatter {
             return this;
         }
 
-        private static BidiFormatter getDefaultInstanceFromContext(boolean isRtlContext) {
-            return isRtlContext ? DEFAULT_RTL_INSTANCE : DEFAULT_LTR_INSTANCE;
-        }
-
         /**
          * @return A BidiFormatter with the specified options.
          */
         public BidiFormatter build() {
             if (mFlags == DEFAULT_FLAGS &&
                     mTextDirectionHeuristic == DEFAULT_TEXT_DIRECTION_HEURISTIC) {
-                return getDefaultInstanceFromContext(mIsRtlContext);
+                return BidiFormatter.getDefaultInstanceFromContext(mIsRtlContext);
             }
             return new BidiFormatter(mIsRtlContext, mFlags, mTextDirectionHeuristic);
         }
@@ -229,27 +230,33 @@ public final class BidiFormatter {
     /**
      * Factory for creating an instance of BidiFormatter for the default locale directionality.
      *
+     * This does not create any new objects, and returns already existing static instances.
+     *
      */
     public static BidiFormatter getInstance() {
-        return new Builder().build();
+        return getDefaultInstanceFromContext(isRtlLocale(Locale.getDefault()));
     }
 
     /**
      * Factory for creating an instance of BidiFormatter given the context directionality.
      *
+     * This does not create any new objects, and returns already existing static instances.
+     *
      * @param rtlContext Whether the context directionality is RTL.
      */
     public static BidiFormatter getInstance(boolean rtlContext) {
-        return new Builder(rtlContext).build();
+        return getDefaultInstanceFromContext(rtlContext);
     }
 
     /**
      * Factory for creating an instance of BidiFormatter given the context locale.
      *
+     * This does not create any new objects, and returns already existing static instances.
+     *
      * @param locale The context locale.
      */
     public static BidiFormatter getInstance(Locale locale) {
-        return new Builder(locale).build();
+        return getDefaultInstanceFromContext(isRtlLocale(locale));
     }
 
     /**
@@ -287,7 +294,7 @@ public final class BidiFormatter {
      * directionality is determined by scanning the end of the string, the overall directionality is
      * given explicitly by a heuristic to estimate the {@code str}'s directionality.
      *
-     * @param str String after which the mark may need to appear.
+     * @param str CharSequence after which the mark may need to appear.
      * @param heuristic The text direction heuristic that will be used to estimate the {@code str}'s
      *                  directionality.
      * @return LRM for RTL text in LTR context; RLM for LTR text in RTL context;
@@ -295,7 +302,7 @@ public final class BidiFormatter {
      *
      * @hide
      */
-    public String markAfter(String str, TextDirectionHeuristic heuristic) {
+    public String markAfter(CharSequence str, TextDirectionHeuristic heuristic) {
         final boolean isRtl = heuristic.isRtl(str, 0, str.length());
         // getExitDir() is called only if needed (short-circuit).
         if (!mIsRtlContext && (isRtl || getExitDir(str) == DIR_RTL)) {
@@ -316,7 +323,7 @@ public final class BidiFormatter {
      * entry directionality is determined by scanning the beginning of the string, the overall
      * directionality is given explicitly by a heuristic to estimate the {@code str}'s directionality.
      *
-     * @param str String before which the mark may need to appear.
+     * @param str CharSequence before which the mark may need to appear.
      * @param heuristic The text direction heuristic that will be used to estimate the {@code str}'s
      *                  directionality.
      * @return LRM for RTL text in LTR context; RLM for LTR text in RTL context;
@@ -324,7 +331,7 @@ public final class BidiFormatter {
      *
      * @hide
      */
-    public String markBefore(String str, TextDirectionHeuristic heuristic) {
+    public String markBefore(CharSequence str, TextDirectionHeuristic heuristic) {
         final boolean isRtl = heuristic.isRtl(str, 0, str.length());
         // getEntryDir() is called only if needed (short-circuit).
         if (!mIsRtlContext && (isRtl || getEntryDir(str) == DIR_RTL)) {
@@ -344,6 +351,13 @@ public final class BidiFormatter {
      *          false.
      */
     public boolean isRtl(String str) {
+        return isRtl((CharSequence) str);
+    }
+
+    /**
+     * @hide
+     */
+    public boolean isRtl(CharSequence str) {
         return mDefaultTextDirectionHeuristic.isRtl(str, 0, str.length());
     }
 
@@ -359,24 +373,38 @@ public final class BidiFormatter {
      * If {@code isolate}, directionally isolates the string so that it does not garble its
      * surroundings. Currently, this is done by "resetting" the directionality after the string by
      * appending a trailing Unicode bidi mark matching the context directionality (LRM or RLM) when
-     * either the overall directionality or the exit directionality of the string is opposite to that
-     * of the context. If the formatter was built using {@link Builder#stereoReset(boolean)} and
-     * passing "true" as an argument, also prepends a Unicode bidi mark matching the context
-     * directionality when either the overall directionality or the entry directionality of the
-     * string is opposite to that of the context. Note that as opposed to the overall
-     * directionality, the entry and exit directionalities are determined from the string itself.
+     * either the overall directionality or the exit directionality of the string is opposite to
+     * that of the context. Unless the formatter was built using
+     * {@link Builder#stereoReset(boolean)} with a {@code false} argument, also prepends a Unicode
+     * bidi mark matching the context directionality when either the overall directionality or the
+     * entry directionality of the string is opposite to that of the context. Note that as opposed
+     * to the overall directionality, the entry and exit directionalities are determined from the
+     * string itself.
      * <p>
      * Does *not* do HTML-escaping.
      *
      * @param str The input string.
      * @param heuristic The algorithm to be used to estimate the string's overall direction.
+     *        See {@link TextDirectionHeuristics} for pre-defined heuristics.
      * @param isolate Whether to directionally isolate the string to prevent it from garbling the
      *     content around it
-     * @return Input string after applying the above processing.
+     * @return Input string after applying the above processing. {@code null} if {@code str} is
+     *     {@code null}.
      */
-    public String unicodeWrap(String str, TextDirectionHeuristic heuristic, boolean isolate) {
+    public @Nullable String unicodeWrap(@Nullable String str, TextDirectionHeuristic heuristic,
+            boolean isolate) {
+        if (str == null) return null;
+        return unicodeWrap((CharSequence) str, heuristic, isolate).toString();
+    }
+
+    /**
+     * @hide
+     */
+    public @Nullable CharSequence unicodeWrap(@Nullable CharSequence str,
+            TextDirectionHeuristic heuristic, boolean isolate) {
+        if (str == null) return null;
         final boolean isRtl = heuristic.isRtl(str, 0, str.length());
-        StringBuilder result = new StringBuilder();
+        SpannableStringBuilder result = new SpannableStringBuilder();
         if (getStereoReset() && isolate) {
             result.append(markBefore(str,
                     isRtl ? TextDirectionHeuristics.RTL : TextDirectionHeuristics.LTR));
@@ -392,7 +420,7 @@ public final class BidiFormatter {
             result.append(markAfter(str,
                     isRtl ? TextDirectionHeuristics.RTL : TextDirectionHeuristics.LTR));
         }
-        return result.toString();
+        return result;
     }
 
     /**
@@ -401,11 +429,20 @@ public final class BidiFormatter {
      *
      * @param str The input string.
      * @param heuristic The algorithm to be used to estimate the string's overall direction.
+     *        See {@link TextDirectionHeuristics} for pre-defined heuristics.
      * @return Input string after applying the above processing.
      */
     public String unicodeWrap(String str, TextDirectionHeuristic heuristic) {
         return unicodeWrap(str, heuristic, true /* isolate */);
     }
+
+    /**
+     * @hide
+     */
+    public CharSequence unicodeWrap(CharSequence str, TextDirectionHeuristic heuristic) {
+        return unicodeWrap(str, heuristic, true /* isolate */);
+    }
+
 
     /**
      * Operates like {@link #unicodeWrap(String, TextDirectionHeuristic, boolean)}, but uses the
@@ -421,6 +458,13 @@ public final class BidiFormatter {
     }
 
     /**
+     * @hide
+     */
+    public CharSequence unicodeWrap(CharSequence str, boolean isolate) {
+        return unicodeWrap(str, mDefaultTextDirectionHeuristic, isolate);
+    }
+
+    /**
      * Operates like {@link #unicodeWrap(String, TextDirectionHeuristic, boolean)}, but uses the
      * formatter's default direction estimation algorithm and assumes {@code isolate} is true.
      *
@@ -429,6 +473,17 @@ public final class BidiFormatter {
      */
     public String unicodeWrap(String str) {
         return unicodeWrap(str, mDefaultTextDirectionHeuristic, true /* isolate */);
+    }
+
+    /**
+     * @hide
+     */
+    public CharSequence unicodeWrap(CharSequence str) {
+        return unicodeWrap(str, mDefaultTextDirectionHeuristic, true /* isolate */);
+    }
+
+    private static BidiFormatter getDefaultInstanceFromContext(boolean isRtlContext) {
+        return isRtlContext ? DEFAULT_RTL_INSTANCE : DEFAULT_LTR_INSTANCE;
     }
 
     /**
@@ -462,7 +517,7 @@ public final class BidiFormatter {
      *
      * @param str the string to check.
      */
-    private static int getExitDir(String str) {
+    private static int getExitDir(CharSequence str) {
         return new DirectionalityEstimator(str, false /* isHtml */).getExitDir();
     }
 
@@ -479,7 +534,7 @@ public final class BidiFormatter {
      *
      * @param str the string to check.
      */
-    private static int getEntryDir(String str) {
+    private static int getEntryDir(CharSequence str) {
         return new DirectionalityEstimator(str, false /* isHtml */).getEntryDir();
     }
 
@@ -517,7 +572,7 @@ public final class BidiFormatter {
         /**
          * The text to be scanned.
          */
-        private final String text;
+        private final CharSequence text;
 
         /**
          * Whether the text to be scanned is to be treated as HTML, i.e. skipping over tags and
@@ -550,7 +605,7 @@ public final class BidiFormatter {
          * @param isHtml Whether the text to be scanned is to be treated as HTML, i.e. skipping over
          *     tags and entities.
          */
-        DirectionalityEstimator(String text, boolean isHtml) {
+        DirectionalityEstimator(CharSequence text, boolean isHtml) {
             this.text = text;
             this.isHtml = isHtml;
             length = text.length();

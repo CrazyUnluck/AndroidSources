@@ -21,31 +21,41 @@ import java.lang.reflect.Field;
 import android.util.Log;
 
 /**
- * <p>The most basic data type. An element represents one cell of a memory allocation.
- * Element is the basic data type of Renderscript. An element can be of two forms: Basic elements or Complex forms.
- * Examples of basic elements are:</p>
- * <ul>
- *  <li>Single float value</li>
- *  <li>4 element float vector</li>
- *  <li>single RGB-565 color</li>
- *  <li>single unsigned int 16</li>
- * </ul>
- * <p>Complex elements contain a list of sub-elements and names that
- * represents a structure of data. The fields can be accessed by name
- * from a script or shader. The memory layout is defined and ordered. Data
- * alignment is determined by the most basic primitive type. i.e. a float4
- * vector will be aligned to sizeof(float) and not sizeof(float4). The
- * ordering of elements in memory will be the order in which they were added
- * with each component aligned as necessary. No re-ordering will be done.</p>
+ * <p>An Element represents one item within an {@link
+ * android.support.v8.renderscript.Allocation}.  An Element is roughly
+ * equivalent to a C type in a RenderScript kernel. Elements may be basic or
+ * complex. Some basic elements are</p> <ul> <li>A single float value
+ * (equivalent to a float in a kernel)</li> <li>A four-element float vector
+ * (equivalent to a float4 in a kernel)</li> <li>An unsigned 32-bit integer
+ * (equivalent to an unsigned int in a kernel)</li> <li>A single signed 8-bit
+ * integer (equivalent to a char in a kernel)</li> </ul> <p>A complex element is
+ * roughly equivalent to a C struct and contains a number of basic or complex
+ * Elements. From Java code, a complex element contains a list of sub-elements
+ * and names that represents a particular data structure. Structs used in RS
+ * scripts are available to Java code by using the
+ * {@code ScriptField_structname} class that is reflected from a particular
+ * script.</p>
  *
- * <p>The primary source of elements are from scripts. A script that exports a
- * bind point for a data structure generates a Renderscript element to represent the
- * data exported by the script. The other common source of elements is from bitmap formats.</p>
+ * <p>Basic Elements are comprised of a {@link
+ * android.support.v8.renderscript.Element.DataType} and a {@link
+ * android.support.v8.renderscript.Element.DataKind}. The DataType encodes C
+ * type information of an Element, while the DataKind encodes how that Element
+ * should be interpreted by a {@link android.support.v8.renderscript.Sampler}.
+ * Note that {@link android.support.v8.renderscript.Allocation} objects with
+ * DataKind {@link android.support.v8.renderscript.Element.DataKind#USER} cannot
+ * be used as input for a {@link android.support.v8.renderscript.Sampler}. In
+ * general, {@link android.support.v8.renderscript.Allocation} objects that are
+ * intended for use with a {@link android.support.v8.renderscript.Sampler}
+ * should use bitmap-derived Elements such as
+ * {@link android.support.v8.renderscript.Element#RGBA_8888} or {@link
+ * android.support.v8.renderscript#Element.A_8}.</p>
  *
  * <div class="special reference">
  * <h3>Developer Guides</h3>
- * <p>For more information about creating an application that uses Renderscript, read the
- * <a href="{@docRoot}guide/topics/graphics/renderscript.html">Renderscript</a> developer guide.</p>
+ * <p>For more information about creating an application that uses RenderScript,
+ * read the
+ * <a href="{@docRoot}guide/topics/renderscript/index.html">RenderScript</a>
+ * developer guide.</p>
  * </div>
  **/
 public class Element extends BaseObj {
@@ -141,17 +151,25 @@ public class Element extends BaseObj {
         MATRIX_3X3 (17, 36),
         MATRIX_2X2 (18, 16),
 
-        RS_ELEMENT (1000, 4),
-        RS_TYPE (1001, 4),
-        RS_ALLOCATION (1002, 4),
-        RS_SAMPLER (1003, 4),
-        RS_SCRIPT (1004, 4);
+        RS_ELEMENT (1000),
+        RS_TYPE (1001),
+        RS_ALLOCATION (1002),
+        RS_SAMPLER (1003),
+        RS_SCRIPT (1004);
 
         int mID;
         int mSize;
         DataType(int id, int size) {
             mID = id;
             mSize = size;
+        }
+
+        DataType(int id) {
+            mID = id;
+            mSize = 4;
+            if (RenderScript.sPointerSize == 8) {
+                mSize = 32;
+            }
         }
     }
 
@@ -696,7 +714,7 @@ public class Element extends BaseObj {
         return rs.mElement_MATRIX_2X2;
     }
 
-    Element(int id, RenderScript rs, Element[] e, String[] n, int[] as) {
+    Element(long id, RenderScript rs, Element[] e, String[] n, int[] as) {
         super(id, rs);
         mSize = 0;
         mVectorSize = 1;
@@ -713,7 +731,7 @@ public class Element extends BaseObj {
         updateVisibleSubElements();
     }
 
-    Element(int id, RenderScript rs, DataType dt, DataKind dk, boolean norm, int size) {
+    Element(long id, RenderScript rs, DataType dt, DataKind dk, boolean norm, int size) {
         super(id, rs);
         if ((dt != DataType.UNSIGNED_5_6_5) &&
             (dt != DataType.UNSIGNED_4_4_4_4) &&
@@ -732,10 +750,17 @@ public class Element extends BaseObj {
         mVectorSize = size;
     }
 
-    Element(int id, RenderScript rs) {
+    Element(long id, RenderScript rs) {
         super(id, rs);
     }
 
+    /*
+     * Get an identical dummy Element for Compat Context
+     *
+     */
+    public long getDummyElement(RenderScript mRS) {
+        return mRS.nIncElementCreate(mType.mID, mKind.mID, mNormalized, mVectorSize);
+    }
     /**
      * Create a custom Element of the specified DataType.  The DataKind will be
      * set to USER and the vector size to 1 indicating non-vector.
@@ -745,14 +770,10 @@ public class Element extends BaseObj {
      * @return Element
      */
     static Element createUser(RenderScript rs, DataType dt) {
-        if (rs.isNative) {
-            RenderScriptThunker rst = (RenderScriptThunker)rs;
-            return ElementThunker.create(rst, dt);
-        }
         DataKind dk = DataKind.USER;
         boolean norm = false;
         int vecSize = 1;
-        int id = rs.nElementCreate(dt.mID, dk.mID, norm, vecSize);
+        long id = rs.nElementCreate(dt.mID, dk.mID, norm, vecSize);
         return new Element(id, rs, dt, dk, norm, vecSize);
     }
 
@@ -770,10 +791,6 @@ public class Element extends BaseObj {
      * @return Element
      */
     public static Element createVector(RenderScript rs, DataType dt, int size) {
-        if (rs.isNative) {
-            RenderScriptThunker rst = (RenderScriptThunker)rs;
-            return ElementThunker.createVector(rst, dt, size);
-        }
         if (size < 2 || size > 4) {
             throw new RSIllegalArgumentException("Vector size out of range 2-4.");
         }
@@ -793,7 +810,7 @@ public class Element extends BaseObj {
         case BOOLEAN: {
             DataKind dk = DataKind.USER;
             boolean norm = false;
-            int id = rs.nElementCreate(dt.mID, dk.mID, norm, size);
+            long id = rs.nElementCreate(dt.mID, dk.mID, norm, size);
             return new Element(id, rs, dt, dk, norm, size);
         }
 
@@ -817,11 +834,6 @@ public class Element extends BaseObj {
      * @return Element
      */
     public static Element createPixel(RenderScript rs, DataType dt, DataKind dk) {
-        if (rs.isNative) {
-            RenderScriptThunker rst = (RenderScriptThunker)rs;
-            return ElementThunker.createPixel(rst, dt, dk);
-        }
-
         if (!(dk == DataKind.PIXEL_L ||
               dk == DataKind.PIXEL_A ||
               dk == DataKind.PIXEL_LA ||
@@ -866,7 +878,7 @@ public class Element extends BaseObj {
         }
 
         boolean norm = true;
-        int id = rs.nElementCreate(dt.mID, dk.mID, norm, size);
+        long id = rs.nElementCreate(dt.mID, dk.mID, norm, size);
         return new Element(id, rs, dt, dk, norm, size);
     }
 
@@ -904,7 +916,6 @@ public class Element extends BaseObj {
      *
      */
     public static class Builder {
-        ElementThunker.BuilderThunker mT;
 
         RenderScript mRS;
         Element[] mElements;
@@ -919,10 +930,6 @@ public class Element extends BaseObj {
          * @param rs
          */
         public Builder(RenderScript rs) {
-            if (rs.isNative) {
-                RenderScriptThunker rst = (RenderScriptThunker)rs;
-                mT = new ElementThunker.BuilderThunker(rs);
-            }
             mRS = rs;
             mCount = 0;
             mElements = new Element[8];
@@ -938,11 +945,6 @@ public class Element extends BaseObj {
          * @param arraySize
          */
         public Builder add(Element element, String name, int arraySize) {
-            if (mT != null) {
-                mT.add(element, name, arraySize);
-                return this;
-            }
-
             if (arraySize < 1) {
                 throw new RSIllegalArgumentException("Array size cannot be less than 1.");
             }
@@ -997,10 +999,6 @@ public class Element extends BaseObj {
          * @return Element
          */
         public Element create() {
-            if (mT != null) {
-                return mT.create(mRS);
-            }
-
             mRS.validate();
             Element[] ein = new Element[mCount];
             String[] sin = new String[mCount];
@@ -1009,12 +1007,12 @@ public class Element extends BaseObj {
             java.lang.System.arraycopy(mElementNames, 0, sin, 0, mCount);
             java.lang.System.arraycopy(mArraySizes, 0, asin, 0, mCount);
 
-            int[] ids = new int[ein.length];
+            long[] ids = new long[ein.length];
             for (int ct = 0; ct < ein.length; ct++ ) {
                 ids[ct] = ein[ct].getID(mRS);
             }
 
-            int id = mRS.nElementCreate2(ids, sin, asin);
+            long id = mRS.nElementCreate2(ids, sin, asin);
             return new Element(id, mRS, ein, sin, asin);
         }
     }

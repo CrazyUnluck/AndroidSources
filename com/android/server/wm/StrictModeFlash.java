@@ -17,18 +17,22 @@
 package com.android.server.wm;
 
 
+import static com.android.server.wm.WindowManagerDebugConfig.TAG_WITH_CLASS_NAME;
+import static com.android.server.wm.WindowManagerDebugConfig.TAG_WM;
+
 import android.graphics.Canvas;
 import android.graphics.Color;
 import android.graphics.PixelFormat;
 import android.graphics.Rect;
 import android.graphics.Region;
 import android.view.Display;
+import android.view.Surface.OutOfResourcesException;
 import android.view.Surface;
 import android.view.SurfaceControl;
 import android.view.SurfaceSession;
 
 class StrictModeFlash {
-    private static final String TAG = "StrictModeFlash";
+    private static final String TAG = TAG_WITH_CLASS_NAME ? "StrictModeFlash" : TAG_WM;
 
     private final SurfaceControl mSurfaceControl;
     private final Surface mSurface = new Surface();
@@ -47,7 +51,7 @@ class StrictModeFlash {
             ctrl.setPosition(0, 0);
             ctrl.show();
             mSurface.copyFrom(ctrl);
-        } catch (SurfaceControl.OutOfResourcesException e) {
+        } catch (OutOfResourcesException e) {
         }
         mSurfaceControl = ctrl;
         mDrawNeeded = true;

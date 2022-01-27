@@ -15,9 +15,7 @@
  */
 package android.security;
 
-import android.content.Intent;
-import java.security.PrivateKey;
-import java.security.cert.X509Certificate;
+import android.annotation.Nullable;
 
 /**
  * The KeyChainAliasCallback is the callback for {@link
@@ -29,5 +27,5 @@ public interface KeyChainAliasCallback {
      * Called with the alias of the certificate chosen by the user, or
      * null if no value was chosen.
      */
-    public void alias(String alias);
+    public void alias(@Nullable String alias);
 }

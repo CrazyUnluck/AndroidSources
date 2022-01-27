@@ -16,191 +16,202 @@
 
 package android.graphics.drawable;
 
+import com.android.internal.R;
+
 import org.xmlpull.v1.XmlPullParser;
 import org.xmlpull.v1.XmlPullParserException;
 
+import android.annotation.NonNull;
+import android.annotation.Nullable;
 import android.content.res.Resources;
+import android.content.res.Resources.Theme;
 import android.content.res.TypedArray;
-import android.graphics.*;
-import android.view.Gravity;
+import android.graphics.Canvas;
+import android.graphics.PixelFormat;
+import android.graphics.Rect;
 import android.util.AttributeSet;
+import android.util.TypedValue;
+import android.view.Gravity;
 
 import java.io.IOException;
 
 /**
  * A Drawable that changes the size of another Drawable based on its current
- * level value.  You can control how much the child Drawable changes in width
+ * level value. You can control how much the child Drawable changes in width
  * and height based on the level, as well as a gravity to control where it is
- * placed in its overall container.  Most often used to implement things like
+ * placed in its overall container. Most often used to implement things like
  * progress bars.
- *
- * <p>It can be defined in an XML file with the <code>&lt;scale></code> element. For more
- * information, see the guide to <a
- * href="{@docRoot}guide/topics/resources/drawable-resource.html">Drawable Resources</a>.</p>
+ * <p>
+ * The default level may be specified from XML using the
+ * {@link android.R.styleable#ScaleDrawable_level android:level} property. When
+ * this property is not specified, the default level is 0, which corresponds to
+ * zero height and/or width depending on the values specified for
+ * {@code android.R.styleable#ScaleDrawable_scaleWidth scaleWidth} and
+ * {@code android.R.styleable#ScaleDrawable_scaleHeight scaleHeight}. At run
+ * time, the level may be set via {@link #setLevel(int)}.
+ * <p>
+ * A scale drawable may be defined in an XML file with the {@code <scale>}
+ * element. For more information, see the guide to
+ * <a href="{@docRoot}guide/topics/resources/drawable-resource.html">Drawable
+ * Resources</a>.
  *
  * @attr ref android.R.styleable#ScaleDrawable_scaleWidth
  * @attr ref android.R.styleable#ScaleDrawable_scaleHeight
  * @attr ref android.R.styleable#ScaleDrawable_scaleGravity
  * @attr ref android.R.styleable#ScaleDrawable_drawable
+ * @attr ref android.R.styleable#ScaleDrawable_level
  */
-public class ScaleDrawable extends Drawable implements Drawable.Callback {
-    private ScaleState mScaleState;
-    private boolean mMutated;
+public class ScaleDrawable extends DrawableWrapper {
+    private static final int MAX_LEVEL = 10000;
+
     private final Rect mTmpRect = new Rect();
 
+    private ScaleState mState;
+
     ScaleDrawable() {
-        this(null, null);
-    }
-
-    public ScaleDrawable(Drawable drawable, int gravity, float scaleWidth, float scaleHeight) {
-        this(null, null);
-
-        mScaleState.mDrawable = drawable;
-        mScaleState.mGravity = gravity;
-        mScaleState.mScaleWidth = scaleWidth;
-        mScaleState.mScaleHeight = scaleHeight;
-
-        if (drawable != null) {
-            drawable.setCallback(this);
-        }
+        this(new ScaleState(null, null), null);
     }
 
     /**
-     * Returns the drawable scaled by this ScaleDrawable.
+     * Creates a new scale drawable with the specified gravity and scale
+     * properties.
+     *
+     * @param drawable the drawable to scale
+     * @param gravity gravity constant (see {@link Gravity} used to position
+     *                the scaled drawable within the parent container
+     * @param scaleWidth width scaling factor [0...1] to use then the level is
+     *                   at the maximum value, or -1 to not scale width
+     * @param scaleHeight height scaling factor [0...1] to use then the level
+     *                    is at the maximum value, or -1 to not scale height
      */
-    public Drawable getDrawable() {
-        return mScaleState.mDrawable;
+    public ScaleDrawable(Drawable drawable, int gravity, float scaleWidth, float scaleHeight) {
+        this(new ScaleState(null, null), null);
+
+        mState.mGravity = gravity;
+        mState.mScaleWidth = scaleWidth;
+        mState.mScaleHeight = scaleHeight;
+
+        setDrawable(drawable);
     }
 
-    private static float getPercent(TypedArray a, int name) {
-        String s = a.getString(name);
+    @Override
+    public void inflate(@NonNull Resources r, @NonNull XmlPullParser parser,
+            @NonNull AttributeSet attrs, @Nullable Theme theme)
+            throws XmlPullParserException, IOException {
+        final TypedArray a = obtainAttributes(r, theme, attrs, R.styleable.ScaleDrawable);
+
+        // Inflation will advance the XmlPullParser and AttributeSet.
+        super.inflate(r, parser, attrs, theme);
+
+        updateStateFromTypedArray(a);
+        verifyRequiredAttributes(a);
+        a.recycle();
+
+        updateLocalState();
+    }
+
+    @Override
+    public void applyTheme(@NonNull Theme t) {
+        super.applyTheme(t);
+
+        final ScaleState state = mState;
+        if (state == null) {
+            return;
+        }
+
+        if (state.mThemeAttrs != null) {
+            final TypedArray a = t.resolveAttributes(state.mThemeAttrs, R.styleable.ScaleDrawable);
+            try {
+                updateStateFromTypedArray(a);
+                verifyRequiredAttributes(a);
+            } catch (XmlPullParserException e) {
+                rethrowAsRuntimeException(e);
+            } finally {
+                a.recycle();
+            }
+        }
+
+        updateLocalState();
+    }
+
+    private void verifyRequiredAttributes(@NonNull TypedArray a) throws XmlPullParserException {
+        // If we're not waiting on a theme, verify required attributes.
+        if (getDrawable() == null && (mState.mThemeAttrs == null
+                || mState.mThemeAttrs[R.styleable.ScaleDrawable_drawable] == 0)) {
+            throw new XmlPullParserException(a.getPositionDescription()
+                    + ": <scale> tag requires a 'drawable' attribute or "
+                    + "child tag defining a drawable");
+        }
+    }
+
+    private void updateStateFromTypedArray(@NonNull TypedArray a) {
+        final ScaleState state = mState;
+        if (state == null) {
+            return;
+        }
+
+        // Account for any configuration changes.
+        state.mChangingConfigurations |= a.getChangingConfigurations();
+
+        // Extract the theme attributes, if any.
+        state.mThemeAttrs = a.extractThemeAttrs();
+
+        state.mScaleWidth = getPercent(a,
+                R.styleable.ScaleDrawable_scaleWidth, state.mScaleWidth);
+        state.mScaleHeight = getPercent(a,
+                R.styleable.ScaleDrawable_scaleHeight, state.mScaleHeight);
+        state.mGravity = a.getInt(
+                R.styleable.ScaleDrawable_scaleGravity, state.mGravity);
+        state.mUseIntrinsicSizeAsMin = a.getBoolean(
+                R.styleable.ScaleDrawable_useIntrinsicSizeAsMinimum, state.mUseIntrinsicSizeAsMin);
+        state.mInitialLevel = a.getInt(
+                R.styleable.ScaleDrawable_level, state.mInitialLevel);
+    }
+
+    private static float getPercent(TypedArray a, int index, float defaultValue) {
+        final int type = a.getType(index);
+        if (type == TypedValue.TYPE_FRACTION || type == TypedValue.TYPE_NULL) {
+            return a.getFraction(index, 1, 1, defaultValue);
+        }
+
+        // Coerce to float.
+        final String s = a.getString(index);
         if (s != null) {
             if (s.endsWith("%")) {
-                String f = s.substring(0, s.length() - 1);
+                final String f = s.substring(0, s.length() - 1);
                 return Float.parseFloat(f) / 100.0f;
             }
         }
-        return -1;
+
+        return defaultValue;
     }
-
-    @Override
-    public void inflate(Resources r, XmlPullParser parser, AttributeSet attrs)
-            throws XmlPullParserException, IOException {
-        super.inflate(r, parser, attrs);
-
-        int type;
-
-        TypedArray a = r.obtainAttributes(attrs, com.android.internal.R.styleable.ScaleDrawable);
-
-        float sw = getPercent(a, com.android.internal.R.styleable.ScaleDrawable_scaleWidth);
-        float sh = getPercent(a, com.android.internal.R.styleable.ScaleDrawable_scaleHeight);
-        int g = a.getInt(com.android.internal.R.styleable.ScaleDrawable_scaleGravity, Gravity.LEFT);
-        boolean min = a.getBoolean(
-                com.android.internal.R.styleable.ScaleDrawable_useIntrinsicSizeAsMinimum, false);
-        Drawable dr = a.getDrawable(com.android.internal.R.styleable.ScaleDrawable_drawable);
-
-        a.recycle();
-
-        final int outerDepth = parser.getDepth();
-        while ((type = parser.next()) != XmlPullParser.END_DOCUMENT
-                && (type != XmlPullParser.END_TAG || parser.getDepth() > outerDepth)) {
-            if (type != XmlPullParser.START_TAG) {
-                continue;
-            }
-            dr = Drawable.createFromXmlInner(r, parser, attrs);
-        }
-
-        if (dr == null) {
-            throw new IllegalArgumentException("No drawable specified for <scale>");
-        }
-
-        mScaleState.mDrawable = dr;
-        mScaleState.mScaleWidth = sw;
-        mScaleState.mScaleHeight = sh;
-        mScaleState.mGravity = g;
-        mScaleState.mUseIntrinsicSizeAsMin = min;
-        if (dr != null) {
-            dr.setCallback(this);
-        }
-    }
-
-    // overrides from Drawable.Callback
-
-    public void invalidateDrawable(Drawable who) {
-        if (getCallback() != null) {
-            getCallback().invalidateDrawable(this);
-        }
-    }
-
-    public void scheduleDrawable(Drawable who, Runnable what, long when) {
-        if (getCallback() != null) {
-            getCallback().scheduleDrawable(this, what, when);
-        }
-    }
-
-    public void unscheduleDrawable(Drawable who, Runnable what) {
-        if (getCallback() != null) {
-            getCallback().unscheduleDrawable(this, what);
-        }
-    }
-
-    // overrides from Drawable
 
     @Override
     public void draw(Canvas canvas) {
-        if (mScaleState.mDrawable.getLevel() != 0)
-            mScaleState.mDrawable.draw(canvas);
-    }
-
-    @Override
-    public int getChangingConfigurations() {
-        return super.getChangingConfigurations()
-                | mScaleState.mChangingConfigurations
-                | mScaleState.mDrawable.getChangingConfigurations();
-    }
-
-    @Override
-    public boolean getPadding(Rect padding) {
-        // XXX need to adjust padding!
-        return mScaleState.mDrawable.getPadding(padding);
-    }
-
-    @Override
-    public boolean setVisible(boolean visible, boolean restart) {
-        mScaleState.mDrawable.setVisible(visible, restart);
-        return super.setVisible(visible, restart);
-    }
-
-    @Override
-    public void setAlpha(int alpha) {
-        mScaleState.mDrawable.setAlpha(alpha);
-    }
-
-    @Override
-    public void setColorFilter(ColorFilter cf) {
-        mScaleState.mDrawable.setColorFilter(cf);
+        final Drawable d = getDrawable();
+        if (d != null && d.getLevel() != 0) {
+            d.draw(canvas);
+        }
     }
 
     @Override
     public int getOpacity() {
-        return mScaleState.mDrawable.getOpacity();
-    }
+        final Drawable d = getDrawable();
+        if (d.getLevel() == 0) {
+            return PixelFormat.TRANSPARENT;
+        }
 
-    @Override
-    public boolean isStateful() {
-        return mScaleState.mDrawable.isStateful();
-    }
+        final int opacity = d.getOpacity();
+        if (opacity == PixelFormat.OPAQUE && d.getLevel() < MAX_LEVEL) {
+            return PixelFormat.TRANSLUCENT;
+        }
 
-    @Override
-    protected boolean onStateChange(int[] state) {
-        boolean changed = mScaleState.mDrawable.setState(state);
-        onBoundsChange(getBounds());
-        return changed;
+        return opacity;
     }
 
     @Override
     protected boolean onLevelChange(int level) {
-        mScaleState.mDrawable.setLevel(level);
+        super.onLevelChange(level);
         onBoundsChange(getBounds());
         invalidateSelf();
         return true;
@@ -208,110 +219,84 @@ public class ScaleDrawable extends Drawable implements Drawable.Callback {
 
     @Override
     protected void onBoundsChange(Rect bounds) {
+        final Drawable d = getDrawable();
         final Rect r = mTmpRect;
-        final boolean min = mScaleState.mUseIntrinsicSizeAsMin;
-        int level = getLevel();
+        final boolean min = mState.mUseIntrinsicSizeAsMin;
+        final int level = getLevel();
+
         int w = bounds.width();
-        if (mScaleState.mScaleWidth > 0) {
-            final int iw = min ? mScaleState.mDrawable.getIntrinsicWidth() : 0;
-            w -= (int) ((w - iw) * (10000 - level) * mScaleState.mScaleWidth / 10000);
+        if (mState.mScaleWidth > 0) {
+            final int iw = min ? d.getIntrinsicWidth() : 0;
+            w -= (int) ((w - iw) * (MAX_LEVEL - level) * mState.mScaleWidth / MAX_LEVEL);
         }
+
         int h = bounds.height();
-        if (mScaleState.mScaleHeight > 0) {
-            final int ih = min ? mScaleState.mDrawable.getIntrinsicHeight() : 0;
-            h -= (int) ((h - ih) * (10000 - level) * mScaleState.mScaleHeight / 10000);
+        if (mState.mScaleHeight > 0) {
+            final int ih = min ? d.getIntrinsicHeight() : 0;
+            h -= (int) ((h - ih) * (MAX_LEVEL - level) * mState.mScaleHeight / MAX_LEVEL);
         }
+
         final int layoutDirection = getLayoutDirection();
-        Gravity.apply(mScaleState.mGravity, w, h, bounds, r, layoutDirection);
+        Gravity.apply(mState.mGravity, w, h, bounds, r, layoutDirection);
 
         if (w > 0 && h > 0) {
-            mScaleState.mDrawable.setBounds(r.left, r.top, r.right, r.bottom);
+            d.setBounds(r.left, r.top, r.right, r.bottom);
         }
     }
 
     @Override
-    public int getIntrinsicWidth() {
-        return mScaleState.mDrawable.getIntrinsicWidth();
+    DrawableWrapperState mutateConstantState() {
+        mState = new ScaleState(mState, null);
+        return mState;
     }
 
-    @Override
-    public int getIntrinsicHeight() {
-        return mScaleState.mDrawable.getIntrinsicHeight();
-    }
+    static final class ScaleState extends DrawableWrapper.DrawableWrapperState {
+        /** Constant used to disable scaling for a particular dimension. */
+        private static final float DO_NOT_SCALE = -1.0f;
 
-    @Override
-    public ConstantState getConstantState() {
-        if (mScaleState.canConstantState()) {
-            mScaleState.mChangingConfigurations = getChangingConfigurations();
-            return mScaleState;
-        }
-        return null;
-    }
+        private int[] mThemeAttrs;
 
-    @Override
-    public Drawable mutate() {
-        if (!mMutated && super.mutate() == this) {
-            mScaleState.mDrawable.mutate();
-            mMutated = true;
-        }
-        return this;
-    }
+        float mScaleWidth = DO_NOT_SCALE;
+        float mScaleHeight = DO_NOT_SCALE;
+        int mGravity = Gravity.LEFT;
+        boolean mUseIntrinsicSizeAsMin = false;
+        int mInitialLevel = 0;
 
-    final static class ScaleState extends ConstantState {
-        Drawable mDrawable;
-        int mChangingConfigurations;
-        float mScaleWidth;
-        float mScaleHeight;
-        int mGravity;
-        boolean mUseIntrinsicSizeAsMin;
+        ScaleState(ScaleState orig, Resources res) {
+            super(orig, res);
 
-        private boolean mCheckedConstantState;
-        private boolean mCanConstantState;
-
-        ScaleState(ScaleState orig, ScaleDrawable owner, Resources res) {
             if (orig != null) {
-                if (res != null) {
-                    mDrawable = orig.mDrawable.getConstantState().newDrawable(res);
-                } else {
-                    mDrawable = orig.mDrawable.getConstantState().newDrawable();
-                }
-                mDrawable.setCallback(owner);
-                mDrawable.setLayoutDirection(orig.mDrawable.getLayoutDirection());
                 mScaleWidth = orig.mScaleWidth;
                 mScaleHeight = orig.mScaleHeight;
                 mGravity = orig.mGravity;
                 mUseIntrinsicSizeAsMin = orig.mUseIntrinsicSizeAsMin;
-                mCheckedConstantState = mCanConstantState = true;
+                mInitialLevel = orig.mInitialLevel;
             }
-        }
-
-        @Override
-        public Drawable newDrawable() {
-            return new ScaleDrawable(this, null);
         }
 
         @Override
         public Drawable newDrawable(Resources res) {
             return new ScaleDrawable(this, res);
         }
-
-        @Override
-        public int getChangingConfigurations() {
-            return mChangingConfigurations;
-        }
-
-        boolean canConstantState() {
-            if (!mCheckedConstantState) {
-                mCanConstantState = mDrawable.getConstantState() != null;
-                mCheckedConstantState = true;
-            }
-
-            return mCanConstantState;
-        }
     }
 
+    /**
+     * Creates a new ScaleDrawable based on the specified constant state.
+     * <p>
+     * The resulting drawable is guaranteed to have a new constant state.
+     *
+     * @param state constant state from which the drawable inherits
+     */
     private ScaleDrawable(ScaleState state, Resources res) {
-        mScaleState = new ScaleState(state, this, res);
+        super(state, res);
+
+        mState = state;
+
+        updateLocalState();
+    }
+
+    private void updateLocalState() {
+        setLevel(mState.mInitialLevel);
     }
 }
 

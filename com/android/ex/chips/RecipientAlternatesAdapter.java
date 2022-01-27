@@ -17,25 +17,24 @@
 package com.android.ex.chips;
 
 import android.accounts.Account;
-import android.content.ContentResolver;
 import android.content.Context;
 import android.database.Cursor;
 import android.database.MatrixCursor;
+import android.graphics.drawable.StateListDrawable;
 import android.net.Uri;
 import android.provider.ContactsContract;
+import android.provider.ContactsContract.Contacts;
 import android.text.TextUtils;
 import android.text.util.Rfc822Token;
 import android.text.util.Rfc822Tokenizer;
 import android.util.Log;
-import android.view.LayoutInflater;
 import android.view.View;
 import android.view.ViewGroup;
 import android.widget.CursorAdapter;
-import android.widget.ImageView;
-import android.widget.TextView;
 
 import com.android.ex.chips.BaseRecipientAdapter.DirectoryListQuery;
 import com.android.ex.chips.BaseRecipientAdapter.DirectorySearchParams;
+import com.android.ex.chips.DropdownChipLayouter.AdapterType;
 import com.android.ex.chips.Queries.Query;
 
 import java.util.ArrayList;
@@ -50,8 +49,7 @@ import java.util.Set;
  * queried by email or by phone number.
  */
 public class RecipientAlternatesAdapter extends CursorAdapter {
-    static final int MAX_LOOKUPS = 50;
-    private final LayoutInflater mLayoutInflater;
+    public static final int MAX_LOOKUPS = 50;
 
     private final long mCurrentId;
 
@@ -63,7 +61,11 @@ public class RecipientAlternatesAdapter extends CursorAdapter {
 
     public static final int QUERY_TYPE_EMAIL = 0;
     public static final int QUERY_TYPE_PHONE = 1;
-    private Query mQuery;
+    private final Long mDirectoryId;
+    private DropdownChipLayouter mDropdownChipLayouter;
+    private final StateListDrawable mDeleteDrawable;
+
+    private static final Map<String, String> sCorrectedPhotoUris = new HashMap<String, String>();
 
     public interface RecipientMatchCallback {
         public void matchesFound(Map<String, RecipientEntry> results);
@@ -73,9 +75,11 @@ public class RecipientAlternatesAdapter extends CursorAdapter {
         public void matchesNotFound(Set<String> unfoundAddresses);
     }
 
-    public static void getMatchingRecipients(Context context, ArrayList<String> inAddresses,
-            Account account, RecipientMatchCallback callback) {
-        getMatchingRecipients(context, inAddresses, QUERY_TYPE_EMAIL, account, callback);
+    public static void getMatchingRecipients(Context context, BaseRecipientAdapter adapter,
+            ArrayList<String> inAddresses, Account account, RecipientMatchCallback callback,
+            ChipsUtil.PermissionsCheckListener permissionsCheckListener) {
+        getMatchingRecipients(context, adapter, inAddresses, QUERY_TYPE_EMAIL, account, callback,
+                permissionsCheckListener);
     }
 
     /**
@@ -86,10 +90,11 @@ public class RecipientAlternatesAdapter extends CursorAdapter {
      * @param context Context.
      * @param inAddresses Array of addresses on which to perform the lookup.
      * @param callback RecipientMatchCallback called when a match or matches are found.
-     * @return HashMap<String,RecipientEntry>
      */
-    public static void getMatchingRecipients(Context context, ArrayList<String> inAddresses,
-            int addressType, Account account, RecipientMatchCallback callback) {
+    public static void getMatchingRecipients(Context context, BaseRecipientAdapter adapter,
+            ArrayList<String> inAddresses, int addressType, Account account,
+            RecipientMatchCallback callback,
+            ChipsUtil.PermissionsCheckListener permissionsCheckListener) {
         Queries.Query query;
         if (addressType == QUERY_TYPE_EMAIL) {
             query = Queries.EMAIL;
@@ -119,34 +124,48 @@ public class RecipientAlternatesAdapter extends CursorAdapter {
         Cursor c = null;
 
         try {
-            c = context.getContentResolver().query(
-                    query.getContentUri(),
-                    query.getProjection(),
-                    query.getProjection()[Queries.Query.DESTINATION] + " IN ("
-                            + bindString.toString() + ")", addressArray, null);
-            recipientEntries = processContactEntries(c);
+            if (ChipsUtil.hasPermissions(context, permissionsCheckListener)) {
+                c = context.getContentResolver().query(
+                        query.getContentUri(),
+                        query.getProjection(),
+                        query.getProjection()[Queries.Query.DESTINATION] + " IN ("
+                                + bindString.toString() + ")", addressArray, null);
+            }
+            recipientEntries = processContactEntries(c, null /* directoryId */);
             callback.matchesFound(recipientEntries);
         } finally {
             if (c != null) {
                 c.close();
             }
         }
+
+        final Set<String> matchesNotFound = new HashSet<String>();
+
+        getMatchingRecipientsFromDirectoryQueries(context, recipientEntries,
+                addresses, account, matchesNotFound, query, callback, permissionsCheckListener);
+
+        getMatchingRecipientsFromExtensionMatcher(adapter, matchesNotFound, callback);
+    }
+
+    public static void getMatchingRecipientsFromDirectoryQueries(Context context,
+            Map<String, RecipientEntry> recipientEntries, Set<String> addresses,
+            Account account, Set<String> matchesNotFound,
+            RecipientMatchCallback callback,
+            ChipsUtil.PermissionsCheckListener permissionsCheckListener) {
+        getMatchingRecipientsFromDirectoryQueries(
+                context, recipientEntries, addresses, account,
+                matchesNotFound, Queries.EMAIL, callback, permissionsCheckListener);
+    }
+
+    private static void getMatchingRecipientsFromDirectoryQueries(Context context,
+            Map<String, RecipientEntry> recipientEntries, Set<String> addresses,
+            Account account, Set<String> matchesNotFound, Queries.Query query,
+            RecipientMatchCallback callback,
+            ChipsUtil.PermissionsCheckListener permissionsCheckListener) {
         // See if any entries did not resolve; if so, we need to check other
         // directories
-        final Set<String> matchesNotFound = new HashSet<String>();
+
         if (recipientEntries.size() < addresses.size()) {
-            final List<DirectorySearchParams> paramsList;
-            Cursor directoryCursor = null;
-            try {
-                directoryCursor = context.getContentResolver().query(DirectoryListQuery.URI,
-                        DirectoryListQuery.PROJECTION, null, null, null);
-                paramsList = BaseRecipientAdapter.setupOtherDirectories(context, directoryCursor,
-                        account);
-            } finally {
-                if (directoryCursor != null) {
-                    directoryCursor.close();
-                }
-            }
             // Run a directory query for each unmatched recipient.
             HashSet<String> unresolvedAddresses = new HashSet<String>();
             for (String address : addresses) {
@@ -154,47 +173,80 @@ public class RecipientAlternatesAdapter extends CursorAdapter {
                     unresolvedAddresses.add(address);
                 }
             }
-
             matchesNotFound.addAll(unresolvedAddresses);
 
-            Cursor directoryContactsCursor = null;
-            for (String unresolvedAddress : unresolvedAddresses) {
-                for (int i = 0; i < paramsList.size(); i++) {
-                    try {
-                        directoryContactsCursor = doQuery(unresolvedAddress, 1,
-                                paramsList.get(i).directoryId, account,
-                                context.getContentResolver(), query);
-                    } finally {
-                        if (directoryContactsCursor != null
-                                && directoryContactsCursor.getCount() == 0) {
-                            directoryContactsCursor.close();
-                            directoryContactsCursor = null;
-                        } else {
-                            break;
-                        }
-                    }
+            final List<DirectorySearchParams> paramsList;
+            Cursor directoryCursor = null;
+            try {
+                if (ChipsUtil.hasPermissions(context, permissionsCheckListener)) {
+                    directoryCursor = context.getContentResolver().query(
+                            DirectoryListQuery.URI, DirectoryListQuery.PROJECTION,
+                            null, null, null);
                 }
-                if (directoryContactsCursor != null) {
-                    try {
-                        final Map<String, RecipientEntry> entries =
-                                processContactEntries(directoryContactsCursor);
+                if (directoryCursor == null) {
+                    return;
+                }
+                paramsList = BaseRecipientAdapter.setupOtherDirectories(
+                        context, directoryCursor, account);
+            } finally {
+                if (directoryCursor != null) {
+                    directoryCursor.close();
+                }
+            }
 
-                        for (final String address : entries.keySet()) {
-                            matchesNotFound.remove(address);
+            if (paramsList != null) {
+                Cursor directoryContactsCursor = null;
+                for (String unresolvedAddress : unresolvedAddresses) {
+                    for (int i = 0; i < paramsList.size(); i++) {
+                        final long directoryId = paramsList.get(i).directoryId;
+                        try {
+                            directoryContactsCursor = doQuery(unresolvedAddress, 1 /* limit */,
+                                    directoryId, account, context, query, permissionsCheckListener);
+                            if (directoryContactsCursor != null
+                                    && directoryContactsCursor.getCount() != 0) {
+                                // We found the directory with at least one contact
+                                final Map<String, RecipientEntry> entries =
+                                        processContactEntries(directoryContactsCursor, directoryId);
+
+                                for (final String address : entries.keySet()) {
+                                    matchesNotFound.remove(address);
+                                }
+
+                                callback.matchesFound(entries);
+                                break;
+                            }
+                        } finally {
+                            if (directoryContactsCursor != null) {
+                                directoryContactsCursor.close();
+                                directoryContactsCursor = null;
+                            }
                         }
-
-                        callback.matchesFound(entries);
-                    } finally {
-                        directoryContactsCursor.close();
                     }
                 }
             }
         }
+    }
 
+    public static void getMatchingRecipientsFromExtensionMatcher(BaseRecipientAdapter adapter,
+            Set<String> matchesNotFound, RecipientMatchCallback callback) {
+        // If no matches found in contact provider or the directories, try the extension
+        // matcher.
+        // todo (aalbert): This whole method needs to be in the adapter?
+        if (adapter != null) {
+            final Map<String, RecipientEntry> entries =
+                    adapter.getMatchingRecipients(matchesNotFound);
+            if (entries != null && entries.size() > 0) {
+                callback.matchesFound(entries);
+                for (final String address : entries.keySet()) {
+                    matchesNotFound.remove(address);
+                }
+            }
+        }
         callback.matchesNotFound(matchesNotFound);
     }
 
-    private static HashMap<String, RecipientEntry> processContactEntries(Cursor c) {
+    private static HashMap<String, RecipientEntry> processContactEntries(Cursor c,
+            Long directoryId) {
         HashMap<String, RecipientEntry> recipientEntries = new HashMap<String, RecipientEntry>();
         if (c != null && c.moveToFirst()) {
             do {
@@ -207,9 +259,11 @@ public class RecipientAlternatesAdapter extends CursorAdapter {
                         c.getInt(Queries.Query.DESTINATION_TYPE),
                         c.getString(Queries.Query.DESTINATION_LABEL),
                         c.getLong(Queries.Query.CONTACT_ID),
+                        directoryId,
                         c.getLong(Queries.Query.DATA_ID),
                         c.getString(Queries.Query.PHOTO_THUMBNAIL_URI),
-                        true);
+                        true,
+                        c.getString(Queries.Query.LOOKUP_KEY));
 
                 /*
                  * In certain situations, we may have two results for one address, where one of the
@@ -286,7 +340,14 @@ public class RecipientAlternatesAdapter extends CursorAdapter {
     }
 
     private static Cursor doQuery(CharSequence constraint, int limit, Long directoryId,
-            Account account, ContentResolver resolver, Query query) {
+            Account account, Context context, Query query,
+            ChipsUtil.PermissionsCheckListener permissionsCheckListener) {
+        if (!ChipsUtil.hasPermissions(context, permissionsCheckListener)) {
+            if (Log.isLoggable(TAG, Log.DEBUG)) {
+                Log.d(TAG, "Not doing query because we don't have required permissions.");
+            }
+            return null;
+        }
         final Uri.Builder builder = query
                 .getContentFilterUri()
                 .buildUpon()
@@ -301,51 +362,89 @@ public class RecipientAlternatesAdapter extends CursorAdapter {
             builder.appendQueryParameter(BaseRecipientAdapter.PRIMARY_ACCOUNT_NAME, account.name);
             builder.appendQueryParameter(BaseRecipientAdapter.PRIMARY_ACCOUNT_TYPE, account.type);
         }
-        final Cursor cursor = resolver.query(builder.build(), query.getProjection(), null, null,
-                null);
-        return cursor;
+        return context.getContentResolver()
+                .query(builder.build(), query.getProjection(), null, null, null);
     }
 
-    public RecipientAlternatesAdapter(Context context, long contactId, long currentId,
-            OnCheckedItemChangedListener listener) {
-        this(context, contactId, currentId, QUERY_TYPE_EMAIL, listener);
+    public RecipientAlternatesAdapter(Context context, long contactId, Long directoryId,
+            String lookupKey, long currentId, int queryMode, OnCheckedItemChangedListener listener,
+            DropdownChipLayouter dropdownChipLayouter,
+            ChipsUtil.PermissionsCheckListener permissionsCheckListener) {
+        this(context, contactId, directoryId, lookupKey, currentId, queryMode, listener,
+                dropdownChipLayouter, null, permissionsCheckListener);
     }
 
-    public RecipientAlternatesAdapter(Context context, long contactId, long currentId,
-            int queryMode, OnCheckedItemChangedListener listener) {
-        super(context, getCursorForConstruction(context, contactId, queryMode), 0);
-        mLayoutInflater = LayoutInflater.from(context);
+    public RecipientAlternatesAdapter(Context context, long contactId, Long directoryId,
+            String lookupKey, long currentId, int queryMode, OnCheckedItemChangedListener listener,
+            DropdownChipLayouter dropdownChipLayouter, StateListDrawable deleteDrawable,
+            ChipsUtil.PermissionsCheckListener permissionsCheckListener) {
+        super(context,
+                getCursorForConstruction(context, contactId, directoryId, lookupKey, queryMode,
+                        permissionsCheckListener),
+                0);
         mCurrentId = currentId;
+        mDirectoryId = directoryId;
         mCheckedItemChangedListener = listener;
 
-        if (queryMode == QUERY_TYPE_EMAIL) {
-            mQuery = Queries.EMAIL;
-        } else if (queryMode == QUERY_TYPE_PHONE) {
-            mQuery = Queries.PHONE;
-        } else {
-            mQuery = Queries.EMAIL;
-            Log.e(TAG, "Unsupported query type: " + queryMode);
-        }
+        mDropdownChipLayouter = dropdownChipLayouter;
+        mDeleteDrawable = deleteDrawable;
     }
 
-    private static Cursor getCursorForConstruction(Context context, long contactId, int queryType) {
-        final Cursor cursor;
+    private static Cursor getCursorForConstruction(Context context, long contactId,
+            Long directoryId, String lookupKey, int queryType,
+            ChipsUtil.PermissionsCheckListener permissionsCheckListener) {
+        final Uri uri;
+        final String desiredMimeType;
+        final String[] projection;
+
         if (queryType == QUERY_TYPE_EMAIL) {
-            cursor = context.getContentResolver().query(
-                    Queries.EMAIL.getContentUri(),
-                    Queries.EMAIL.getProjection(),
-                    Queries.EMAIL.getProjection()[Queries.Query.CONTACT_ID] + " =?", new String[] {
-                        String.valueOf(contactId)
-                    }, null);
+            projection = Queries.EMAIL.getProjection();
+
+            if (directoryId == null || lookupKey == null) {
+                uri = Queries.EMAIL.getContentUri();
+                desiredMimeType = null;
+            } else {
+                uri = Contacts.getLookupUri(contactId, lookupKey)
+                        .buildUpon()
+                        .appendPath(Contacts.Entity.CONTENT_DIRECTORY)
+                        .appendQueryParameter(
+                                ContactsContract.DIRECTORY_PARAM_KEY, String.valueOf(directoryId))
+                        .build();
+                desiredMimeType = ContactsContract.CommonDataKinds.Email.CONTENT_ITEM_TYPE;
+            }
         } else {
-            cursor = context.getContentResolver().query(
-                    Queries.PHONE.getContentUri(),
-                    Queries.PHONE.getProjection(),
-                    Queries.PHONE.getProjection()[Queries.Query.CONTACT_ID] + " =?", new String[] {
-                        String.valueOf(contactId)
-                    }, null);
+            projection = Queries.PHONE.getProjection();
+
+            if (lookupKey == null) {
+                uri = Queries.PHONE.getContentUri();
+                desiredMimeType = null;
+            } else {
+                uri = Contacts.getLookupUri(contactId, lookupKey)
+                        .buildUpon()
+                        .appendPath(Contacts.Entity.CONTENT_DIRECTORY)
+                        .appendQueryParameter(
+                                ContactsContract.DIRECTORY_PARAM_KEY, String.valueOf(directoryId))
+                        .build();
+                desiredMimeType = ContactsContract.CommonDataKinds.Phone.CONTENT_ITEM_TYPE;
+            }
         }
-        return removeDuplicateDestinations(cursor);
+
+        final String selection = new StringBuilder()
+                .append(projection[Queries.Query.CONTACT_ID])
+                .append(" = ?")
+                .toString();
+        final Cursor cursor;
+        if (ChipsUtil.hasPermissions(context, permissionsCheckListener)) {
+            cursor = context.getContentResolver().query(
+                    uri, projection, selection, new String[] {String.valueOf(contactId)}, null);
+        } else {
+            cursor = new MatrixCursor(projection);
+        }
+
+        final Cursor resultCursor = removeUndesiredDestinations(cursor, desiredMimeType, lookupKey);
+        cursor.close();
+
+        return resultCursor;
     }
 
     /**
@@ -358,22 +457,53 @@ public class RecipientAlternatesAdapter extends CursorAdapter {
      * - This method creates a MatrixCursor, so all data will be kept in memory.  We wouldn't want
      * to do this if the original cursor is large, but it's okay here because the alternate list
      * won't be that big.
+     *
+     * @param desiredMimeType If this is non-<code>null</code>, only entries with this mime type
+     *            will be added to the cursor
+     * @param lookupKey The lookup key used for this contact if there isn't one in the cursor. This
+     *            should be the same one used in the query that returned the cursor
      */
     // Visible for testing
-    /* package */ static Cursor removeDuplicateDestinations(Cursor original) {
+    static Cursor removeUndesiredDestinations(final Cursor original, final String desiredMimeType,
+            final String lookupKey) {
         final MatrixCursor result = new MatrixCursor(
                 original.getColumnNames(), original.getCount());
         final HashSet<String> destinationsSeen = new HashSet<String>();
 
+        String defaultDisplayName = null;
+        String defaultPhotoThumbnailUri = null;
+        int defaultDisplayNameSource = 0;
+
+        // Find some nice defaults in case we need them
         original.moveToPosition(-1);
         while (original.moveToNext()) {
+            final String mimeType = original.getString(Query.MIME_TYPE);
+
+            if (ContactsContract.CommonDataKinds.StructuredName.CONTENT_ITEM_TYPE.equals(
+                    mimeType)) {
+                // Store this data
+                defaultDisplayName = original.getString(Query.NAME);
+                defaultPhotoThumbnailUri = original.getString(Query.PHOTO_THUMBNAIL_URI);
+                defaultDisplayNameSource = original.getInt(Query.DISPLAY_NAME_SOURCE);
+                break;
+            }
+        }
+
+        original.moveToPosition(-1);
+        while (original.moveToNext()) {
+            if (desiredMimeType != null) {
+                final String mimeType = original.getString(Query.MIME_TYPE);
+                if (!desiredMimeType.equals(mimeType)) {
+                    continue;
+                }
+            }
             final String destination = original.getString(Query.DESTINATION);
             if (destinationsSeen.contains(destination)) {
                 continue;
             }
             destinationsSeen.add(destination);
 
-            result.addRow(new Object[] {
+            final Object[] row = new Object[] {
                     original.getString(Query.NAME),
                     original.getString(Query.DESTINATION),
                     original.getInt(Query.DESTINATION_TYPE),
@@ -381,8 +511,48 @@ public class RecipientAlternatesAdapter extends CursorAdapter {
                     original.getLong(Query.CONTACT_ID),
                     original.getLong(Query.DATA_ID),
                     original.getString(Query.PHOTO_THUMBNAIL_URI),
-                    original.getInt(Query.DISPLAY_NAME_SOURCE)
-                    });
+                    original.getInt(Query.DISPLAY_NAME_SOURCE),
+                    original.getString(Query.LOOKUP_KEY),
+                    original.getString(Query.MIME_TYPE)
+            };
+
+            if (row[Query.NAME] == null) {
+                row[Query.NAME] = defaultDisplayName;
+            }
+            if (row[Query.PHOTO_THUMBNAIL_URI] == null) {
+                row[Query.PHOTO_THUMBNAIL_URI] = defaultPhotoThumbnailUri;
+            }
+            if ((Integer) row[Query.DISPLAY_NAME_SOURCE] == 0) {
+                row[Query.DISPLAY_NAME_SOURCE] = defaultDisplayNameSource;
+            }
+            if (row[Query.LOOKUP_KEY] == null) {
+                row[Query.LOOKUP_KEY] = lookupKey;
+            }
+
+            // Ensure we don't have two '?' like content://.../...?account_name=...?sz=...
+            final String photoThumbnailUri = (String) row[Query.PHOTO_THUMBNAIL_URI];
+            if (photoThumbnailUri != null) {
+                if (sCorrectedPhotoUris.containsKey(photoThumbnailUri)) {
+                    row[Query.PHOTO_THUMBNAIL_URI] = sCorrectedPhotoUris.get(photoThumbnailUri);
+                } else if (photoThumbnailUri.indexOf('?') != photoThumbnailUri.lastIndexOf('?')) {
+                    final String[] parts = photoThumbnailUri.split("\\?");
+                    final StringBuilder correctedUriBuilder = new StringBuilder();
+                    for (int i = 0; i < parts.length; i++) {
+                        if (i == 1) {
+                            correctedUriBuilder.append("?"); // We only want one of these
+                        } else if (i > 1) {
+                            correctedUriBuilder.append("&"); // And we want these elsewhere
+                        }
+                        correctedUriBuilder.append(parts[i]);
+                    }
+
+                    final String correctedUri = correctedUriBuilder.toString();
+                    sCorrectedPhotoUris.put(photoThumbnailUri, correctedUri);
+                    row[Query.PHOTO_THUMBNAIL_URI] = correctedUri;
+                }
+            }
+
+            result.addRow(row);
         }
 
         return result;
@@ -407,9 +577,11 @@ public class RecipientAlternatesAdapter extends CursorAdapter {
                 c.getInt(Queries.Query.DESTINATION_TYPE),
                 c.getString(Queries.Query.DESTINATION_LABEL),
                 c.getLong(Queries.Query.CONTACT_ID),
+                mDirectoryId,
                 c.getLong(Queries.Query.DATA_ID),
                 c.getString(Queries.Query.PHOTO_THUMBNAIL_URI),
-                true);
+                true,
+                c.getString(Queries.Query.LOOKUP_KEY));
     }
 
     @Override
@@ -417,7 +589,7 @@ public class RecipientAlternatesAdapter extends CursorAdapter {
         Cursor cursor = getCursor();
         cursor.moveToPosition(position);
         if (convertView == null) {
-            convertView = newView();
+            convertView = mDropdownChipLayouter.newView(AdapterType.RECIPIENT_ALTERNATES);
         }
         if (cursor.getLong(Queries.Query.DATA_ID) == mCurrentId) {
             mCheckedItemPosition = position;
@@ -429,44 +601,18 @@ public class RecipientAlternatesAdapter extends CursorAdapter {
         return convertView;
     }
 
-    // TODO: this is VERY similar to the BaseRecipientAdapter. Can we combine
-    // somehow?
     @Override
     public void bindView(View view, Context context, Cursor cursor) {
         int position = cursor.getPosition();
-
-        TextView display = (TextView) view.findViewById(android.R.id.title);
-        ImageView imageView = (ImageView) view.findViewById(android.R.id.icon);
         RecipientEntry entry = getRecipientEntry(position);
-        if (position == 0) {
-            display.setText(cursor.getString(Queries.Query.NAME));
-            display.setVisibility(View.VISIBLE);
-            // TODO: see if this needs to be done outside the main thread
-            // as it may be too slow to get immediately.
-            imageView.setImageURI(entry.getPhotoThumbnailUri());
-            imageView.setVisibility(View.VISIBLE);
-        } else {
-            display.setVisibility(View.GONE);
-            imageView.setVisibility(View.GONE);
-        }
-        TextView destination = (TextView) view.findViewById(android.R.id.text1);
-        destination.setText(cursor.getString(Queries.Query.DESTINATION));
 
-        TextView destinationType = (TextView) view.findViewById(android.R.id.text2);
-        if (destinationType != null) {
-            destinationType.setText(mQuery.getTypeLabel(context.getResources(),
-                    cursor.getInt(Queries.Query.DESTINATION_TYPE),
-                    cursor.getString(Queries.Query.DESTINATION_LABEL)).toString().toUpperCase());
-        }
+        mDropdownChipLayouter.bindView(view, null, entry, position,
+                AdapterType.RECIPIENT_ALTERNATES, null, mDeleteDrawable);
     }
 
     @Override
     public View newView(Context context, Cursor cursor, ViewGroup parent) {
-        return newView();
-    }
-
-    private View newView() {
-        return mLayoutInflater.inflate(R.layout.chips_recipient_dropdown_item, null);
+        return mDropdownChipLayouter.newView(AdapterType.RECIPIENT_ALTERNATES);
     }
 
     /*package*/ static interface OnCheckedItemChangedListener {

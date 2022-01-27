@@ -16,6 +16,7 @@
 
 package android.content;
 
+import android.content.ContentProvider;
 import android.net.Uri;
 import android.os.Parcelable;
 import android.os.Parcel;
@@ -48,6 +49,12 @@ public class ContentProviderResult implements Parcelable {
             count = null;
             uri = Uri.CREATOR.createFromParcel(source);
         }
+    }
+
+    /** @hide */
+    public ContentProviderResult(ContentProviderResult cpr, int userId) {
+        uri = ContentProvider.maybeAddUserId(cpr.uri, userId);
+        count = cpr.count;
     }
 
     public void writeToParcel(Parcel dest, int flags) {

@@ -58,7 +58,7 @@ public class ColorStateDrawable extends LayerDrawable {
     /**
      * Given a particular color, adjusts its value by a multiplier.
      */
-    private int getPressedColor(int color) {
+    private static int getPressedColor(int color) {
         float[] hsv = new float[3];
         Color.colorToHSV(color, hsv);
         hsv[2] = hsv[2] * PRESSED_STATE_MULTIPLIER;

@@ -16,6 +16,9 @@
 
 package com.android.server.wm;
 
+import static com.android.server.wm.WindowManagerDebugConfig.TAG_WITH_CLASS_NAME;
+import static com.android.server.wm.WindowManagerDebugConfig.TAG_WM;
+
 import android.app.ActivityManagerNative;
 import android.app.admin.DevicePolicyManager;
 import android.content.Context;
@@ -24,13 +27,12 @@ import android.os.IBinder;
 import android.os.Message;
 import android.os.RemoteException;
 import android.os.TokenWatcher;
-import android.os.UserHandle;
 import android.util.Log;
 import android.util.Pair;
 import android.view.WindowManagerPolicy;
 
 public class KeyguardDisableHandler extends Handler {
-    private static final String TAG = "KeyguardDisableHandler";
+    private static final String TAG = TAG_WITH_CLASS_NAME ? "KeyguardDisableHandler" : TAG_WM;
 
     private static final int ALLOW_DISABLE_YES = 1;
     private static final int ALLOW_DISABLE_NO = 0;
@@ -69,9 +71,18 @@ public class KeyguardDisableHandler extends Handler {
                 break;
 
             case KEYGUARD_POLICY_CHANGED:
-                mPolicy.enableKeyguard(true);
-                // lazily evaluate this next time we're asked to disable keyguard
                 mAllowDisableKeyguard = ALLOW_DISABLE_UNKNOWN;
+                if (mKeyguardTokenWatcher.isAcquired()) {
+                    // If we are currently disabled we need to know if the keyguard
+                    // should be re-enabled, so determine the allow state immediately.
+                    mKeyguardTokenWatcher.updateAllowState();
+                    if (mAllowDisableKeyguard != ALLOW_DISABLE_YES) {
+                        mPolicy.enableKeyguard(true);
+                    }
+                } else {
+                    // lazily evaluate this next time we're asked to disable keyguard
+                    mPolicy.enableKeyguard(true);
+                }
                 break;
         }
     }
@@ -82,23 +93,27 @@ public class KeyguardDisableHandler extends Handler {
             super(handler, TAG);
         }
 
-        @Override
-        public void acquired() {
+        public void updateAllowState() {
             // We fail safe and prevent disabling keyguard in the unlikely event this gets
             // called before DevicePolicyManagerService has started.
-            if (mAllowDisableKeyguard == ALLOW_DISABLE_UNKNOWN) {
-                DevicePolicyManager dpm = (DevicePolicyManager) mContext.getSystemService(
-                        Context.DEVICE_POLICY_SERVICE);
-                if (dpm != null) {
-                    try {
-                        mAllowDisableKeyguard = dpm.getPasswordQuality(null, 
-                                ActivityManagerNative.getDefault().getCurrentUser().id)
-                                == DevicePolicyManager.PASSWORD_QUALITY_UNSPECIFIED ?
-                                        ALLOW_DISABLE_YES : ALLOW_DISABLE_NO;
-                    } catch (RemoteException re) {
-                        // Nothing much we can do
-                    }
+            DevicePolicyManager dpm = (DevicePolicyManager) mContext.getSystemService(
+                    Context.DEVICE_POLICY_SERVICE);
+            if (dpm != null) {
+                try {
+                    mAllowDisableKeyguard = dpm.getPasswordQuality(null,
+                            ActivityManagerNative.getDefault().getCurrentUser().id)
+                            == DevicePolicyManager.PASSWORD_QUALITY_UNSPECIFIED ?
+                                    ALLOW_DISABLE_YES : ALLOW_DISABLE_NO;
+                } catch (RemoteException re) {
+                    // Nothing much we can do
                 }
+            }
+        }
+
+        @Override
+        public void acquired() {
+            if (mAllowDisableKeyguard == ALLOW_DISABLE_UNKNOWN) {
+                updateAllowState();
             }
             if (mAllowDisableKeyguard == ALLOW_DISABLE_YES) {
                 mPolicy.enableKeyguard(false);

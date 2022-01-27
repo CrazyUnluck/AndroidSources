@@ -30,7 +30,8 @@ import java.lang.reflect.Field;
 import java.lang.reflect.Modifier;
 
 /**
- *
+ * The superclass for all user-defined scripts. This is only
+ * intended to be used by the generated derived classes.
  **/
 public class ScriptC extends Script {
     private static final String TAG = "ScriptC";
@@ -41,7 +42,7 @@ public class ScriptC extends Script {
      * @param id
      * @param rs
      */
-    protected ScriptC(int id, RenderScript rs) {
+    protected ScriptC(long id, RenderScript rs) {
         super(id, rs);
     }
 
@@ -55,23 +56,36 @@ public class ScriptC extends Script {
      */
     protected ScriptC(RenderScript rs, Resources resources, int resourceID) {
         super(0, rs);
-
-        if (rs.isNative) {
-            RenderScriptThunker rst = (RenderScriptThunker)rs;
-            ScriptCThunker s = new ScriptCThunker(rst, resources, resourceID);
-            mT = s;
-            return;
-        }
-
-        int id = internalCreate(rs, resources, resourceID);
+        long id = internalCreate(rs, resources, resourceID);
         if (id == 0) {
             throw new RSRuntimeException("Loading of ScriptC script failed.");
         }
         setID(id);
     }
 
+    /**
+     * Only intended for use by the generated derived classes.
+     *
+     * @param rs
+     * @param resName
+     * @param bitcode32
+     * @param bitcode64
+     */
+    protected ScriptC(RenderScript rs, String resName, byte[] bitcode32, byte[] bitcode64) {
+        super(0, rs);
+        long id = 0;
+        if (RenderScript.sPointerSize == 4) {
+            id = internalStringCreate(rs, resName, bitcode32);
+        } else {
+            id = internalStringCreate(rs, resName, bitcode64);
+        }
+        if (id == 0) {
+            throw new RSRuntimeException("Loading of ScriptC script failed.");
+        }
+        setID(id);
+    }
 
-    private static synchronized int internalCreate(RenderScript rs, Resources resources, int resourceID) {
+    private static synchronized long internalCreate(RenderScript rs, Resources resources, int resourceID) {
         byte[] pgm;
         int pgmLength;
         InputStream is = resources.openRawResource(resourceID);
@@ -107,4 +121,11 @@ public class ScriptC extends Script {
         //Log.v(TAG, " path = " + cachePath);
         return rs.nScriptCCreate(resName, cachePath, pgm, pgmLength);
     }
+
+    private static synchronized long internalStringCreate(RenderScript rs, String resName, byte[] bitcode) {
+        //        Log.v(TAG, "Create script for resource = " + resName);
+        String cachePath = rs.getApplicationContext().getCacheDir().toString();
+        return rs.nScriptCCreate(resName, cachePath, bitcode, bitcode.length);
+    }
+
 }

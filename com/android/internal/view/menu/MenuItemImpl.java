@@ -149,7 +149,7 @@ public final class MenuItemImpl implements MenuItem {
             return true;
         }
 
-        if (mMenu.dispatchMenuItemSelected(mMenu.getRootMenu(), this)) {
+        if (mMenu.dispatchMenuItemSelected(mMenu, this)) {
             return true;
         }
 
@@ -385,7 +385,7 @@ public final class MenuItemImpl implements MenuItem {
         }
 
         if (mIconResId != NO_ICON) {
-            Drawable icon =  mMenu.getResources().getDrawable(mIconResId);
+            Drawable icon =  mMenu.getContext().getDrawable(mIconResId);
             mIconResId = NO_ICON;
             mIconDrawable = icon;
             return icon;
@@ -496,7 +496,7 @@ public final class MenuItemImpl implements MenuItem {
     
     @Override
     public String toString() {
-        return mTitle.toString();
+        return mTitle != null ? mTitle.toString() : null;
     }
 
     void setMenuInfo(ContextMenuInfo menuInfo) {
@@ -593,7 +593,7 @@ public final class MenuItemImpl implements MenuItem {
 
     public MenuItem setActionProvider(ActionProvider actionProvider) {
         if (mActionProvider != null) {
-            mActionProvider.setVisibilityListener(null);
+            mActionProvider.reset();
         }
         mActionView = null;
         mActionProvider = actionProvider;
@@ -616,7 +616,7 @@ public final class MenuItemImpl implements MenuItem {
 
     @Override
     public boolean expandActionView() {
-        if ((mShowAsAction & SHOW_AS_ACTION_COLLAPSE_ACTION_VIEW) == 0 || mActionView == null) {
+        if (!hasCollapsibleActionView()) {
             return false;
         }
 
@@ -653,7 +653,13 @@ public final class MenuItemImpl implements MenuItem {
     }
 
     public boolean hasCollapsibleActionView() {
-        return (mShowAsAction & SHOW_AS_ACTION_COLLAPSE_ACTION_VIEW) != 0 && mActionView != null;
+        if ((mShowAsAction & SHOW_AS_ACTION_COLLAPSE_ACTION_VIEW) != 0) {
+            if (mActionView == null && mActionProvider != null) {
+                mActionView = mActionProvider.onCreateActionView(this);
+            }
+            return mActionView != null;
+        }
+        return false;
     }
 
     public void setActionViewExpanded(boolean isExpanded) {

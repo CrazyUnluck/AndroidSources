@@ -28,8 +28,8 @@ import android.database.ContentObserver;
 import android.net.NetworkInfo;
 import android.net.wifi.ScanResult;
 import android.net.wifi.WifiManager;
-import android.net.wifi.WifiStateMachine;
 import android.os.Handler;
+import android.os.Looper;
 import android.os.Message;
 import android.os.UserHandle;
 import android.provider.Settings;
@@ -66,7 +66,7 @@ final class WifiNotificationController {
     /**
      * The Notification object given to the NotificationManager.
      */
-    private Notification mNotification;
+    private Notification.Builder mNotificationBuilder;
     /**
      * Whether the notification is being shown, as set by us. That is, if the
      * user cancels the notification, we will not receive the callback so this
@@ -91,12 +91,18 @@ final class WifiNotificationController {
     private final Context mContext;
     private final WifiStateMachine mWifiStateMachine;
     private NetworkInfo mNetworkInfo;
+    private NetworkInfo.DetailedState mDetailedState;
     private volatile int mWifiState;
+    private FrameworkFacade mFrameworkFacade;
 
-    WifiNotificationController(Context context, WifiStateMachine wsm) {
+    WifiNotificationController(Context context, Looper looper, WifiStateMachine wsm,
+            FrameworkFacade framework, Notification.Builder builder) {
         mContext = context;
         mWifiStateMachine = wsm;
+        mFrameworkFacade = framework;
+        mNotificationBuilder = builder;
         mWifiState = WifiManager.WIFI_STATE_UNKNOWN;
+        mDetailedState = NetworkInfo.DetailedState.IDLE;
 
         IntentFilter filter = new IntentFilter();
         filter.addAction(WifiManager.WIFI_STATE_CHANGED_ACTION);
@@ -115,13 +121,19 @@ final class WifiNotificationController {
                                 WifiManager.NETWORK_STATE_CHANGED_ACTION)) {
                             mNetworkInfo = (NetworkInfo) intent.getParcelableExtra(
                                     WifiManager.EXTRA_NETWORK_INFO);
-                            // reset & clear notification on a network connect & disconnect
-                            switch(mNetworkInfo.getDetailedState()) {
-                                case CONNECTED:
-                                case DISCONNECTED:
-                                case CAPTIVE_PORTAL_CHECK:
-                                    resetNotification();
-                                    break;
+                            NetworkInfo.DetailedState detailedState =
+                                    mNetworkInfo.getDetailedState();
+                            if (detailedState != NetworkInfo.DetailedState.SCANNING
+                                    && detailedState != mDetailedState) {
+                                mDetailedState = detailedState;
+                                // reset & clear notification on a network connect & disconnect
+                                switch(mDetailedState) {
+                                    case CONNECTED:
+                                    case DISCONNECTED:
+                                    case CAPTIVE_PORTAL_CHECK:
+                                        resetNotification();
+                                        break;
+                                }
                             }
                         } else if (intent.getAction().equals(
                                 WifiManager.SCAN_RESULTS_AVAILABLE_ACTION)) {
@@ -132,22 +144,26 @@ final class WifiNotificationController {
                 }, filter);
 
         // Setting is in seconds
-        NOTIFICATION_REPEAT_DELAY_MS = Settings.Global.getInt(context.getContentResolver(),
+        NOTIFICATION_REPEAT_DELAY_MS = mFrameworkFacade.getIntegerSetting(context,
                 Settings.Global.WIFI_NETWORKS_AVAILABLE_REPEAT_DELAY, 900) * 1000l;
-        mNotificationEnabledSettingObserver = new NotificationEnabledSettingObserver(new Handler());
+        mNotificationEnabledSettingObserver = new NotificationEnabledSettingObserver(
+                new Handler(looper));
         mNotificationEnabledSettingObserver.register();
     }
 
     private synchronized void checkAndSetNotification(NetworkInfo networkInfo,
             List<ScanResult> scanResults) {
+
         // TODO: unregister broadcast so we do not have to check here
         // If we shouldn't place a notification on available networks, then
         // don't bother doing any of the following
         if (!mNotificationEnabled) return;
-        if (networkInfo == null) return;
         if (mWifiState != WifiManager.WIFI_STATE_ENABLED) return;
 
-        NetworkInfo.State state = networkInfo.getState();
+        NetworkInfo.State state = NetworkInfo.State.DISCONNECTED;
+        if (networkInfo != null)
+            state = networkInfo.getState();
+
         if ((state == NetworkInfo.State.DISCONNECTED)
                 || (state == NetworkInfo.State.UNKNOWN)) {
             if (scanResults != null) {
@@ -227,29 +243,32 @@ final class WifiNotificationController {
                 return;
             }
 
-            if (mNotification == null) {
-                // Cache the Notification object.
-                mNotification = new Notification();
-                mNotification.when = 0;
-                mNotification.icon = ICON_NETWORKS_AVAILABLE;
-                mNotification.flags = Notification.FLAG_AUTO_CANCEL;
-                mNotification.contentIntent = TaskStackBuilder.create(mContext)
-                        .addNextIntentWithParentStack(
-                                new Intent(WifiManager.ACTION_PICK_WIFI_NETWORK))
-                        .getPendingIntent(0, 0, null, UserHandle.CURRENT);
+            if (mNotificationBuilder == null) {
+                // Cache the Notification builder object.
+                mNotificationBuilder = new Notification.Builder(mContext)
+                        .setWhen(0)
+                        .setSmallIcon(ICON_NETWORKS_AVAILABLE)
+                        .setAutoCancel(true)
+                        .setContentIntent(TaskStackBuilder.create(mContext)
+                                .addNextIntentWithParentStack(
+                                        new Intent(WifiManager.ACTION_PICK_WIFI_NETWORK))
+                                .getPendingIntent(0, 0, null, UserHandle.CURRENT))
+                        .setColor(mContext.getResources().getColor(
+                                com.android.internal.R.color.system_notification_accent_color));
             }
 
             CharSequence title = mContext.getResources().getQuantityText(
                     com.android.internal.R.plurals.wifi_available, numNetworks);
             CharSequence details = mContext.getResources().getQuantityText(
                     com.android.internal.R.plurals.wifi_available_detailed, numNetworks);
-            mNotification.tickerText = title;
-            mNotification.setLatestEventInfo(mContext, title, details, mNotification.contentIntent);
+            mNotificationBuilder.setTicker(title);
+            mNotificationBuilder.setContentTitle(title);
+            mNotificationBuilder.setContentText(details);
 
             mNotificationRepeatTime = System.currentTimeMillis() + NOTIFICATION_REPEAT_DELAY_MS;
 
-            notificationManager.notifyAsUser(null, ICON_NETWORKS_AVAILABLE, mNotification,
-                    UserHandle.ALL);
+            notificationManager.notifyAsUser(null, ICON_NETWORKS_AVAILABLE,
+                    mNotificationBuilder.build(), UserHandle.ALL);
         } else {
             notificationManager.cancelAsUser(null, ICON_NETWORKS_AVAILABLE, UserHandle.ALL);
         }
@@ -289,9 +308,8 @@ final class WifiNotificationController {
         }
 
         private boolean getValue() {
-            return Settings.Global.getInt(mContext.getContentResolver(),
+            return mFrameworkFacade.getIntegerSetting(mContext,
                     Settings.Global.WIFI_NETWORKS_AVAILABLE_NOTIFICATION_ON, 1) == 1;
         }
     }
-
 }

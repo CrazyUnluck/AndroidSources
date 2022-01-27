@@ -70,7 +70,7 @@ public class PowerCommand extends Svc.Command {
                         if (val != 0) {
                             // if the request is not to set it to false, wake up the screen so that
                             // it can stay on as requested
-                            pm.wakeUp(SystemClock.uptimeMillis());
+                            pm.wakeUp(SystemClock.uptimeMillis(), "PowerCommand", null);
                         }
                         pm.setStayOnSetting(val);
                     }
@@ -93,7 +93,7 @@ public class PowerCommand extends Svc.Command {
                 } else if ("shutdown".equals(args[1])) {
                     try {
                         // no confirm, wait till device is off
-                        pm.shutdown(false, true);
+                        pm.shutdown(false, null, true);
                     } catch (RemoteException e) {
                         System.err.println("Failed to shutdown.");
                     }

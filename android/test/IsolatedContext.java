@@ -39,15 +39,17 @@ import android.os.Handler;
 import java.io.File;
 import java.io.IOException;
 import java.util.concurrent.TimeUnit;
-import java.util.concurrent.ExecutionException;
-import java.util.concurrent.TimeoutException;
 import java.util.List;
 
 
 /**
-     * A mock context which prevents its users from talking to the rest of the device while
+ * A mock context which prevents its users from talking to the rest of the device while
  * stubbing enough methods to satify code that tries to talk to other packages.
+ *
+ * @deprecated New tests should be written using the
+ * <a href="{@docRoot}tools/testing-support-library/index.html">Android Testing Support Library</a>.
  */
+@Deprecated
 public class IsolatedContext extends ContextWrapper {
 
     private ContentResolver mResolver;

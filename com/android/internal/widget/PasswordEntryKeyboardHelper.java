@@ -21,9 +21,7 @@ import android.content.res.Resources;
 import android.inputmethodservice.Keyboard;
 import android.inputmethodservice.KeyboardView;
 import android.inputmethodservice.KeyboardView.OnKeyboardActionListener;
-import android.os.Handler;
 import android.os.SystemClock;
-import android.os.Vibrator;
 import android.provider.Settings;
 import android.util.Log;
 import android.view.HapticFeedbackConstants;
@@ -184,7 +182,7 @@ public class PasswordEntryKeyboardHelper implements OnKeyboardActionListener {
                 KeyEvent event = events[i];
                 event = KeyEvent.changeFlags(event, event.getFlags()
                         | KeyEvent.FLAG_SOFT_KEYBOARD | KeyEvent.FLAG_KEEP_TOUCH_MODE);
-                viewRootImpl.dispatchKey(event);
+                viewRootImpl.dispatchInputEvent(event);
             }
         }
     }

@@ -26,15 +26,20 @@ public class BackgroundColorSpan extends CharacterStyle
 
     private final int mColor;
 
-	public BackgroundColorSpan(int color) {
-		mColor = color;
-	}
+    public BackgroundColorSpan(int color) {
+        mColor = color;
+    }
 
     public BackgroundColorSpan(Parcel src) {
         mColor = src.readInt();
     }
     
     public int getSpanTypeId() {
+        return getSpanTypeIdInternal();
+    }
+
+    /** @hide */
+    public int getSpanTypeIdInternal() {
         return TextUtils.BACKGROUND_COLOR_SPAN;
     }
     
@@ -43,15 +48,20 @@ public class BackgroundColorSpan extends CharacterStyle
     }
 
     public void writeToParcel(Parcel dest, int flags) {
+        writeToParcelInternal(dest, flags);
+    }
+
+    /** @hide */
+    public void writeToParcelInternal(Parcel dest, int flags) {
         dest.writeInt(mColor);
     }
 
-	public int getBackgroundColor() {
-		return mColor;
-	}
+    public int getBackgroundColor() {
+        return mColor;
+    }
 
-	@Override
-	public void updateDrawState(TextPaint ds) {
-		ds.bgColor = mColor;
-	}
+    @Override
+    public void updateDrawState(TextPaint ds) {
+        ds.bgColor = mColor;
+    }
 }

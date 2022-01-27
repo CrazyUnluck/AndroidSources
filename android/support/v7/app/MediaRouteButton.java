@@ -22,7 +22,9 @@ import android.content.ContextWrapper;
 import android.content.res.TypedArray;
 import android.graphics.Canvas;
 import android.graphics.Rect;
+import android.graphics.drawable.AnimationDrawable;
 import android.graphics.drawable.Drawable;
+import android.support.annotation.NonNull;
 import android.support.v4.app.FragmentActivity;
 import android.support.v4.app.FragmentManager;
 import android.support.v4.graphics.drawable.DrawableCompat;
@@ -87,6 +89,7 @@ public class MediaRouteButton extends View {
     private final MediaRouterCallback mCallback;
 
     private MediaRouteSelector mSelector = MediaRouteSelector.EMPTY;
+    private MediaRouteDialogFactory mDialogFactory = MediaRouteDialogFactory.getDefault();
 
     private boolean mAttachedToWindow;
 
@@ -117,7 +120,8 @@ public class MediaRouteButton extends View {
     }
 
     public MediaRouteButton(Context context, AttributeSet attrs, int defStyleAttr) {
-        super(MediaRouterThemeHelper.createThemedContext(context, false), attrs, defStyleAttr);
+        super(MediaRouterThemeHelper.createThemedContext(context, defStyleAttr), attrs,
+                defStyleAttr);
         context = getContext();
 
         mRouter = MediaRouter.getInstance(context);
@@ -143,6 +147,7 @@ public class MediaRouteButton extends View {
      *
      * @return The selector, never null.
      */
+    @NonNull
     public MediaRouteSelector getRouteSelector() {
         return mSelector;
     }
@@ -173,6 +178,31 @@ public class MediaRouteButton extends View {
     }
 
     /**
+     * Gets the media route dialog factory to use when showing the route chooser
+     * or controller dialog.
+     *
+     * @return The dialog factory, never null.
+     */
+    @NonNull
+    public MediaRouteDialogFactory getDialogFactory() {
+        return mDialogFactory;
+    }
+
+    /**
+     * Sets the media route dialog factory to use when showing the route chooser
+     * or controller dialog.
+     *
+     * @param factory The dialog factory, must not be null.
+     */
+    public void setDialogFactory(@NonNull MediaRouteDialogFactory factory) {
+        if (factory == null) {
+            throw new IllegalArgumentException("factory must not be null");
+        }
+
+        mDialogFactory = factory;
+    }
+
+    /**
      * Show the route chooser or controller dialog.
      * <p>
      * If the default route is selected or if the currently selected route does
@@ -181,9 +211,8 @@ public class MediaRouteButton extends View {
      * a choice to disconnect from the route or perform other control actions
      * such as setting the route's volume.
      * </p><p>
-     * The application can customize the dialogs by overriding
-     * {@link #onCreateChooserDialogFragment()} or {@link #onCreateControllerDialogFragment()}
-     * as appropriate.
+     * The application can customize the dialogs by calling {@link #setDialogFactory}
+     * to provide a customized dialog factory.
      * </p>
      *
      * @return True if the dialog was actually shown.
@@ -202,12 +231,13 @@ public class MediaRouteButton extends View {
         }
 
         MediaRouter.RouteInfo route = mRouter.getSelectedRoute();
-        if (route.isDefault() || !route.matchesSelector(mSelector)) {
+        if (route.isDefaultOrBluetooth() || !route.matchesSelector(mSelector)) {
             if (fm.findFragmentByTag(CHOOSER_FRAGMENT_TAG) != null) {
                 Log.w(TAG, "showDialog(): Route chooser dialog already showing!");
                 return false;
             }
-            MediaRouteChooserDialogFragment f = onCreateChooserDialogFragment();
+            MediaRouteChooserDialogFragment f =
+                    mDialogFactory.onCreateChooserDialogFragment();
             f.setRouteSelector(mSelector);
             f.show(fm, CHOOSER_FRAGMENT_TAG);
         } else {
@@ -215,34 +245,11 @@ public class MediaRouteButton extends View {
                 Log.w(TAG, "showDialog(): Route controller dialog already showing!");
                 return false;
             }
-            MediaRouteControllerDialogFragment f = onCreateControllerDialogFragment();
+            MediaRouteControllerDialogFragment f =
+                    mDialogFactory.onCreateControllerDialogFragment();
             f.show(fm, CONTROLLER_FRAGMENT_TAG);
         }
         return true;
-    }
-
-    /**
-     * Called when the chooser dialog is being opened and it is time to create the fragment.
-     * <p>
-     * Subclasses may override this method to create a customized fragment.
-     * </p>
-     *
-     * @return The media route chooser dialog fragment, must not be null.
-     */
-    public MediaRouteChooserDialogFragment onCreateChooserDialogFragment() {
-        return new MediaRouteChooserDialogFragment();
-    }
-
-    /**
-     * Called when the controller dialog is being opened and it is time to create the fragment.
-     * <p>
-     * Subclasses may override this method to create a customized fragment.
-     * </p>
-     *
-     * @return The media route controller dialog fragment, must not be null.
-     */
-    public MediaRouteControllerDialogFragment onCreateControllerDialogFragment() {
-        return new MediaRouteControllerDialogFragment();
     }
 
     private FragmentManager getFragmentManager() {
@@ -351,7 +358,10 @@ public class MediaRouteButton extends View {
         }
     }
 
-    private void setRemoteIndicatorDrawable(Drawable d) {
+    /**
+     * Sets a drawable to use as the remote route indicator.
+     */
+    public void setRemoteIndicatorDrawable(Drawable d) {
         if (mRemoteIndicator != null) {
             mRemoteIndicator.setCallback(null);
             unscheduleDrawable(mRemoteIndicator);
@@ -422,40 +432,40 @@ public class MediaRouteButton extends View {
         final int widthMode = MeasureSpec.getMode(widthMeasureSpec);
         final int heightMode = MeasureSpec.getMode(heightMeasureSpec);
 
-        final int minWidth = Math.max(mMinWidth,
-                mRemoteIndicator != null ? mRemoteIndicator.getIntrinsicWidth() : 0);
-        final int minHeight = Math.max(mMinHeight,
-                mRemoteIndicator != null ? mRemoteIndicator.getIntrinsicHeight() : 0);
+        final int width = Math.max(mMinWidth, mRemoteIndicator != null ?
+                mRemoteIndicator.getIntrinsicWidth() + getPaddingLeft() + getPaddingRight() : 0);
+        final int height = Math.max(mMinHeight, mRemoteIndicator != null ?
+                mRemoteIndicator.getIntrinsicHeight() + getPaddingTop() + getPaddingBottom() : 0);
 
-        int width;
+        int measuredWidth;
         switch (widthMode) {
             case MeasureSpec.EXACTLY:
-                width = widthSize;
+                measuredWidth = widthSize;
                 break;
             case MeasureSpec.AT_MOST:
-                width = Math.min(widthSize, minWidth + getPaddingLeft() + getPaddingRight());
+                measuredWidth = Math.min(widthSize, width);
                 break;
             default:
             case MeasureSpec.UNSPECIFIED:
-                width = minWidth + getPaddingLeft() + getPaddingRight();
+                measuredWidth = width;
                 break;
         }
 
-        int height;
+        int measuredHeight;
         switch (heightMode) {
             case MeasureSpec.EXACTLY:
-                height = heightSize;
+                measuredHeight = heightSize;
                 break;
             case MeasureSpec.AT_MOST:
-                height = Math.min(heightSize, minHeight + getPaddingTop() + getPaddingBottom());
+                measuredHeight = Math.min(heightSize, height);
                 break;
             default:
             case MeasureSpec.UNSPECIFIED:
-                height = minHeight + getPaddingTop() + getPaddingBottom();
+                measuredHeight = height;
                 break;
         }
 
-        setMeasuredDimension(width, height);
+        setMeasuredDimension(measuredWidth, measuredHeight);
     }
 
     @Override
@@ -482,7 +492,8 @@ public class MediaRouteButton extends View {
     private void refreshRoute() {
         if (mAttachedToWindow) {
             final MediaRouter.RouteInfo route = mRouter.getSelectedRoute();
-            final boolean isRemote = !route.isDefault() && route.matchesSelector(mSelector);
+            final boolean isRemote = !route.isDefaultOrBluetooth()
+                    && route.matchesSelector(mSelector);
             final boolean isConnecting = isRemote && route.isConnecting();
 
             boolean needsRefresh = false;
@@ -497,16 +508,15 @@ public class MediaRouteButton extends View {
 
             if (needsRefresh) {
                 refreshDrawableState();
+                if (mRemoteIndicator.getCurrent() instanceof AnimationDrawable) {
+                    AnimationDrawable curDrawable =
+                            (AnimationDrawable) mRemoteIndicator.getCurrent();
+                    if (!curDrawable.isRunning()) {
+                        curDrawable.start();
+                    }
+                }
             }
-
-            setEnabled(mRouter.isRouteAvailable(mSelector,
-                    MediaRouter.AVAILABILITY_FLAG_IGNORE_DEFAULT_ROUTE));
         }
-    }
-
-    static interface AttachCallback {
-        void onAttachedToWindow();
-        void onDetachedFromWindow();
     }
 
     private final class MediaRouterCallback extends MediaRouter.Callback {

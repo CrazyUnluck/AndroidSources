@@ -16,9 +16,11 @@
 
 package com.android.volley;
 
+import android.annotation.TargetApi;
 import android.net.TrafficStats;
 import android.os.Build;
 import android.os.Process;
+import android.os.SystemClock;
 
 import java.util.concurrent.BlockingQueue;
 
@@ -30,10 +32,9 @@ import java.util.concurrent.BlockingQueue;
  * eligible, using a specified {@link Cache} interface. Valid responses and
  * errors are posted back to the caller via a {@link ResponseDelivery}.
  */
-@SuppressWarnings("rawtypes")
 public class NetworkDispatcher extends Thread {
     /** The queue of requests to service. */
-    private final BlockingQueue<Request> mQueue;
+    private final BlockingQueue<Request<?>> mQueue;
     /** The network interface for processing requests. */
     private final Network mNetwork;
     /** The cache to write to. */
@@ -52,7 +53,7 @@ public class NetworkDispatcher extends Thread {
      * @param cache Cache interface to use for writing responses to cache
      * @param delivery Delivery interface to use for posting responses
      */
-    public NetworkDispatcher(BlockingQueue<Request> queue,
+    public NetworkDispatcher(BlockingQueue<Request<?>> queue,
             Network network, Cache cache,
             ResponseDelivery delivery) {
         mQueue = queue;
@@ -70,11 +71,20 @@ public class NetworkDispatcher extends Thread {
         interrupt();
     }
 
+    @TargetApi(Build.VERSION_CODES.ICE_CREAM_SANDWICH)
+    private void addTrafficStatsTag(Request<?> request) {
+        // Tag the request (if API >= 14)
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.ICE_CREAM_SANDWICH) {
+            TrafficStats.setThreadStatsTag(request.getTrafficStatsTag());
+        }
+    }
+
     @Override
     public void run() {
         Process.setThreadPriority(Process.THREAD_PRIORITY_BACKGROUND);
-        Request request;
         while (true) {
+            long startTimeMs = SystemClock.elapsedRealtime();
+            Request<?> request;
             try {
                 // Take a request from the queue.
                 request = mQueue.take();
@@ -96,10 +106,7 @@ public class NetworkDispatcher extends Thread {
                     continue;
                 }
 
-                // Tag the request (if API >= 14)
-                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.ICE_CREAM_SANDWICH) {
-                    TrafficStats.setThreadStatsTag(request.getTrafficStatsTag());
-                }
+                addTrafficStatsTag(request);
 
                 // Perform the network request.
                 NetworkResponse networkResponse = mNetwork.performRequest(request);
@@ -127,10 +134,13 @@ public class NetworkDispatcher extends Thread {
                 request.markDelivered();
                 mDelivery.postResponse(request, response);
             } catch (VolleyError volleyError) {
+                volleyError.setNetworkTimeMs(SystemClock.elapsedRealtime() - startTimeMs);
                 parseAndDeliverNetworkError(request, volleyError);
             } catch (Exception e) {
                 VolleyLog.e(e, "Unhandled exception %s", e.toString());
-                mDelivery.postError(request, new VolleyError(e));
+                VolleyError volleyError = new VolleyError(e);
+                volleyError.setNetworkTimeMs(SystemClock.elapsedRealtime() - startTimeMs);
+                mDelivery.postError(request, volleyError);
             }
         }
     }

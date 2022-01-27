@@ -22,6 +22,7 @@ import android.os.Binder;
 import android.os.Bundle;
 import android.util.Log;
 import android.view.Window;
+import com.android.internal.content.ReferrerIntent;
 
 import java.util.ArrayList;
 import java.util.HashMap;
@@ -143,7 +144,7 @@ public class LocalActivityManager {
             
             if (desiredState == RESUMED) {
                 if (localLOGV) Log.v(TAG, r.id + ": resuming");
-                mActivityThread.performResumeActivity(r, true);
+                mActivityThread.performResumeActivity(r, true, "moveToState-INITIALIZING");
                 r.curState = RESUMED;
             }
             
@@ -166,7 +167,7 @@ public class LocalActivityManager {
                 if (desiredState == RESUMED) {
                     if (localLOGV) Log.v(TAG, r.id + ": restarting and resuming");
                     mActivityThread.performRestartActivity(r);
-                    mActivityThread.performResumeActivity(r, true);
+                    mActivityThread.performResumeActivity(r, true, "moveToState-CREATED");
                     r.curState = RESUMED;
                 }
                 return;
@@ -175,13 +176,13 @@ public class LocalActivityManager {
                 if (desiredState == RESUMED) {
                     // Need to resume it...
                     if (localLOGV) Log.v(TAG, r.id + ": resuming");
-                    mActivityThread.performResumeActivity(r, true);
+                    mActivityThread.performResumeActivity(r, true, "moveToState-STARTED");
                     r.instanceState = null;
                     r.curState = RESUMED;
                 }
                 if (desiredState == CREATED) {
                     if (localLOGV) Log.v(TAG, r.id + ": stopping");
-                    mActivityThread.performStopActivity(r, false);
+                    mActivityThread.performStopActivity(r, false, "moveToState-STARTED");
                     r.curState = CREATED;
                 }
                 return;
@@ -196,7 +197,7 @@ public class LocalActivityManager {
                     if (localLOGV) Log.v(TAG, r.id + ": pausing");
                     performPause(r, mFinishing);
                     if (localLOGV) Log.v(TAG, r.id + ": stopping");
-                    mActivityThread.performStopActivity(r, false);
+                    mActivityThread.performStopActivity(r, false, "moveToState-RESUMED");
                     r.curState = CREATED;
                 }
                 return;
@@ -204,9 +205,9 @@ public class LocalActivityManager {
     }
     
     private void performPause(LocalActivityRecord r, boolean finishing) {
-        boolean needState = r.instanceState == null;
-        Bundle instanceState = mActivityThread.performPauseActivity(r,
-                finishing, needState);
+        final boolean needState = r.instanceState == null;
+        final Bundle instanceState = mActivityThread.performPauseActivity(
+                r, finishing, needState, "performPause");
         if (needState) {
             r.instanceState = instanceState;
         }
@@ -310,8 +311,8 @@ public class LocalActivityManager {
                 if (aInfo.launchMode != ActivityInfo.LAUNCH_MULTIPLE ||
                         (intent.getFlags()&Intent.FLAG_ACTIVITY_SINGLE_TOP) != 0) {
                     // The activity wants onNewIntent() called.
-                    ArrayList<Intent> intents = new ArrayList<Intent>(1);
-                    intents.add(intent);
+                    ArrayList<ReferrerIntent> intents = new ArrayList<>(1);
+                    intents.add(new ReferrerIntent(intent, mParent.getPackageName()));
                     if (localLOGV) Log.v(TAG, r.id + ": new intent");
                     mActivityThread.performNewIntents(r, intents);
                     r.intent = intent;

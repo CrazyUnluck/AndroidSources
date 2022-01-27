@@ -1,4 +1,6 @@
 /*
+ * Copyright (c) 2015 The Android Open Source Project
+ * Copyright (C) 2015 Samsung LSI
  * Copyright (c) 2008-2009, Motorola, Inc.
  *
  * All rights reserved.
@@ -39,12 +41,18 @@ import java.io.DataInputStream;
 import java.io.DataOutputStream;
 import java.io.ByteArrayOutputStream;
 
+import android.util.Log;
+
 /**
  * This class implements the <code>Operation</code> interface. It will read and
  * write data via puts and gets.
  * @hide
  */
 public final class ClientOperation implements Operation, BaseStream {
+
+    private static final String TAG = "ClientOperation";
+
+    private static final boolean V = ObexHelper.VDBG;
 
     private ClientSession mParent;
 
@@ -66,11 +74,26 @@ public final class ClientOperation implements Operation, BaseStream {
 
     private boolean mGetOperation;
 
+    private boolean mGetFinalFlag;
+
     private HeaderSet mRequestHeader;
 
     private HeaderSet mReplyHeader;
 
     private boolean mEndOfBodySent;
+
+    private boolean mSendBodyHeader = true;
+    // A latch - when triggered, there is not way back ;-)
+    private boolean mSrmActive = false;
+
+    // Assume SRM disabled - until support is confirmed
+    // by the server
+    private boolean mSrmEnabled = false;
+    // keep waiting until final-bit is received in request
+    // to handle the case where the SRM enable header is in
+    // a different OBEX packet than the SRMP header.
+    private boolean mSrmWaitingForRemote = true;
+
 
     /**
      * Creates new OperationImpl to read and write data to a server
@@ -90,6 +113,7 @@ public final class ClientOperation implements Operation, BaseStream {
         mOperationDone = false;
         mMaxPacketSize = maxSize;
         mGetOperation = type;
+        mGetFinalFlag = false;
 
         mPrivateInputOpen = false;
         mPrivateOutputOpen = false;
@@ -121,6 +145,22 @@ public final class ClientOperation implements Operation, BaseStream {
                     (header).mAuthResp.length);
 
         }
+
+        if ((header).mConnectionID != null) {
+            mRequestHeader.mConnectionID = new byte[4];
+            System.arraycopy((header).mConnectionID, 0, mRequestHeader.mConnectionID, 0,
+                    4);
+
+        }
+    }
+
+    /**
+     * Allows to set flag which will force GET to be always sent as single packet request with
+     * final flag set. This is to improve compatibility with some profiles, i.e. PBAP which
+     * require requests to be sent this way.
+     */
+    public void setGetFinalFlag(boolean flag) {
+        mGetFinalFlag = flag;
     }
 
     /**
@@ -144,7 +184,7 @@ public final class ClientOperation implements Operation, BaseStream {
              * Since we are not sending any headers or returning any headers then
              * we just need to write and read the same bytes
              */
-            mParent.sendRequest(ObexHelper.OBEX_OPCODE_ABORT, null, mReplyHeader, null);
+            mParent.sendRequest(ObexHelper.OBEX_OPCODE_ABORT, null, mReplyHeader, null, false);
 
             if (mReplyHeader.responseCode != ResponseCodes.OBEX_HTTP_OK) {
                 throw new IOException("Invalid response code from server");
@@ -195,6 +235,7 @@ public final class ClientOperation implements Operation, BaseStream {
         try {
             return (String)mReplyHeader.getHeader(HeaderSet.TYPE);
         } catch (IOException e) {
+            if(V) Log.d(TAG, "Exception occured - returning null",e);
             return null;
         }
     }
@@ -216,6 +257,7 @@ public final class ClientOperation implements Operation, BaseStream {
                 return temp.longValue();
             }
         } catch (IOException e) {
+            if(V) Log.d(TAG,"Exception occured - returning -1",e);
             return -1;
         }
     }
@@ -388,7 +430,9 @@ public final class ClientOperation implements Operation, BaseStream {
     }
 
     /**
-     * Sends a request to the client of the specified type
+     * Sends a request to the client of the specified type.
+     * This function will enable SRM and set SRM active if the server
+     * response allows this.
      * @param opCode the request code to send to the client
      * @return <code>true</code> if there is more data to send;
      *         <code>false</code> if there is no more data to send
@@ -411,16 +455,19 @@ public final class ClientOperation implements Operation, BaseStream {
          * length, but it is a waste of resources if we can't send much of
          * the body.
          */
-        if ((ObexHelper.BASE_PACKET_LENGTH + headerArray.length) > mMaxPacketSize) {
+        final int MINIMUM_BODY_LENGTH = 3;
+        if ((ObexHelper.BASE_PACKET_LENGTH + headerArray.length + MINIMUM_BODY_LENGTH)
+                > mMaxPacketSize) {
             int end = 0;
             int start = 0;
             // split & send the headerArray in multiple packets.
 
             while (end != headerArray.length) {
                 //split the headerArray
+
                 end = ObexHelper.findHeaderEnd(headerArray, start, mMaxPacketSize
                         - ObexHelper.BASE_PACKET_LENGTH);
-                // can not split 
+                // can not split
                 if (end == -1) {
                     mOperationDone = true;
                     abort();
@@ -439,7 +486,7 @@ public final class ClientOperation implements Operation, BaseStream {
 
                 byte[] sendHeader = new byte[end - start];
                 System.arraycopy(headerArray, start, sendHeader, 0, sendHeader.length);
-                if (!mParent.sendRequest(opCode, sendHeader, mReplyHeader, mPrivateInput)) {
+                if (!mParent.sendRequest(opCode, sendHeader, mReplyHeader, mPrivateInput, false)) {
                     return false;
                 }
 
@@ -450,12 +497,20 @@ public final class ClientOperation implements Operation, BaseStream {
                 start = end;
             }
 
+            // Enable SRM if it should be enabled
+            checkForSrm();
+
             if (bodyLength > 0) {
                 return true;
             } else {
                 return false;
             }
         } else {
+            /* All headers will fit into a single package */
+            if(mSendBodyHeader == false) {
+                /* As we are not to send any body data, set the FINAL_BIT */
+                opCode |= ObexHelper.OBEX_OPCODE_FINAL_BIT_MASK;
+            }
             out.write(headerArray);
         }
 
@@ -479,11 +534,11 @@ public final class ClientOperation implements Operation, BaseStream {
              * (End of Body) otherwise, we need to send 0x48 (Body)
              */
             if ((mPrivateOutput.isClosed()) && (!returnValue) && (!mEndOfBodySent)
-                    && ((opCode & 0x80) != 0)) {
-                out.write(0x49);
+                    && ((opCode & ObexHelper.OBEX_OPCODE_FINAL_BIT_MASK) != 0)) {
+                out.write(HeaderSet.END_OF_BODY);
                 mEndOfBodySent = true;
             } else {
-                out.write(0x48);
+                out.write(HeaderSet.BODY);
             }
 
             bodyLength += 3;
@@ -497,12 +552,11 @@ public final class ClientOperation implements Operation, BaseStream {
 
         if (mPrivateOutputOpen && bodyLength <= 0 && !mEndOfBodySent) {
             // only 0x82 or 0x83 can send 0x49
-            if ((opCode & 0x80) == 0) {
-                out.write(0x48);
+            if ((opCode & ObexHelper.OBEX_OPCODE_FINAL_BIT_MASK) == 0) {
+                out.write(HeaderSet.BODY);
             } else {
-                out.write(0x49);
+                out.write(HeaderSet.END_OF_BODY);
                 mEndOfBodySent = true;
-
             }
 
             bodyLength = 3;
@@ -511,22 +565,56 @@ public final class ClientOperation implements Operation, BaseStream {
         }
 
         if (out.size() == 0) {
-            if (!mParent.sendRequest(opCode, null, mReplyHeader, mPrivateInput)) {
+            if (!mParent.sendRequest(opCode, null, mReplyHeader, mPrivateInput, mSrmActive)) {
                 return false;
             }
+            // Enable SRM if it should be enabled
+            checkForSrm();
             return returnValue;
         }
         if ((out.size() > 0)
-                && (!mParent.sendRequest(opCode, out.toByteArray(), mReplyHeader, mPrivateInput))) {
+                && (!mParent.sendRequest(opCode, out.toByteArray(),
+                        mReplyHeader, mPrivateInput, mSrmActive))) {
             return false;
         }
+        // Enable SRM if it should be enabled
+        checkForSrm();
 
-        // send all of the output data in 0x48, 
+        // send all of the output data in 0x48,
         // send 0x49 with empty body
         if ((mPrivateOutput != null) && (mPrivateOutput.size() > 0))
             returnValue = true;
 
         return returnValue;
+    }
+
+    private void checkForSrm() throws IOException {
+        Byte srmMode = (Byte)mReplyHeader.getHeader(HeaderSet.SINGLE_RESPONSE_MODE);
+        if(mParent.isSrmSupported() == true && srmMode != null
+                && srmMode == ObexHelper.OBEX_SRM_ENABLE) {
+            mSrmEnabled = true;
+        }
+        /**
+         * Call this only when a complete obex packet have been received.
+         * (This is not optimal, but the current design is not really suited to
+         * the way SRM is specified.)
+         * The BT usage of SRM is not really safe - it assumes that the SRMP will fit
+         * into every OBEX packet, hence if another header occupies the entire packet,
+         * the scheme will not work - unlikely though.
+         */
+        if(mSrmEnabled) {
+            mSrmWaitingForRemote = false;
+            Byte srmp = (Byte)mReplyHeader.getHeader(HeaderSet.SINGLE_RESPONSE_MODE_PARAMETER);
+            if(srmp != null && srmp == ObexHelper.OBEX_SRMP_WAIT) {
+                mSrmWaitingForRemote = true;
+                // Clear the wait header, as the absence of the header in the next packet
+                // indicates don't wait anymore.
+                mReplyHeader.setHeader(HeaderSet.SINGLE_RESPONSE_MODE_PARAMETER, null);
+            }
+        }
+        if((mSrmWaitingForRemote == false) && (mSrmEnabled == true)) {
+            mSrmActive = true;
+        }
     }
 
     /**
@@ -546,28 +634,33 @@ public final class ClientOperation implements Operation, BaseStream {
             if (!mOperationDone) {
                 mReplyHeader.responseCode = ResponseCodes.OBEX_HTTP_CONTINUE;
                 while ((more) && (mReplyHeader.responseCode == ResponseCodes.OBEX_HTTP_CONTINUE)) {
-                    more = sendRequest(0x03);
+                    more = sendRequest(ObexHelper.OBEX_OPCODE_GET);
                 }
-
+                // For GET we need to loop until all headers have been sent,
+                // And then we wait for the first continue package with the
+                // reply.
                 if (mReplyHeader.responseCode == ResponseCodes.OBEX_HTTP_CONTINUE) {
-                    mParent.sendRequest(0x83, null, mReplyHeader, mPrivateInput);
+                    mParent.sendRequest(ObexHelper.OBEX_OPCODE_GET_FINAL,
+                            null, mReplyHeader, mPrivateInput, mSrmActive);
                 }
                 if (mReplyHeader.responseCode != ResponseCodes.OBEX_HTTP_CONTINUE) {
                     mOperationDone = true;
+                } else {
+                    checkForSrm();
                 }
             }
         } else {
-
+            // PUT operation
             if (!mOperationDone) {
                 mReplyHeader.responseCode = ResponseCodes.OBEX_HTTP_CONTINUE;
                 while ((more) && (mReplyHeader.responseCode == ResponseCodes.OBEX_HTTP_CONTINUE)) {
-                    more = sendRequest(0x02);
-
+                    more = sendRequest(ObexHelper.OBEX_OPCODE_PUT);
                 }
             }
 
             if (mReplyHeader.responseCode == ResponseCodes.OBEX_HTTP_CONTINUE) {
-                mParent.sendRequest(0x82, null, mReplyHeader, mPrivateInput);
+                mParent.sendRequest(ObexHelper.OBEX_OPCODE_PUT_FINAL,
+                        null, mReplyHeader, mPrivateInput, mSrmActive);
             }
 
             if (mReplyHeader.responseCode != ResponseCodes.OBEX_HTTP_CONTINUE) {
@@ -587,15 +680,21 @@ public final class ClientOperation implements Operation, BaseStream {
     public synchronized boolean continueOperation(boolean sendEmpty, boolean inStream)
             throws IOException {
 
+        // One path to the first put operation - the other one does not need to
+        // handle SRM, as all will fit into one packet.
+
         if (mGetOperation) {
             if ((inStream) && (!mOperationDone)) {
                 // to deal with inputstream in get operation
-                mParent.sendRequest(0x83, null, mReplyHeader, mPrivateInput);
+                mParent.sendRequest(ObexHelper.OBEX_OPCODE_GET_FINAL,
+                        null, mReplyHeader, mPrivateInput, mSrmActive);
                 /*
                   * Determine if that was not the last packet in the operation
                   */
                 if (mReplyHeader.responseCode != ResponseCodes.OBEX_HTTP_CONTINUE) {
                     mOperationDone = true;
+                } else {
+                    checkForSrm();
                 }
 
                 return true;
@@ -606,7 +705,7 @@ public final class ClientOperation implements Operation, BaseStream {
                 if (mPrivateInput == null) {
                     mPrivateInput = new PrivateInputStream(this);
                 }
-                sendRequest(0x03);
+                sendRequest(ObexHelper.OBEX_OPCODE_GET);
                 return true;
 
             } else if (mOperationDone) {
@@ -614,12 +713,13 @@ public final class ClientOperation implements Operation, BaseStream {
             }
 
         } else {
+            // PUT operation
             if ((!inStream) && (!mOperationDone)) {
                 // to deal with outputstream in put operation
                 if (mReplyHeader.responseCode == -1) {
                     mReplyHeader.responseCode = ResponseCodes.OBEX_HTTP_CONTINUE;
                 }
-                sendRequest(0x02);
+                sendRequest(ObexHelper.OBEX_OPCODE_PUT);
                 return true;
             } else if ((inStream) && (!mOperationDone)) {
                 // How to deal with inputstream  in put operation ?
@@ -657,7 +757,7 @@ public final class ClientOperation implements Operation, BaseStream {
                 }
 
                 while ((more) && (mReplyHeader.responseCode == ResponseCodes.OBEX_HTTP_CONTINUE)) {
-                    more = sendRequest(0x02);
+                    more = sendRequest(ObexHelper.OBEX_OPCODE_PUT);
                 }
 
                 /*
@@ -667,7 +767,7 @@ public final class ClientOperation implements Operation, BaseStream {
                  */
                 while (mReplyHeader.responseCode == ResponseCodes.OBEX_HTTP_CONTINUE) {
 
-                    sendRequest(0x82);
+                    sendRequest(ObexHelper.OBEX_OPCODE_PUT_FINAL);
                 }
                 mOperationDone = true;
             } else if ((inStream) && (mOperationDone)) {
@@ -684,13 +784,15 @@ public final class ClientOperation implements Operation, BaseStream {
                     mReplyHeader.responseCode = ResponseCodes.OBEX_HTTP_CONTINUE;
                 }
 
-                while (mReplyHeader.responseCode == ResponseCodes.OBEX_HTTP_CONTINUE) {
-                    if (!sendRequest(0x83)) {
+                while (mReplyHeader.responseCode == ResponseCodes.OBEX_HTTP_CONTINUE && !mOperationDone) {
+                    if (!sendRequest(ObexHelper.OBEX_OPCODE_GET_FINAL)) {
                         break;
                     }
                 }
-                while (mReplyHeader.responseCode == ResponseCodes.OBEX_HTTP_CONTINUE) {
-                    mParent.sendRequest(0x83, null, mReplyHeader, mPrivateInput);
+                while (mReplyHeader.responseCode == ResponseCodes.OBEX_HTTP_CONTINUE && !mOperationDone) {
+                    mParent.sendRequest(ObexHelper.OBEX_OPCODE_GET_FINAL, null,
+                            mReplyHeader, mPrivateInput, false);
+                    // Regardless of the SRM state, wait for the response.
                 }
                 mOperationDone = true;
             } else if ((!inStream) && (!mOperationDone)) {
@@ -713,14 +815,18 @@ public final class ClientOperation implements Operation, BaseStream {
 
                 mReplyHeader.responseCode = ResponseCodes.OBEX_HTTP_CONTINUE;
                 while ((more) && (mReplyHeader.responseCode == ResponseCodes.OBEX_HTTP_CONTINUE)) {
-                    more = sendRequest(0x03);
+                    more = sendRequest(ObexHelper.OBEX_OPCODE_GET);
                 }
-                sendRequest(0x83);
+                sendRequest(ObexHelper.OBEX_OPCODE_GET_FINAL);
                 //                parent.sendRequest(0x83, null, replyHeaders, privateInput);
                 if (mReplyHeader.responseCode != ResponseCodes.OBEX_HTTP_CONTINUE) {
                     mOperationDone = true;
                 }
             }
         }
+    }
+
+    public void noBodyHeader(){
+        mSendBodyHeader = false;
     }
 }

@@ -16,11 +16,14 @@
 
 package android.hardware.input;
 
-import com.android.internal.util.ArrayUtils;
+import com.android.internal.os.SomeArgs;
 
+import android.annotation.IntDef;
+import android.annotation.Nullable;
 import android.annotation.SdkConstant;
 import android.annotation.SdkConstant.SdkConstantType;
 import android.content.Context;
+import android.media.AudioAttributes;
 import android.os.Binder;
 import android.os.Handler;
 import android.os.IBinder;
@@ -28,6 +31,7 @@ import android.os.Looper;
 import android.os.Message;
 import android.os.RemoteException;
 import android.os.ServiceManager;
+import android.os.SystemClock;
 import android.os.Vibrator;
 import android.provider.Settings;
 import android.provider.Settings.SettingNotFoundException;
@@ -35,8 +39,14 @@ import android.util.Log;
 import android.util.SparseArray;
 import android.view.InputDevice;
 import android.view.InputEvent;
+import android.view.PointerIcon;
+import android.view.inputmethod.InputMethodInfo;
+import android.view.inputmethod.InputMethodSubtype;
 
+import java.lang.annotation.Retention;
+import java.lang.annotation.RetentionPolicy;
 import java.util.ArrayList;
+import java.util.List;
 
 /**
  * Provides information about input devices and available key layouts.
@@ -65,6 +75,11 @@ public final class InputManager {
     private InputDevicesChangedListener mInputDevicesChangedListener;
     private final ArrayList<InputDeviceListenerDelegate> mInputDeviceListeners =
             new ArrayList<InputDeviceListenerDelegate>();
+
+    // Guarded by mTabletModeLock
+    private final Object mTabletModeLock = new Object();
+    private TabletModeChangedListener mTabletModeChangedListener;
+    private List<OnTabletModeChangedListenerDelegate> mOnTabletModeChangedListeners;
 
     /**
      * Broadcast Action: Query available keyboard layouts.
@@ -96,17 +111,18 @@ public final class InputManager {
      * of a key character map for a particular keyboard layout.  The label on the receiver
      * is used to name the collection of keyboard layouts provided by this receiver in the
      * keyboard layout settings.
-     * <pre></code>
+     * <pre><code>
      * &lt;?xml version="1.0" encoding="utf-8"?>
      * &lt;keyboard-layouts xmlns:android="http://schemas.android.com/apk/res/android">
      *     &lt;keyboard-layout android:name="keyboard_layout_english_us"
      *             android:label="@string/keyboard_layout_english_us_label"
      *             android:keyboardLayout="@raw/keyboard_layout_english_us" />
      * &lt;/keyboard-layouts>
+     * </pre></code>
      * </p><p>
      * The <code>android:name</code> attribute specifies an identifier by which
      * the keyboard layout will be known in the package.
-     * The <code>android:label</code> attributes specifies a human-readable descriptive
+     * The <code>android:label</code> attribute specifies a human-readable descriptive
      * label to describe the keyboard layout in the user interface, such as "English (US)".
      * The <code>android:keyboardLayout</code> attribute refers to a
      * <a href="http://source.android.com/tech/input/key-character-map-files.html">
@@ -170,6 +186,31 @@ public final class InputManager {
      */
     public static final int INJECT_INPUT_EVENT_MODE_WAIT_FOR_FINISH = 2;  // see InputDispatcher.h
 
+    /** @hide */
+    @Retention(RetentionPolicy.SOURCE)
+    @IntDef({SWITCH_STATE_UNKNOWN, SWITCH_STATE_OFF, SWITCH_STATE_ON})
+    public @interface SwitchState {}
+
+    /**
+     * Switch State: Unknown.
+     *
+     * The system has yet to report a valid value for the switch.
+     * @hide
+     */
+    public static final int SWITCH_STATE_UNKNOWN = -1;
+
+    /**
+     * Switch State: Off.
+     * @hide
+     */
+    public static final int SWITCH_STATE_OFF = 0;
+
+    /**
+     * Switch State: On.
+     * @hide
+     */
+    public static final int SWITCH_STATE_ON = 1;
+
     private InputManager(IInputManager im) {
         mIm = im;
     }
@@ -210,7 +251,7 @@ public final class InputManager {
                 try {
                     inputDevice = mIm.getInputDevice(id);
                 } catch (RemoteException ex) {
-                    throw new RuntimeException("Could not get input device information.", ex);
+                    throw ex.rethrowFromSystemServer();
                 }
                 if (inputDevice != null) {
                     mInputDevices.setValueAt(index, inputDevice);
@@ -242,7 +283,7 @@ public final class InputManager {
                     try {
                         inputDevice = mIm.getInputDevice(id);
                     } catch (RemoteException ex) {
-                        // Ignore the problem for the purposes of this method.
+                        throw ex.rethrowFromSystemServer();
                     }
                     if (inputDevice == null) {
                         continue;
@@ -290,6 +331,7 @@ public final class InputManager {
         }
 
         synchronized (mInputDevicesLock) {
+            populateInputDevicesLocked();
             int index = findInputDeviceListenerLocked(listener);
             if (index < 0) {
                 mInputDeviceListeners.add(new InputDeviceListenerDelegate(listener, handler));
@@ -330,6 +372,88 @@ public final class InputManager {
     }
 
     /**
+     * Queries whether the device is in tablet mode.
+     *
+     * @return The tablet switch state which is one of {@link #SWITCH_STATE_UNKNOWN},
+     * {@link #SWITCH_STATE_OFF} or {@link #SWITCH_STATE_ON}.
+     * @hide
+     */
+    @SwitchState
+    public int isInTabletMode() {
+        try {
+            return mIm.isInTabletMode();
+        } catch (RemoteException ex) {
+            throw ex.rethrowFromSystemServer();
+        }
+    }
+
+    /**
+     * Register a tablet mode changed listener.
+     *
+     * @param listener The listener to register.
+     * @param handler The handler on which the listener should be invoked, or null
+     * if the listener should be invoked on the calling thread's looper.
+     * @hide
+     */
+    public void registerOnTabletModeChangedListener(
+            OnTabletModeChangedListener listener, Handler handler) {
+        if (listener == null) {
+            throw new IllegalArgumentException("listener must not be null");
+        }
+        synchronized (mTabletModeLock) {
+            if (mOnTabletModeChangedListeners == null) {
+                initializeTabletModeListenerLocked();
+            }
+            int idx = findOnTabletModeChangedListenerLocked(listener);
+            if (idx < 0) {
+                OnTabletModeChangedListenerDelegate d =
+                    new OnTabletModeChangedListenerDelegate(listener, handler);
+                mOnTabletModeChangedListeners.add(d);
+            }
+        }
+    }
+
+    /**
+     * Unregister a tablet mode changed listener.
+     *
+     * @param listener The listener to unregister.
+     * @hide
+     */
+    public void unregisterOnTabletModeChangedListener(OnTabletModeChangedListener listener) {
+        if (listener == null) {
+            throw new IllegalArgumentException("listener must not be null");
+        }
+        synchronized (mTabletModeLock) {
+            int idx = findOnTabletModeChangedListenerLocked(listener);
+            if (idx >= 0) {
+                OnTabletModeChangedListenerDelegate d = mOnTabletModeChangedListeners.remove(idx);
+                d.removeCallbacksAndMessages(null);
+            }
+        }
+    }
+
+    private void initializeTabletModeListenerLocked() {
+        final TabletModeChangedListener listener = new TabletModeChangedListener();
+        try {
+            mIm.registerTabletModeChangedListener(listener);
+        } catch (RemoteException ex) {
+            throw ex.rethrowFromSystemServer();
+        }
+        mTabletModeChangedListener = listener;
+        mOnTabletModeChangedListeners = new ArrayList<>();
+    }
+
+    private int findOnTabletModeChangedListenerLocked(OnTabletModeChangedListener listener) {
+        final int N = mOnTabletModeChangedListeners.size();
+        for (int i = 0; i < N; i++) {
+            if (mOnTabletModeChangedListeners.get(i).mListener == listener) {
+                return i;
+            }
+        }
+        return -1;
+    }
+
+    /**
      * Gets information about all supported keyboard layouts.
      * <p>
      * The input manager consults the built-in keyboard layouts as well
@@ -345,8 +469,29 @@ public final class InputManager {
         try {
             return mIm.getKeyboardLayouts();
         } catch (RemoteException ex) {
-            Log.w(TAG, "Could not get list of keyboard layout informations.", ex);
-            return new KeyboardLayout[0];
+            throw ex.rethrowFromSystemServer();
+        }
+    }
+
+    /**
+     * Gets information about all supported keyboard layouts appropriate
+     * for a specific input device.
+     * <p>
+     * The input manager consults the built-in keyboard layouts as well
+     * as all keyboard layouts advertised by applications using a
+     * {@link #ACTION_QUERY_KEYBOARD_LAYOUTS} broadcast receiver.
+     * </p>
+     *
+     * @return A list of all supported keyboard layouts for a specific
+     * input device.
+     *
+     * @hide
+     */
+    public KeyboardLayout[] getKeyboardLayoutsForInputDevice(InputDeviceIdentifier identifier) {
+        try {
+            return mIm.getKeyboardLayoutsForInputDevice(identifier);
+        } catch (RemoteException ex) {
+            throw ex.rethrowFromSystemServer();
         }
     }
 
@@ -367,97 +512,92 @@ public final class InputManager {
         try {
             return mIm.getKeyboardLayout(keyboardLayoutDescriptor);
         } catch (RemoteException ex) {
-            Log.w(TAG, "Could not get keyboard layout information.", ex);
-            return null;
+            throw ex.rethrowFromSystemServer();
         }
     }
 
     /**
-     * Gets the current keyboard layout descriptor for the specified input device.
+     * Gets the current keyboard layout descriptor for the specified input
+     * device.
      *
-     * @param inputDeviceDescriptor The input device descriptor.
-     * @return The keyboard layout descriptor, or null if no keyboard layout has been set.
-     *
+     * @param identifier Identifier for the input device
+     * @return The keyboard layout descriptor, or null if no keyboard layout has
+     *         been set.
      * @hide
      */
-    public String getCurrentKeyboardLayoutForInputDevice(String inputDeviceDescriptor) {
-        if (inputDeviceDescriptor == null) {
-            throw new IllegalArgumentException("inputDeviceDescriptor must not be null");
-        }
-
+    public String getCurrentKeyboardLayoutForInputDevice(InputDeviceIdentifier identifier) {
         try {
-            return mIm.getCurrentKeyboardLayoutForInputDevice(inputDeviceDescriptor);
+            return mIm.getCurrentKeyboardLayoutForInputDevice(identifier);
         } catch (RemoteException ex) {
-            Log.w(TAG, "Could not get current keyboard layout for input device.", ex);
-            return null;
+            throw ex.rethrowFromSystemServer();
         }
     }
 
     /**
-     * Sets the current keyboard layout descriptor for the specified input device.
+     * Sets the current keyboard layout descriptor for the specified input
+     * device.
      * <p>
-     * This method may have the side-effect of causing the input device in question
-     * to be reconfigured.
+     * This method may have the side-effect of causing the input device in
+     * question to be reconfigured.
      * </p>
      *
-     * @param inputDeviceDescriptor The input device descriptor.
-     * @param keyboardLayoutDescriptor The keyboard layout descriptor to use, must not be null.
-     *
+     * @param identifier The identifier for the input device.
+     * @param keyboardLayoutDescriptor The keyboard layout descriptor to use,
+     *            must not be null.
      * @hide
      */
-    public void setCurrentKeyboardLayoutForInputDevice(String inputDeviceDescriptor,
+    public void setCurrentKeyboardLayoutForInputDevice(InputDeviceIdentifier identifier,
             String keyboardLayoutDescriptor) {
-        if (inputDeviceDescriptor == null) {
-            throw new IllegalArgumentException("inputDeviceDescriptor must not be null");
+        if (identifier == null) {
+            throw new IllegalArgumentException("identifier must not be null");
         }
         if (keyboardLayoutDescriptor == null) {
             throw new IllegalArgumentException("keyboardLayoutDescriptor must not be null");
         }
 
         try {
-            mIm.setCurrentKeyboardLayoutForInputDevice(inputDeviceDescriptor,
+            mIm.setCurrentKeyboardLayoutForInputDevice(identifier,
                     keyboardLayoutDescriptor);
         } catch (RemoteException ex) {
-            Log.w(TAG, "Could not set current keyboard layout for input device.", ex);
+            throw ex.rethrowFromSystemServer();
         }
     }
 
     /**
-     * Gets all keyboard layout descriptors that are enabled for the specified input device.
+     * Gets all keyboard layout descriptors that are enabled for the specified
+     * input device.
      *
-     * @param inputDeviceDescriptor The input device descriptor.
+     * @param identifier The identifier for the input device.
      * @return The keyboard layout descriptors.
-     *
      * @hide
      */
-    public String[] getKeyboardLayoutsForInputDevice(String inputDeviceDescriptor) {
-        if (inputDeviceDescriptor == null) {
+    public String[] getEnabledKeyboardLayoutsForInputDevice(InputDeviceIdentifier identifier) {
+        if (identifier == null) {
             throw new IllegalArgumentException("inputDeviceDescriptor must not be null");
         }
 
         try {
-            return mIm.getKeyboardLayoutsForInputDevice(inputDeviceDescriptor);
+            return mIm.getEnabledKeyboardLayoutsForInputDevice(identifier);
         } catch (RemoteException ex) {
-            Log.w(TAG, "Could not get keyboard layouts for input device.", ex);
-            return ArrayUtils.emptyArray(String.class);
+            throw ex.rethrowFromSystemServer();
         }
     }
 
     /**
      * Adds the keyboard layout descriptor for the specified input device.
      * <p>
-     * This method may have the side-effect of causing the input device in question
-     * to be reconfigured.
+     * This method may have the side-effect of causing the input device in
+     * question to be reconfigured.
      * </p>
      *
-     * @param inputDeviceDescriptor The input device descriptor.
-     * @param keyboardLayoutDescriptor The descriptor of the keyboard layout to add.
-     *
+     * @param identifier The identifier for the input device.
+     * @param keyboardLayoutDescriptor The descriptor of the keyboard layout to
+     *            add.
      * @hide
      */
-    public void addKeyboardLayoutForInputDevice(String inputDeviceDescriptor,
+    public void addKeyboardLayoutForInputDevice(InputDeviceIdentifier identifier,
             String keyboardLayoutDescriptor) {
-        if (inputDeviceDescriptor == null) {
+        if (identifier == null) {
             throw new IllegalArgumentException("inputDeviceDescriptor must not be null");
         }
         if (keyboardLayoutDescriptor == null) {
@@ -465,27 +605,27 @@ public final class InputManager {
         }
 
         try {
-            mIm.addKeyboardLayoutForInputDevice(inputDeviceDescriptor, keyboardLayoutDescriptor);
+            mIm.addKeyboardLayoutForInputDevice(identifier, keyboardLayoutDescriptor);
         } catch (RemoteException ex) {
-            Log.w(TAG, "Could not add keyboard layout for input device.", ex);
+            throw ex.rethrowFromSystemServer();
         }
     }
 
     /**
      * Removes the keyboard layout descriptor for the specified input device.
      * <p>
-     * This method may have the side-effect of causing the input device in question
-     * to be reconfigured.
+     * This method may have the side-effect of causing the input device in
+     * question to be reconfigured.
      * </p>
      *
-     * @param inputDeviceDescriptor The input device descriptor.
-     * @param keyboardLayoutDescriptor The descriptor of the keyboard layout to remove.
-     *
+     * @param identifier The identifier for the input device.
+     * @param keyboardLayoutDescriptor The descriptor of the keyboard layout to
+     *            remove.
      * @hide
      */
-    public void removeKeyboardLayoutForInputDevice(String inputDeviceDescriptor,
+    public void removeKeyboardLayoutForInputDevice(InputDeviceIdentifier identifier,
             String keyboardLayoutDescriptor) {
-        if (inputDeviceDescriptor == null) {
+        if (identifier == null) {
             throw new IllegalArgumentException("inputDeviceDescriptor must not be null");
         }
         if (keyboardLayoutDescriptor == null) {
@@ -493,9 +633,93 @@ public final class InputManager {
         }
 
         try {
-            mIm.removeKeyboardLayoutForInputDevice(inputDeviceDescriptor, keyboardLayoutDescriptor);
+            mIm.removeKeyboardLayoutForInputDevice(identifier, keyboardLayoutDescriptor);
         } catch (RemoteException ex) {
-            Log.w(TAG, "Could not remove keyboard layout for input device.", ex);
+            throw ex.rethrowFromSystemServer();
+        }
+    }
+
+
+    /**
+     * Gets the keyboard layout for the specified input device and IME subtype.
+     *
+     * @param identifier The identifier for the input device.
+     * @param inputMethodInfo The input method.
+     * @param inputMethodSubtype The input method subtype. {@code null} if this input method does
+     * not support any subtype.
+     *
+     * @return The associated {@link KeyboardLayout}, or null if one has not been set.
+     *
+     * @hide
+     */
+    @Nullable
+    public KeyboardLayout getKeyboardLayoutForInputDevice(InputDeviceIdentifier identifier,
+            InputMethodInfo inputMethodInfo, @Nullable InputMethodSubtype inputMethodSubtype) {
+        try {
+            return mIm.getKeyboardLayoutForInputDevice(
+                    identifier, inputMethodInfo, inputMethodSubtype);
+        } catch (RemoteException ex) {
+            throw ex.rethrowFromSystemServer();
+        }
+    }
+
+    /**
+     * Sets the keyboard layout for the specified input device and IME subtype pair.
+     *
+     * @param identifier The identifier for the input device.
+     * @param inputMethodInfo The input method with which to associate the keyboard layout.
+     * @param inputMethodSubtype The input method subtype which which to associate the keyboard
+     * layout. {@code null} if this input method does not support any subtype.
+     * @param keyboardLayoutDescriptor The descriptor of the keyboard layout to set
+     *
+     * @hide
+     */
+    public void setKeyboardLayoutForInputDevice(InputDeviceIdentifier identifier,
+            InputMethodInfo inputMethodInfo, @Nullable InputMethodSubtype inputMethodSubtype,
+            String keyboardLayoutDescriptor) {
+        try {
+            mIm.setKeyboardLayoutForInputDevice(identifier, inputMethodInfo,
+                    inputMethodSubtype, keyboardLayoutDescriptor);
+        } catch (RemoteException ex) {
+            throw ex.rethrowFromSystemServer();
+        }
+    }
+
+    /**
+     * Gets the TouchCalibration applied to the specified input device's coordinates.
+     *
+     * @param inputDeviceDescriptor The input device descriptor.
+     * @return The TouchCalibration currently assigned for use with the given
+     * input device. If none is set, an identity TouchCalibration is returned.
+     *
+     * @hide
+     */
+    public TouchCalibration getTouchCalibration(String inputDeviceDescriptor, int surfaceRotation) {
+        try {
+            return mIm.getTouchCalibrationForInputDevice(inputDeviceDescriptor, surfaceRotation);
+        } catch (RemoteException ex) {
+            throw ex.rethrowFromSystemServer();
+        }
+    }
+
+    /**
+     * Sets the TouchCalibration to apply to the specified input device's coordinates.
+     * <p>
+     * This method may have the side-effect of causing the input device in question
+     * to be reconfigured. Requires {@link android.Manifest.permissions.SET_INPUT_CALIBRATION}.
+     * </p>
+     *
+     * @param inputDeviceDescriptor The input device descriptor.
+     * @param calibration The calibration to be applied
+     *
+     * @hide
+     */
+    public void setTouchCalibration(String inputDeviceDescriptor, int surfaceRotation,
+            TouchCalibration calibration) {
+        try {
+            mIm.setTouchCalibrationForInputDevice(inputDeviceDescriptor, surfaceRotation, calibration);
+        } catch (RemoteException ex) {
+            throw ex.rethrowFromSystemServer();
         }
     }
 
@@ -562,7 +786,7 @@ public final class InputManager {
         try {
             mIm.tryPointerSpeed(speed);
         } catch (RemoteException ex) {
-            Log.w(TAG, "Could not set temporary pointer speed.", ex);
+            throw ex.rethrowFromSystemServer();
         }
     }
 
@@ -579,14 +803,32 @@ public final class InputManager {
      * @hide
      */
     public boolean[] deviceHasKeys(int[] keyCodes) {
+        return deviceHasKeys(-1, keyCodes);
+    }
+
+    /**
+     * Queries the framework about whether any physical keys exist on the
+     * any keyboard attached to the device that are capable of producing the given
+     * array of key codes.
+     *
+     * @param id The id of the device to query.
+     * @param keyCodes The array of key codes to query.
+     * @return A new array of the same size as the key codes array whose elements are set to true
+     * if the given device could produce the corresponding key code at the same index in the key
+     * codes array.
+     *
+     * @hide
+     */
+    public boolean[] deviceHasKeys(int id, int[] keyCodes) {
         boolean[] ret = new boolean[keyCodes.length];
         try {
-            mIm.hasKeys(-1, InputDevice.SOURCE_ANY, keyCodes, ret);
+            mIm.hasKeys(id, InputDevice.SOURCE_ANY, keyCodes, ret);
         } catch (RemoteException e) {
-            // no fallback; just return the empty array
+            throw e.rethrowFromSystemServer();
         }
         return ret;
     }
+
 
     /**
      * Injects an input event into the event system on behalf of an application.
@@ -622,7 +864,32 @@ public final class InputManager {
         try {
             return mIm.injectInputEvent(event, mode);
         } catch (RemoteException ex) {
-            return false;
+            throw ex.rethrowFromSystemServer();
+        }
+    }
+
+    /**
+     * Changes the mouse pointer's icon shape into the specified id.
+     *
+     * @param iconId The id of the pointer graphic, as a value between
+     * {@link PointerIcon.TYPE_ARROW} and {@link PointerIcon.TYPE_GRABBING}.
+     *
+     * @hide
+     */
+    public void setPointerIconType(int iconId) {
+        try {
+            mIm.setPointerIconType(iconId);
+        } catch (RemoteException ex) {
+            throw ex.rethrowFromSystemServer();
+        }
+    }
+
+    /** @hide */
+    public void setCustomPointerIcon(PointerIcon icon) {
+        try {
+            mIm.setCustomPointerIcon(icon);
+        } catch (RemoteException ex) {
+            throw ex.rethrowFromSystemServer();
         }
     }
 
@@ -632,8 +899,7 @@ public final class InputManager {
             try {
                 mIm.registerInputDevicesChangedListener(listener);
             } catch (RemoteException ex) {
-                throw new RuntimeException(
-                        "Could not get register input device changed listener", ex);
+                throw ex.rethrowFromSystemServer();
             }
             mInputDevicesChangedListener = listener;
         }
@@ -643,7 +909,7 @@ public final class InputManager {
             try {
                 ids = mIm.getInputDeviceIds();
             } catch (RemoteException ex) {
-                throw new RuntimeException("Could not get input device ids.", ex);
+                throw ex.rethrowFromSystemServer();
             }
 
             mInputDevices = new SparseArray<InputDevice>();
@@ -711,6 +977,22 @@ public final class InputManager {
             }
         }
         return false;
+    }
+
+
+    private void onTabletModeChanged(long whenNanos, boolean inTabletMode) {
+        if (DEBUG) {
+            Log.d(TAG, "Received tablet mode changed: "
+                    + "whenNanos=" + whenNanos + ", inTabletMode=" + inTabletMode);
+        }
+        synchronized (mTabletModeLock) {
+            final int N = mOnTabletModeChangedListeners.size();
+            for (int i = 0; i < N; i++) {
+                OnTabletModeChangedListenerDelegate listener =
+                        mOnTabletModeChangedListeners.get(i);
+                listener.sendTabletModeChanged(whenNanos, inTabletMode);
+            }
+        }
     }
 
     /**
@@ -782,6 +1064,57 @@ public final class InputManager {
         }
     }
 
+    /** @hide */
+    public interface OnTabletModeChangedListener {
+        /**
+         * Called whenever the device goes into or comes out of tablet mode.
+         *
+         * @param whenNanos The time at which the device transitioned into or
+         * out of tablet mode. This is given in nanoseconds in the
+         * {@link SystemClock#uptimeMillis} time base.
+         */
+        void onTabletModeChanged(long whenNanos, boolean inTabletMode);
+    }
+
+    private final class TabletModeChangedListener extends ITabletModeChangedListener.Stub {
+        @Override
+        public void onTabletModeChanged(long whenNanos, boolean inTabletMode) {
+            InputManager.this.onTabletModeChanged(whenNanos, inTabletMode);
+        }
+    }
+
+    private static final class OnTabletModeChangedListenerDelegate extends Handler {
+        private static final int MSG_TABLET_MODE_CHANGED = 0;
+
+        public final OnTabletModeChangedListener mListener;
+
+        public OnTabletModeChangedListenerDelegate(
+                OnTabletModeChangedListener listener, Handler handler) {
+            super(handler != null ? handler.getLooper() : Looper.myLooper());
+            mListener = listener;
+        }
+
+        public void sendTabletModeChanged(long whenNanos, boolean inTabletMode) {
+            SomeArgs args = SomeArgs.obtain();
+            args.argi1 = (int) (whenNanos & 0xFFFFFFFF);
+            args.argi2 = (int) (whenNanos >> 32);
+            args.arg1 = (Boolean) inTabletMode;
+            obtainMessage(MSG_TABLET_MODE_CHANGED, args).sendToTarget();
+        }
+
+        @Override
+        public void handleMessage(Message msg) {
+            switch (msg.what) {
+                case MSG_TABLET_MODE_CHANGED:
+                    SomeArgs args = (SomeArgs) msg.obj;
+                    long whenNanos = (args.argi1 & 0xFFFFFFFFl) | ((long) args.argi2 << 32);
+                    boolean inTabletMode = (boolean) args.arg1;
+                    mListener.onTabletModeChanged(whenNanos, inTabletMode);
+                    break;
+            }
+        }
+    }
+
     private final class InputDeviceVibrator extends Vibrator {
         private final int mDeviceId;
         private final Binder mToken;
@@ -796,37 +1129,28 @@ public final class InputManager {
             return true;
         }
 
+        /**
+         * @hide
+         */
         @Override
-        public void vibrate(long milliseconds) {
+        public void vibrate(int uid, String opPkg, long milliseconds, AudioAttributes attributes) {
             vibrate(new long[] { 0, milliseconds}, -1);
         }
 
+        /**
+         * @hide
+         */
         @Override
-        public void vibrate(long[] pattern, int repeat) {
+        public void vibrate(int uid, String opPkg, long[] pattern, int repeat,
+                AudioAttributes attributes) {
             if (repeat >= pattern.length) {
                 throw new ArrayIndexOutOfBoundsException();
             }
             try {
                 mIm.vibrate(mDeviceId, pattern, repeat, mToken);
             } catch (RemoteException ex) {
-                Log.w(TAG, "Failed to vibrate.", ex);
+                throw ex.rethrowFromSystemServer();
             }
-        }
-
-        /**
-         * @hide
-         */
-        @Override
-        public void vibrate(int owningUid, String owningPackage, long milliseconds) {
-            vibrate(milliseconds);
-        }
-
-        /**
-         * @hide
-         */
-        @Override
-        public void vibrate(int owningUid, String owningPackage, long[] pattern, int repeat) {
-            vibrate(pattern, repeat);
         }
 
         @Override
@@ -834,7 +1158,7 @@ public final class InputManager {
             try {
                 mIm.cancelVibrate(mDeviceId, mToken);
             } catch (RemoteException ex) {
-                Log.w(TAG, "Failed to cancel vibration.", ex);
+                throw ex.rethrowFromSystemServer();
             }
         }
     }

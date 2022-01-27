@@ -20,9 +20,10 @@ import android.annotation.SdkConstant;
 import android.annotation.SdkConstant.SdkConstantType;
 import android.content.ComponentName;
 import android.content.Context;
-import android.content.Intent;
-import android.content.ServiceConnection;
+import android.os.Handler;
 import android.os.IBinder;
+import android.os.Looper;
+import android.os.Message;
 import android.os.RemoteException;
 import android.util.Log;
 
@@ -193,6 +194,11 @@ public final class BluetoothHeadset implements BluetoothProfile {
             "android.bluetooth.headset.intent.category.companyid";
 
     /**
+     * A vendor-specific command for unsolicited result code.
+     */
+    public static final String VENDOR_RESULT_CODE_COMMAND_ANDROID = "+ANDROID";
+
+    /**
      * Headset state when SCO audio is not connected.
      * This state can be one of
      * {@link #EXTRA_STATE} or {@link #EXTRA_PREVIOUS_STATE} of
@@ -216,6 +222,8 @@ public final class BluetoothHeadset implements BluetoothProfile {
      */
     public static final int STATE_AUDIO_CONNECTED = 12;
 
+    private static final int MESSAGE_HEADSET_SERVICE_CONNECTED = 100;
+    private static final int MESSAGE_HEADSET_SERVICE_DISCONNECTED = 101;
 
     private Context mContext;
     private ServiceListener mServiceListener;
@@ -228,22 +236,13 @@ public final class BluetoothHeadset implements BluetoothProfile {
                     if (DBG) Log.d(TAG, "onBluetoothStateChange: up=" + up);
                     if (!up) {
                         if (VDBG) Log.d(TAG,"Unbinding service...");
-                        synchronized (mConnection) {
-                            try {
-                                mService = null;
-                                mContext.unbindService(mConnection);
-                            } catch (Exception re) {
-                                Log.e(TAG,"",re);
-                            }
-                        }
+                        doUnbind();
                     } else {
                         synchronized (mConnection) {
                             try {
                                 if (mService == null) {
                                     if (VDBG) Log.d(TAG,"Binding service...");
-                                    if (!mContext.bindService(new Intent(IBluetoothHeadset.class.getName()), mConnection, 0)) {
-                                        Log.e(TAG, "Could not bind to Bluetooth Headset Service");
-                                    }
+                                    doBind();
                                 }
                             } catch (Exception re) {
                                 Log.e(TAG,"",re);
@@ -270,8 +269,29 @@ public final class BluetoothHeadset implements BluetoothProfile {
             }
         }
 
-        if (!context.bindService(new Intent(IBluetoothHeadset.class.getName()), mConnection, 0)) {
-            Log.e(TAG, "Could not bind to Bluetooth Headset Service");
+        doBind();
+    }
+
+    boolean doBind() {
+        try {
+            return mAdapter.getBluetoothManager().bindBluetoothProfileService(
+                    BluetoothProfile.HEADSET, mConnection);
+        } catch (RemoteException e) {
+            Log.e(TAG, "Unable to bind HeadsetService", e);
+        }
+        return false;
+    }
+
+    void doUnbind() {
+        synchronized (mConnection) {
+            if (mService != null) {
+                try {
+                    mAdapter.getBluetoothManager().unbindBluetoothProfileService(
+                            BluetoothProfile.HEADSET, mConnection);
+                } catch (RemoteException e) {
+                    Log.e(TAG,"Unable to unbind HeadsetService", e);
+                }
+            }
         }
     }
 
@@ -292,18 +312,8 @@ public final class BluetoothHeadset implements BluetoothProfile {
                 Log.e(TAG,"",e);
             }
         }
-
-        synchronized (mConnection) {
-            if (mService != null) {
-                try {
-                    mService = null;
-                    mContext.unbindService(mConnection);
-                } catch (Exception re) {
-                    Log.e(TAG,"",re);
-                }
-            }
-        }
         mServiceListener = null;
+        doUnbind();
     }
 
     /**
@@ -675,6 +685,48 @@ public final class BluetoothHeadset implements BluetoothProfile {
     }
 
     /**
+     * Sets whether audio routing is allowed. When set to {@code false}, the AG will not route any
+     * audio to the HF unless explicitly told to.
+     * This method should be used in cases where the SCO channel is shared between multiple profiles
+     * and must be delegated by a source knowledgeable
+     * Note: This is an internal function and shouldn't be exposed
+     *
+     * @param allowed {@code true} if the profile can reroute audio, {@code false} otherwise.
+     *
+     * @hide
+     */
+    public void setAudioRouteAllowed(boolean allowed) {
+        if (VDBG) log("setAudioRouteAllowed");
+        if (mService != null && isEnabled()) {
+            try {
+                mService.setAudioRouteAllowed(allowed);
+            } catch (RemoteException e) {Log.e(TAG, e.toString());}
+        } else {
+            Log.w(TAG, "Proxy not attached to service");
+            if (DBG) Log.d(TAG, Log.getStackTraceString(new Throwable()));
+        }
+    }
+
+    /**
+     * Returns whether audio routing is allowed. see {@link #setAudioRouteAllowed(boolean)}.
+     * Note: This is an internal function and shouldn't be exposed
+     *
+     * @hide
+     */
+    public boolean getAudioRouteAllowed() {
+        if (VDBG) log("getAudioRouteAllowed");
+        if (mService != null && isEnabled()) {
+            try {
+                return mService.getAudioRouteAllowed();
+            } catch (RemoteException e) {Log.e(TAG, e.toString());}
+        } else {
+            Log.w(TAG, "Proxy not attached to service");
+            if (DBG) Log.d(TAG, Log.getStackTraceString(new Throwable()));
+        }
+        return false;
+    }
+
+    /**
      * Check if Bluetooth SCO audio is connected.
      *
      * <p>Requires {@link android.Manifest.permission#BLUETOOTH} permission.
@@ -815,27 +867,6 @@ public final class BluetoothHeadset implements BluetoothProfile {
     }
 
     /**
-     * Notify Headset of phone roam state change.
-     * This is a backdoor for phone app to call BluetoothHeadset since
-     * there is currently not a good way to get roaming state change outside
-     * of phone app.
-     *
-     * @hide
-     */
-    public void roamChanged(boolean roaming) {
-        if (mService != null && isEnabled()) {
-            try {
-                mService.roamChanged(roaming);
-            } catch (RemoteException e) {
-                Log.e(TAG, e.toString());
-            }
-        } else {
-            Log.w(TAG, "Proxy not attached to service");
-            if (DBG) Log.d(TAG, Log.getStackTraceString(new Throwable()));
-        }
-    }
-
-    /**
      * Send Headset of CLCC response
      *
      * @hide
@@ -854,21 +885,105 @@ public final class BluetoothHeadset implements BluetoothProfile {
         }
     }
 
-    private ServiceConnection mConnection = new ServiceConnection() {
+    /**
+     * Sends a vendor-specific unsolicited result code to the headset.
+     *
+     * <p>The actual string to be sent is <code>command + ": " + arg</code>.
+     * For example, if {@code command} is {@link #VENDOR_RESULT_CODE_COMMAND_ANDROID} and {@code arg}
+     * is {@code "0"}, the string <code>"+ANDROID: 0"</code> will be sent.
+     *
+     * <p>Currently only {@link #VENDOR_RESULT_CODE_COMMAND_ANDROID} is allowed as {@code command}.
+     *
+     * <p>Requires {@link android.Manifest.permission#BLUETOOTH} permission.
+     *
+     * @param device Bluetooth headset.
+     * @param command A vendor-specific command.
+     * @param arg The argument that will be attached to the command.
+     * @return {@code false} if there is no headset connected, or if the command is not an allowed
+     *         vendor-specific unsolicited result code, or on error. {@code true} otherwise.
+     * @throws IllegalArgumentException if {@code command} is {@code null}.
+     */
+    public boolean sendVendorSpecificResultCode(BluetoothDevice device, String command,
+            String arg) {
+        if (DBG) {
+            log("sendVendorSpecificResultCode()");
+        }
+        if (command == null) {
+            throw new IllegalArgumentException("command is null");
+        }
+        if (mService != null && isEnabled() &&
+                isValidDevice(device)) {
+            try {
+                return mService.sendVendorSpecificResultCode(device, command, arg);
+            } catch (RemoteException e) {
+                Log.e(TAG, Log.getStackTraceString(new Throwable()));
+            }
+        }
+        if (mService == null) {
+            Log.w(TAG, "Proxy not attached to service");
+        }
+        return false;
+    }
+
+    /**
+     * enable WBS codec setting.
+     *
+     * @return true if successful
+     *         false if there was some error such as
+     *               there is no connected headset
+     * @hide
+     */
+    public boolean enableWBS() {
+        if (mService != null && isEnabled()) {
+            try {
+                return mService.enableWBS();
+            } catch (RemoteException e) {
+                Log.e(TAG, e.toString());
+            }
+        } else {
+            Log.w(TAG, "Proxy not attached to service");
+            if (DBG) Log.d(TAG, Log.getStackTraceString(new Throwable()));
+        }
+        return false;
+    }
+
+    /**
+     * disable WBS codec settting. It set NBS codec.
+     *
+     * @return true if successful
+     *         false if there was some error such as
+     *               there is no connected headset
+     * @hide
+     */
+    public boolean disableWBS() {
+        if (mService != null && isEnabled()) {
+            try {
+                return mService.disableWBS();
+            } catch (RemoteException e) {
+                Log.e(TAG, e.toString());
+            }
+        } else {
+            Log.w(TAG, "Proxy not attached to service");
+            if (DBG) Log.d(TAG, Log.getStackTraceString(new Throwable()));
+        }
+        return false;
+    }
+
+    private final IBluetoothProfileServiceConnection mConnection
+            = new IBluetoothProfileServiceConnection.Stub()  {
+        @Override
         public void onServiceConnected(ComponentName className, IBinder service) {
             if (DBG) Log.d(TAG, "Proxy object connected");
             mService = IBluetoothHeadset.Stub.asInterface(service);
-
-            if (mServiceListener != null) {
-                mServiceListener.onServiceConnected(BluetoothProfile.HEADSET, BluetoothHeadset.this);
-            }
+            mHandler.sendMessage(mHandler.obtainMessage(
+                    MESSAGE_HEADSET_SERVICE_CONNECTED));
         }
+        @Override
         public void onServiceDisconnected(ComponentName className) {
             if (DBG) Log.d(TAG, "Proxy object disconnected");
             mService = null;
-            if (mServiceListener != null) {
-                mServiceListener.onServiceDisconnected(BluetoothProfile.HEADSET);
-            }
+            mHandler.sendMessage(mHandler.obtainMessage(
+                    MESSAGE_HEADSET_SERVICE_DISCONNECTED));
         }
     };
 
@@ -892,4 +1007,25 @@ public final class BluetoothHeadset implements BluetoothProfile {
     private static void log(String msg) {
         Log.d(TAG, msg);
     }
+
+    private final Handler mHandler = new Handler(Looper.getMainLooper()) {
+        @Override
+        public void handleMessage(Message msg) {
+            switch (msg.what) {
+                case MESSAGE_HEADSET_SERVICE_CONNECTED: {
+                    if (mServiceListener != null) {
+                        mServiceListener.onServiceConnected(BluetoothProfile.HEADSET,
+                                BluetoothHeadset.this);
+                    }
+                    break;
+                }
+                case MESSAGE_HEADSET_SERVICE_DISCONNECTED: {
+                    if (mServiceListener != null) {
+                        mServiceListener.onServiceDisconnected(BluetoothProfile.HEADSET);
+                    }
+                    break;
+                }
+            }
+        }
+    };
 }

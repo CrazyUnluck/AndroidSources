@@ -16,7 +16,6 @@
 
 package android.net.dhcp;
 
-import java.net.InetAddress;
 import java.net.Inet4Address;
 import java.nio.ByteBuffer;
 
@@ -27,9 +26,8 @@ class DhcpDiscoverPacket extends DhcpPacket {
     /**
      * Generates a DISCOVER packet with the specified parameters.
      */
-    DhcpDiscoverPacket(int transId, byte[] clientMac, boolean broadcast) {
-        super(transId, Inet4Address.ANY, Inet4Address.ANY, Inet4Address.ANY,
-            Inet4Address.ANY, clientMac, broadcast);
+    DhcpDiscoverPacket(int transId, short secs, byte[] clientMac, boolean broadcast) {
+        super(transId, secs, INADDR_ANY, INADDR_ANY, INADDR_ANY, INADDR_ANY, clientMac, broadcast);
     }
 
     public String toString() {
@@ -43,10 +41,8 @@ class DhcpDiscoverPacket extends DhcpPacket {
      */
     public ByteBuffer buildPacket(int encap, short destUdp, short srcUdp) {
         ByteBuffer result = ByteBuffer.allocate(MAX_LENGTH);
-        InetAddress destIp = Inet4Address.ALL;
-
-        fillInPacket(encap, Inet4Address.ALL, Inet4Address.ANY, destUdp, srcUdp,
-            result, DHCP_BOOTREQUEST, true);
+        fillInPacket(encap, INADDR_BROADCAST, INADDR_ANY, destUdp,
+                srcUdp, result, DHCP_BOOTREQUEST, mBroadcast);
         result.flip();
         return result;
     }
@@ -56,16 +52,9 @@ class DhcpDiscoverPacket extends DhcpPacket {
      */
     void finishPacket(ByteBuffer buffer) {
         addTlv(buffer, DHCP_MESSAGE_TYPE, DHCP_MESSAGE_TYPE_DISCOVER);
+        addTlv(buffer, DHCP_CLIENT_IDENTIFIER, getClientId());
+        addCommonClientTlvs(buffer);
         addTlv(buffer, DHCP_PARAMETER_LIST, mRequestedParams);
         addTlvEnd(buffer);
-    }
-
-    /**
-     * Informs the state machine of the arrival of a DISCOVER packet.
-     */
-    public void doNextOp(DhcpStateMachine machine) {
-        // currently omitted: host name
-        machine.onDiscoverReceived(mBroadcast, mTransId, mClientMac,
-            mRequestedParams);
     }
 }

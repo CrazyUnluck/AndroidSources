@@ -23,17 +23,22 @@ import android.text.TextUtils;
 
 public class RelativeSizeSpan extends MetricAffectingSpan implements ParcelableSpan {
 
-	private final float mProportion;
+    private final float mProportion;
 
-	public RelativeSizeSpan(float proportion) {
-		mProportion = proportion;
-	}
+    public RelativeSizeSpan(float proportion) {
+        mProportion = proportion;
+    }
 
     public RelativeSizeSpan(Parcel src) {
         mProportion = src.readFloat();
     }
     
     public int getSpanTypeId() {
+        return getSpanTypeIdInternal();
+    }
+
+    /** @hide */
+    public int getSpanTypeIdInternal() {
         return TextUtils.RELATIVE_SIZE_SPAN;
     }
     
@@ -42,20 +47,25 @@ public class RelativeSizeSpan extends MetricAffectingSpan implements ParcelableS
     }
 
     public void writeToParcel(Parcel dest, int flags) {
+        writeToParcelInternal(dest, flags);
+    }
+
+    /** @hide */
+    public void writeToParcelInternal(Parcel dest, int flags) {
         dest.writeFloat(mProportion);
     }
 
-	public float getSizeChange() {
-		return mProportion;
-	}
+    public float getSizeChange() {
+        return mProportion;
+    }
 
-	@Override
-	public void updateDrawState(TextPaint ds) {
-		ds.setTextSize(ds.getTextSize() * mProportion);
-	}
+    @Override
+    public void updateDrawState(TextPaint ds) {
+        ds.setTextSize(ds.getTextSize() * mProportion);
+    }
 
-	@Override
-	public void updateMeasureState(TextPaint ds) {
-		ds.setTextSize(ds.getTextSize() * mProportion);
-	}
+    @Override
+    public void updateMeasureState(TextPaint ds) {
+        ds.setTextSize(ds.getTextSize() * mProportion);
+    }
 }

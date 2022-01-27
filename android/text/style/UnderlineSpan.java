@@ -30,6 +30,11 @@ public class UnderlineSpan extends CharacterStyle
     }
     
     public int getSpanTypeId() {
+        return getSpanTypeIdInternal();
+    }
+
+    /** @hide */
+    public int getSpanTypeIdInternal() {
         return TextUtils.UNDERLINE_SPAN;
     }
     
@@ -38,10 +43,15 @@ public class UnderlineSpan extends CharacterStyle
     }
 
     public void writeToParcel(Parcel dest, int flags) {
+        writeToParcelInternal(dest, flags);
     }
 
-	@Override
-	public void updateDrawState(TextPaint ds) {
-		ds.setUnderlineText(true);
-	}
+    /** @hide */
+    public void writeToParcelInternal(Parcel dest, int flags) {
+    }
+
+    @Override
+    public void updateDrawState(TextPaint ds) {
+        ds.setUnderlineText(true);
+    }
 }

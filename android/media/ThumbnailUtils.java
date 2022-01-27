@@ -17,9 +17,6 @@
 package android.media;
 
 import android.content.ContentResolver;
-import android.content.ContentUris;
-import android.content.ContentValues;
-import android.database.Cursor;
 import android.graphics.Bitmap;
 import android.graphics.BitmapFactory;
 import android.graphics.Canvas;
@@ -29,15 +26,12 @@ import android.media.MediaMetadataRetriever;
 import android.media.MediaFile.MediaFileType;
 import android.net.Uri;
 import android.os.ParcelFileDescriptor;
-import android.provider.BaseColumns;
 import android.provider.MediaStore.Images;
-import android.provider.MediaStore.Images.Thumbnails;
 import android.util.Log;
 
 import java.io.FileInputStream;
 import java.io.FileDescriptor;
 import java.io.IOException;
-import java.io.OutputStream;
 
 /**
  * Thumbnail generation routines for media provider.
@@ -98,7 +92,8 @@ public class ThumbnailUtils {
         SizedThumbnailBitmap sizedThumbnailBitmap = new SizedThumbnailBitmap();
         Bitmap bitmap = null;
         MediaFileType fileType = MediaFile.getFileType(filePath);
-        if (fileType != null && fileType.fileType == MediaFile.FILE_TYPE_JPEG) {
+        if (fileType != null && (fileType.fileType == MediaFile.FILE_TYPE_JPEG
+                || MediaFile.isRawImageFileType(fileType.fileType))) {
             createThumbnailFromEXIF(filePath, targetSize, maxPixels, sizedThumbnailBitmap);
             bitmap = sizedThumbnailBitmap.mBitmap;
         }

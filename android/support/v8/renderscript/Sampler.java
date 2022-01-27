@@ -28,9 +28,16 @@ import android.graphics.Bitmap;
 import android.graphics.BitmapFactory;
 
 /**
- * Sampler object which defines how data is extracted from textures. Samplers
- * are attached to Program objects (currently only ProgramFragment) when those objects
- * need to access texture data.
+ * Sampler object that defines how Allocations can be read as textures within a
+ * kernel. Samplers are used in conjunction with the {@code rsSample} runtime
+ * function to return values from normalized coordinates.
+ *
+ * Any Allocation used with a Sampler must have been created with {@link
+ * android.support.v8.renderscript.Allocation#USAGE_GRAPHICS_TEXTURE}; using a
+ * Sampler on an {@link android.support.v8.renderscript.Allocation} that was not
+ * created with
+ * {@link android.support.v8.renderscript.Allocation#USAGE_GRAPHICS_TEXTURE} is
+ * undefined.
  **/
 public class Sampler extends BaseObj {
     public enum Value {
@@ -55,7 +62,7 @@ public class Sampler extends BaseObj {
     Value mWrapR;
     float mAniso;
 
-    Sampler(int id, RenderScript rs) {
+    Sampler(long id, RenderScript rs) {
         super(id, rs);
     }
 
@@ -255,9 +262,8 @@ public class Sampler extends BaseObj {
     }
 
     /**
-     * Builder for creating non-standard samplers.  Usefull if mix and match of
-     * wrap modes is necesary or if anisotropic filtering is desired.
-     *
+     * Builder for creating non-standard samplers.  This is only necessary if
+     * a Sampler with different min and mag modes is desired.
      */
     public static class Builder {
         RenderScript mRS;
@@ -322,18 +328,8 @@ public class Sampler extends BaseObj {
         }
 
         public Sampler create() {
-            if (mRS.isNative) {
-                RenderScriptThunker rst = (RenderScriptThunker)mRS;
-                SamplerThunker.Builder b = new SamplerThunker.Builder(rst);
-                b.setMinification(mMin);
-                b.setMagnification(mMag);
-                b.setWrapS(mWrapS);
-                b.setWrapT(mWrapT);
-                b.setAnisotropy(mAniso);
-                return b.create();
-            }
             mRS.validate();
-            int id = mRS.nSamplerCreate(mMag.mID, mMin.mID,
+            long id = mRS.nSamplerCreate(mMag.mID, mMin.mID,
                                         mWrapS.mID, mWrapT.mID, mWrapR.mID, mAniso);
             Sampler sampler = new Sampler(id, mRS);
             sampler.mMin = mMin;

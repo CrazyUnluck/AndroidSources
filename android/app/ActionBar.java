@@ -16,39 +16,76 @@
 
 package android.app;
 
+import android.annotation.DrawableRes;
+import android.annotation.IntDef;
+import android.annotation.LayoutRes;
+import android.annotation.NonNull;
+import android.annotation.Nullable;
+import android.annotation.StringRes;
 import android.content.Context;
+import android.content.res.Configuration;
 import android.content.res.TypedArray;
 import android.graphics.drawable.Drawable;
 import android.util.AttributeSet;
+import android.view.ActionMode;
 import android.view.Gravity;
+import android.view.KeyEvent;
 import android.view.View;
+import android.view.View.OnFocusChangeListener;
 import android.view.ViewDebug;
 import android.view.ViewGroup;
-import android.view.ViewGroup.MarginLayoutParams;
+import android.view.ViewHierarchyEncoder;
+import android.view.ViewParent;
 import android.view.Window;
 import android.widget.SpinnerAdapter;
+import java.lang.annotation.Retention;
+import java.lang.annotation.RetentionPolicy;
 
 /**
- * A window feature at the top of the activity that may display the activity title, navigation
- * modes, and other interactive items.
+ * A primary toolbar within the activity that may display the activity title, application-level
+ * navigation affordances, and other interactive items.
+ *
  * <p>Beginning with Android 3.0 (API level 11), the action bar appears at the top of an
  * activity's window when the activity uses the system's {@link
  * android.R.style#Theme_Holo Holo} theme (or one of its descendant themes), which is the default.
  * You may otherwise add the action bar by calling {@link
  * android.view.Window#requestFeature requestFeature(FEATURE_ACTION_BAR)} or by declaring it in a
  * custom theme with the {@link android.R.styleable#Theme_windowActionBar windowActionBar} property.
- * <p>By default, the action bar shows the application icon on
+ * </p>
+ *
+ * <p>Beginning with Android L (API level 21), the action bar may be represented by any
+ * Toolbar widget within the application layout. The application may signal to the Activity
+ * which Toolbar should be treated as the Activity's action bar. Activities that use this
+ * feature should use one of the supplied <code>.NoActionBar</code> themes, set the
+ * {@link android.R.styleable#Theme_windowActionBar windowActionBar} attribute to <code>false</code>
+ * or otherwise not request the window feature.</p>
+ *
+ * <p>By adjusting the window features requested by the theme and the layouts used for
+ * an Activity's content view, an app can use the standard system action bar on older platform
+ * releases and the newer inline toolbars on newer platform releases. The <code>ActionBar</code>
+ * object obtained from the Activity can be used to control either configuration transparently.</p>
+ *
+ * <p>When using the Holo themes the action bar shows the application icon on
  * the left, followed by the activity title. If your activity has an options menu, you can make
  * select items accessible directly from the action bar as "action items". You can also
  * modify various characteristics of the action bar or remove it completely.</p>
+ *
+ * <p>When using the Material themes (default in API 21 or newer) the navigation button
+ * (formerly "Home") takes over the space previously occupied by the application icon.
+ * Apps wishing to express a stronger branding should use their brand colors heavily
+ * in the action bar and other application chrome or use a {@link #setLogo(int) logo}
+ * in place of their standard title text.</p>
+ *
  * <p>From your activity, you can retrieve an instance of {@link ActionBar} by calling {@link
  * android.app.Activity#getActionBar getActionBar()}.</p>
+ *
  * <p>In some cases, the action bar may be overlayed by another bar that enables contextual actions,
  * using an {@link android.view.ActionMode}. For example, when the user selects one or more items in
  * your activity, you can enable an action mode that offers actions specific to the selected
  * items, with a UI that temporarily replaces the action bar. Although the UI may occupy the
  * same space, the {@link android.view.ActionMode} APIs are distinct and independent from those for
- * {@link ActionBar}.
+ * {@link ActionBar}.</p>
+ *
  * <div class="special reference">
  * <h3>Developer Guides</h3>
  * <p>For information about how to use the action bar, including how to add action items, navigation
@@ -57,11 +94,21 @@ import android.widget.SpinnerAdapter;
  * </div>
  */
 public abstract class ActionBar {
+    /** @hide */
+    @Retention(RetentionPolicy.SOURCE)
+    @IntDef({NAVIGATION_MODE_STANDARD, NAVIGATION_MODE_LIST, NAVIGATION_MODE_TABS})
+    public @interface NavigationMode {}
+
     /**
      * Standard navigation mode. Consists of either a logo or icon
      * and title text with an optional subtitle. Clicking any of these elements
      * will dispatch onOptionsItemSelected to the host Activity with
      * a MenuItem with item ID android.R.id.home.
+     *
+     * @deprecated Action bar navigation modes are deprecated and not supported by inline
+     * toolbar action bars. Consider using other
+     * <a href="http://developer.android.com/design/patterns/navigation.html">common
+     * navigation patterns</a> instead.
      */
     public static final int NAVIGATION_MODE_STANDARD = 0;
     
@@ -69,14 +116,37 @@ public abstract class ActionBar {
      * List navigation mode. Instead of static title text this mode
      * presents a list menu for navigation within the activity.
      * e.g. this might be presented to the user as a dropdown list.
+     *
+     * @deprecated Action bar navigation modes are deprecated and not supported by inline
+     * toolbar action bars. Consider using other
+     * <a href="http://developer.android.com/design/patterns/navigation.html">common
+     * navigation patterns</a> instead.
      */
     public static final int NAVIGATION_MODE_LIST = 1;
     
     /**
      * Tab navigation mode. Instead of static title text this mode
      * presents a series of tabs for navigation within the activity.
+     *
+     * @deprecated Action bar navigation modes are deprecated and not supported by inline
+     * toolbar action bars. Consider using other
+     * <a href="http://developer.android.com/design/patterns/navigation.html">common
+     * navigation patterns</a> instead.
      */
     public static final int NAVIGATION_MODE_TABS = 2;
+
+    /** @hide */
+    @Retention(RetentionPolicy.SOURCE)
+    @IntDef(flag = true,
+            value = {
+                    DISPLAY_USE_LOGO,
+                    DISPLAY_SHOW_HOME,
+                    DISPLAY_HOME_AS_UP,
+                    DISPLAY_SHOW_TITLE,
+                    DISPLAY_SHOW_CUSTOM,
+                    DISPLAY_TITLE_MULTIPLE_LINES
+            })
+    public @interface DisplayOptions {}
 
     /**
      * Use logo instead of icon if available. This flag will cause appropriate
@@ -188,7 +258,7 @@ public abstract class ActionBar {
      *
      * @see #setDisplayOptions(int, int)
      */
-    public abstract void setCustomView(int resId);
+    public abstract void setCustomView(@LayoutRes int resId);
 
     /**
      * Set the icon to display in the 'home' section of the action bar.
@@ -203,7 +273,7 @@ public abstract class ActionBar {
      * @see #setDisplayUseLogoEnabled(boolean)
      * @see #setDisplayShowHomeEnabled(boolean)
      */
-    public abstract void setIcon(int resId);
+    public abstract void setIcon(@DrawableRes int resId);
 
     /**
      * Set the icon to display in the 'home' section of the action bar.
@@ -233,7 +303,7 @@ public abstract class ActionBar {
      * @see #setDisplayUseLogoEnabled(boolean)
      * @see #setDisplayShowHomeEnabled(boolean)
      */
-    public abstract void setLogo(int resId);
+    public abstract void setLogo(@DrawableRes int resId);
 
     /**
      * Set the logo to display in the 'home' section of the action bar.
@@ -264,6 +334,11 @@ public abstract class ActionBar {
      *                within the dropdown navigation menu.
      * @param callback An OnNavigationListener that will receive events when the user
      *                 selects a navigation item.
+     *
+     * @deprecated Action bar navigation modes are deprecated and not supported by inline
+     * toolbar action bars. Consider using other
+     * <a href="http://developer.android.com/design/patterns/navigation.html">common
+     * navigation patterns</a> instead.
      */
     public abstract void setListNavigationCallbacks(SpinnerAdapter adapter,
             OnNavigationListener callback);
@@ -272,6 +347,11 @@ public abstract class ActionBar {
      * Set the selected navigation item in list or tabbed navigation modes.
      *
      * @param position Position of the item to select.
+     *
+     * @deprecated Action bar navigation modes are deprecated and not supported by inline
+     * toolbar action bars. Consider using other
+     * <a href="http://developer.android.com/design/patterns/navigation.html">common
+     * navigation patterns</a> instead.
      */
     public abstract void setSelectedNavigationItem(int position);
 
@@ -279,6 +359,11 @@ public abstract class ActionBar {
      * Get the position of the selected navigation item in list or tabbed navigation modes.
      *
      * @return Position of the selected item.
+     *
+     * @deprecated Action bar navigation modes are deprecated and not supported by inline
+     * toolbar action bars. Consider using other
+     * <a href="http://developer.android.com/design/patterns/navigation.html">common
+     * navigation patterns</a> instead.
      */
     public abstract int getSelectedNavigationIndex();
 
@@ -286,6 +371,11 @@ public abstract class ActionBar {
      * Get the number of navigation items present in the current navigation mode.
      *
      * @return Number of navigation items.
+     *
+     * @deprecated Action bar navigation modes are deprecated and not supported by inline
+     * toolbar action bars. Consider using other
+     * <a href="http://developer.android.com/design/patterns/navigation.html">common
+     * navigation patterns</a> instead.
      */
     public abstract int getNavigationItemCount();
 
@@ -309,7 +399,7 @@ public abstract class ActionBar {
      * @see #setTitle(CharSequence)
      * @see #setDisplayOptions(int, int)
      */
-    public abstract void setTitle(int resId);
+    public abstract void setTitle(@StringRes int resId);
 
     /**
      * Set the action bar's subtitle. This will only be displayed if
@@ -332,7 +422,7 @@ public abstract class ActionBar {
      * @see #setSubtitle(CharSequence)
      * @see #setDisplayOptions(int, int)
      */
-    public abstract void setSubtitle(int resId);
+    public abstract void setSubtitle(@StringRes int resId);
 
     /**
      * Set display options. This changes all display option bits at once. To change
@@ -341,7 +431,7 @@ public abstract class ActionBar {
      * @param options A combination of the bits defined by the DISPLAY_ constants
      *                defined in ActionBar.
      */
-    public abstract void setDisplayOptions(int options);
+    public abstract void setDisplayOptions(@DisplayOptions int options);
     
     /**
      * Set selected display options. Only the options specified by mask will be changed.
@@ -356,7 +446,7 @@ public abstract class ActionBar {
      *                defined in ActionBar.
      * @param mask A bit mask declaring which display options should be changed.
      */
-    public abstract void setDisplayOptions(int options, int mask);
+    public abstract void setDisplayOptions(@DisplayOptions int options, @DisplayOptions int mask);
 
     /**
      * Set whether to display the activity logo rather than the activity icon.
@@ -431,7 +521,7 @@ public abstract class ActionBar {
      * @see #setStackedBackgroundDrawable(Drawable)
      * @see #setSplitBackgroundDrawable(Drawable)
      */
-    public abstract void setBackgroundDrawable(Drawable d);
+    public abstract void setBackgroundDrawable(@Nullable Drawable d);
 
     /**
      * Set the ActionBar's stacked background. This will appear
@@ -483,7 +573,13 @@ public abstract class ActionBar {
      * </ul>
      *
      * @return The current navigation mode.
+     *
+     * @deprecated Action bar navigation modes are deprecated and not supported by inline
+     * toolbar action bars. Consider using other
+     * <a href="http://developer.android.com/design/patterns/navigation.html">common
+     * navigation patterns</a> instead.
      */
+    @NavigationMode
     public abstract int getNavigationMode();
 
     /**
@@ -493,8 +589,13 @@ public abstract class ActionBar {
      * @see #NAVIGATION_MODE_STANDARD
      * @see #NAVIGATION_MODE_LIST
      * @see #NAVIGATION_MODE_TABS
+     *
+     * @deprecated Action bar navigation modes are deprecated and not supported by inline
+     * toolbar action bars. Consider using other
+     * <a href="http://developer.android.com/design/patterns/navigation.html">common
+     * navigation patterns</a> instead.
      */
-    public abstract void setNavigationMode(int mode);
+    public abstract void setNavigationMode(@NavigationMode int mode);
 
     /**
      * @return The current set of display options. 
@@ -514,6 +615,11 @@ public abstract class ActionBar {
      * @return A new Tab
      *
      * @see #addTab(Tab)
+     *
+     * @deprecated Action bar navigation modes are deprecated and not supported by inline
+     * toolbar action bars. Consider using other
+     * <a href="http://developer.android.com/design/patterns/navigation.html">common
+     * navigation patterns</a> instead.
      */
     public abstract Tab newTab();
 
@@ -522,6 +628,11 @@ public abstract class ActionBar {
      * If this is the first tab to be added it will become the selected tab.
      *
      * @param tab Tab to add
+     *
+     * @deprecated Action bar navigation modes are deprecated and not supported by inline
+     * toolbar action bars. Consider using other
+     * <a href="http://developer.android.com/design/patterns/navigation.html">common
+     * navigation patterns</a> instead.
      */
     public abstract void addTab(Tab tab);
 
@@ -530,6 +641,11 @@ public abstract class ActionBar {
      *
      * @param tab Tab to add
      * @param setSelected True if the added tab should become the selected tab.
+     *
+     * @deprecated Action bar navigation modes are deprecated and not supported by inline
+     * toolbar action bars. Consider using other
+     * <a href="http://developer.android.com/design/patterns/navigation.html">common
+     * navigation patterns</a> instead.
      */
     public abstract void addTab(Tab tab, boolean setSelected);
 
@@ -540,6 +656,11 @@ public abstract class ActionBar {
      *
      * @param tab The tab to add
      * @param position The new position of the tab
+     *
+     * @deprecated Action bar navigation modes are deprecated and not supported by inline
+     * toolbar action bars. Consider using other
+     * <a href="http://developer.android.com/design/patterns/navigation.html">common
+     * navigation patterns</a> instead.
      */
     public abstract void addTab(Tab tab, int position);
 
@@ -550,6 +671,11 @@ public abstract class ActionBar {
      * @param tab The tab to add
      * @param position The new position of the tab
      * @param setSelected True if the added tab should become the selected tab.
+     *
+     * @deprecated Action bar navigation modes are deprecated and not supported by inline
+     * toolbar action bars. Consider using other
+     * <a href="http://developer.android.com/design/patterns/navigation.html">common
+     * navigation patterns</a> instead.
      */
     public abstract void addTab(Tab tab, int position, boolean setSelected);
 
@@ -558,6 +684,11 @@ public abstract class ActionBar {
      * and another tab will be selected if present.
      *
      * @param tab The tab to remove
+     *
+     * @deprecated Action bar navigation modes are deprecated and not supported by inline
+     * toolbar action bars. Consider using other
+     * <a href="http://developer.android.com/design/patterns/navigation.html">common
+     * navigation patterns</a> instead.
      */
     public abstract void removeTab(Tab tab);
 
@@ -566,11 +697,21 @@ public abstract class ActionBar {
      * and another tab will be selected if present.
      *
      * @param position Position of the tab to remove
+     *
+     * @deprecated Action bar navigation modes are deprecated and not supported by inline
+     * toolbar action bars. Consider using other
+     * <a href="http://developer.android.com/design/patterns/navigation.html">common
+     * navigation patterns</a> instead.
      */
     public abstract void removeTabAt(int position);
 
     /**
      * Remove all tabs from the action bar and deselect the current tab.
+     *
+     * @deprecated Action bar navigation modes are deprecated and not supported by inline
+     * toolbar action bars. Consider using other
+     * <a href="http://developer.android.com/design/patterns/navigation.html">common
+     * navigation patterns</a> instead.
      */
     public abstract void removeAllTabs();
 
@@ -580,6 +721,11 @@ public abstract class ActionBar {
      * <p>Note: If you want to select by index, use {@link #setSelectedNavigationItem(int)}.</p>
      *
      * @param tab Tab to select
+     *
+     * @deprecated Action bar navigation modes are deprecated and not supported by inline
+     * toolbar action bars. Consider using other
+     * <a href="http://developer.android.com/design/patterns/navigation.html">common
+     * navigation patterns</a> instead.
      */
     public abstract void selectTab(Tab tab);
 
@@ -588,6 +734,11 @@ public abstract class ActionBar {
      * one tab present.
      *
      * @return The currently selected tab or null
+     *
+     * @deprecated Action bar navigation modes are deprecated and not supported by inline
+     * toolbar action bars. Consider using other
+     * <a href="http://developer.android.com/design/patterns/navigation.html">common
+     * navigation patterns</a> instead.
      */
     public abstract Tab getSelectedTab();
 
@@ -596,12 +747,22 @@ public abstract class ActionBar {
      *
      * @param index Index value in the range 0-get
      * @return
+     *
+     * @deprecated Action bar navigation modes are deprecated and not supported by inline
+     * toolbar action bars. Consider using other
+     * <a href="http://developer.android.com/design/patterns/navigation.html">common
+     * navigation patterns</a> instead.
      */
     public abstract Tab getTabAt(int index);
 
     /**
      * Returns the number of tabs currently registered with the action bar.
      * @return Tab count
+     *
+     * @deprecated Action bar navigation modes are deprecated and not supported by inline
+     * toolbar action bars. Consider using other
+     * <a href="http://developer.android.com/design/patterns/navigation.html">common
+     * navigation patterns</a> instead.
      */
     public abstract int getTabCount();
 
@@ -733,7 +894,7 @@ public abstract class ActionBar {
      * @see #setDisplayHomeAsUpEnabled(boolean)
      * @see #setHomeActionContentDescription(int)
      */
-    public void setHomeAsUpIndicator(int resId) { }
+    public void setHomeAsUpIndicator(@DrawableRes int resId) { }
 
     /**
      * Set an alternate description for the Home/Up action, when enabled.
@@ -772,10 +933,212 @@ public abstract class ActionBar {
      * @see #setHomeAsUpIndicator(int)
      * @see #setHomeAsUpIndicator(android.graphics.drawable.Drawable)
      */
-    public void setHomeActionContentDescription(int resId) { }
+    public void setHomeActionContentDescription(@StringRes int resId) { }
+
+    /**
+     * Enable hiding the action bar on content scroll.
+     *
+     * <p>If enabled, the action bar will scroll out of sight along with a
+     * {@link View#setNestedScrollingEnabled(boolean) nested scrolling child} view's content.
+     * The action bar must be in {@link Window#FEATURE_ACTION_BAR_OVERLAY overlay mode}
+     * to enable hiding on content scroll.</p>
+     *
+     * <p>When partially scrolled off screen the action bar is considered
+     * {@link #hide() hidden}. A call to {@link #show() show} will cause it to return to full view.
+     * </p>
+     * @param hideOnContentScroll true to enable hiding on content scroll.
+     */
+    public void setHideOnContentScrollEnabled(boolean hideOnContentScroll) {
+        if (hideOnContentScroll) {
+            throw new UnsupportedOperationException("Hide on content scroll is not supported in " +
+                    "this action bar configuration.");
+        }
+    }
+
+    /**
+     * Return whether the action bar is configured to scroll out of sight along with
+     * a {@link View#setNestedScrollingEnabled(boolean) nested scrolling child}.
+     *
+     * @return true if hide-on-content-scroll is enabled
+     * @see #setHideOnContentScrollEnabled(boolean)
+     */
+    public boolean isHideOnContentScrollEnabled() {
+        return false;
+    }
+
+    /**
+     * Return the current vertical offset of the action bar.
+     *
+     * <p>The action bar's current hide offset is the distance that the action bar is currently
+     * scrolled offscreen in pixels. The valid range is 0 (fully visible) to the action bar's
+     * current measured {@link #getHeight() height} (fully invisible).</p>
+     *
+     * @return The action bar's offset toward its fully hidden state in pixels
+     */
+    public int getHideOffset() {
+        return 0;
+    }
+
+    /**
+     * Set the current hide offset of the action bar.
+     *
+     * <p>The action bar's current hide offset is the distance that the action bar is currently
+     * scrolled offscreen in pixels. The valid range is 0 (fully visible) to the action bar's
+     * current measured {@link #getHeight() height} (fully invisible).</p>
+     *
+     * @param offset The action bar's offset toward its fully hidden state in pixels.
+     */
+    public void setHideOffset(int offset) {
+        if (offset != 0) {
+            throw new UnsupportedOperationException("Setting an explicit action bar hide offset " +
+                    "is not supported in this action bar configuration.");
+        }
+    }
+
+    /**
+     * Set the Z-axis elevation of the action bar in pixels.
+     *
+     * <p>The action bar's elevation is the distance it is placed from its parent surface. Higher
+     * values are closer to the user.</p>
+     *
+     * @param elevation Elevation value in pixels
+     */
+    public void setElevation(float elevation) {
+        if (elevation != 0) {
+            throw new UnsupportedOperationException("Setting a non-zero elevation is " +
+                    "not supported in this action bar configuration.");
+        }
+    }
+
+    /**
+     * Get the Z-axis elevation of the action bar in pixels.
+     *
+     * <p>The action bar's elevation is the distance it is placed from its parent surface. Higher
+     * values are closer to the user.</p>
+     *
+     * @return Elevation value in pixels
+     */
+    public float getElevation() {
+        return 0;
+    }
+
+    /** @hide */
+    public void setDefaultDisplayHomeAsUpEnabled(boolean enabled) {
+    }
+
+    /** @hide */
+    public void setShowHideAnimationEnabled(boolean enabled) {
+    }
+
+    /** @hide */
+    public void onConfigurationChanged(Configuration config) {
+    }
+
+    /** @hide */
+    public void dispatchMenuVisibilityChanged(boolean visible) {
+    }
+
+    /** @hide */
+    public ActionMode startActionMode(ActionMode.Callback callback) {
+        return null;
+    }
+
+    /** @hide */
+    public boolean openOptionsMenu() {
+        return false;
+    }
+
+    /** @hide */
+    public boolean invalidateOptionsMenu() {
+        return false;
+    }
+
+    /** @hide */
+    public boolean onMenuKeyEvent(KeyEvent event) {
+        return false;
+    }
+
+    /** @hide */
+    public boolean onKeyShortcut(int keyCode, KeyEvent event) {
+        return false;
+    }
+
+    /** @hide */
+    public boolean collapseActionView() {
+        return false;
+    }
+
+    /** @hide */
+    public void setWindowTitle(CharSequence title) {
+    }
+
+    /**
+     * Attempts to move focus to the ActionBar if it does not already contain the focus.
+     *
+     * @return {@code true} if focus changes or {@code false} if focus doesn't change.
+     * @hide
+     */
+    public boolean requestFocus() {
+        return false;
+    }
+
+    /** @hide */
+    public void onDestroy() {
+    }
+
+    /**
+     * Common implementation for requestFocus that takes in the Toolbar and moves focus
+     * to the contents. This makes the ViewGroups containing the toolbar allow focus while it stays
+     * in the ActionBar and then prevents it again once it leaves.
+     *
+     * @param viewGroup The toolbar ViewGroup
+     * @return {@code true} if focus changes or {@code false} if focus doesn't change.
+     * @hide
+     */
+    protected boolean requestFocus(ViewGroup viewGroup) {
+        if (viewGroup != null && !viewGroup.hasFocus()) {
+            final ViewGroup toolbar = viewGroup.getTouchscreenBlocksFocus() ? viewGroup : null;
+            ViewParent parent = viewGroup.getParent();
+            ViewGroup container = null;
+            while (parent != null && parent instanceof ViewGroup) {
+                final ViewGroup vgParent = (ViewGroup) parent;
+                if (vgParent.getTouchscreenBlocksFocus()) {
+                    container = vgParent;
+                    break;
+                }
+                parent = vgParent.getParent();
+            }
+            if (container != null) {
+                container.setTouchscreenBlocksFocus(false);
+            }
+            if (toolbar != null) {
+                toolbar.setTouchscreenBlocksFocus(false);
+            }
+            viewGroup.requestFocus();
+            final View focused = viewGroup.findFocus();
+            if (focused != null) {
+                focused.setOnFocusChangeListener(new FollowOutOfActionBar(viewGroup,
+                        container, toolbar));
+            } else {
+                if (container != null) {
+                    container.setTouchscreenBlocksFocus(true);
+                }
+                if (toolbar != null) {
+                    toolbar.setTouchscreenBlocksFocus(true);
+                }
+            }
+            return true;
+        }
+        return false;
+    }
 
     /**
      * Listener interface for ActionBar navigation events.
+     *
+     * @deprecated Action bar navigation modes are deprecated and not supported by inline
+     * toolbar action bars. Consider using other
+     * <a href="http://developer.android.com/design/patterns/navigation.html">common
+     * navigation patterns</a> instead.
      */
     public interface OnNavigationListener {
         /**
@@ -808,6 +1171,11 @@ public abstract class ActionBar {
      * A tab in the action bar.
      *
      * <p>Tabs manage the hiding and showing of {@link Fragment}s.
+     *
+     * @deprecated Action bar navigation modes are deprecated and not supported by inline
+     * toolbar action bars. Consider using other
+     * <a href="http://developer.android.com/design/patterns/navigation.html">common
+     * navigation patterns</a> instead.
      */
     public static abstract class Tab {
         /**
@@ -853,7 +1221,7 @@ public abstract class ActionBar {
          * @param resId Resource ID referring to the drawable to use as an icon
          * @return The current instance for call chaining
          */
-        public abstract Tab setIcon(int resId);
+        public abstract Tab setIcon(@DrawableRes int resId);
 
         /**
          * Set the text displayed on this tab. Text may be truncated if there is not
@@ -871,7 +1239,7 @@ public abstract class ActionBar {
          * @param resId A resource ID referring to the text that should be displayed
          * @return The current instance for call chaining
          */
-        public abstract Tab setText(int resId);
+        public abstract Tab setText(@StringRes int resId);
 
         /**
          * Set a custom view to be used for this tab. This overrides values set by
@@ -889,7 +1257,7 @@ public abstract class ActionBar {
          * @param layoutResId A layout resource to inflate and use as a custom tab view
          * @return The current instance for call chaining
          */
-        public abstract Tab setCustomView(int layoutResId);
+        public abstract Tab setCustomView(@LayoutRes int layoutResId);
 
         /**
          * Retrieve a previously set custom view for this tab.
@@ -934,7 +1302,7 @@ public abstract class ActionBar {
          * @see #setContentDescription(CharSequence)
          * @see #getContentDescription()
          */
-        public abstract Tab setContentDescription(int resId);
+        public abstract Tab setContentDescription(@StringRes int resId);
 
         /**
          * Set a description of this tab's content for use in accessibility support.
@@ -959,6 +1327,11 @@ public abstract class ActionBar {
 
     /**
      * Callback interface invoked when a tab is focused, unfocused, added, or removed.
+     *
+     * @deprecated Action bar navigation modes are deprecated and not supported by inline
+     * toolbar action bars. Consider using other
+     * <a href="http://developer.android.com/design/patterns/navigation.html">common
+     * navigation patterns</a> instead.
      */
     public interface TabListener {
         /**
@@ -1000,31 +1373,31 @@ public abstract class ActionBar {
      *
      * @attr ref android.R.styleable#ActionBar_LayoutParams_layout_gravity
      */
-    public static class LayoutParams extends MarginLayoutParams {
+    public static class LayoutParams extends ViewGroup.MarginLayoutParams {
         /**
          * Gravity for the view associated with these LayoutParams.
          *
          * @see android.view.Gravity
          */
         @ViewDebug.ExportedProperty(category = "layout", mapping = {
-            @ViewDebug.IntToString(from =  -1,                       to = "NONE"),
-            @ViewDebug.IntToString(from = Gravity.NO_GRAVITY,        to = "NONE"),
-            @ViewDebug.IntToString(from = Gravity.TOP,               to = "TOP"),
-            @ViewDebug.IntToString(from = Gravity.BOTTOM,            to = "BOTTOM"),
-            @ViewDebug.IntToString(from = Gravity.LEFT,              to = "LEFT"),
-            @ViewDebug.IntToString(from = Gravity.RIGHT,             to = "RIGHT"),
-            @ViewDebug.IntToString(from = Gravity.START,             to = "START"),
-            @ViewDebug.IntToString(from = Gravity.END,               to = "END"),
-            @ViewDebug.IntToString(from = Gravity.CENTER_VERTICAL,   to = "CENTER_VERTICAL"),
-            @ViewDebug.IntToString(from = Gravity.FILL_VERTICAL,     to = "FILL_VERTICAL"),
-            @ViewDebug.IntToString(from = Gravity.CENTER_HORIZONTAL, to = "CENTER_HORIZONTAL"),
-            @ViewDebug.IntToString(from = Gravity.FILL_HORIZONTAL,   to = "FILL_HORIZONTAL"),
-            @ViewDebug.IntToString(from = Gravity.CENTER,            to = "CENTER"),
-            @ViewDebug.IntToString(from = Gravity.FILL,              to = "FILL")
+                @ViewDebug.IntToString(from =  -1,                       to = "NONE"),
+                @ViewDebug.IntToString(from = Gravity.NO_GRAVITY,        to = "NONE"),
+                @ViewDebug.IntToString(from = Gravity.TOP,               to = "TOP"),
+                @ViewDebug.IntToString(from = Gravity.BOTTOM,            to = "BOTTOM"),
+                @ViewDebug.IntToString(from = Gravity.LEFT,              to = "LEFT"),
+                @ViewDebug.IntToString(from = Gravity.RIGHT,             to = "RIGHT"),
+                @ViewDebug.IntToString(from = Gravity.START,             to = "START"),
+                @ViewDebug.IntToString(from = Gravity.END,               to = "END"),
+                @ViewDebug.IntToString(from = Gravity.CENTER_VERTICAL,   to = "CENTER_VERTICAL"),
+                @ViewDebug.IntToString(from = Gravity.FILL_VERTICAL,     to = "FILL_VERTICAL"),
+                @ViewDebug.IntToString(from = Gravity.CENTER_HORIZONTAL, to = "CENTER_HORIZONTAL"),
+                @ViewDebug.IntToString(from = Gravity.FILL_HORIZONTAL,   to = "FILL_HORIZONTAL"),
+                @ViewDebug.IntToString(from = Gravity.CENTER,            to = "CENTER"),
+                @ViewDebug.IntToString(from = Gravity.FILL,              to = "FILL")
         })
         public int gravity = Gravity.NO_GRAVITY;
 
-        public LayoutParams(Context c, AttributeSet attrs) {
+        public LayoutParams(@NonNull Context c, AttributeSet attrs) {
             super(c, attrs);
 
             TypedArray a = c.obtainStyledAttributes(attrs,
@@ -1042,6 +1415,7 @@ public abstract class ActionBar {
 
         public LayoutParams(int width, int height, int gravity) {
             super(width, height);
+
             this.gravity = gravity;
         }
 
@@ -1051,12 +1425,68 @@ public abstract class ActionBar {
 
         public LayoutParams(LayoutParams source) {
             super(source);
-
             this.gravity = source.gravity;
         }
 
         public LayoutParams(ViewGroup.LayoutParams source) {
             super(source);
+        }
+
+        /*
+         * Note for framework developers:
+         *
+         * You might notice that ActionBar.LayoutParams is missing a constructor overload
+         * for MarginLayoutParams. While it may seem like a good idea to add one, at this
+         * point it's dangerous for source compatibility. Upon building against a new
+         * version of the SDK an app can end up statically linking to the new MarginLayoutParams
+         * overload, causing a crash when running on older platform versions with no other changes.
+         */
+
+        /** @hide */
+        @Override
+        protected void encodeProperties(@NonNull ViewHierarchyEncoder encoder) {
+            super.encodeProperties(encoder);
+
+            encoder.addProperty("gravity", gravity);
+        }
+    }
+
+    /**
+     * Tracks the focused View until it leaves the ActionBar, then it resets the
+     * touchscreenBlocksFocus value.
+     */
+    private static class FollowOutOfActionBar implements OnFocusChangeListener, Runnable {
+        private final ViewGroup mFocusRoot;
+        private final ViewGroup mContainer;
+        private final ViewGroup mToolbar;
+
+        public FollowOutOfActionBar(ViewGroup focusRoot, ViewGroup container, ViewGroup toolbar) {
+            mContainer = container;
+            mToolbar = toolbar;
+            mFocusRoot = focusRoot;
+        }
+
+        @Override
+        public void onFocusChange(View v, boolean hasFocus) {
+            if (!hasFocus) {
+                v.setOnFocusChangeListener(null);
+                final View focused = mFocusRoot.findFocus();
+                if (focused != null) {
+                    focused.setOnFocusChangeListener(this);
+                } else {
+                    mFocusRoot.post(this);
+                }
+            }
+        }
+
+        @Override
+        public void run() {
+            if (mContainer != null) {
+                mContainer.setTouchscreenBlocksFocus(true);
+            }
+            if (mToolbar != null) {
+                mToolbar.setTouchscreenBlocksFocus(true);
+            }
         }
     }
 }

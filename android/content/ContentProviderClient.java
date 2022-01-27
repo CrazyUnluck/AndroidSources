@@ -16,85 +16,159 @@
 
 package android.content;
 
+import android.annotation.NonNull;
+import android.annotation.Nullable;
+import android.content.res.AssetFileDescriptor;
+import android.database.CrossProcessCursorWrapper;
 import android.database.Cursor;
 import android.net.Uri;
 import android.os.Bundle;
 import android.os.CancellationSignal;
 import android.os.DeadObjectException;
+import android.os.Handler;
 import android.os.ICancellationSignal;
-import android.os.RemoteException;
+import android.os.Looper;
 import android.os.ParcelFileDescriptor;
-import android.content.res.AssetFileDescriptor;
+import android.os.RemoteException;
+import android.util.Log;
+
+import com.android.internal.annotations.GuardedBy;
+import com.android.internal.annotations.VisibleForTesting;
+import com.android.internal.util.Preconditions;
+
+import dalvik.system.CloseGuard;
 
 import java.io.FileNotFoundException;
 import java.util.ArrayList;
+import java.util.concurrent.atomic.AtomicBoolean;
 
 /**
- * The public interface object used to interact with a {@link ContentProvider}. This is obtained by
- * calling {@link ContentResolver#acquireContentProviderClient}. This object must be released
- * using {@link #release} in order to indicate to the system that the {@link ContentProvider} is
- * no longer needed and can be killed to free up resources.
- *
- * <p>Note that you should generally create a new ContentProviderClient instance
- * for each thread that will be performing operations.  Unlike
+ * The public interface object used to interact with a specific
+ * {@link ContentProvider}.
+ * <p>
+ * Instances can be obtained by calling
+ * {@link ContentResolver#acquireContentProviderClient} or
+ * {@link ContentResolver#acquireUnstableContentProviderClient}. Instances must
+ * be released using {@link #close()} in order to indicate to the system that
+ * the underlying {@link ContentProvider} is no longer needed and can be killed
+ * to free up resources.
+ * <p>
+ * Note that you should generally create a new ContentProviderClient instance
+ * for each thread that will be performing operations. Unlike
  * {@link ContentResolver}, the methods here such as {@link #query} and
- * {@link #openFile} are not thread safe -- you must not call
- * {@link #release()} on the ContentProviderClient those calls are made from
- * until you are finished with the data they have returned.
+ * {@link #openFile} are not thread safe -- you must not call {@link #close()}
+ * on the ContentProviderClient those calls are made from until you are finished
+ * with the data they have returned.
  */
-public class ContentProviderClient {
-    private final IContentProvider mContentProvider;
+public class ContentProviderClient implements AutoCloseable {
+    private static final String TAG = "ContentProviderClient";
+
+    @GuardedBy("ContentProviderClient.class")
+    private static Handler sAnrHandler;
+
     private final ContentResolver mContentResolver;
+    private final IContentProvider mContentProvider;
     private final String mPackageName;
     private final boolean mStable;
-    private boolean mReleased;
 
-    /**
-     * @hide
-     */
-    ContentProviderClient(ContentResolver contentResolver,
-            IContentProvider contentProvider, boolean stable) {
-        mContentProvider = contentProvider;
+    private final AtomicBoolean mClosed = new AtomicBoolean();
+    private final CloseGuard mCloseGuard = CloseGuard.get();
+
+    private long mAnrTimeout;
+    private NotRespondingRunnable mAnrRunnable;
+
+    /** {@hide} */
+    @VisibleForTesting
+    public ContentProviderClient(
+            ContentResolver contentResolver, IContentProvider contentProvider, boolean stable) {
         mContentResolver = contentResolver;
+        mContentProvider = contentProvider;
         mPackageName = contentResolver.mPackageName;
+
         mStable = stable;
+
+        mCloseGuard.open("close");
     }
 
-    /** See {@link ContentProvider#query ContentProvider.query} */
-    public Cursor query(Uri url, String[] projection, String selection,
-            String[] selectionArgs, String sortOrder) throws RemoteException {
-        try {
-            return query(url, projection, selection,  selectionArgs, sortOrder, null);
-        } catch (DeadObjectException e) {
-            if (!mStable) {
-                mContentResolver.unstableProviderDied(mContentProvider);
+    /** {@hide} */
+    public void setDetectNotResponding(long timeoutMillis) {
+        synchronized (ContentProviderClient.class) {
+            mAnrTimeout = timeoutMillis;
+
+            if (timeoutMillis > 0) {
+                if (mAnrRunnable == null) {
+                    mAnrRunnable = new NotRespondingRunnable();
+                }
+                if (sAnrHandler == null) {
+                    sAnrHandler = new Handler(Looper.getMainLooper(), null, true /* async */);
+                }
+            } else {
+                mAnrRunnable = null;
             }
-            throw e;
+        }
+    }
+
+    private void beforeRemote() {
+        if (mAnrRunnable != null) {
+            sAnrHandler.postDelayed(mAnrRunnable, mAnrTimeout);
+        }
+    }
+
+    private void afterRemote() {
+        if (mAnrRunnable != null) {
+            sAnrHandler.removeCallbacks(mAnrRunnable);
         }
     }
 
     /** See {@link ContentProvider#query ContentProvider.query} */
-    public Cursor query(Uri url, String[] projection, String selection,
-            String[] selectionArgs, String sortOrder, CancellationSignal cancellationSignal)
+    public @Nullable Cursor query(@NonNull Uri url, @Nullable String[] projection,
+            @Nullable String selection, @Nullable String[] selectionArgs,
+            @Nullable String sortOrder) throws RemoteException {
+        return query(url, projection, selection,  selectionArgs, sortOrder, null);
+    }
+
+    /** See {@link ContentProvider#query ContentProvider.query} */
+    public @Nullable Cursor query(@NonNull Uri url, @Nullable String[] projection,
+            @Nullable String selection, @Nullable String[] selectionArgs,
+            @Nullable String sortOrder, @Nullable CancellationSignal cancellationSignal)
                     throws RemoteException {
-        ICancellationSignal remoteCancellationSignal = null;
-        if (cancellationSignal != null) {
-            remoteCancellationSignal = mContentProvider.createCancellationSignal();
-            cancellationSignal.setRemote(remoteCancellationSignal);
-        }
+        Preconditions.checkNotNull(url, "url");
+
+        beforeRemote();
         try {
-            return mContentProvider.query(mPackageName, url, projection, selection,  selectionArgs,
-                    sortOrder, remoteCancellationSignal);
+            ICancellationSignal remoteCancellationSignal = null;
+            if (cancellationSignal != null) {
+                cancellationSignal.throwIfCanceled();
+                remoteCancellationSignal = mContentProvider.createCancellationSignal();
+                cancellationSignal.setRemote(remoteCancellationSignal);
+            }
+            final Cursor cursor = mContentProvider.query(mPackageName, url, projection, selection,
+                    selectionArgs, sortOrder, remoteCancellationSignal);
+            if (cursor == null) {
+                return null;
+            }
+
+            if ("com.google.android.gms".equals(mPackageName)) {
+                // They're casting to a concrete subclass, sigh
+                return cursor;
+            } else {
+                return new CursorWrapperInner(cursor);
+            }
         } catch (DeadObjectException e) {
             if (!mStable) {
                 mContentResolver.unstableProviderDied(mContentProvider);
             }
             throw e;
+        } finally {
+            afterRemote();
         }
     }
 
     /** See {@link ContentProvider#getType ContentProvider.getType} */
-    public String getType(Uri url) throws RemoteException {
+    public @Nullable String getType(@NonNull Uri url) throws RemoteException {
+        Preconditions.checkNotNull(url, "url");
+
+        beforeRemote();
         try {
             return mContentProvider.getType(url);
         } catch (DeadObjectException e) {
@@ -102,11 +176,18 @@ public class ContentProviderClient {
                 mContentResolver.unstableProviderDied(mContentProvider);
             }
             throw e;
+        } finally {
+            afterRemote();
         }
     }
 
     /** See {@link ContentProvider#getStreamTypes ContentProvider.getStreamTypes} */
-    public String[] getStreamTypes(Uri url, String mimeTypeFilter) throws RemoteException {
+    public @Nullable String[] getStreamTypes(@NonNull Uri url, @NonNull String mimeTypeFilter)
+            throws RemoteException {
+        Preconditions.checkNotNull(url, "url");
+        Preconditions.checkNotNull(mimeTypeFilter, "mimeTypeFilter");
+
+        beforeRemote();
         try {
             return mContentProvider.getStreamTypes(url, mimeTypeFilter);
         } catch (DeadObjectException e) {
@@ -114,12 +195,51 @@ public class ContentProviderClient {
                 mContentResolver.unstableProviderDied(mContentProvider);
             }
             throw e;
+        } finally {
+            afterRemote();
+        }
+    }
+
+    /** See {@link ContentProvider#canonicalize} */
+    public final @Nullable Uri canonicalize(@NonNull Uri url) throws RemoteException {
+        Preconditions.checkNotNull(url, "url");
+
+        beforeRemote();
+        try {
+            return mContentProvider.canonicalize(mPackageName, url);
+        } catch (DeadObjectException e) {
+            if (!mStable) {
+                mContentResolver.unstableProviderDied(mContentProvider);
+            }
+            throw e;
+        } finally {
+            afterRemote();
+        }
+    }
+
+    /** See {@link ContentProvider#uncanonicalize} */
+    public final @Nullable Uri uncanonicalize(@NonNull Uri url) throws RemoteException {
+        Preconditions.checkNotNull(url, "url");
+
+        beforeRemote();
+        try {
+            return mContentProvider.uncanonicalize(mPackageName, url);
+        } catch (DeadObjectException e) {
+            if (!mStable) {
+                mContentResolver.unstableProviderDied(mContentProvider);
+            }
+            throw e;
+        } finally {
+            afterRemote();
         }
     }
 
     /** See {@link ContentProvider#insert ContentProvider.insert} */
-    public Uri insert(Uri url, ContentValues initialValues)
+    public @Nullable Uri insert(@NonNull Uri url, @Nullable ContentValues initialValues)
             throws RemoteException {
+        Preconditions.checkNotNull(url, "url");
+
+        beforeRemote();
         try {
             return mContentProvider.insert(mPackageName, url, initialValues);
         } catch (DeadObjectException e) {
@@ -127,11 +247,18 @@ public class ContentProviderClient {
                 mContentResolver.unstableProviderDied(mContentProvider);
             }
             throw e;
+        } finally {
+            afterRemote();
         }
     }
 
     /** See {@link ContentProvider#bulkInsert ContentProvider.bulkInsert} */
-    public int bulkInsert(Uri url, ContentValues[] initialValues) throws RemoteException {
+    public int bulkInsert(@NonNull Uri url, @NonNull ContentValues[] initialValues)
+            throws RemoteException {
+        Preconditions.checkNotNull(url, "url");
+        Preconditions.checkNotNull(initialValues, "initialValues");
+
+        beforeRemote();
         try {
             return mContentProvider.bulkInsert(mPackageName, url, initialValues);
         } catch (DeadObjectException e) {
@@ -139,12 +266,17 @@ public class ContentProviderClient {
                 mContentResolver.unstableProviderDied(mContentProvider);
             }
             throw e;
+        } finally {
+            afterRemote();
         }
     }
 
     /** See {@link ContentProvider#delete ContentProvider.delete} */
-    public int delete(Uri url, String selection, String[] selectionArgs)
-            throws RemoteException {
+    public int delete(@NonNull Uri url, @Nullable String selection,
+            @Nullable String[] selectionArgs) throws RemoteException {
+        Preconditions.checkNotNull(url, "url");
+
+        beforeRemote();
         try {
             return mContentProvider.delete(mPackageName, url, selection, selectionArgs);
         } catch (DeadObjectException e) {
@@ -152,12 +284,17 @@ public class ContentProviderClient {
                 mContentResolver.unstableProviderDied(mContentProvider);
             }
             throw e;
+        } finally {
+            afterRemote();
         }
     }
 
     /** See {@link ContentProvider#update ContentProvider.update} */
-    public int update(Uri url, ContentValues values, String selection,
-            String[] selectionArgs) throws RemoteException {
+    public int update(@NonNull Uri url, @Nullable ContentValues values, @Nullable String selection,
+            @Nullable String[] selectionArgs) throws RemoteException {
+        Preconditions.checkNotNull(url, "url");
+
+        beforeRemote();
         try {
             return mContentProvider.update(mPackageName, url, values, selection, selectionArgs);
         } catch (DeadObjectException e) {
@@ -165,6 +302,8 @@ public class ContentProviderClient {
                 mContentResolver.unstableProviderDied(mContentProvider);
             }
             throw e;
+        } finally {
+            afterRemote();
         }
     }
 
@@ -175,15 +314,39 @@ public class ContentProviderClient {
      * you use the {@link ContentResolver#openFileDescriptor
      * ContentResolver.openFileDescriptor} API instead.
      */
-    public ParcelFileDescriptor openFile(Uri url, String mode)
+    public @Nullable ParcelFileDescriptor openFile(@NonNull Uri url, @NonNull String mode)
             throws RemoteException, FileNotFoundException {
+        return openFile(url, mode, null);
+    }
+
+    /**
+     * See {@link ContentProvider#openFile ContentProvider.openFile}.  Note that
+     * this <em>does not</em>
+     * take care of non-content: URIs such as file:.  It is strongly recommended
+     * you use the {@link ContentResolver#openFileDescriptor
+     * ContentResolver.openFileDescriptor} API instead.
+     */
+    public @Nullable ParcelFileDescriptor openFile(@NonNull Uri url, @NonNull String mode,
+            @Nullable CancellationSignal signal) throws RemoteException, FileNotFoundException {
+        Preconditions.checkNotNull(url, "url");
+        Preconditions.checkNotNull(mode, "mode");
+
+        beforeRemote();
         try {
-            return mContentProvider.openFile(mPackageName, url, mode);
+            ICancellationSignal remoteSignal = null;
+            if (signal != null) {
+                signal.throwIfCanceled();
+                remoteSignal = mContentProvider.createCancellationSignal();
+                signal.setRemote(remoteSignal);
+            }
+            return mContentProvider.openFile(mPackageName, url, mode, remoteSignal, null);
         } catch (DeadObjectException e) {
             if (!mStable) {
                 mContentResolver.unstableProviderDied(mContentProvider);
             }
             throw e;
+        } finally {
+            afterRemote();
         }
     }
 
@@ -194,35 +357,83 @@ public class ContentProviderClient {
      * you use the {@link ContentResolver#openAssetFileDescriptor
      * ContentResolver.openAssetFileDescriptor} API instead.
      */
-    public AssetFileDescriptor openAssetFile(Uri url, String mode)
+    public @Nullable AssetFileDescriptor openAssetFile(@NonNull Uri url, @NonNull String mode)
             throws RemoteException, FileNotFoundException {
+        return openAssetFile(url, mode, null);
+    }
+
+    /**
+     * See {@link ContentProvider#openAssetFile ContentProvider.openAssetFile}.
+     * Note that this <em>does not</em>
+     * take care of non-content: URIs such as file:.  It is strongly recommended
+     * you use the {@link ContentResolver#openAssetFileDescriptor
+     * ContentResolver.openAssetFileDescriptor} API instead.
+     */
+    public @Nullable AssetFileDescriptor openAssetFile(@NonNull Uri url, @NonNull String mode,
+            @Nullable CancellationSignal signal) throws RemoteException, FileNotFoundException {
+        Preconditions.checkNotNull(url, "url");
+        Preconditions.checkNotNull(mode, "mode");
+
+        beforeRemote();
         try {
-            return mContentProvider.openAssetFile(mPackageName, url, mode);
+            ICancellationSignal remoteSignal = null;
+            if (signal != null) {
+                signal.throwIfCanceled();
+                remoteSignal = mContentProvider.createCancellationSignal();
+                signal.setRemote(remoteSignal);
+            }
+            return mContentProvider.openAssetFile(mPackageName, url, mode, remoteSignal);
         } catch (DeadObjectException e) {
             if (!mStable) {
                 mContentResolver.unstableProviderDied(mContentProvider);
             }
             throw e;
+        } finally {
+            afterRemote();
         }
     }
 
     /** See {@link ContentProvider#openTypedAssetFile ContentProvider.openTypedAssetFile} */
-    public final AssetFileDescriptor openTypedAssetFileDescriptor(Uri uri,
-            String mimeType, Bundle opts)
-            throws RemoteException, FileNotFoundException {
+    public final @Nullable AssetFileDescriptor openTypedAssetFileDescriptor(@NonNull Uri uri,
+            @NonNull String mimeType, @Nullable Bundle opts)
+                    throws RemoteException, FileNotFoundException {
+        return openTypedAssetFileDescriptor(uri, mimeType, opts, null);
+    }
+
+    /** See {@link ContentProvider#openTypedAssetFile ContentProvider.openTypedAssetFile} */
+    public final @Nullable AssetFileDescriptor openTypedAssetFileDescriptor(@NonNull Uri uri,
+            @NonNull String mimeType, @Nullable Bundle opts, @Nullable CancellationSignal signal)
+                    throws RemoteException, FileNotFoundException {
+        Preconditions.checkNotNull(uri, "uri");
+        Preconditions.checkNotNull(mimeType, "mimeType");
+
+        beforeRemote();
         try {
-            return mContentProvider.openTypedAssetFile(mPackageName, uri, mimeType, opts);
+            ICancellationSignal remoteSignal = null;
+            if (signal != null) {
+                signal.throwIfCanceled();
+                remoteSignal = mContentProvider.createCancellationSignal();
+                signal.setRemote(remoteSignal);
+            }
+            return mContentProvider.openTypedAssetFile(
+                    mPackageName, uri, mimeType, opts, remoteSignal);
         } catch (DeadObjectException e) {
             if (!mStable) {
                 mContentResolver.unstableProviderDied(mContentProvider);
             }
             throw e;
+        } finally {
+            afterRemote();
         }
     }
 
     /** See {@link ContentProvider#applyBatch ContentProvider.applyBatch} */
-    public ContentProviderResult[] applyBatch(ArrayList<ContentProviderOperation> operations)
-            throws RemoteException, OperationApplicationException {
+    public @NonNull ContentProviderResult[] applyBatch(
+            @NonNull ArrayList<ContentProviderOperation> operations)
+                    throws RemoteException, OperationApplicationException {
+        Preconditions.checkNotNull(operations, "operations");
+
+        beforeRemote();
         try {
             return mContentProvider.applyBatch(mPackageName, operations);
         } catch (DeadObjectException e) {
@@ -230,12 +441,17 @@ public class ContentProviderClient {
                 mContentResolver.unstableProviderDied(mContentProvider);
             }
             throw e;
+        } finally {
+            afterRemote();
         }
     }
 
     /** See {@link ContentProvider#call(String, String, Bundle)} */
-    public Bundle call(String method, String arg, Bundle extras)
-            throws RemoteException {
+    public @Nullable Bundle call(@NonNull String method, @Nullable String arg,
+            @Nullable Bundle extras) throws RemoteException {
+        Preconditions.checkNotNull(method, "method");
+
+        beforeRemote();
         try {
             return mContentProvider.call(mPackageName, method, arg, extras);
         } catch (DeadObjectException e) {
@@ -243,25 +459,48 @@ public class ContentProviderClient {
                 mContentResolver.unstableProviderDied(mContentProvider);
             }
             throw e;
+        } finally {
+            afterRemote();
         }
     }
 
     /**
-     * Call this to indicate to the system that the associated {@link ContentProvider} is no
-     * longer needed by this {@link ContentProviderClient}.
-     * @return true if this was release, false if it was already released
+     * Closes this client connection, indicating to the system that the
+     * underlying {@link ContentProvider} is no longer needed.
      */
+    @Override
+    public void close() {
+        closeInternal();
+    }
+
+    /**
+     * @deprecated replaced by {@link #close()}.
+     */
+    @Deprecated
     public boolean release() {
-        synchronized (this) {
-            if (mReleased) {
-                throw new IllegalStateException("Already released");
-            }
-            mReleased = true;
+        return closeInternal();
+    }
+
+    private boolean closeInternal() {
+        mCloseGuard.close();
+        if (mClosed.compareAndSet(false, true)) {
             if (mStable) {
                 return mContentResolver.releaseProvider(mContentProvider);
             } else {
                 return mContentResolver.releaseUnstableProvider(mContentProvider);
             }
+        } else {
+            return false;
+        }
+    }
+
+    @Override
+    protected void finalize() throws Throwable {
+        try {
+            mCloseGuard.warnIfOpen();
+            close();
+        } finally {
+            super.finalize();
         }
     }
 
@@ -274,7 +513,50 @@ public class ContentProviderClient {
      * @return If the associated {@link ContentProvider} is local, returns it.
      * Otherwise returns null.
      */
-    public ContentProvider getLocalContentProvider() {
+    public @Nullable ContentProvider getLocalContentProvider() {
         return ContentProvider.coerceToLocalContentProvider(mContentProvider);
+    }
+
+    /** {@hide} */
+    public static void releaseQuietly(ContentProviderClient client) {
+        if (client != null) {
+            try {
+                client.release();
+            } catch (Exception ignored) {
+            }
+        }
+    }
+
+    private class NotRespondingRunnable implements Runnable {
+        @Override
+        public void run() {
+            Log.w(TAG, "Detected provider not responding: " + mContentProvider);
+            mContentResolver.appNotRespondingViaProvider(mContentProvider);
+        }
+    }
+
+    private final class CursorWrapperInner extends CrossProcessCursorWrapper {
+        private final CloseGuard mCloseGuard = CloseGuard.get();
+
+        CursorWrapperInner(Cursor cursor) {
+            super(cursor);
+            mCloseGuard.open("close");
+        }
+
+        @Override
+        public void close() {
+            mCloseGuard.close();
+            super.close();
+        }
+
+        @Override
+        protected void finalize() throws Throwable {
+            try {
+                mCloseGuard.warnIfOpen();
+                close();
+            } finally {
+                super.finalize();
+            }
+        }
     }
 }

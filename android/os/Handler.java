@@ -73,6 +73,9 @@ public class Handler {
     /**
      * Callback interface you can use when instantiating a Handler to avoid
      * having to implement your own subclass of Handler.
+     *
+     * @param msg A {@link android.os.Message Message} object
+     * @return True if no further handling is desired
      */
     public interface Callback {
         public boolean handleMessage(Message msg);
@@ -153,7 +156,7 @@ public class Handler {
      * one that is strictly asynchronous.
      *
      * Asynchronous messages represent interrupts or events that do not require global ordering
-     * with represent to synchronous messages.  Asynchronous messages are not subject to
+     * with respect to synchronous messages.  Asynchronous messages are not subject to
      * the synchronization barriers introduced by {@link MessageQueue#enqueueSyncBarrier(long)}.
      *
      * @param async If true, the handler calls {@link Message#setAsynchronous(boolean)} for
@@ -173,7 +176,7 @@ public class Handler {
      * one that is strictly asynchronous.
      *
      * Asynchronous messages represent interrupts or events that do not require global ordering
-     * with represent to synchronous messages.  Asynchronous messages are not subject to
+     * with respect to synchronous messages.  Asynchronous messages are not subject to
      * the synchronization barriers introduced by {@link MessageQueue#enqueueSyncBarrier(long)}.
      *
      * @param callback The callback interface in which to handle messages, or null.
@@ -211,7 +214,7 @@ public class Handler {
      * one that is strictly asynchronous.
      *
      * Asynchronous messages represent interrupts or events that do not require global ordering
-     * with represent to synchronous messages.  Asynchronous messages are not subject to
+     * with respect to synchronous messages.  Asynchronous messages are not subject to
      * the synchronization barriers introduced by {@link MessageQueue#enqueueSyncBarrier(long)}.
      *
      * @param looper The looper, must not be null.
@@ -226,6 +229,18 @@ public class Handler {
         mQueue = looper.mQueue;
         mCallback = callback;
         mAsynchronous = async;
+    }
+
+    /** {@hide} */
+    public String getTraceName(Message message) {
+        final StringBuilder sb = new StringBuilder();
+        sb.append(getClass().getName()).append(": ");
+        if (message.callback != null) {
+            sb.append(message.callback.getClass().getName());
+        } else {
+            sb.append("#").append(message.what);
+        }
+        return sb.toString();
     }
 
     /**
@@ -327,6 +342,7 @@ public class Handler {
      * Causes the Runnable r to be added to the message queue, to be run
      * at a specific time given by <var>uptimeMillis</var>.
      * <b>The time-base is {@link android.os.SystemClock#uptimeMillis}.</b>
+     * Time spent in deep sleep will add an additional delay to execution.
      * The runnable will be run on the thread to which this handler is attached.
      *
      * @param r The Runnable that will be executed.
@@ -349,6 +365,7 @@ public class Handler {
      * Causes the Runnable r to be added to the message queue, to be run
      * at a specific time given by <var>uptimeMillis</var>.
      * <b>The time-base is {@link android.os.SystemClock#uptimeMillis}.</b>
+     * Time spent in deep sleep will add an additional delay to execution.
      * The runnable will be run on the thread to which this handler is attached.
      *
      * @param r The Runnable that will be executed.
@@ -374,6 +391,8 @@ public class Handler {
      * after the specified amount of time elapses.
      * The runnable will be run on the thread to which this handler
      * is attached.
+     * <b>The time-base is {@link android.os.SystemClock#uptimeMillis}.</b>
+     * Time spent in deep sleep will add an additional delay to execution.
      *  
      * @param r The Runnable that will be executed.
      * @param delayMillis The delay (in milliseconds) until the Runnable
@@ -567,6 +586,7 @@ public class Handler {
      * Enqueue a message into the message queue after all pending messages
      * before the absolute time (in milliseconds) <var>uptimeMillis</var>.
      * <b>The time-base is {@link android.os.SystemClock#uptimeMillis}.</b>
+     * Time spent in deep sleep will add an additional delay to execution.
      * You will receive it in {@link #handleMessage}, in the thread attached
      * to this handler.
      * 
@@ -709,6 +729,7 @@ public class Handler {
 
     private final class MessengerImpl extends IMessenger.Stub {
         public void send(Message msg) {
+            msg.sendingUid = Binder.getCallingUid();
             Handler.this.sendMessage(msg);
         }
     }
@@ -730,8 +751,8 @@ public class Handler {
         message.callback.run();
     }
 
-    final MessageQueue mQueue;
     final Looper mLooper;
+    final MessageQueue mQueue;
     final Callback mCallback;
     final boolean mAsynchronous;
     IMessenger mMessenger;

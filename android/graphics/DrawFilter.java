@@ -24,17 +24,21 @@ package android.graphics;
  */
 public class DrawFilter {
 
-    // this is set by subclasses, but don't make it public
-    /* package */ int mNativeInt;    // pointer to native object
+    /**
+     * this is set by subclasses
+     * @hide
+     */
+    public long mNativeInt;
 
     protected void finalize() throws Throwable {
         try {
             nativeDestructor(mNativeInt);
+            mNativeInt = 0;
         } finally {
             super.finalize();
         }
     }
     
-    private static native void nativeDestructor(int nativeDrawFilter);
+    private static native void nativeDestructor(long nativeDrawFilter);
 }
 

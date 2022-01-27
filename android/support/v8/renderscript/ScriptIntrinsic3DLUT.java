@@ -20,13 +20,19 @@ import android.util.Log;
 
 /**
  *
- * @hide
+ * Intrinsic for converting RGB to RGBA by using a 3D lookup table.  The
+ * incoming r,g,b values are use as normalized x,y,z coordinates into a 3D
+ * allocation.  The 8 nearest values are sampled and linearly interpolated.  The
+ * result is placed in the output.
+ *
  **/
 public class ScriptIntrinsic3DLUT extends ScriptIntrinsic {
     private Allocation mLUT;
     private Element mElement;
+    // API level for the intrinsic
+    private static final int INTRINSIC_API_LEVEL = 19;
 
-    protected ScriptIntrinsic3DLUT(int id, RenderScript rs, Element e) {
+    protected ScriptIntrinsic3DLUT(long id, RenderScript rs, Element e) {
         super(id, rs);
         mElement = e;
     }
@@ -36,24 +42,34 @@ public class ScriptIntrinsic3DLUT extends ScriptIntrinsic {
      *
      * The defaults tables are identity.
      *
-     * @param rs The Renderscript context
+     * @param rs The RenderScript context
      * @param e Element type for intputs and outputs
      *
      * @return ScriptIntrinsic3DLUT
      */
     public static ScriptIntrinsic3DLUT create(RenderScript rs, Element e) {
-        if (rs.isNative) {
-            RenderScriptThunker rst = (RenderScriptThunker) rs;
-            return ScriptIntrinsic3DLUTThunker.create(rs, e);
-        }
-        int id = rs.nScriptIntrinsicCreate(8, e.getID(rs));
-
         if (!e.isCompatible(Element.U8_4(rs))) {
             throw new RSIllegalArgumentException("Element must be compatible with uchar4.");
         }
+        long id;
+        boolean mUseIncSupp = rs.isUseNative() &&
+                              android.os.Build.VERSION.SDK_INT < INTRINSIC_API_LEVEL;
 
-        return new ScriptIntrinsic3DLUT(id, rs, e);
+        id = rs.nScriptIntrinsicCreate(8, e.getID(rs), mUseIncSupp);
+
+        ScriptIntrinsic3DLUT si = new ScriptIntrinsic3DLUT(id, rs, e);
+        si.setIncSupp(mUseIncSupp);
+        return si;
     }
+
+    /**
+     * Sets the {@link android.support.v8.renderscript.Allocation} to be used as
+     * the lookup table.
+     *
+     * The lookup table must use the same
+     * {@link android.support.v8.renderscript.Element} as the intrinsic.
+     *
+     */
 
     public void setLUT(Allocation lut) {
         final Type t = lut.getType();

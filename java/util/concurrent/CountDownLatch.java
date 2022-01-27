@@ -5,7 +5,8 @@
  */
 
 package java.util.concurrent;
-import java.util.concurrent.locks.*;
+
+import java.util.concurrent.locks.AbstractQueuedSynchronizer;
 
 /**
  * A synchronization aid that allows one or more threads to wait until
@@ -43,7 +44,7 @@ import java.util.concurrent.locks.*;
  * until all workers have completed.
  * </ul>
  *
- *  <pre> {@code
+ * <pre> {@code
  * class Driver { // ...
  *   void main() throws InterruptedException {
  *     CountDownLatch startSignal = new CountDownLatch(1);
@@ -63,15 +64,15 @@ import java.util.concurrent.locks.*;
  *   private final CountDownLatch startSignal;
  *   private final CountDownLatch doneSignal;
  *   Worker(CountDownLatch startSignal, CountDownLatch doneSignal) {
- *      this.startSignal = startSignal;
- *      this.doneSignal = doneSignal;
+ *     this.startSignal = startSignal;
+ *     this.doneSignal = doneSignal;
  *   }
  *   public void run() {
- *      try {
- *        startSignal.await();
- *        doWork();
- *        doneSignal.countDown();
- *      } catch (InterruptedException ex) {} // return;
+ *     try {
+ *       startSignal.await();
+ *       doWork();
+ *       doneSignal.countDown();
+ *     } catch (InterruptedException ex) {} // return;
  *   }
  *
  *   void doWork() { ... }
@@ -84,7 +85,7 @@ import java.util.concurrent.locks.*;
  * will be able to pass through await. (When threads must repeatedly
  * count down in this way, instead use a {@link CyclicBarrier}.)
  *
- *  <pre> {@code
+ * <pre> {@code
  * class Driver2 { // ...
  *   void main() throws InterruptedException {
  *     CountDownLatch doneSignal = new CountDownLatch(N);
@@ -101,14 +102,14 @@ import java.util.concurrent.locks.*;
  *   private final CountDownLatch doneSignal;
  *   private final int i;
  *   WorkerRunnable(CountDownLatch doneSignal, int i) {
- *      this.doneSignal = doneSignal;
- *      this.i = i;
+ *     this.doneSignal = doneSignal;
+ *     this.i = i;
  *   }
  *   public void run() {
- *      try {
- *        doWork(i);
- *        doneSignal.countDown();
- *      } catch (InterruptedException ex) {} // return;
+ *     try {
+ *       doWork(i);
+ *       doneSignal.countDown();
+ *     } catch (InterruptedException ex) {} // return;
  *   }
  *
  *   void doWork() { ... }
@@ -150,7 +151,7 @@ public class CountDownLatch {
                 int c = getState();
                 if (c == 0)
                     return false;
-                int nextc = c-1;
+                int nextc = c - 1;
                 if (compareAndSetState(c, nextc))
                     return nextc == 0;
             }

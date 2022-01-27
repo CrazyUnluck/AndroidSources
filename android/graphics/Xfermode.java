@@ -33,12 +33,13 @@ public class Xfermode {
     protected void finalize() throws Throwable {
         try {
             finalizer(native_instance);
+            native_instance = 0;
         } finally {
             super.finalize();
         }
     }
 
-    private static native void finalizer(int native_instance);
+    private static native void finalizer(long native_instance);
 
-    int native_instance;
+    long native_instance;
 }

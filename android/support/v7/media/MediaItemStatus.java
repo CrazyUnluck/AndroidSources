@@ -24,10 +24,14 @@ import android.support.v4.util.TimeUtils;
 /**
  * Describes the playback status of a media item.
  * <p>
+ * This class is part of the remote playback protocol described by the
+ * {@link MediaControlIntent MediaControlIntent} class.
+ * </p><p>
  * As a media item is played, it transitions through a sequence of states including:
- * {@link #PLAYBACK_STATE_QUEUED queued}, {@link #PLAYBACK_STATE_BUFFERING buffering},
+ * {@link #PLAYBACK_STATE_PENDING pending}, {@link #PLAYBACK_STATE_BUFFERING buffering},
  * {@link #PLAYBACK_STATE_PLAYING playing}, {@link #PLAYBACK_STATE_PAUSED paused},
- * {@link #PLAYBACK_STATE_STOPPED stopped}, {@link #PLAYBACK_STATE_CANCELED canceled},
+ * {@link #PLAYBACK_STATE_FINISHED finished}, {@link #PLAYBACK_STATE_CANCELED canceled},
+ * {@link #PLAYBACK_STATE_INVALIDATED invalidated}, and
  * {@link #PLAYBACK_STATE_ERROR error}.  Refer to the documentation of each state
  * for an explanation of its meaning.
  * </p><p>
@@ -36,11 +40,11 @@ import android.support.v4.util.TimeUtils;
  * {@link #getContentDuration content duration} although not all route destinations
  * will report it.
  * </p><p>
- * To monitor playback status, the application should supply a {@link PendingIntent} to use
- * as the {@link MediaControlIntent#EXTRA_ITEM_STATUS_UPDATE_RECEIVER status update receiver}
+ * To monitor playback status, the application should supply a {@link PendingIntent} to use as the
+ * {@link MediaControlIntent#EXTRA_ITEM_STATUS_UPDATE_RECEIVER item status update receiver}
  * for a given {@link MediaControlIntent#ACTION_PLAY playback request}.  Note that
  * the status update receiver will only be invoked for major status changes such as a
- * transition from playing to stopped.
+ * transition from playing to finished.
  * </p><p class="note">
  * The status update receiver will not be invoked for minor progress updates such as
  * changes to playback position or duration.  If the application wants to monitor
@@ -58,18 +62,17 @@ public final class MediaItemStatus {
     private static final String KEY_PLAYBACK_STATE = "playbackState";
     private static final String KEY_CONTENT_POSITION = "contentPosition";
     private static final String KEY_CONTENT_DURATION = "contentDuration";
-    private static final String KEY_HTTP_STATUS_CODE = "httpStatusCode";
     private static final String KEY_EXTRAS = "extras";
 
     private final Bundle mBundle;
 
     /**
-     * Playback state: Queued.
+     * Playback state: Pending.
      * <p>
-     * Indicates that the media item is in the queue to be played eventually.
+     * Indicates that the media item has not yet started playback but will be played eventually.
      * </p>
      */
-    public static final int PLAYBACK_STATE_QUEUED = 0;
+    public static final int PLAYBACK_STATE_PENDING = 0;
 
     /**
      * Playback state: Playing.
@@ -82,15 +85,8 @@ public final class MediaItemStatus {
     /**
      * Playback state: Paused.
      * <p>
-     * Indicates that playback of the media item has been paused because the
-     * queue was paused.  Playback can be resumed playback by sending
-     * {@link MediaControlIntent#ACTION_RESUME_QUEUE} to resume playback of the queue.
-     * </p><p>
-     * Only the media item at the head of the queue enters the paused state when the
-     * queue is paused because that is the media item that would otherwise have been
-     * {@link #PLAYBACK_STATE_PLAYING playing}; other media items in the queue remain
-     * in the {@link #PLAYBACK_STATE_QUEUED queued} state until the head item
-     * finishes playing or is removed from the queue.
+     * Indicates that playback of the media item has been paused.  Playback can be
+     * resumed using the {@link MediaControlIntent#ACTION_RESUME resume} action.
      * </p>
      */
     public static final int PLAYBACK_STATE_PAUSED = 2;
@@ -99,39 +95,60 @@ public final class MediaItemStatus {
      * Playback state: Buffering or seeking to a new position.
      * <p>
      * Indicates that the media item has been temporarily interrupted
-     * to fetch more content.  Playback will resume automatically
+     * to fetch more content.  Playback will continue automatically
      * when enough content has been buffered.
      * </p>
      */
     public static final int PLAYBACK_STATE_BUFFERING = 3;
 
     /**
-     * Playback state: Stopped.
+     * Playback state: Finished.
      * <p>
-     * Indicates that the media item has been stopped permanently either because
-     * it reached the end of the content or because the user ended playback.
+     * Indicates that the media item played to the end of the content and finished normally.
      * </p><p>
-     * A stopped media item cannot be resumed.  To play the content again, the application
-     * must send a new {@link MediaControlIntent#ACTION_PLAY} action to enqueue
-     * a new playback request and obtain a new media item id from that request.
+     * A finished media item cannot be resumed.  To play the content again, the application
+     * must send a new {@link MediaControlIntent#ACTION_PLAY play} or
+     * {@link MediaControlIntent#ACTION_ENQUEUE enqueue} action.
      * </p>
      */
-    public static final int PLAYBACK_STATE_STOPPED = 4;
+    public static final int PLAYBACK_STATE_FINISHED = 4;
 
     /**
      * Playback state: Canceled.
      * <p>
-     * Indicates that the media item was canceled permanently.  This may
-     * happen because the media item was removed from the queue, the queue was
-     * cleared by the application, or the queue was invalidated by another playback
-     * request that resulted in the creation of a new queue.
+     * Indicates that the media item was explicitly removed from the queue by the
+     * application.  Items may be canceled and removed from the queue using
+     * the {@link MediaControlIntent#ACTION_REMOVE remove} or
+     * {@link MediaControlIntent#ACTION_STOP stop} action or by issuing
+     * another {@link MediaControlIntent#ACTION_PLAY play} action that has the
+     * side-effect of clearing the queue.
      * </p><p>
-     * A canceled media item cannot be resumed.  To play the content again, the application
-     * must send a new {@link MediaControlIntent#ACTION_PLAY} action to enqueue
-     * a new playback request and obtain a new media item id from that request.
+     * A canceled media item cannot be resumed.  To play the content again, the
+     * application must send a new {@link MediaControlIntent#ACTION_PLAY play} or
+     * {@link MediaControlIntent#ACTION_ENQUEUE enqueue} action.
      * </p>
      */
     public static final int PLAYBACK_STATE_CANCELED = 5;
+
+    /**
+     * Playback state: Invalidated.
+     * <p>
+     * Indicates that the media item was invalidated permanently and involuntarily.
+     * This state is used to indicate that the media item was invalidated and removed
+     * from the queue because the session to which it belongs was invalidated
+     * (typically by another application taking control of the route).
+     * </p><p>
+     * When invalidation occurs, the application should generally wait for the user
+     * to perform an explicit action, such as clicking on a play button in the UI,
+     * before creating a new media session to avoid unnecessarily interrupting
+     * another application that may have just started using the route.
+     * </p><p>
+     * An invalidated media item cannot be resumed.  To play the content again, the application
+     * must send a new {@link MediaControlIntent#ACTION_PLAY play} or
+     * {@link MediaControlIntent#ACTION_ENQUEUE enqueue} action.
+     * </p>
+     */
+    public static final int PLAYBACK_STATE_INVALIDATED = 6;
 
     /**
      * Playback state: Playback halted or aborted due to an error.
@@ -141,11 +158,42 @@ public final class MediaItemStatus {
      * content.
      * </p><p>
      * A media item in the error state cannot be resumed.  To play the content again,
-     * the application must send a new {@link MediaControlIntent#ACTION_PLAY} action to enqueue
-     * a new playback request and obtain a new media item id from that request.
+     * the application must send a new {@link MediaControlIntent#ACTION_PLAY play} or
+     * {@link MediaControlIntent#ACTION_ENQUEUE enqueue} action.
      * </p>
      */
-    public static final int PLAYBACK_STATE_ERROR = 6;
+    public static final int PLAYBACK_STATE_ERROR = 7;
+
+    /**
+     * Integer extra: HTTP status code.
+     * <p>
+     * Specifies the HTTP status code that was encountered when the content
+     * was requested after all redirects were followed.  This key only needs to
+     * specified when the content uri uses the HTTP or HTTPS scheme and an error
+     * occurred.  This key may be omitted if the content was able to be played
+     * successfully; there is no need to report a 200 (OK) status code.
+     * </p><p>
+     * The value is an integer HTTP status code, such as 401 (Unauthorized),
+     * 404 (Not Found), or 500 (Server Error), or 0 if none.
+     * </p>
+     */
+    public static final String EXTRA_HTTP_STATUS_CODE =
+            "android.media.status.extra.HTTP_STATUS_CODE";
+
+    /**
+     * Bundle extra: HTTP response headers.
+     * <p>
+     * Specifies the HTTP response headers that were returned when the content was
+     * requested from the network.  The headers may include additional information
+     * about the content or any errors conditions that were encountered while
+     * trying to fetch the content.
+     * </p><p>
+     * The value is a {@link android.os.Bundle} of string based key-value pairs
+     * that describe the HTTP response headers.
+     * </p>
+     */
+    public static final String EXTRA_HTTP_RESPONSE_HEADERS =
+            "android.media.status.extra.HTTP_RESPONSE_HEADERS";
 
     private MediaItemStatus(Bundle bundle) {
         mBundle = bundle;
@@ -164,13 +212,14 @@ public final class MediaItemStatus {
     /**
      * Gets the playback state of the media item.
      *
-     * @return The playback state.  One of {@link #PLAYBACK_STATE_QUEUED},
-     * {@link #PLAYBACK_STATE_PLAYING},
-     * {@link #PLAYBACK_STATE_PAUSED}, {@link #PLAYBACK_STATE_BUFFERING},
-     * {@link #PLAYBACK_STATE_CANCELED}, or {@link #PLAYBACK_STATE_ERROR}.
+     * @return The playback state.  One of {@link #PLAYBACK_STATE_PENDING},
+     * {@link #PLAYBACK_STATE_PLAYING}, {@link #PLAYBACK_STATE_PAUSED},
+     * {@link #PLAYBACK_STATE_BUFFERING}, {@link #PLAYBACK_STATE_FINISHED},
+     * {@link #PLAYBACK_STATE_CANCELED}, {@link #PLAYBACK_STATE_INVALIDATED},
+     * or {@link #PLAYBACK_STATE_ERROR}.
      */
     public int getPlaybackState() {
-        return mBundle.getInt(KEY_PLAYBACK_STATE, PLAYBACK_STATE_CANCELED);
+        return mBundle.getInt(KEY_PLAYBACK_STATE, PLAYBACK_STATE_ERROR);
     }
 
     /**
@@ -194,23 +243,6 @@ public final class MediaItemStatus {
     }
 
     /**
-     * Gets the associated HTTP status code.
-     * <p>
-     * Specifies the HTTP status code that was encountered when the content
-     * was requested after all redirects were followed.  This key only needs to
-     * specified when the content uri uses the HTTP or HTTPS scheme and an error
-     * occurred.  This key may be omitted if the content was able to be played
-     * successfully; there is no need to report a 200 (OK) status code.
-     * </p>
-     *
-     * @return The HTTP status code from playback such as 401 (Unauthorized), 404 (Not Found),
-     * or 500 (Server Error), or 0 if none.
-     */
-    public int getHttpStatusCode() {
-        return mBundle.getInt(KEY_HTTP_STATUS_CODE, 0);
-    }
-
-    /**
      * Gets a bundle of extras for this status object.
      * The extras will be ignored by the media router but they may be used
      * by applications.
@@ -226,13 +258,34 @@ public final class MediaItemStatus {
         result.append("timestamp=");
         TimeUtils.formatDuration(SystemClock.elapsedRealtime() - getTimestamp(), result);
         result.append(" ms ago");
-        result.append(", playbackState=").append(getPlaybackState());
+        result.append(", playbackState=").append(playbackStateToString(getPlaybackState()));
         result.append(", contentPosition=").append(getContentPosition());
         result.append(", contentDuration=").append(getContentDuration());
-        result.append(", httpStatusCode=").append(getHttpStatusCode());
         result.append(", extras=").append(getExtras());
         result.append(" }");
         return result.toString();
+    }
+
+    private static String playbackStateToString(int playbackState) {
+        switch (playbackState) {
+            case PLAYBACK_STATE_PENDING:
+                return "pending";
+            case PLAYBACK_STATE_BUFFERING:
+                return "buffering";
+            case PLAYBACK_STATE_PLAYING:
+                return "playing";
+            case PLAYBACK_STATE_PAUSED:
+                return "paused";
+            case PLAYBACK_STATE_FINISHED:
+                return "finished";
+            case PLAYBACK_STATE_CANCELED:
+                return "canceled";
+            case PLAYBACK_STATE_INVALIDATED:
+                return "invalidated";
+            case PLAYBACK_STATE_ERROR:
+                return "error";
+        }
+        return Integer.toString(playbackState);
     }
 
     /**
@@ -316,21 +369,6 @@ public final class MediaItemStatus {
          */
         public Builder setContentDuration(long durationMilliseconds) {
             mBundle.putLong(KEY_CONTENT_DURATION, durationMilliseconds);
-            return this;
-        }
-
-        /**
-         * Sets the associated HTTP status code.
-         * <p>
-         * Specifies the HTTP status code that was encountered when the content
-         * was requested after all redirects were followed.  This key only needs to
-         * specified when the content uri uses the HTTP or HTTPS scheme and an error
-         * occurred.  This key may be omitted if the content was able to be played
-         * successfully; there is no need to report a 200 (OK) status code.
-         * </p>
-         */
-        public Builder setHttpStatusCode(int httpStatusCode) {
-            mBundle.putInt(KEY_HTTP_STATUS_CODE, httpStatusCode);
             return this;
         }
 

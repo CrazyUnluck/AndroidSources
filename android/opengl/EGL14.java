@@ -1,5 +1,4 @@
 /*
-**
 ** Copyright 2012, The Android Open Source Project
 **
 ** Licensed under the Apache License, Version 2.0 (the "License");
@@ -159,6 +158,13 @@ public static final int EGL_CORE_NATIVE_ENGINE             = 0x305B;
 
     public static native EGLDisplay eglGetDisplay(
         int display_id
+    );
+
+    /**
+     * {@hide}
+     */
+    public static native EGLDisplay eglGetDisplay(
+        long display_id
     );
 
     // C function EGLBoolean eglInitialize ( EGLDisplay dpy, EGLint *major, EGLint *minor )
@@ -325,11 +331,23 @@ public static final int EGL_CORE_NATIVE_ENGINE             = 0x305B;
     );
 
     // C function EGLSurface eglCreatePbufferFromClientBuffer ( EGLDisplay dpy, EGLenum buftype, EGLClientBuffer buffer, EGLConfig config, const EGLint *attrib_list )
-
+    // TODO Deprecate the below method
     public static native EGLSurface eglCreatePbufferFromClientBuffer(
         EGLDisplay dpy,
         int buftype,
         int buffer,
+        EGLConfig config,
+        int[] attrib_list,
+        int offset
+    );
+    // TODO Unhide the below method
+    /**
+     * {@hide}
+     */
+    public static native EGLSurface eglCreatePbufferFromClientBuffer(
+        EGLDisplay dpy,
+        int buftype,
+        long buffer,
         EGLConfig config,
         int[] attrib_list,
         int offset

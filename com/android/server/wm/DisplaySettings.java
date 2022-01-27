@@ -16,32 +16,36 @@
 
 package com.android.server.wm;
 
-import android.content.Context;
+import static com.android.server.wm.WindowManagerDebugConfig.TAG_WITH_CLASS_NAME;
+import static com.android.server.wm.WindowManagerDebugConfig.TAG_WM;
+
 import android.graphics.Rect;
 import android.os.Environment;
 import android.util.AtomicFile;
 import android.util.Slog;
 import android.util.Xml;
+
 import com.android.internal.util.FastXmlSerializer;
 import com.android.internal.util.XmlUtils;
-import org.xmlpull.v1.XmlPullParser;
-import org.xmlpull.v1.XmlPullParserException;
-import org.xmlpull.v1.XmlSerializer;
 
 import java.io.File;
 import java.io.FileInputStream;
 import java.io.FileNotFoundException;
 import java.io.FileOutputStream;
 import java.io.IOException;
+import java.nio.charset.StandardCharsets;
 import java.util.HashMap;
+
+import org.xmlpull.v1.XmlPullParser;
+import org.xmlpull.v1.XmlPullParserException;
+import org.xmlpull.v1.XmlSerializer;
 
 /**
  * Current persistent settings about a display
  */
 public class DisplaySettings {
-    private static final String TAG = WindowManagerService.TAG;
+    private static final String TAG = TAG_WITH_CLASS_NAME ? "DisplaySettings" : TAG_WM;
 
-    private final Context mContext;
     private final AtomicFile mFile;
     private final HashMap<String, Entry> mEntries = new HashMap<String, Entry>();
 
@@ -57,15 +61,19 @@ public class DisplaySettings {
         }
     }
 
-    public DisplaySettings(Context context) {
-        mContext = context;
+    public DisplaySettings() {
         File dataDir = Environment.getDataDirectory();
         File systemDir = new File(dataDir, "system");
         mFile = new AtomicFile(new File(systemDir, "display_settings.xml"));
     }
 
-    public void getOverscanLocked(String name, Rect outRect) {
-        Entry entry = mEntries.get(name);
+    public void getOverscanLocked(String name, String uniqueId, Rect outRect) {
+        // Try to get the entry with the unique if possible.
+        // Else, fall back on the display name.
+        Entry entry;
+        if (uniqueId == null || (entry = mEntries.get(uniqueId)) == null) {
+            entry = mEntries.get(name);
+        }
         if (entry != null) {
             outRect.left = entry.overscanLeft;
             outRect.top = entry.overscanTop;
@@ -76,17 +84,20 @@ public class DisplaySettings {
         }
     }
 
-    public void setOverscanLocked(String name, int left, int top, int right, int bottom) {
+    public void setOverscanLocked(String uniqueId, String name, int left, int top, int right,
+            int bottom) {
         if (left == 0 && top == 0 && right == 0 && bottom == 0) {
             // Right now all we are storing is overscan; if there is no overscan,
             // we have no need for the entry.
+            mEntries.remove(uniqueId);
+            // Legacy name might have been in used, so we need to clear it.
             mEntries.remove(name);
             return;
         }
-        Entry entry = mEntries.get(name);
+        Entry entry = mEntries.get(uniqueId);
         if (entry == null) {
-            entry = new Entry(name);
-            mEntries.put(name, entry);
+            entry = new Entry(uniqueId);
+            mEntries.put(uniqueId, entry);
         }
         entry.overscanLeft = left;
         entry.overscanTop = top;
@@ -106,11 +117,11 @@ public class DisplaySettings {
         boolean success = false;
         try {
             XmlPullParser parser = Xml.newPullParser();
-            parser.setInput(stream, null);
+            parser.setInput(stream, StandardCharsets.UTF_8.name());
             int type;
             while ((type = parser.next()) != XmlPullParser.START_TAG
                     && type != XmlPullParser.END_DOCUMENT) {
-                ;
+                // Do nothing.
             }
 
             if (type != XmlPullParser.START_TAG) {
@@ -191,7 +202,7 @@ public class DisplaySettings {
 
         try {
             XmlSerializer out = new FastXmlSerializer();
-            out.setOutput(stream, "utf-8");
+            out.setOutput(stream, StandardCharsets.UTF_8.name());
             out.startDocument(null, true);
             out.startTag(null, "display-settings");
 

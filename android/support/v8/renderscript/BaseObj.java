@@ -17,22 +17,23 @@
 package android.support.v8.renderscript;
 
 import android.util.Log;
+import java.util.concurrent.locks.ReentrantReadWriteLock;
 
 /**
- * BaseObj is the base class for interfacing with native renderscript objects.
- * It primarly contains code for tracking the native object ID and forcably
- * disconecting the object from the native allocation for early cleanup.
+ * BaseObj is the base class for all RenderScript objects owned by a RS context.
+ * It is responsible for lifetime management and resource tracking. This class
+ * should not be used by a user application.
  *
  **/
 public class BaseObj {
-    BaseObj(int id, RenderScript rs) {
+    BaseObj(long id, RenderScript rs) {
         rs.validate();
         mRS = rs;
         mID = id;
         mDestroyed = false;
     }
 
-    void setID(int id) {
+    void setID(long id) {
         if (mID != 0) {
             throw new RSRuntimeException("Internal Error, reset of object ID.");
         }
@@ -46,16 +47,10 @@ public class BaseObj {
      * @param rs Context to verify against internal context for
      *           match.
      *
-     * @return int
+     * @return long
      */
-    int getID(RenderScript rs) {
+    long getID(RenderScript rs) {
         mRS.validate();
-        if (rs.isNative) {
-            RenderScriptThunker rst = (RenderScriptThunker)rs;
-            if (getNObj() != null) {
-                return getNObj().hashCode();
-            }
-        }
         if (mDestroyed) {
             throw new RSInvalidStateException("using a destroyed object.");
         }
@@ -78,36 +73,48 @@ public class BaseObj {
         }
     }
 
-    private int mID;
+    private long mID;
     private boolean mDestroyed;
     RenderScript mRS;
 
-    protected void finalize() throws Throwable {
-        if (!mDestroyed) {
-            if(mID != 0 && mRS.isAlive()) {
+    private void helpDestroy() {
+        boolean shouldDestroy = false;
+        synchronized(this) {
+            if (!mDestroyed) {
+                shouldDestroy = true;
+                mDestroyed = true;
+            }
+        }
+
+        if (shouldDestroy) {
+            // must include nObjDestroy in the critical section
+            ReentrantReadWriteLock.ReadLock rlock = mRS.mRWLock.readLock();
+            rlock.lock();
+            if(mRS.isAlive()) {
                 mRS.nObjDestroy(mID);
             }
+            rlock.unlock();
             mRS = null;
             mID = 0;
-            mDestroyed = true;
-            //Log.v(RenderScript.LOG_TAG, getClass() +
-            // " auto finalizing object without having released the RS reference.");
         }
+    }
+
+
+    protected void finalize() throws Throwable {
+        helpDestroy();
         super.finalize();
     }
 
     /**
-     * destroy disconnects the object from the native object effectively
-     * rendering this java object dead.  The primary use is to force immediate
-     * cleanup of resources when it is believed the GC will not respond quickly
-     * enough.
+     * Frees any native resources associated with this object.  The
+     * primary use is to force immediate cleanup of resources when it is
+     * believed the GC will not respond quickly enough.
      */
-    synchronized public void destroy() {
+    public void destroy() {
         if(mDestroyed) {
             throw new RSInvalidStateException("Object already destroyed.");
         }
-        mDestroyed = true;
-        mRS.nObjDestroy(mID);
+        helpDestroy();
     }
 
     /**
@@ -117,7 +124,7 @@ public class BaseObj {
      */
     @Override
     public int hashCode() {
-        return mID;
+        return (int)((mID & 0xfffffff) ^ (mID >> 32));
     }
 
     /**
@@ -132,6 +139,10 @@ public class BaseObj {
         // Early-out check to see if both BaseObjs are actually the same
         if (this == obj)
             return true;
+
+        if (obj == null) {
+            return false;
+        }
 
         if (getClass() != obj.getClass()) {
             return false;

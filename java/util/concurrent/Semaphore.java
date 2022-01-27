@@ -5,8 +5,9 @@
  */
 
 package java.util.concurrent;
-import java.util.*;
-import java.util.concurrent.locks.*;
+
+import java.util.Collection;
+import java.util.concurrent.locks.AbstractQueuedSynchronizer;
 
 /**
  * A counting semaphore.  Conceptually, a semaphore maintains a set of
@@ -19,7 +20,7 @@ import java.util.concurrent.locks.*;
  * <p>Semaphores are often used to restrict the number of threads than can
  * access some (physical or logical) resource. For example, here is
  * a class that uses a semaphore to control access to a pool of items:
- *  <pre> {@code
+ * <pre> {@code
  * class Pool {
  *   private static final int MAX_AVAILABLE = 100;
  *   private final Semaphore available = new Semaphore(MAX_AVAILABLE, true);
@@ -79,13 +80,13 @@ import java.util.concurrent.locks.*;
  * exclusion lock.  This is more commonly known as a <em>binary
  * semaphore</em>, because it only has two states: one permit
  * available, or zero permits available.  When used in this way, the
- * binary semaphore has the property (unlike many {@link Lock}
+ * binary semaphore has the property (unlike many {@link java.util.concurrent.locks.Lock}
  * implementations), that the &quot;lock&quot; can be released by a
  * thread other than the owner (as semaphores have no notion of
  * ownership).  This can be useful in some specialized contexts, such
  * as deadlock recovery.
  *
- * <p> The constructor for this class optionally accepts a
+ * <p>The constructor for this class optionally accepts a
  * <em>fairness</em> parameter. When set false, this class makes no
  * guarantees about the order in which threads acquire permits. In
  * particular, <em>barging</em> is permitted, that is, a thread
@@ -112,8 +113,13 @@ import java.util.concurrent.locks.*;
  *
  * <p>This class also provides convenience methods to {@link
  * #acquire(int) acquire} and {@link #release(int) release} multiple
- * permits at a time.  Beware of the increased risk of indefinite
- * postponement when these methods are used without fairness set true.
+ * permits at a time. These methods are generally more efficient and
+ * effective than loops. However, they do not establish any preference
+ * order. For example, if thread A invokes {@code s.acquire(3}) and
+ * thread B invokes {@code s.acquire(2)}, and two permits become
+ * available, then there is no guarantee that thread B will obtain
+ * them unless its acquire came first and Semaphore {@code s} is in
+ * fair mode.
  *
  * <p>Memory consistency effects: Actions in a thread prior to calling
  * a "release" method such as {@code release()}
@@ -123,9 +129,7 @@ import java.util.concurrent.locks.*;
  *
  * @since 1.5
  * @author Doug Lea
- *
  */
-
 public class Semaphore implements java.io.Serializable {
     private static final long serialVersionUID = -3222578661600680210L;
     /** All mechanics via AbstractQueuedSynchronizer subclass */
@@ -406,14 +410,16 @@ public class Semaphore implements java.io.Serializable {
      *
      * <p>Acquires the given number of permits, if they are available,
      * and returns immediately, reducing the number of available permits
-     * by the given amount.
+     * by the given amount. This method has the same effect as the
+     * loop {@code for (int i = 0; i < permits; ++i) acquire();} except
+     * that it atomically acquires the permits all at once:
      *
      * <p>If insufficient permits are available then the current thread becomes
      * disabled for thread scheduling purposes and lies dormant until
      * one of two things happens:
      * <ul>
      * <li>Some other thread invokes one of the {@link #release() release}
-     * methods for this semaphore, the current thread is next to be assigned
+     * methods for this semaphore and the current thread is next to be assigned
      * permits and the number of available permits satisfies this request; or
      * <li>Some other thread {@linkplain Thread#interrupt interrupts}
      * the current thread.
@@ -446,12 +452,14 @@ public class Semaphore implements java.io.Serializable {
      *
      * <p>Acquires the given number of permits, if they are available,
      * and returns immediately, reducing the number of available permits
-     * by the given amount.
+     * by the given amount. This method has the same effect as the
+     * loop {@code for (int i = 0; i < permits; ++i) acquireUninterruptibly();}
+     * except that it atomically acquires the permits all at once:
      *
      * <p>If insufficient permits are available then the current thread becomes
      * disabled for thread scheduling purposes and lies dormant until
      * some other thread invokes one of the {@link #release() release}
-     * methods for this semaphore, the current thread is next to be assigned
+     * methods for this semaphore and the current thread is next to be assigned
      * permits and the number of available permits satisfies this request.
      *
      * <p>If the current thread is {@linkplain Thread#interrupt interrupted}
@@ -461,7 +469,6 @@ public class Semaphore implements java.io.Serializable {
      *
      * @param permits the number of permits to acquire
      * @throws IllegalArgumentException if {@code permits} is negative
-     *
      */
     public void acquireUninterruptibly(int permits) {
         if (permits < 0) throw new IllegalArgumentException();
@@ -514,7 +521,7 @@ public class Semaphore implements java.io.Serializable {
      * purposes and lies dormant until one of three things happens:
      * <ul>
      * <li>Some other thread invokes one of the {@link #release() release}
-     * methods for this semaphore, the current thread is next to be assigned
+     * methods for this semaphore and the current thread is next to be assigned
      * permits and the number of available permits satisfies this request; or
      * <li>Some other thread {@linkplain Thread#interrupt interrupts}
      * the current thread; or
@@ -561,7 +568,7 @@ public class Semaphore implements java.io.Serializable {
      *
      * <p>Releases the given number of permits, increasing the number of
      * available permits by that amount.
-     * If any threads are trying to acquire permits, then one
+     * If any threads are trying to acquire permits, then one thread
      * is selected and given the permits that were just released.
      * If the number of available permits satisfies that thread's request
      * then that thread is (re)enabled for thread scheduling purposes;
@@ -645,7 +652,7 @@ public class Semaphore implements java.io.Serializable {
      * Returns an estimate of the number of threads waiting to acquire.
      * The value is only an estimate because the number of threads may
      * change dynamically while this method traverses internal data
-     * structures.  This method is designed for use in monitoring of the
+     * structures.  This method is designed for use in monitoring
      * system state, not for synchronization control.
      *
      * @return the estimated number of threads waiting for this lock

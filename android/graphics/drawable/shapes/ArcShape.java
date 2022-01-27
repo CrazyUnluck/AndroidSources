@@ -17,8 +17,8 @@
 package android.graphics.drawable.shapes;
 
 import android.graphics.Canvas;
+import android.graphics.Outline;
 import android.graphics.Paint;
-import android.graphics.RectF;
 
 /**
  * Creates an arc shape. The arc shape starts at a specified
@@ -46,6 +46,12 @@ public class ArcShape extends RectShape {
     @Override
     public void draw(Canvas canvas, Paint paint) {
         canvas.drawArc(rect(), mStart, mSweep, true, paint);
+    }
+
+    @Override
+    public void getOutline(Outline outline) {
+        // Since we don't support concave outlines, arc shape does not attempt
+        // to provide an outline.
     }
 }
 

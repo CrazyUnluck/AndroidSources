@@ -16,11 +16,20 @@
 
 package android.graphics.drawable;
 
+import android.annotation.ColorInt;
+import android.annotation.NonNull;
+import android.content.pm.ActivityInfo.Config;
 import android.graphics.*;
+import android.graphics.PorterDuff.Mode;
+import android.content.res.ColorStateList;
 import android.content.res.Resources;
+import android.content.res.Resources.Theme;
 import android.content.res.TypedArray;
 import android.util.AttributeSet;
 import android.view.ViewDebug;
+
+import com.android.internal.R;
+
 import org.xmlpull.v1.XmlPullParser;
 import org.xmlpull.v1.XmlPullParserException;
 
@@ -35,16 +44,19 @@ import java.io.IOException;
  * @attr ref android.R.styleable#ColorDrawable_color
  */
 public class ColorDrawable extends Drawable {
+    private final Paint mPaint = new Paint(Paint.ANTI_ALIAS_FLAG);
+
     @ViewDebug.ExportedProperty(deepExport = true, prefix = "state_")
-    private ColorState mState;
-    private final Paint mPaint = new Paint();
+    private ColorState mColorState;
+    private PorterDuffColorFilter mTintFilter;
+
     private boolean mMutated;
 
     /**
      * Creates a new black ColorDrawable.
      */
     public ColorDrawable() {
-        this(null);
+        mColorState = new ColorState();
     }
 
     /**
@@ -52,18 +64,15 @@ public class ColorDrawable extends Drawable {
      *
      * @param color The color to draw.
      */
-    public ColorDrawable(int color) {
-        this(null);
+    public ColorDrawable(@ColorInt int color) {
+        mColorState = new ColorState();
+
         setColor(color);
     }
 
-    private ColorDrawable(ColorState state) {
-        mState = new ColorState(state);
-    }
-
     @Override
-    public int getChangingConfigurations() {
-        return super.getChangingConfigurations() | mState.mChangingConfigurations;
+    public @Config int getChangingConfigurations() {
+        return super.getChangingConfigurations() | mColorState.getChangingConfigurations();
     }
 
     /**
@@ -75,17 +84,33 @@ public class ColorDrawable extends Drawable {
     @Override
     public Drawable mutate() {
         if (!mMutated && super.mutate() == this) {
-            mState = new ColorState(mState);
+            mColorState = new ColorState(mColorState);
             mMutated = true;
         }
         return this;
     }
 
+    /**
+     * @hide
+     */
+    public void clearMutated() {
+        super.clearMutated();
+        mMutated = false;
+    }
+
     @Override
     public void draw(Canvas canvas) {
-        if ((mState.mUseColor >>> 24) != 0) {
-            mPaint.setColor(mState.mUseColor);
+        final ColorFilter colorFilter = mPaint.getColorFilter();
+        if ((mColorState.mUseColor >>> 24) != 0 || colorFilter != null || mTintFilter != null) {
+            if (colorFilter == null) {
+                mPaint.setColorFilter(mTintFilter);
+            }
+
+            mPaint.setColor(mColorState.mUseColor);
             canvas.drawRect(getBounds(), mPaint);
+
+            // Restore original color filter.
+            mPaint.setColorFilter(colorFilter);
         }
     }
 
@@ -94,20 +119,22 @@ public class ColorDrawable extends Drawable {
      *
      * @return int The color to draw.
      */
+    @ColorInt
     public int getColor() {
-        return mState.mUseColor;
+        return mColorState.mUseColor;
     }
 
     /**
-     * Sets the drawable's color value. This action will clobber the results of prior calls to
-     * {@link #setAlpha(int)} on this object, which side-affected the underlying color.
+     * Sets the drawable's color value. This action will clobber the results of
+     * prior calls to {@link #setAlpha(int)} on this object, which side-affected
+     * the underlying color.
      *
      * @param color The color to draw.
      */
-    public void setColor(int color) {
-        if (mState.mBaseColor != color || mState.mUseColor != color) {
+    public void setColor(@ColorInt int color) {
+        if (mColorState.mBaseColor != color || mColorState.mUseColor != color) {
+            mColorState.mBaseColor = mColorState.mUseColor = color;
             invalidateSelf();
-            mState.mBaseColor = mState.mUseColor = color;
         }
     }
 
@@ -116,8 +143,9 @@ public class ColorDrawable extends Drawable {
      *
      * @return A value between 0 and 255.
      */
+    @Override
     public int getAlpha() {
-        return mState.mUseColor >>> 24;
+        return mColorState.mUseColor >>> 24;
     }
 
     /**
@@ -125,27 +153,67 @@ public class ColorDrawable extends Drawable {
      *
      * @param alpha The alpha value to set, between 0 and 255.
      */
+    @Override
     public void setAlpha(int alpha) {
         alpha += alpha >> 7;   // make it 0..256
-        int baseAlpha = mState.mBaseColor >>> 24;
-        int useAlpha = baseAlpha * alpha >> 8;
-        int oldUseColor = mState.mUseColor;
-        mState.mUseColor = (mState.mBaseColor << 8 >>> 8) | (useAlpha << 24);
-        if (oldUseColor != mState.mUseColor) {
+        final int baseAlpha = mColorState.mBaseColor >>> 24;
+        final int useAlpha = baseAlpha * alpha >> 8;
+        final int useColor = (mColorState.mBaseColor << 8 >>> 8) | (useAlpha << 24);
+        if (mColorState.mUseColor != useColor) {
+            mColorState.mUseColor = useColor;
             invalidateSelf();
         }
     }
 
     /**
-     * Setting a color filter on a ColorDrawable has no effect.
+     * Sets the color filter applied to this color.
+     * <p>
+     * Only supported on version {@link android.os.Build.VERSION_CODES#LOLLIPOP} and
+     * above. Calling this method has no effect on earlier versions.
      *
-     * @param colorFilter Ignore.
+     * @see android.graphics.drawable.Drawable#setColorFilter(ColorFilter)
      */
+    @Override
     public void setColorFilter(ColorFilter colorFilter) {
+        mPaint.setColorFilter(colorFilter);
     }
 
+    @Override
+    public void setTintList(ColorStateList tint) {
+        mColorState.mTint = tint;
+        mTintFilter = updateTintFilter(mTintFilter, tint, mColorState.mTintMode);
+        invalidateSelf();
+    }
+
+    @Override
+    public void setTintMode(Mode tintMode) {
+        mColorState.mTintMode = tintMode;
+        mTintFilter = updateTintFilter(mTintFilter, mColorState.mTint, tintMode);
+        invalidateSelf();
+    }
+
+    @Override
+    protected boolean onStateChange(int[] stateSet) {
+        final ColorState state = mColorState;
+        if (state.mTint != null && state.mTintMode != null) {
+            mTintFilter = updateTintFilter(mTintFilter, state.mTint, state.mTintMode);
+            return true;
+        }
+        return false;
+    }
+
+    @Override
+    public boolean isStateful() {
+        return mColorState.mTint != null && mColorState.mTint.isStateful();
+    }
+
+    @Override
     public int getOpacity() {
-        switch (mState.mUseColor >>> 24) {
+        if (mTintFilter != null || mPaint.getColorFilter() != null) {
+            return PixelFormat.TRANSLUCENT;
+        }
+
+        switch (mColorState.mUseColor >>> 24) {
             case 255:
                 return PixelFormat.OPAQUE;
             case 0:
@@ -155,52 +223,128 @@ public class ColorDrawable extends Drawable {
     }
 
     @Override
-    public void inflate(Resources r, XmlPullParser parser, AttributeSet attrs)
+    public void getOutline(@NonNull Outline outline) {
+        outline.setRect(getBounds());
+        outline.setAlpha(getAlpha() / 255.0f);
+    }
+
+    @Override
+    public void inflate(Resources r, XmlPullParser parser, AttributeSet attrs, Theme theme)
             throws XmlPullParserException, IOException {
-        super.inflate(r, parser, attrs);
+        super.inflate(r, parser, attrs, theme);
 
-        TypedArray a = r.obtainAttributes(attrs, com.android.internal.R.styleable.ColorDrawable);
-
-        int color = mState.mBaseColor;
-        color = a.getColor(com.android.internal.R.styleable.ColorDrawable_color, color);
-        mState.mBaseColor = mState.mUseColor = color;
-
+        final TypedArray a = obtainAttributes(r, theme, attrs, R.styleable.ColorDrawable);
+        updateStateFromTypedArray(a);
         a.recycle();
+
+        updateLocalState(r);
+    }
+
+    /**
+     * Updates the constant state from the values in the typed array.
+     */
+    private void updateStateFromTypedArray(TypedArray a) {
+        final ColorState state = mColorState;
+
+        // Account for any configuration changes.
+        state.mChangingConfigurations |= a.getChangingConfigurations();
+
+        // Extract the theme attributes, if any.
+        state.mThemeAttrs = a.extractThemeAttrs();
+
+        state.mBaseColor = a.getColor(R.styleable.ColorDrawable_color, state.mBaseColor);
+        state.mUseColor = state.mBaseColor;
+    }
+
+    @Override
+    public boolean canApplyTheme() {
+        return mColorState.canApplyTheme() || super.canApplyTheme();
+    }
+
+    @Override
+    public void applyTheme(Theme t) {
+        super.applyTheme(t);
+
+        final ColorState state = mColorState;
+        if (state == null) {
+            return;
+        }
+
+        if (state.mThemeAttrs != null) {
+            final TypedArray a = t.resolveAttributes(state.mThemeAttrs, R.styleable.ColorDrawable);
+            updateStateFromTypedArray(a);
+            a.recycle();
+        }
+
+        if (state.mTint != null && state.mTint.canApplyTheme()) {
+            state.mTint = state.mTint.obtainForTheme(t);
+        }
+
+        updateLocalState(t.getResources());
     }
 
     @Override
     public ConstantState getConstantState() {
-        mState.mChangingConfigurations = getChangingConfigurations();
-        return mState;
+        return mColorState;
     }
 
     final static class ColorState extends ConstantState {
+        int[] mThemeAttrs;
         int mBaseColor; // base color, independent of setAlpha()
         @ViewDebug.ExportedProperty
         int mUseColor;  // basecolor modulated by setAlpha()
-        int mChangingConfigurations;
+        @Config int mChangingConfigurations;
+        ColorStateList mTint = null;
+        Mode mTintMode = DEFAULT_TINT_MODE;
+
+        ColorState() {
+            // Empty constructor.
+        }
 
         ColorState(ColorState state) {
-            if (state != null) {
-                mBaseColor = state.mBaseColor;
-                mUseColor = state.mUseColor;
-                mChangingConfigurations = state.mChangingConfigurations;
-            }
+            mThemeAttrs = state.mThemeAttrs;
+            mBaseColor = state.mBaseColor;
+            mUseColor = state.mUseColor;
+            mChangingConfigurations = state.mChangingConfigurations;
+            mTint = state.mTint;
+            mTintMode = state.mTintMode;
+        }
+
+        @Override
+        public boolean canApplyTheme() {
+            return mThemeAttrs != null
+                    || (mTint != null && mTint.canApplyTheme());
         }
 
         @Override
         public Drawable newDrawable() {
-            return new ColorDrawable(this);
+            return new ColorDrawable(this, null);
         }
 
         @Override
         public Drawable newDrawable(Resources res) {
-            return new ColorDrawable(this);
+            return new ColorDrawable(this, res);
         }
 
         @Override
-        public int getChangingConfigurations() {
-            return mChangingConfigurations;
+        public @Config int getChangingConfigurations() {
+            return mChangingConfigurations
+                    | (mTint != null ? mTint.getChangingConfigurations() : 0);
         }
+    }
+
+    private ColorDrawable(ColorState state, Resources res) {
+        mColorState = state;
+
+        updateLocalState(res);
+    }
+
+    /**
+     * Initializes local dynamic properties from state. This should be called
+     * after significant state changes, e.g. from the One True Constructor and
+     * after inflating or applying a theme.
+     */
+    private void updateLocalState(Resources r) {
+        mTintFilter = updateTintFilter(mTintFilter, mColorState.mTint, mColorState.mTintMode);
     }
 }
