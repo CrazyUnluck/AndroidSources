@@ -28,6 +28,7 @@ import android.os.Parcelable;
 import android.util.AndroidRuntimeException;
 import android.util.AttributeSet;
 import android.util.DebugUtils;
+import android.util.Log;
 import android.util.SparseArray;
 import android.view.ContextMenu;
 import android.view.ContextMenu.ContextMenuInfo;
@@ -108,7 +109,9 @@ final class FragmentState implements Parcelable {
         mInstance.mRetainInstance = mRetainInstance;
         mInstance.mDetached = mDetached;
         mInstance.mFragmentManager = activity.mFragments;
-        
+        if (FragmentManagerImpl.DEBUG) Log.v(FragmentManagerImpl.TAG,
+                "Instantiated fragment " + mInstance);
+
         return mInstance;
     }
     
@@ -203,7 +206,7 @@ final class FragmentState implements Parcelable {
  * <li> {@link #onCreateView} creates and returns the view hierarchy associated
  * with the fragment.
  * <li> {@link #onActivityCreated} tells the fragment that its activity has
- * completed its own {@link Activity#onCreate Activity.onCreaate}.
+ * completed its own {@link Activity#onCreate Activity.onCreate()}.
  * <li> {@link #onStart} makes the fragment visible to the user (based on its
  * containing activity being started).
  * <li> {@link #onResume} makes the fragment interacting with the user (based on its
@@ -961,27 +964,62 @@ public class Fragment implements ComponentCallbacks2, OnCreateContextMenuListene
         mLoaderManager = mActivity.getLoaderManager(mIndex, mLoadersStarted, true);
         return mLoaderManager;
     }
-    
+
     /**
      * Call {@link Activity#startActivity(Intent)} on the fragment's
      * containing Activity.
+     *
+     * @param intent The intent to start.
      */
     public void startActivity(Intent intent) {
+        startActivity(intent, null);
+    }
+    
+    /**
+     * Call {@link Activity#startActivity(Intent, Bundle)} on the fragment's
+     * containing Activity.
+     *
+     * @param intent The intent to start.
+     * @param options Additional options for how the Activity should be started.
+     * See {@link android.content.Context#startActivity(Intent, Bundle)
+     * Context.startActivity(Intent, Bundle)} for more details.
+     */
+    public void startActivity(Intent intent, Bundle options) {
         if (mActivity == null) {
             throw new IllegalStateException("Fragment " + this + " not attached to Activity");
         }
-        mActivity.startActivityFromFragment(this, intent, -1);
+        if (options != null) {
+            mActivity.startActivityFromFragment(this, intent, -1, options);
+        } else {
+            // Note we want to go through this call for compatibility with
+            // applications that may have overridden the method.
+            mActivity.startActivityFromFragment(this, intent, -1);
+        }
     }
-    
+
     /**
      * Call {@link Activity#startActivityForResult(Intent, int)} on the fragment's
      * containing Activity.
      */
     public void startActivityForResult(Intent intent, int requestCode) {
+        startActivityForResult(intent, requestCode, null);
+    }
+
+    /**
+     * Call {@link Activity#startActivityForResult(Intent, int, Bundle)} on the fragment's
+     * containing Activity.
+     */
+    public void startActivityForResult(Intent intent, int requestCode, Bundle options) {
         if (mActivity == null) {
             throw new IllegalStateException("Fragment " + this + " not attached to Activity");
         }
-        mActivity.startActivityFromFragment(this, intent, requestCode);
+        if (options != null) {
+            mActivity.startActivityFromFragment(this, intent, requestCode, options);
+        } else {
+            // Note we want to go through this call for compatibility with
+            // applications that may have overridden the method.
+            mActivity.startActivityFromFragment(this, intent, requestCode, options);
+        }
     }
     
     /**
@@ -1465,7 +1503,7 @@ public class Fragment implements ComponentCallbacks2, OnCreateContextMenuListene
     public void dump(String prefix, FileDescriptor fd, PrintWriter writer, String[] args) {
         writer.print(prefix); writer.print("mFragmentId=#");
                 writer.print(Integer.toHexString(mFragmentId));
-                writer.print(" mContainerId#=");
+                writer.print(" mContainerId=#");
                 writer.print(Integer.toHexString(mContainerId));
                 writer.print(" mTag="); writer.println(mTag);
         writer.print(prefix); writer.print("mState="); writer.print(mState);

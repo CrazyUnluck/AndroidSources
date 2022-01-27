@@ -30,6 +30,7 @@ import android.database.sqlite.SQLiteException;
 import android.database.sqlite.SQLiteFullException;
 import android.database.sqlite.SQLiteProgram;
 import android.database.sqlite.SQLiteStatement;
+import android.os.OperationCanceledException;
 import android.os.Parcel;
 import android.os.ParcelFileDescriptor;
 import android.text.TextUtils;
@@ -107,6 +108,9 @@ public class DatabaseUtils {
             code = 9;
         } else if (e instanceof OperationApplicationException) {
             code = 10;
+        } else if (e instanceof OperationCanceledException) {
+            code = 11;
+            logException = false;
         } else {
             reply.writeException(e);
             Log.e(TAG, "Writing exception to parcel", e);
@@ -178,6 +182,8 @@ public class DatabaseUtils {
                 throw new SQLiteDiskIOException(msg);
             case 9:
                 throw new SQLiteException(msg);
+            case 11:
+                throw new OperationCanceledException(msg);
             default:
                 reply.readException(code, msg);
         }
@@ -263,63 +269,56 @@ public class DatabaseUtils {
         if (position < 0 || position >= cursor.getCount()) {
             return;
         }
-        window.acquireReference();
-        try {
-            final int oldPos = cursor.getPosition();
-            final int numColumns = cursor.getColumnCount();
-            window.clear();
-            window.setStartPosition(position);
-            window.setNumColumns(numColumns);
-            if (cursor.moveToPosition(position)) {
-                do {
-                    if (!window.allocRow()) {
-                        break;
-                    }
-                    for (int i = 0; i < numColumns; i++) {
-                        final int type = cursor.getType(i);
-                        final boolean success;
-                        switch (type) {
-                            case Cursor.FIELD_TYPE_NULL:
-                                success = window.putNull(position, i);
-                                break;
+        final int oldPos = cursor.getPosition();
+        final int numColumns = cursor.getColumnCount();
+        window.clear();
+        window.setStartPosition(position);
+        window.setNumColumns(numColumns);
+        if (cursor.moveToPosition(position)) {
+            do {
+                if (!window.allocRow()) {
+                    break;
+                }
+                for (int i = 0; i < numColumns; i++) {
+                    final int type = cursor.getType(i);
+                    final boolean success;
+                    switch (type) {
+                        case Cursor.FIELD_TYPE_NULL:
+                            success = window.putNull(position, i);
+                            break;
 
-                            case Cursor.FIELD_TYPE_INTEGER:
-                                success = window.putLong(cursor.getLong(i), position, i);
-                                break;
+                        case Cursor.FIELD_TYPE_INTEGER:
+                            success = window.putLong(cursor.getLong(i), position, i);
+                            break;
 
-                            case Cursor.FIELD_TYPE_FLOAT:
-                                success = window.putDouble(cursor.getDouble(i), position, i);
-                                break;
+                        case Cursor.FIELD_TYPE_FLOAT:
+                            success = window.putDouble(cursor.getDouble(i), position, i);
+                            break;
 
-                            case Cursor.FIELD_TYPE_BLOB: {
-                                final byte[] value = cursor.getBlob(i);
-                                success = value != null ? window.putBlob(value, position, i)
-                                        : window.putNull(position, i);
-                                break;
-                            }
-
-                            default: // assume value is convertible to String
-                            case Cursor.FIELD_TYPE_STRING: {
-                                final String value = cursor.getString(i);
-                                success = value != null ? window.putString(value, position, i)
-                                        : window.putNull(position, i);
-                                break;
-                            }
+                        case Cursor.FIELD_TYPE_BLOB: {
+                            final byte[] value = cursor.getBlob(i);
+                            success = value != null ? window.putBlob(value, position, i)
+                                    : window.putNull(position, i);
+                            break;
                         }
-                        if (!success) {
-                            window.freeLastRow();
+
+                        default: // assume value is convertible to String
+                        case Cursor.FIELD_TYPE_STRING: {
+                            final String value = cursor.getString(i);
+                            success = value != null ? window.putString(value, position, i)
+                                    : window.putNull(position, i);
                             break;
                         }
                     }
-                    position += 1;
-                } while (cursor.moveToNext());
-            }
-            cursor.moveToPosition(oldPos);
-        } catch (IllegalStateException e){
-            // simply ignore it
-        } finally {
-            window.releaseReference();
+                    if (!success) {
+                        window.freeLastRow();
+                        break;
+                    }
+                }
+                position += 1;
+            } while (cursor.moveToNext());
         }
+        cursor.moveToPosition(oldPos);
     }
 
     /**
@@ -724,6 +723,32 @@ public class DatabaseUtils {
                 values.put(columns[i], cursor.getString(i));
             }
         }
+    }
+
+    /**
+     * Picks a start position for {@link Cursor#fillWindow} such that the
+     * window will contain the requested row and a useful range of rows
+     * around it.
+     *
+     * When the data set is too large to fit in a cursor window, seeking the
+     * cursor can become a very expensive operation since we have to run the
+     * query again when we move outside the bounds of the current window.
+     *
+     * We try to choose a start position for the cursor window such that
+     * 1/3 of the window's capacity is used to hold rows before the requested
+     * position and 2/3 of the window's capacity is used to hold rows after the
+     * requested position.
+     *
+     * @param cursorPosition The row index of the row we want to get.
+     * @param cursorWindowCapacity The estimated number of rows that can fit in
+     * a cursor window, or 0 if unknown.
+     * @return The recommended start position, always less than or equal to
+     * the requested row.
+     * @hide
+     */
+    public static int cursorPickFillWindowStartPosition(
+            int cursorPosition, int cursorWindowCapacity) {
+        return Math.max(cursorPosition - cursorWindowCapacity / 3, 0);
     }
 
     /**
@@ -1360,5 +1385,19 @@ public class DatabaseUtils {
         System.arraycopy(originalValues, 0, result, 0, originalValues.length);
         System.arraycopy(newValues, 0, result, originalValues.length, newValues.length);
         return result;
+    }
+
+    /**
+     * Returns column index of "_id" column, or -1 if not found.
+     * @hide
+     */
+    public static int findRowIdColumnIndex(String[] columnNames) {
+        int length = columnNames.length;
+        for (int i = 0; i < length; i++) {
+            if (columnNames[i].equals("_id")) {
+                return i;
+            }
+        }
+        return -1;
     }
 }

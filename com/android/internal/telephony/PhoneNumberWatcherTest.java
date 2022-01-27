@@ -64,7 +64,7 @@ public class PhoneNumberWatcherTest extends AndroidTestCase {
         assertEquals(result1, number.toString());
         assertEquals(result1.length(), Selection.getSelectionEnd(number));
         // Remove last 5 chars
-        final String result2 = "(650) 123";
+        final String result2 = "650-123";
         textWatcher.beforeTextChanged(number, number.length() - 4, 4, 0);
         number.delete(number.length() - 5, number.length());
         Selection.setSelection(number, number.length());
@@ -75,26 +75,26 @@ public class PhoneNumberWatcherTest extends AndroidTestCase {
     }
 
     public void testInsertChars() {
-        final String init = "(650) 23";
-        final String expected1 = "(650) 123";
+        final String init = "650-23";
+        final String expected1 = "650-123";
         TextWatcher textWatcher = getTextWatcher();
 
         // Insert one char
         SpannableStringBuilder number = new SpannableStringBuilder(init);
-        textWatcher.beforeTextChanged(number, 4, 0, 1);
-        number.insert(4, "1"); // (6501) 23
-        Selection.setSelection(number, 5); // make the cursor at right of 1
-        textWatcher.onTextChanged(number, 4, 0, 1);
+        textWatcher.beforeTextChanged(number, 3, 0, 1);
+        number.insert(3, "1"); // 6501-23
+        Selection.setSelection(number, 4); // make the cursor at right of 1
+        textWatcher.onTextChanged(number, 3, 0, 1);
         textWatcher.afterTextChanged(number);
         assertEquals(expected1, number.toString());
         // the cursor should still at the right of '1'
-        assertEquals(7, Selection.getSelectionEnd(number));
+        assertEquals(5, Selection.getSelectionEnd(number));
 
         // Insert multiple chars
         final String expected2 = "(650) 145-6723";
-        textWatcher.beforeTextChanged(number, 7, 0, 4);
-        number.insert(7, "4567"); // change to (650) 1456723
-        Selection.setSelection(number, 11); // the cursor is at the right of '7'.
+        textWatcher.beforeTextChanged(number, 5, 0, 4);
+        number.insert(5, "4567"); // change to 650-1456723
+        Selection.setSelection(number, 9); // the cursor is at the right of '7'.
         textWatcher.onTextChanged(number, 7, 0, 4);
         textWatcher.afterTextChanged(number);
         assertEquals(expected2, number.toString());
@@ -168,7 +168,7 @@ public class PhoneNumberWatcherTest extends AndroidTestCase {
         textWatcher.onTextChanged(number, 0, len, 0);
         textWatcher.afterTextChanged(number);
 
-        final String expected2 = "(650) 123-4";
+        final String expected2 = "650-1234";
         number = new SpannableStringBuilder(init);
         textWatcher.beforeTextChanged(number, 9, 0, 1);
         number.insert(9, "4"); // (650) 1234
@@ -182,14 +182,17 @@ public class PhoneNumberWatcherTest extends AndroidTestCase {
 
     public void testTextChangedByOtherTextWatcher() {
         final TextWatcher cleanupTextWatcher = new TextWatcher() {
+            @Override
             public void afterTextChanged(Editable s) {
                 s.clear();
             }
 
+            @Override
             public void beforeTextChanged(CharSequence s, int start, int count,
                     int after) {
             }
 
+            @Override
             public void onTextChanged(CharSequence s, int start, int before,
                     int count) {
             }
@@ -206,6 +209,81 @@ public class PhoneNumberWatcherTest extends AndroidTestCase {
         number.setSpan(cleanupTextWatcher, 0, number.length(), 0);
         textWatcher.afterTextChanged(number);
         assertEquals(expected1, number.toString());
+    }
+
+    /**
+     * Test the case where some other component is auto-completing what the user is typing
+     */
+    public void testAutoCompleteWithFormattedNumber() {
+        String init = "650-1";
+        String expected = "+1-650-123-4567"; // Different formatting than ours
+        testReplacement(init, expected, expected);
+    }
+
+    /**
+     * Test the case where some other component is auto-completing what the user is typing
+     */
+    public void testAutoCompleteWithFormattedNameAndNumber() {
+        String init = "650-1";
+        String expected = "Test User <650-123-4567>";
+        testReplacement(init, expected, expected);
+    }
+
+    /**
+     * Test the case where some other component is auto-completing what the user is typing
+     */
+    public void testAutoCompleteWithNumericNameAndNumber() {
+        String init = "650";
+        String expected = "2nd Test User <650-123-4567>";
+        testReplacement(init, expected, expected);
+    }
+
+    /**
+     * Test the case where some other component is auto-completing what the user is typing
+     */
+    public void testAutoCompleteWithUnformattedNumber() {
+        String init = "650-1";
+        String expected = "6501234567";
+        testReplacement(init, expected, expected);
+    }
+
+    /**
+     * Test the case where some other component is auto-completing what the user is typing, where
+     * the deleted text doesn't have any formatting and neither does the replacement text: in this
+     * case the replacement text should be formatted by the PhoneNumberFormattingTextWatcher.
+     */
+    public void testAutoCompleteUnformattedWithUnformattedNumber() {
+        String init = "650";
+        String replacement = "6501234567";
+        String expected = "(650) 123-4567";
+        testReplacement(init, replacement, expected);
+
+        String init2 = "650";
+        String replacement2 = "16501234567";
+        String expected2 = "1 650-123-4567";
+        testReplacement(init2, replacement2, expected2);
+    }
+
+    /**
+     * Helper method for testing replacing the entire string with another string
+     * @param init The initial string
+     * @param expected
+     */
+    private void testReplacement(String init, String replacement, String expected) {
+        TextWatcher textWatcher = getTextWatcher();
+
+        SpannableStringBuilder number = new SpannableStringBuilder(init);
+
+        // Replace entire text with the given values
+        textWatcher.beforeTextChanged(number, 0, init.length(), replacement.length());
+        number.replace(0, init.length(), replacement, 0, replacement.length());
+        Selection.setSelection(number, replacement.length()); // move the cursor to the end
+        textWatcher.onTextChanged(number, 0, init.length(), replacement.length());
+        textWatcher.afterTextChanged(number);
+
+        assertEquals(expected, number.toString());
+        // the cursor should be still at the end
+        assertEquals(expected.length(), Selection.getSelectionEnd(number));
     }
 
     private TextWatcher getTextWatcher() {

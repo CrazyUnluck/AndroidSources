@@ -16,18 +16,20 @@
 
 package android.view;
 
+import android.os.Parcel;
+import android.os.Parcelable;
 import android.text.method.MetaKeyKeyListener;
 import android.util.AndroidRuntimeException;
 import android.util.SparseIntArray;
-import android.os.RemoteException;
-import android.util.SparseArray;
+import android.hardware.input.InputManager;
 
 import java.lang.Character;
+import java.text.Normalizer;
 
 /**
  * Describes the keys provided by a keyboard device and their associated labels.
  */
-public class KeyCharacterMap {
+public class KeyCharacterMap implements Parcelable {
     /**
      * The id of the device's primary built in keyboard is always 0.
      *
@@ -134,12 +136,154 @@ public class KeyCharacterMap {
      */
     public static final int MODIFIER_BEHAVIOR_CHORDED_OR_TOGGLED = 1;
 
-    private static SparseArray<KeyCharacterMap> sInstances = new SparseArray<KeyCharacterMap>();
+    /*
+     * This bit will be set in the return value of {@link #get(int, int)} if the
+     * key is a "dead key."
+     */
+    public static final int COMBINING_ACCENT = 0x80000000;
 
-    private final int mDeviceId;
+    /**
+     * Mask the return value from {@link #get(int, int)} with this value to get
+     * a printable representation of the accent character of a "dead key."
+     */
+    public static final int COMBINING_ACCENT_MASK = 0x7FFFFFFF;
+
+    /* Characters used to display placeholders for dead keys. */
+    private static final int ACCENT_ACUTE = '\u00B4';
+    private static final int ACCENT_BREVE = '\u02D8';
+    private static final int ACCENT_CARON = '\u02C7';
+    private static final int ACCENT_CEDILLA = '\u00B8';
+    private static final int ACCENT_CIRCUMFLEX = '\u02C6';
+    private static final int ACCENT_COMMA_ABOVE = '\u1FBD';
+    private static final int ACCENT_COMMA_ABOVE_RIGHT = '\u02BC';
+    private static final int ACCENT_DOT_ABOVE = '\u02D9';
+    private static final int ACCENT_DOT_BELOW = '.'; // approximate
+    private static final int ACCENT_DOUBLE_ACUTE = '\u02DD';
+    private static final int ACCENT_GRAVE = '\u02CB';
+    private static final int ACCENT_HOOK_ABOVE = '\u02C0';
+    private static final int ACCENT_HORN = '\''; // approximate
+    private static final int ACCENT_MACRON = '\u00AF';
+    private static final int ACCENT_MACRON_BELOW = '\u02CD';
+    private static final int ACCENT_OGONEK = '\u02DB';
+    private static final int ACCENT_REVERSED_COMMA_ABOVE = '\u02BD';
+    private static final int ACCENT_RING_ABOVE = '\u02DA';
+    private static final int ACCENT_STROKE = '-'; // approximate
+    private static final int ACCENT_TILDE = '\u02DC';
+    private static final int ACCENT_TURNED_COMMA_ABOVE = '\u02BB';
+    private static final int ACCENT_UMLAUT = '\u00A8';
+    private static final int ACCENT_VERTICAL_LINE_ABOVE = '\u02C8';
+    private static final int ACCENT_VERTICAL_LINE_BELOW = '\u02CC';
+
+    /* Legacy dead key display characters used in previous versions of the API.
+     * We still support these characters by mapping them to their non-legacy version. */
+    private static final int ACCENT_GRAVE_LEGACY = '`';
+    private static final int ACCENT_CIRCUMFLEX_LEGACY = '^';
+    private static final int ACCENT_TILDE_LEGACY = '~';
+
+    /**
+     * Maps Unicode combining diacritical to display-form dead key.
+     */
+    private static final SparseIntArray sCombiningToAccent = new SparseIntArray();
+    private static final SparseIntArray sAccentToCombining = new SparseIntArray();
+    static {
+        addCombining('\u0300', ACCENT_GRAVE);
+        addCombining('\u0301', ACCENT_ACUTE);
+        addCombining('\u0302', ACCENT_CIRCUMFLEX);
+        addCombining('\u0303', ACCENT_TILDE);
+        addCombining('\u0304', ACCENT_MACRON);
+        addCombining('\u0306', ACCENT_BREVE);
+        addCombining('\u0307', ACCENT_DOT_ABOVE);
+        addCombining('\u0308', ACCENT_UMLAUT);
+        addCombining('\u0309', ACCENT_HOOK_ABOVE);
+        addCombining('\u030A', ACCENT_RING_ABOVE);
+        addCombining('\u030B', ACCENT_DOUBLE_ACUTE);
+        addCombining('\u030C', ACCENT_CARON);
+        addCombining('\u030D', ACCENT_VERTICAL_LINE_ABOVE);
+        //addCombining('\u030E', ACCENT_DOUBLE_VERTICAL_LINE_ABOVE);
+        //addCombining('\u030F', ACCENT_DOUBLE_GRAVE);
+        //addCombining('\u0310', ACCENT_CANDRABINDU);
+        //addCombining('\u0311', ACCENT_INVERTED_BREVE);
+        addCombining('\u0312', ACCENT_TURNED_COMMA_ABOVE);
+        addCombining('\u0313', ACCENT_COMMA_ABOVE);
+        addCombining('\u0314', ACCENT_REVERSED_COMMA_ABOVE);
+        addCombining('\u0315', ACCENT_COMMA_ABOVE_RIGHT);
+        addCombining('\u031B', ACCENT_HORN);
+        addCombining('\u0323', ACCENT_DOT_BELOW);
+        //addCombining('\u0326', ACCENT_COMMA_BELOW);
+        addCombining('\u0327', ACCENT_CEDILLA);
+        addCombining('\u0328', ACCENT_OGONEK);
+        addCombining('\u0329', ACCENT_VERTICAL_LINE_BELOW);
+        addCombining('\u0331', ACCENT_MACRON_BELOW);
+        addCombining('\u0335', ACCENT_STROKE);
+        //addCombining('\u0342', ACCENT_PERISPOMENI);
+        //addCombining('\u0344', ACCENT_DIALYTIKA_TONOS);
+        //addCombining('\u0345', ACCENT_YPOGEGRAMMENI);
+
+        // One-way mappings to equivalent preferred accents.
+        sCombiningToAccent.append('\u0340', ACCENT_GRAVE);
+        sCombiningToAccent.append('\u0341', ACCENT_ACUTE);
+        sCombiningToAccent.append('\u0343', ACCENT_COMMA_ABOVE);
+
+        // One-way legacy mappings to preserve compatibility with older applications.
+        sAccentToCombining.append(ACCENT_GRAVE_LEGACY, '\u0300');
+        sAccentToCombining.append(ACCENT_CIRCUMFLEX_LEGACY, '\u0302');
+        sAccentToCombining.append(ACCENT_TILDE_LEGACY, '\u0303');
+    }
+
+    private static void addCombining(int combining, int accent) {
+        sCombiningToAccent.append(combining, accent);
+        sAccentToCombining.append(accent, combining);
+    }
+
+    /**
+     * Maps combinations of (display-form) combining key and second character
+     * to combined output character.
+     * These mappings are derived from the Unicode NFC tables as needed.
+     */
+    private static final SparseIntArray sDeadKeyCache = new SparseIntArray();
+    private static final StringBuilder sDeadKeyBuilder = new StringBuilder();
+    static {
+        // Non-standard decompositions.
+        // Stroke modifier for Finnish multilingual keyboard and others.
+        addDeadKey(ACCENT_STROKE, 'D', '\u0110');
+        addDeadKey(ACCENT_STROKE, 'G', '\u01e4');
+        addDeadKey(ACCENT_STROKE, 'H', '\u0126');
+        addDeadKey(ACCENT_STROKE, 'I', '\u0197');
+        addDeadKey(ACCENT_STROKE, 'L', '\u0141');
+        addDeadKey(ACCENT_STROKE, 'O', '\u00d8');
+        addDeadKey(ACCENT_STROKE, 'T', '\u0166');
+        addDeadKey(ACCENT_STROKE, 'd', '\u0111');
+        addDeadKey(ACCENT_STROKE, 'g', '\u01e5');
+        addDeadKey(ACCENT_STROKE, 'h', '\u0127');
+        addDeadKey(ACCENT_STROKE, 'i', '\u0268');
+        addDeadKey(ACCENT_STROKE, 'l', '\u0142');
+        addDeadKey(ACCENT_STROKE, 'o', '\u00f8');
+        addDeadKey(ACCENT_STROKE, 't', '\u0167');
+    }
+
+    private static void addDeadKey(int accent, int c, int result) {
+        final int combining = sAccentToCombining.get(accent);
+        if (combining == 0) {
+            throw new IllegalStateException("Invalid dead key declaration.");
+        }
+        final int combination = (combining << 16) | c;
+        sDeadKeyCache.put(combination, result);
+    }
+
+    public static final Parcelable.Creator<KeyCharacterMap> CREATOR =
+            new Parcelable.Creator<KeyCharacterMap>() {
+        public KeyCharacterMap createFromParcel(Parcel in) {
+            return new KeyCharacterMap(in);
+        }
+        public KeyCharacterMap[] newArray(int size) {
+            return new KeyCharacterMap[size];
+        }
+    };
+
     private int mPtr;
 
-    private static native int nativeLoad(String file);
+    private static native int nativeReadFromParcel(Parcel in);
+    private static native void nativeWriteToParcel(int ptr, Parcel out);
     private static native void nativeDispose(int ptr);
 
     private static native char nativeGetCharacter(int ptr, int keyCode, int metaState);
@@ -149,10 +293,20 @@ public class KeyCharacterMap {
     private static native char nativeGetMatch(int ptr, int keyCode, char[] chars, int metaState);
     private static native char nativeGetDisplayLabel(int ptr, int keyCode);
     private static native int nativeGetKeyboardType(int ptr);
-    private static native KeyEvent[] nativeGetEvents(int ptr, int deviceId, char[] chars);
+    private static native KeyEvent[] nativeGetEvents(int ptr, char[] chars);
 
-    private KeyCharacterMap(int deviceId, int ptr) {
-        mDeviceId = deviceId;
+    private KeyCharacterMap(Parcel in) {
+        if (in == null) {
+            throw new IllegalArgumentException("parcel must not be null");
+        }
+        mPtr = nativeReadFromParcel(in);
+        if (mPtr == 0) {
+            throw new RuntimeException("Could not read KeyCharacterMap from parcel.");
+        }
+    }
+
+    // Called from native
+    private KeyCharacterMap(int ptr) {
         mPtr = ptr;
     }
 
@@ -174,25 +328,16 @@ public class KeyCharacterMap {
      * is missing from the system.
      */
     public static KeyCharacterMap load(int deviceId) {
-        synchronized (sInstances) {
-            KeyCharacterMap map = sInstances.get(deviceId);
-            if (map == null) {
-                String kcm = null;
-                if (deviceId != VIRTUAL_KEYBOARD) {
-                    InputDevice device = InputDevice.getDevice(deviceId);
-                    if (device != null) {
-                        kcm = device.getKeyCharacterMapFile();
-                    }
-                }
-                if (kcm == null || kcm.length() == 0) {
-                    kcm = "/system/usr/keychars/Virtual.kcm";
-                }
-                int ptr = nativeLoad(kcm); // might throw
-                map = new KeyCharacterMap(deviceId, ptr);
-                sInstances.put(deviceId, map);
+        final InputManager im = InputManager.getInstance();
+        InputDevice inputDevice = im.getInputDevice(deviceId);
+        if (inputDevice == null) {
+            inputDevice = im.getInputDevice(VIRTUAL_KEYBOARD);
+            if (inputDevice == null) {
+                throw new UnavailableException(
+                        "Could not load key character map for device " + deviceId);
             }
-            return map;
         }
+        return inputDevice.getKeyCharacterMap();
     }
 
     /**
@@ -220,9 +365,9 @@ public class KeyCharacterMap {
         metaState = KeyEvent.normalizeMetaState(metaState);
         char ch = nativeGetCharacter(mPtr, keyCode, metaState);
 
-        int map = COMBINING.get(ch);
+        int map = sCombiningToAccent.get(ch);
         if (map != 0) {
-            return map;
+            return map | COMBINING_ACCENT;
         } else {
             return ch;
         }
@@ -241,19 +386,19 @@ public class KeyCharacterMap {
      *
      * @param keyCode The key code.
      * @param metaState The meta key modifier state.
-     * @param outFallbackAction The fallback action object to populate.
-     * @return True if a fallback action was found, false otherwise.
+     * @return The fallback action, or null if none.  Remember to recycle the fallback action.
      *
      * @hide
      */
-    public boolean getFallbackAction(int keyCode, int metaState,
-            FallbackAction outFallbackAction) {
-        if (outFallbackAction == null) {
-            throw new IllegalArgumentException("fallbackAction must not be null");
-        }
-
+    public FallbackAction getFallbackAction(int keyCode, int metaState) {
+        FallbackAction action = FallbackAction.obtain();
         metaState = KeyEvent.normalizeMetaState(metaState);
-        return nativeGetFallbackAction(mPtr, keyCode, metaState, outFallbackAction);
+        if (nativeGetFallbackAction(mPtr, keyCode, metaState, action)) {
+            action.metaState = KeyEvent.normalizeMetaState(action.metaState);
+            return action;
+        }
+        action.recycle();
+        return null;
     }
 
     /**
@@ -336,7 +481,25 @@ public class KeyCharacterMap {
      * @return The combined character, or 0 if the characters cannot be combined.
      */
     public static int getDeadChar(int accent, int c) {
-        return DEAD.get((accent << 16) | c);
+        int combining = sAccentToCombining.get(accent);
+        if (combining == 0) {
+            return 0;
+        }
+
+        final int combination = (combining << 16) | c;
+        int combined;
+        synchronized (sDeadKeyCache) {
+            combined = sDeadKeyCache.get(combination, -1);
+            if (combined == -1) {
+                sDeadKeyBuilder.setLength(0);
+                sDeadKeyBuilder.append((char)c);
+                sDeadKeyBuilder.append((char)combining);
+                String result = Normalizer.normalize(sDeadKeyBuilder, Normalizer.Form.NFC);
+                combined = result.length() == 1 ? result.charAt(0) : 0;
+                sDeadKeyCache.put(combination, combined);
+            }
+        }
+        return combined;
     }
 
     /**
@@ -429,7 +592,7 @@ public class KeyCharacterMap {
         if (chars == null) {
             throw new IllegalArgumentException("chars must not be null.");
         }
-        return nativeGetEvents(mPtr, mDeviceId, chars);
+        return nativeGetEvents(mPtr, chars);
     }
 
     /**
@@ -456,7 +619,8 @@ public class KeyCharacterMap {
 
     /**
      * Gets the keyboard type.
-     * Returns {@link #NUMERIC}, {@link #PREDICTIVE}, {@link #ALPHA} or {@link #FULL}.
+     * Returns {@link #NUMERIC}, {@link #PREDICTIVE}, {@link #ALPHA}, {@link #FULL}
+     * or {@link #SPECIAL_FUNCTION}.
      * <p>
      * Different keyboard types have different semantics.  Refer to the documentation
      * associated with the keyboard type constants for details.
@@ -518,10 +682,7 @@ public class KeyCharacterMap {
      * @return True if at least one attached keyboard supports the specified key code.
      */
     public static boolean deviceHasKey(int keyCode) {
-        int[] codeArray = new int[1];
-        codeArray[0] = keyCode;
-        boolean[] ret = deviceHasKeys(codeArray);
-        return ret[0];
+        return InputManager.getInstance().deviceHasKeys(new int[] { keyCode })[0];
     }
 
     /**
@@ -535,167 +696,20 @@ public class KeyCharacterMap {
      * at the same index in the key codes array.
      */
     public static boolean[] deviceHasKeys(int[] keyCodes) {
-        boolean[] ret = new boolean[keyCodes.length];
-        IWindowManager wm = Display.getWindowManager();
-        try {
-            wm.hasKeys(keyCodes, ret);
-        } catch (RemoteException e) {
-            // no fallback; just return the empty array
-        }
-        return ret;
+        return InputManager.getInstance().deviceHasKeys(keyCodes);
     }
 
-    /**
-     * Maps Unicode combining diacritical to display-form dead key
-     * (display character shifted left 16 bits).
-     */
-    private static SparseIntArray COMBINING = new SparseIntArray();
+    @Override
+    public void writeToParcel(Parcel out, int flags) {
+        if (out == null) {
+            throw new IllegalArgumentException("parcel must not be null");
+        }
+        nativeWriteToParcel(mPtr, out);
+    }
 
-    /**
-     * Maps combinations of (display-form) dead key and second character
-     * to combined output character.
-     */
-    private static SparseIntArray DEAD = new SparseIntArray();
-
-    /*
-     * TODO: Change the table format to support full 21-bit-wide
-     * accent characters and combined characters if ever necessary.
-     */
-    private static final int ACUTE = '\u00B4' << 16;
-    private static final int GRAVE = '`' << 16;
-    private static final int CIRCUMFLEX = '^' << 16;
-    private static final int TILDE = '~' << 16;
-    private static final int UMLAUT = '\u00A8' << 16;
-
-    /*
-     * This bit will be set in the return value of {@link #get(int, int)} if the
-     * key is a "dead key."
-     */
-    public static final int COMBINING_ACCENT = 0x80000000;
-    /**
-     * Mask the return value from {@link #get(int, int)} with this value to get
-     * a printable representation of the accent character of a "dead key."
-     */
-    public static final int COMBINING_ACCENT_MASK = 0x7FFFFFFF;
-
-    static {
-        COMBINING.put('\u0300', (GRAVE >> 16) | COMBINING_ACCENT);
-        COMBINING.put('\u0301', (ACUTE >> 16) | COMBINING_ACCENT);
-        COMBINING.put('\u0302', (CIRCUMFLEX >> 16) | COMBINING_ACCENT);
-        COMBINING.put('\u0303', (TILDE >> 16) | COMBINING_ACCENT);
-        COMBINING.put('\u0308', (UMLAUT >> 16) | COMBINING_ACCENT);
-
-        DEAD.put(ACUTE | 'A', '\u00C1');
-        DEAD.put(ACUTE | 'C', '\u0106');
-        DEAD.put(ACUTE | 'E', '\u00C9');
-        DEAD.put(ACUTE | 'G', '\u01F4');
-        DEAD.put(ACUTE | 'I', '\u00CD');
-        DEAD.put(ACUTE | 'K', '\u1E30');
-        DEAD.put(ACUTE | 'L', '\u0139');
-        DEAD.put(ACUTE | 'M', '\u1E3E');
-        DEAD.put(ACUTE | 'N', '\u0143');
-        DEAD.put(ACUTE | 'O', '\u00D3');
-        DEAD.put(ACUTE | 'P', '\u1E54');
-        DEAD.put(ACUTE | 'R', '\u0154');
-        DEAD.put(ACUTE | 'S', '\u015A');
-        DEAD.put(ACUTE | 'U', '\u00DA');
-        DEAD.put(ACUTE | 'W', '\u1E82');
-        DEAD.put(ACUTE | 'Y', '\u00DD');
-        DEAD.put(ACUTE | 'Z', '\u0179');
-        DEAD.put(ACUTE | 'a', '\u00E1');
-        DEAD.put(ACUTE | 'c', '\u0107');
-        DEAD.put(ACUTE | 'e', '\u00E9');
-        DEAD.put(ACUTE | 'g', '\u01F5');
-        DEAD.put(ACUTE | 'i', '\u00ED');
-        DEAD.put(ACUTE | 'k', '\u1E31');
-        DEAD.put(ACUTE | 'l', '\u013A');
-        DEAD.put(ACUTE | 'm', '\u1E3F');
-        DEAD.put(ACUTE | 'n', '\u0144');
-        DEAD.put(ACUTE | 'o', '\u00F3');
-        DEAD.put(ACUTE | 'p', '\u1E55');
-        DEAD.put(ACUTE | 'r', '\u0155');
-        DEAD.put(ACUTE | 's', '\u015B');
-        DEAD.put(ACUTE | 'u', '\u00FA');
-        DEAD.put(ACUTE | 'w', '\u1E83');
-        DEAD.put(ACUTE | 'y', '\u00FD');
-        DEAD.put(ACUTE | 'z', '\u017A');
-        DEAD.put(CIRCUMFLEX | 'A', '\u00C2');
-        DEAD.put(CIRCUMFLEX | 'C', '\u0108');
-        DEAD.put(CIRCUMFLEX | 'E', '\u00CA');
-        DEAD.put(CIRCUMFLEX | 'G', '\u011C');
-        DEAD.put(CIRCUMFLEX | 'H', '\u0124');
-        DEAD.put(CIRCUMFLEX | 'I', '\u00CE');
-        DEAD.put(CIRCUMFLEX | 'J', '\u0134');
-        DEAD.put(CIRCUMFLEX | 'O', '\u00D4');
-        DEAD.put(CIRCUMFLEX | 'S', '\u015C');
-        DEAD.put(CIRCUMFLEX | 'U', '\u00DB');
-        DEAD.put(CIRCUMFLEX | 'W', '\u0174');
-        DEAD.put(CIRCUMFLEX | 'Y', '\u0176');
-        DEAD.put(CIRCUMFLEX | 'Z', '\u1E90');
-        DEAD.put(CIRCUMFLEX | 'a', '\u00E2');
-        DEAD.put(CIRCUMFLEX | 'c', '\u0109');
-        DEAD.put(CIRCUMFLEX | 'e', '\u00EA');
-        DEAD.put(CIRCUMFLEX | 'g', '\u011D');
-        DEAD.put(CIRCUMFLEX | 'h', '\u0125');
-        DEAD.put(CIRCUMFLEX | 'i', '\u00EE');
-        DEAD.put(CIRCUMFLEX | 'j', '\u0135');
-        DEAD.put(CIRCUMFLEX | 'o', '\u00F4');
-        DEAD.put(CIRCUMFLEX | 's', '\u015D');
-        DEAD.put(CIRCUMFLEX | 'u', '\u00FB');
-        DEAD.put(CIRCUMFLEX | 'w', '\u0175');
-        DEAD.put(CIRCUMFLEX | 'y', '\u0177');
-        DEAD.put(CIRCUMFLEX | 'z', '\u1E91');
-        DEAD.put(GRAVE | 'A', '\u00C0');
-        DEAD.put(GRAVE | 'E', '\u00C8');
-        DEAD.put(GRAVE | 'I', '\u00CC');
-        DEAD.put(GRAVE | 'N', '\u01F8');
-        DEAD.put(GRAVE | 'O', '\u00D2');
-        DEAD.put(GRAVE | 'U', '\u00D9');
-        DEAD.put(GRAVE | 'W', '\u1E80');
-        DEAD.put(GRAVE | 'Y', '\u1EF2');
-        DEAD.put(GRAVE | 'a', '\u00E0');
-        DEAD.put(GRAVE | 'e', '\u00E8');
-        DEAD.put(GRAVE | 'i', '\u00EC');
-        DEAD.put(GRAVE | 'n', '\u01F9');
-        DEAD.put(GRAVE | 'o', '\u00F2');
-        DEAD.put(GRAVE | 'u', '\u00F9');
-        DEAD.put(GRAVE | 'w', '\u1E81');
-        DEAD.put(GRAVE | 'y', '\u1EF3');
-        DEAD.put(TILDE | 'A', '\u00C3');
-        DEAD.put(TILDE | 'E', '\u1EBC');
-        DEAD.put(TILDE | 'I', '\u0128');
-        DEAD.put(TILDE | 'N', '\u00D1');
-        DEAD.put(TILDE | 'O', '\u00D5');
-        DEAD.put(TILDE | 'U', '\u0168');
-        DEAD.put(TILDE | 'V', '\u1E7C');
-        DEAD.put(TILDE | 'Y', '\u1EF8');
-        DEAD.put(TILDE | 'a', '\u00E3');
-        DEAD.put(TILDE | 'e', '\u1EBD');
-        DEAD.put(TILDE | 'i', '\u0129');
-        DEAD.put(TILDE | 'n', '\u00F1');
-        DEAD.put(TILDE | 'o', '\u00F5');
-        DEAD.put(TILDE | 'u', '\u0169');
-        DEAD.put(TILDE | 'v', '\u1E7D');
-        DEAD.put(TILDE | 'y', '\u1EF9');
-        DEAD.put(UMLAUT | 'A', '\u00C4');
-        DEAD.put(UMLAUT | 'E', '\u00CB');
-        DEAD.put(UMLAUT | 'H', '\u1E26');
-        DEAD.put(UMLAUT | 'I', '\u00CF');
-        DEAD.put(UMLAUT | 'O', '\u00D6');
-        DEAD.put(UMLAUT | 'U', '\u00DC');
-        DEAD.put(UMLAUT | 'W', '\u1E84');
-        DEAD.put(UMLAUT | 'X', '\u1E8C');
-        DEAD.put(UMLAUT | 'Y', '\u0178');
-        DEAD.put(UMLAUT | 'a', '\u00E4');
-        DEAD.put(UMLAUT | 'e', '\u00EB');
-        DEAD.put(UMLAUT | 'h', '\u1E27');
-        DEAD.put(UMLAUT | 'i', '\u00EF');
-        DEAD.put(UMLAUT | 'o', '\u00F6');
-        DEAD.put(UMLAUT | 't', '\u1E97');
-        DEAD.put(UMLAUT | 'u', '\u00FC');
-        DEAD.put(UMLAUT | 'w', '\u1E85');
-        DEAD.put(UMLAUT | 'x', '\u1E8D');
-        DEAD.put(UMLAUT | 'y', '\u00FF');
+    @Override
+    public int describeContents() {
+        return 0;
     }
 
     /**
@@ -713,7 +727,44 @@ public class KeyCharacterMap {
      * @hide
      */
     public static final class FallbackAction {
+        private static final int MAX_RECYCLED = 10;
+        private static final Object sRecycleLock = new Object();
+        private static FallbackAction sRecycleBin;
+        private static int sRecycledCount;
+
+        private FallbackAction next;
+
         public int keyCode;
         public int metaState;
+
+        private FallbackAction() {
+        }
+
+        public static FallbackAction obtain() {
+            final FallbackAction target;
+            synchronized (sRecycleLock) {
+                if (sRecycleBin == null) {
+                    target = new FallbackAction();
+                } else {
+                    target = sRecycleBin;
+                    sRecycleBin = target.next;
+                    sRecycledCount--;
+                    target.next = null;
+                }
+            }
+            return target;
+        }
+
+        public void recycle() {
+            synchronized (sRecycleLock) {
+                if (sRecycledCount < MAX_RECYCLED) {
+                    next = sRecycleBin;
+                    sRecycleBin = this;
+                    sRecycledCount += 1;
+                } else {
+                    next = null;
+                }
+            }
+        }
     }
 }

@@ -93,22 +93,41 @@ public class RsBench extends Activity {
     public boolean onOptionsItemSelected(MenuItem item) {
         // Handle item selection
         switch (item.getItemId()) {
-            case R.id.benchmark_mode:
-                mView.setBenchmarkMode();
+            case R.id.benchmark_all:
+                mView.setBenchmarkMode(-1);
+                mView.suspendRendering(false);
                 return true;
-            case R.id.debug_mode:
+            case R.id.benchmark_one:
+                mView.suspendRendering(true);
                 AlertDialog.Builder builder = new AlertDialog.Builder(this);
                 builder.setTitle("Pick a Test");
                 builder.setItems(mView.getTestNames(),
                                  new DialogInterface.OnClickListener() {
                     public void onClick(DialogInterface dialog, int item) {
                         Toast.makeText(getApplicationContext(),
-                                       "Switching to: " + mView.getTestNames()[item],
+                                       "Starting to benchmark: " + mView.getTestNames()[item],
                                        Toast.LENGTH_SHORT).show();
-                        mView.setDebugMode(item);
+                        mView.setBenchmarkMode(item);
+                        mView.suspendRendering(false);
                     }
                 });
                 builder.show();
+                return true;
+            case R.id.debug_mode:
+                mView.suspendRendering(true);
+                AlertDialog.Builder debugBuilder = new AlertDialog.Builder(this);
+                debugBuilder.setTitle("Pick a Test");
+                debugBuilder.setItems(mView.getTestNames(),
+                                 new DialogInterface.OnClickListener() {
+                    public void onClick(DialogInterface dialog, int item) {
+                        Toast.makeText(getApplicationContext(),
+                                       "Switching to: " + mView.getTestNames()[item],
+                                       Toast.LENGTH_SHORT).show();
+                        mView.setDebugMode(item);
+                        mView.suspendRendering(false);
+                    }
+                });
+                debugBuilder.show();
                 return true;
             default:
                 return super.onOptionsItemSelected(item);

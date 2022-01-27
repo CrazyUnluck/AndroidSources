@@ -34,41 +34,37 @@ class ViewStateSerializer {
 
     static final int VERSION = 1;
 
-    static boolean serializeViewState(OutputStream stream, WebView web)
+    static boolean serializeViewState(OutputStream stream, DrawData draw)
             throws IOException {
-        int baseLayer = web.getBaseLayer();
+        int baseLayer = draw.mBaseLayer;
         if (baseLayer == 0) {
             return false;
         }
         DataOutputStream dos = new DataOutputStream(stream);
         dos.writeInt(VERSION);
-        dos.writeInt(web.getContentWidth());
-        dos.writeInt(web.getContentHeight());
+        dos.writeInt(draw.mContentSize.x);
+        dos.writeInt(draw.mContentSize.y);
         return nativeSerializeViewState(baseLayer, dos,
                 new byte[WORKING_STREAM_STORAGE]);
     }
 
-    static DrawData deserializeViewState(InputStream stream, WebView web)
+    static DrawData deserializeViewState(InputStream stream)
             throws IOException {
         DataInputStream dis = new DataInputStream(stream);
         int version = dis.readInt();
-        if (version != VERSION) {
+        if (version > VERSION) {
             throw new IOException("Unexpected version: " + version);
         }
         int contentWidth = dis.readInt();
         int contentHeight = dis.readInt();
-        int baseLayer = nativeDeserializeViewState(dis,
+        int baseLayer = nativeDeserializeViewState(version, dis,
                 new byte[WORKING_STREAM_STORAGE]);
 
         final WebViewCore.DrawData draw = new WebViewCore.DrawData();
         draw.mViewState = new WebViewCore.ViewState();
-        int viewWidth = web.getViewWidth();
-        int viewHeight = web.getViewHeightWithTitle() - web.getTitleHeight();
-        draw.mViewSize = new Point(viewWidth, viewHeight);
         draw.mContentSize = new Point(contentWidth, contentHeight);
-        draw.mViewState.mDefaultScale = web.getDefaultZoomScale();
         draw.mBaseLayer = baseLayer;
-        draw.mInvalRegion = new Region(0, 0, contentWidth, contentHeight);
+        stream.close();
         return draw;
     }
 
@@ -76,7 +72,7 @@ class ViewStateSerializer {
             OutputStream stream, byte[] storage);
 
     // Returns a pointer to the BaseLayer
-    private static native int nativeDeserializeViewState(
+    private static native int nativeDeserializeViewState(int version,
             InputStream stream, byte[] storage);
 
     private ViewStateSerializer() {}

@@ -29,10 +29,11 @@ import android.content.Intent;
 import android.content.IntentSender;
 import android.content.SharedPreferences;
 import android.content.pm.ActivityInfo;
+import android.content.pm.PackageManager;
+import android.content.pm.PackageManager.NameNotFoundException;
 import android.content.res.Configuration;
 import android.content.res.Resources;
 import android.content.res.TypedArray;
-import android.content.res.Resources.Theme;
 import android.database.Cursor;
 import android.graphics.Bitmap;
 import android.graphics.Canvas;
@@ -54,8 +55,8 @@ import android.text.method.TextKeyListener;
 import android.util.AttributeSet;
 import android.util.EventLog;
 import android.util.Log;
+import android.util.Slog;
 import android.util.SparseArray;
-import android.util.TypedValue;
 import android.view.ActionMode;
 import android.view.ContextMenu;
 import android.view.ContextMenu.ContextMenuInfo;
@@ -67,13 +68,13 @@ import android.view.MenuInflater;
 import android.view.MenuItem;
 import android.view.MotionEvent;
 import android.view.View;
-import android.view.WindowManagerImpl;
 import android.view.View.OnCreateContextMenuListener;
 import android.view.ViewGroup;
 import android.view.ViewGroup.LayoutParams;
 import android.view.ViewManager;
 import android.view.Window;
 import android.view.WindowManager;
+import android.view.WindowManagerImpl;
 import android.view.accessibility.AccessibilityEvent;
 import android.widget.AdapterView;
 
@@ -203,8 +204,8 @@ import java.util.HashMap;
  * with the user.  Between these two methods you can maintain resources that
  * are needed to show the activity to the user.  For example, you can register
  * a {@link android.content.BroadcastReceiver} in onStart() to monitor for changes
- * that impact your UI, and unregister it in onStop() when the user an no
- * longer see what you are displaying.  The onStart() and onStop() methods
+ * that impact your UI, and unregister it in onStop() when the user no
+ * longer sees what you are displaying.  The onStart() and onStop() methods
  * can be called multiple times, as the activity becomes visible and hidden
  * to the user.
  * 
@@ -548,7 +549,7 @@ import java.util.HashMap;
  *         super.onCreate(savedInstanceState);
  *
  *         SharedPreferences mPrefs = getSharedPreferences();
- *         mCurViewMode = mPrefs.getInt("view_mode" DAY_VIEW_MODE);
+ *         mCurViewMode = mPrefs.getInt("view_mode", DAY_VIEW_MODE);
  *     }
  *
  *     protected void onPause() {
@@ -570,7 +571,18 @@ import java.util.HashMap;
  * tag.  By doing so, other applications will need to declare a corresponding
  * {@link android.R.styleable#AndroidManifestUsesPermission &lt;uses-permission&gt;}
  * element in their own manifest to be able to start that activity.
- * 
+ *
+ * <p>When starting an Activity you can set {@link Intent#FLAG_GRANT_READ_URI_PERMISSION
+ * Intent.FLAG_GRANT_READ_URI_PERMISSION} and/or {@link Intent#FLAG_GRANT_WRITE_URI_PERMISSION
+ * Intent.FLAG_GRANT_WRITE_URI_PERMISSION} on the Intent.  This will grant the
+ * Activity access to the specific URIs in the Intent.  Access will remain
+ * until the Activity has finished (it will remain across the hosting
+ * process being killed and other temporary destruction).  As of
+ * {@link android.os.Build.VERSION_CODES#GINGERBREAD}, if the Activity
+ * was already created and a new Intent is being delivered to
+ * {@link #onNewIntent(Intent)}, any newly granted URI permissions will be added
+ * to the existing ones it holds.
+ *
  * <p>See the <a href="{@docRoot}guide/topics/security/security.html">Security and Permissions</a>
  * document for more information on permissions and security in general.
  * 
@@ -631,6 +643,7 @@ public class Activity extends ContextThemeWrapper
         Window.Callback, KeyEvent.Callback,
         OnCreateContextMenuListener, ComponentCallbacks2 {
     private static final String TAG = "Activity";
+    private static final boolean DEBUG_LIFECYCLE = false;
 
     /** Standard activity result: operation canceled. */
     public static final int RESULT_CANCELED    = 0;
@@ -695,6 +708,7 @@ public class Activity extends ContextThemeWrapper
     /*package*/ boolean mVisibleFromServer = false;
     /*package*/ boolean mVisibleFromClient = true;
     /*package*/ ActionBarImpl mActionBar = null;
+    private boolean mEnableDefaultActionBarUp;
 
     private CharSequence mTitle;
     private int mTitleColor = 0;
@@ -853,8 +867,16 @@ public class Activity extends ContextThemeWrapper
      * @see #onPostCreate
      */
     protected void onCreate(Bundle savedInstanceState) {
+        if (DEBUG_LIFECYCLE) Slog.v(TAG, "onCreate " + this + ": " + savedInstanceState);
         if (mLastNonConfigurationInstances != null) {
             mAllLoaderManagers = mLastNonConfigurationInstances.loaders;
+        }
+        if (mActivityInfo.parentActivityName != null) {
+            if (mActionBar == null) {
+                mEnableDefaultActionBarUp = true;
+            } else {
+                mActionBar.setDefaultDisplayHomeAsUpEnabled(true);
+            }
         }
         if (savedInstanceState != null) {
             Parcelable p = savedInstanceState.getParcelable(FRAGMENTS_TAG);
@@ -994,6 +1016,7 @@ public class Activity extends ContextThemeWrapper
      * @see #onResume
      */
     protected void onStart() {
+        if (DEBUG_LIFECYCLE) Slog.v(TAG, "onStart " + this);
         mCalled = true;
         
         if (!mLoadersStarted) {
@@ -1054,6 +1077,7 @@ public class Activity extends ContextThemeWrapper
      * @see #onPause
      */
     protected void onResume() {
+        if (DEBUG_LIFECYCLE) Slog.v(TAG, "onResume " + this);
         getApplication().dispatchActivityResumed(this);
         mCalled = true;
     }
@@ -1112,6 +1136,7 @@ public class Activity extends ContextThemeWrapper
     final void performSaveInstanceState(Bundle outState) {
         onSaveInstanceState(outState);
         saveManagedDialogs(outState);
+        if (DEBUG_LIFECYCLE) Slog.v(TAG, "onSaveInstanceState " + this + ": " + outState);
     }
 
     /**
@@ -1217,7 +1242,7 @@ public class Activity extends ContextThemeWrapper
      * making sure nothing is lost if there are not enough resources to start
      * the new activity without first killing this one.  This is also a good
      * place to do things like stop animations and other things that consume a
-     * noticeable mount of CPU in order to make the switch to the next activity
+     * noticeable amount of CPU in order to make the switch to the next activity
      * as fast as possible, or to close resources that are exclusive access
      * such as the camera.
      * 
@@ -1242,6 +1267,7 @@ public class Activity extends ContextThemeWrapper
      * @see #onStop
      */
     protected void onPause() {
+        if (DEBUG_LIFECYCLE) Slog.v(TAG, "onPause " + this);
         getApplication().dispatchActivityPaused(this);
         mCalled = true;
     }
@@ -1328,6 +1354,7 @@ public class Activity extends ContextThemeWrapper
      * @see #onDestroy
      */
     protected void onStop() {
+        if (DEBUG_LIFECYCLE) Slog.v(TAG, "onStop " + this);
         if (mActionBar != null) mActionBar.setShowHideAnimationEnabled(false);
         getApplication().dispatchActivityStopped(this);
         mCalled = true;
@@ -1362,6 +1389,7 @@ public class Activity extends ContextThemeWrapper
      * @see #isFinishing
      */
     protected void onDestroy() {
+        if (DEBUG_LIFECYCLE) Slog.v(TAG, "onDestroy " + this);
         mCalled = true;
 
         // dismiss any dialogs we are managing.
@@ -1413,6 +1441,7 @@ public class Activity extends ContextThemeWrapper
      * @param newConfig The new device configuration.
      */
     public void onConfigurationChanged(Configuration newConfig) {
+        if (DEBUG_LIFECYCLE) Slog.v(TAG, "onConfigurationChanged " + this + ": " + newConfig);
         mCalled = true;
 
         mFragments.dispatchConfigurationChanged(newConfig);
@@ -1594,11 +1623,13 @@ public class Activity extends ContextThemeWrapper
     }
 
     public void onLowMemory() {
+        if (DEBUG_LIFECYCLE) Slog.v(TAG, "onLowMemory " + this);
         mCalled = true;
         mFragments.dispatchLowMemory();
     }
 
     public void onTrimMemory(int level) {
+        if (DEBUG_LIFECYCLE) Slog.v(TAG, "onTrimMemory " + this + ": " + level);
         mCalled = true;
         mFragments.dispatchTrimMemory(level);
     }
@@ -1820,6 +1851,7 @@ public class Activity extends ContextThemeWrapper
         }
         
         mActionBar = new ActionBarImpl(this);
+        mActionBar.setDefaultDisplayHomeAsUpEnabled(mEnableDefaultActionBarUp);
     }
     
     /**
@@ -2461,7 +2493,7 @@ public class Activity extends ContextThemeWrapper
         if (featureId == Window.FEATURE_OPTIONS_PANEL && menu != null) {
             boolean goforit = onPrepareOptionsMenu(menu);
             goforit |= mFragments.dispatchPrepareOptionsMenu(menu);
-            return goforit && menu.hasVisibleItems();
+            return goforit;
         }
         return true;
     }
@@ -2502,7 +2534,18 @@ public class Activity extends ContextThemeWrapper
                 if (onOptionsItemSelected(item)) {
                     return true;
                 }
-                return mFragments.dispatchOptionsItemSelected(item);
+                if (mFragments.dispatchOptionsItemSelected(item)) {
+                    return true;
+                }
+                if (item.getItemId() == android.R.id.home && mActionBar != null &&
+                        (mActionBar.getDisplayOptions() & ActionBar.DISPLAY_HOME_AS_UP) != 0) {
+                    if (mParent == null) {
+                        return onNavigateUp();
+                    } else {
+                        return mParent.onNavigateUpFromChild(this);
+                    }
+                }
+                return false;
                 
             case Window.FEATURE_CONTEXT_MENU:
                 EventLog.writeEvent(50000, 1, item.getTitleCondensed());
@@ -2621,7 +2664,7 @@ public class Activity extends ContextThemeWrapper
      * facilities.
      * 
      * <p>Derived classes should call through to the base class for it to
-     * perform the default menu handling.
+     * perform the default menu handling.</p>
      * 
      * @param item The menu item that was selected.
      * 
@@ -2635,6 +2678,105 @@ public class Activity extends ContextThemeWrapper
             return mParent.onOptionsItemSelected(item);
         }
         return false;
+    }
+
+    /**
+     * This method is called whenever the user chooses to navigate Up within your application's
+     * activity hierarchy from the action bar.
+     *
+     * <p>If the attribute {@link android.R.attr#parentActivityName parentActivityName}
+     * was specified in the manifest for this activity or an activity-alias to it,
+     * default Up navigation will be handled automatically. If any activity
+     * along the parent chain requires extra Intent arguments, the Activity subclass
+     * should override the method {@link #onPrepareNavigateUpTaskStack(TaskStackBuilder)}
+     * to supply those arguments.</p>
+     *
+     * <p>See <a href="{@docRoot}guide/topics/fundamentals/tasks-and-back-stack.html">Tasks and Back Stack</a>
+     * from the developer guide and <a href="{@docRoot}design/patterns/navigation.html">Navigation</a>
+     * from the design guide for more information about navigating within your app.</p>
+     *
+     * <p>See the {@link TaskStackBuilder} class and the Activity methods
+     * {@link #getParentActivityIntent()}, {@link #shouldUpRecreateTask(Intent)}, and
+     * {@link #navigateUpTo(Intent)} for help implementing custom Up navigation.
+     * The AppNavigation sample application in the Android SDK is also available for reference.</p>
+     *
+     * @return true if Up navigation completed successfully and this Activity was finished,
+     *         false otherwise.
+     */
+    public boolean onNavigateUp() {
+        // Automatically handle hierarchical Up navigation if the proper
+        // metadata is available.
+        Intent upIntent = getParentActivityIntent();
+        if (upIntent != null) {
+            if (shouldUpRecreateTask(upIntent)) {
+                TaskStackBuilder b = TaskStackBuilder.create(this);
+                onCreateNavigateUpTaskStack(b);
+                onPrepareNavigateUpTaskStack(b);
+                b.startActivities();
+
+                // We can't finishAffinity if we have a result.
+                // Fall back and simply finish the current activity instead.
+                if (mResultCode != RESULT_CANCELED || mResultData != null) {
+                    // Tell the developer what's going on to avoid hair-pulling.
+                    Log.i(TAG, "onNavigateUp only finishing topmost activity to return a result");
+                    finish();
+                } else {
+                    finishAffinity();
+                }
+            } else {
+                navigateUpTo(upIntent);
+            }
+            return true;
+        }
+        return false;
+    }
+
+    /**
+     * This is called when a child activity of this one attempts to navigate up.
+     * The default implementation simply calls onNavigateUp() on this activity (the parent).
+     *
+     * @param child The activity making the call.
+     */
+    public boolean onNavigateUpFromChild(Activity child) {
+        return onNavigateUp();
+    }
+
+    /**
+     * Define the synthetic task stack that will be generated during Up navigation from
+     * a different task.
+     *
+     * <p>The default implementation of this method adds the parent chain of this activity
+     * as specified in the manifest to the supplied {@link TaskStackBuilder}. Applications
+     * may choose to override this method to construct the desired task stack in a different
+     * way.</p>
+     *
+     * <p>This method will be invoked by the default implementation of {@link #onNavigateUp()}
+     * if {@link #shouldUpRecreateTask(Intent)} returns true when supplied with the intent
+     * returned by {@link #getParentActivityIntent()}.</p>
+     *
+     * <p>Applications that wish to supply extra Intent parameters to the parent stack defined
+     * by the manifest should override {@link #onPrepareNavigateUpTaskStack(TaskStackBuilder)}.</p>
+     *
+     * @param builder An empty TaskStackBuilder - the application should add intents representing
+     *                the desired task stack
+     */
+    public void onCreateNavigateUpTaskStack(TaskStackBuilder builder) {
+        builder.addParentStack(this);
+    }
+
+    /**
+     * Prepare the synthetic task stack that will be generated during Up navigation
+     * from a different task.
+     *
+     * <p>This method receives the {@link TaskStackBuilder} with the constructed series of
+     * Intents as generated by {@link #onCreateNavigateUpTaskStack(TaskStackBuilder)}.
+     * If any extra data should be added to these intents before launching the new task,
+     * the application should override this method and add that data here.</p>
+     *
+     * @param builder A TaskStackBuilder that has been populated with Intents by
+     *                onCreateNavigateUpTaskStack.
+     */
+    public void onPrepareNavigateUpTaskStack(TaskStackBuilder builder) {
     }
 
     /**
@@ -3131,7 +3273,7 @@ public class Activity extends ContextThemeWrapper
         if (mMenuInflater == null) {
             initActionBar();
             if (mActionBar != null) {
-                mMenuInflater = new MenuInflater(mActionBar.getThemedContext());
+                mMenuInflater = new MenuInflater(mActionBar.getThemedContext(), this);
             } else {
                 mMenuInflater = new MenuInflater(this);
             }
@@ -3155,42 +3297,61 @@ public class Activity extends ContextThemeWrapper
     }
 
     /**
+     * Same as calling {@link #startActivityForResult(Intent, int, Bundle)}
+     * with no options.
+     *
+     * @param intent The intent to start.
+     * @param requestCode If >= 0, this code will be returned in
+     *                    onActivityResult() when the activity exits.
+     *
+     * @throws android.content.ActivityNotFoundException
+     *
+     * @see #startActivity 
+     */
+    public void startActivityForResult(Intent intent, int requestCode) {
+        startActivityForResult(intent, requestCode, null);
+    }
+
+    /**
      * Launch an activity for which you would like a result when it finished.
      * When this activity exits, your
      * onActivityResult() method will be called with the given requestCode. 
      * Using a negative requestCode is the same as calling 
      * {@link #startActivity} (the activity is not launched as a sub-activity).
-     * 
+     *
      * <p>Note that this method should only be used with Intent protocols
      * that are defined to return a result.  In other protocols (such as
      * {@link Intent#ACTION_MAIN} or {@link Intent#ACTION_VIEW}), you may
      * not get the result when you expect.  For example, if the activity you
      * are launching uses the singleTask launch mode, it will not run in your
      * task and thus you will immediately receive a cancel result.
-     * 
+     *
      * <p>As a special case, if you call startActivityForResult() with a requestCode 
      * >= 0 during the initial onCreate(Bundle savedInstanceState)/onResume() of your
      * activity, then your window will not be displayed until a result is 
      * returned back from the started activity.  This is to avoid visible 
      * flickering when redirecting to another activity. 
-     * 
+     *
      * <p>This method throws {@link android.content.ActivityNotFoundException}
      * if there was no Activity found to run the given Intent.
-     * 
+     *
      * @param intent The intent to start.
      * @param requestCode If >= 0, this code will be returned in
      *                    onActivityResult() when the activity exits.
-     * 
+     * @param options Additional options for how the Activity should be started.
+     * See {@link android.content.Context#startActivity(Intent, Bundle)
+     * Context.startActivity(Intent, Bundle)} for more details.
+     *
      * @throws android.content.ActivityNotFoundException
-     * 
+     *
      * @see #startActivity 
      */
-    public void startActivityForResult(Intent intent, int requestCode) {
+    public void startActivityForResult(Intent intent, int requestCode, Bundle options) {
         if (mParent == null) {
             Instrumentation.ActivityResult ar =
                 mInstrumentation.execStartActivity(
                     this, mMainThread.getApplicationThread(), mToken, this,
-                    intent, requestCode);
+                    intent, requestCode, options);
             if (ar != null) {
                 mMainThread.sendActivityResult(
                     mToken, mEmbeddedID, requestCode, ar.getResultCode(),
@@ -3207,8 +3368,36 @@ public class Activity extends ContextThemeWrapper
                 mStartedActivity = true;
             }
         } else {
-            mParent.startActivityFromChild(this, intent, requestCode);
+            if (options != null) {
+                mParent.startActivityFromChild(this, intent, requestCode, options);
+            } else {
+                // Note we want to go through this method for compatibility with
+                // existing applications that may have overridden it.
+                mParent.startActivityFromChild(this, intent, requestCode);
+            }
         }
+    }
+
+    /**
+     * Same as calling {@link #startIntentSenderForResult(IntentSender, int,
+     * Intent, int, int, int, Bundle)} with no options.
+     *
+     * @param intent The IntentSender to launch.
+     * @param requestCode If >= 0, this code will be returned in
+     *                    onActivityResult() when the activity exits.
+     * @param fillInIntent If non-null, this will be provided as the
+     * intent parameter to {@link IntentSender#sendIntent}.
+     * @param flagsMask Intent flags in the original IntentSender that you
+     * would like to change.
+     * @param flagsValues Desired values for any bits set in
+     * <var>flagsMask</var>
+     * @param extraFlags Always set to 0.
+     */
+    public void startIntentSenderForResult(IntentSender intent, int requestCode,
+            Intent fillInIntent, int flagsMask, int flagsValues, int extraFlags)
+            throws IntentSender.SendIntentException {
+        startIntentSenderForResult(intent, requestCode, fillInIntent, flagsMask,
+                flagsValues, extraFlags, null);
     }
 
     /**
@@ -3230,21 +3419,32 @@ public class Activity extends ContextThemeWrapper
      * @param flagsValues Desired values for any bits set in
      * <var>flagsMask</var>
      * @param extraFlags Always set to 0.
+     * @param options Additional options for how the Activity should be started.
+     * See {@link android.content.Context#startActivity(Intent, Bundle)
+     * Context.startActivity(Intent, Bundle)} for more details.  If options
+     * have also been supplied by the IntentSender, options given here will
+     * override any that conflict with those given by the IntentSender.
      */
     public void startIntentSenderForResult(IntentSender intent, int requestCode,
-            Intent fillInIntent, int flagsMask, int flagsValues, int extraFlags)
-            throws IntentSender.SendIntentException {
+            Intent fillInIntent, int flagsMask, int flagsValues, int extraFlags,
+            Bundle options) throws IntentSender.SendIntentException {
         if (mParent == null) {
             startIntentSenderForResultInner(intent, requestCode, fillInIntent,
-                    flagsMask, flagsValues, this);
+                    flagsMask, flagsValues, this, options);
+        } else if (options != null) {
+            mParent.startIntentSenderFromChild(this, intent, requestCode,
+                    fillInIntent, flagsMask, flagsValues, extraFlags, options);
         } else {
+            // Note we want to go through this call for compatibility with
+            // existing applications that may have overridden the method.
             mParent.startIntentSenderFromChild(this, intent, requestCode,
                     fillInIntent, flagsMask, flagsValues, extraFlags);
         }
     }
 
     private void startIntentSenderForResultInner(IntentSender intent, int requestCode,
-            Intent fillInIntent, int flagsMask, int flagsValues, Activity activity)
+            Intent fillInIntent, int flagsMask, int flagsValues, Activity activity,
+            Bundle options)
             throws IntentSender.SendIntentException {
         try {
             String resolvedType = null;
@@ -3255,8 +3455,8 @@ public class Activity extends ContextThemeWrapper
             int result = ActivityManagerNative.getDefault()
                 .startActivityIntentSender(mMainThread.getApplicationThread(), intent,
                         fillInIntent, resolvedType, mToken, activity.mEmbeddedID,
-                        requestCode, flagsMask, flagsValues);
-            if (result == IActivityManager.START_CANCELED) {
+                        requestCode, flagsMask, flagsValues, options);
+            if (result == ActivityManager.START_CANCELED) {
                 throw new IntentSender.SendIntentException();
             }
             Instrumentation.checkStartActivityResult(result, null);
@@ -3275,6 +3475,22 @@ public class Activity extends ContextThemeWrapper
     }
 
     /**
+     * Same as {@link #startActivity(Intent, Bundle)} with no options
+     * specified.
+     *
+     * @param intent The intent to start.
+     *
+     * @throws android.content.ActivityNotFoundException
+     *
+     * @see {@link #startActivity(Intent, Bundle)}
+     * @see #startActivityForResult
+     */
+    @Override
+    public void startActivity(Intent intent) {
+        startActivity(intent, null);
+    }
+
+    /**
      * Launch a new activity.  You will not receive any information about when
      * the activity exits.  This implementation overrides the base version,
      * providing information about
@@ -3287,14 +3503,40 @@ public class Activity extends ContextThemeWrapper
      * if there was no Activity found to run the given Intent.
      * 
      * @param intent The intent to start. 
+     * @param options Additional options for how the Activity should be started.
+     * See {@link android.content.Context#startActivity(Intent, Bundle)
+     * Context.startActivity(Intent, Bundle)} for more details.
      * 
      * @throws android.content.ActivityNotFoundException
-     * 
+     *
+     * @see {@link #startActivity(Intent)}
      * @see #startActivityForResult 
      */
     @Override
-    public void startActivity(Intent intent) {
-        startActivityForResult(intent, -1);
+    public void startActivity(Intent intent, Bundle options) {
+        if (options != null) {
+            startActivityForResult(intent, -1, options);
+        } else {
+            // Note we want to go through this call for compatibility with
+            // applications that may have overridden the method.
+            startActivityForResult(intent, -1);
+        }
+    }
+
+    /**
+     * Same as {@link #startActivities(Intent[], Bundle)} with no options
+     * specified.
+     *
+     * @param intents The intents to start.
+     *
+     * @throws android.content.ActivityNotFoundException
+     *
+     * @see {@link #startActivities(Intent[], Bundle)}
+     * @see #startActivityForResult
+     */
+    @Override
+    public void startActivities(Intent[] intents) {
+        startActivities(intents, null);
     }
 
     /**
@@ -3310,22 +3552,24 @@ public class Activity extends ContextThemeWrapper
      * if there was no Activity found to run the given Intent.
      *
      * @param intents The intents to start.
+     * @param options Additional options for how the Activity should be started.
+     * See {@link android.content.Context#startActivity(Intent, Bundle)
+     * Context.startActivity(Intent, Bundle)} for more details.
      *
      * @throws android.content.ActivityNotFoundException
      *
+     * @see {@link #startActivities(Intent[])}
      * @see #startActivityForResult
      */
     @Override
-    public void startActivities(Intent[] intents) {
+    public void startActivities(Intent[] intents, Bundle options) {
         mInstrumentation.execStartActivities(this, mMainThread.getApplicationThread(),
-                mToken, this, intents);
+                mToken, this, intents, options);
     }
 
     /**
-     * Like {@link #startActivity(Intent)}, but taking a IntentSender
-     * to start; see
-     * {@link #startIntentSenderForResult(IntentSender, int, Intent, int, int, int)}
-     * for more information.
+     * Same as calling {@link #startIntentSender(IntentSender, Intent, int, int, int, Bundle)}
+     * with no options.
      * 
      * @param intent The IntentSender to launch.
      * @param fillInIntent If non-null, this will be provided as the
@@ -3339,8 +3583,61 @@ public class Activity extends ContextThemeWrapper
     public void startIntentSender(IntentSender intent,
             Intent fillInIntent, int flagsMask, int flagsValues, int extraFlags)
             throws IntentSender.SendIntentException {
-        startIntentSenderForResult(intent, -1, fillInIntent, flagsMask,
-                flagsValues, extraFlags);
+        startIntentSender(intent, fillInIntent, flagsMask, flagsValues,
+                extraFlags, null);
+    }
+
+    /**
+     * Like {@link #startActivity(Intent, Bundle)}, but taking a IntentSender
+     * to start; see
+     * {@link #startIntentSenderForResult(IntentSender, int, Intent, int, int, int, Bundle)}
+     * for more information.
+     *
+     * @param intent The IntentSender to launch.
+     * @param fillInIntent If non-null, this will be provided as the
+     * intent parameter to {@link IntentSender#sendIntent}.
+     * @param flagsMask Intent flags in the original IntentSender that you
+     * would like to change.
+     * @param flagsValues Desired values for any bits set in
+     * <var>flagsMask</var>
+     * @param extraFlags Always set to 0.
+     * @param options Additional options for how the Activity should be started.
+     * See {@link android.content.Context#startActivity(Intent, Bundle)
+     * Context.startActivity(Intent, Bundle)} for more details.  If options
+     * have also been supplied by the IntentSender, options given here will
+     * override any that conflict with those given by the IntentSender.
+     */
+    public void startIntentSender(IntentSender intent,
+            Intent fillInIntent, int flagsMask, int flagsValues, int extraFlags,
+            Bundle options) throws IntentSender.SendIntentException {
+        if (options != null) {
+            startIntentSenderForResult(intent, -1, fillInIntent, flagsMask,
+                    flagsValues, extraFlags, options);
+        } else {
+            // Note we want to go through this call for compatibility with
+            // applications that may have overridden the method.
+            startIntentSenderForResult(intent, -1, fillInIntent, flagsMask,
+                    flagsValues, extraFlags);
+        }
+    }
+
+    /**
+     * Same as calling {@link #startActivityIfNeeded(Intent, int, Bundle)}
+     * with no options.
+     *
+     * @param intent The intent to start.
+     * @param requestCode If >= 0, this code will be returned in
+     *         onActivityResult() when the activity exits, as described in
+     *         {@link #startActivityForResult}.
+     *
+     * @return If a new activity was launched then true is returned; otherwise
+     *         false is returned and you must handle the Intent yourself.
+     *
+     * @see #startActivity
+     * @see #startActivityForResult
+     */
+    public boolean startActivityIfNeeded(Intent intent, int requestCode) {
+        return startActivityIfNeeded(intent, requestCode, null);
     }
 
     /**
@@ -3363,6 +3660,9 @@ public class Activity extends ContextThemeWrapper
      * @param requestCode If >= 0, this code will be returned in
      *         onActivityResult() when the activity exits, as described in
      *         {@link #startActivityForResult}.
+     * @param options Additional options for how the Activity should be started.
+     * See {@link android.content.Context#startActivity(Intent, Bundle)
+     * Context.startActivity(Intent, Bundle)} for more details.
      * 
      * @return If a new activity was launched then true is returned; otherwise
      *         false is returned and you must handle the Intent yourself.
@@ -3370,24 +3670,23 @@ public class Activity extends ContextThemeWrapper
      * @see #startActivity
      * @see #startActivityForResult
      */
-    public boolean startActivityIfNeeded(Intent intent, int requestCode) {
+    public boolean startActivityIfNeeded(Intent intent, int requestCode, Bundle options) {
         if (mParent == null) {
-            int result = IActivityManager.START_RETURN_INTENT_TO_CALLER;
+            int result = ActivityManager.START_RETURN_INTENT_TO_CALLER;
             try {
                 intent.setAllowFds(false);
                 result = ActivityManagerNative.getDefault()
                     .startActivity(mMainThread.getApplicationThread(),
-                            intent, intent.resolveTypeIfNeeded(
-                                    getContentResolver()),
-                            null, 0,
-                            mToken, mEmbeddedID, requestCode, true, false,
-                            null, null, false);
+                            intent, intent.resolveTypeIfNeeded(getContentResolver()),
+                            mToken, mEmbeddedID, requestCode,
+                            ActivityManager.START_FLAG_ONLY_IF_NEEDED, null, null,
+                            options);
             } catch (RemoteException e) {
                 // Empty
             }
-            
+
             Instrumentation.checkStartActivityResult(result, intent);
-            
+
             if (requestCode >= 0) {
                 // If this start is requesting a result, we can avoid making
                 // the activity visible until the result is received.  Setting
@@ -3398,11 +3697,29 @@ public class Activity extends ContextThemeWrapper
                 // activity is finished, no matter what happens to it.
                 mStartedActivity = true;
             }
-            return result != IActivityManager.START_RETURN_INTENT_TO_CALLER;
+            return result != ActivityManager.START_RETURN_INTENT_TO_CALLER;
         }
 
         throw new UnsupportedOperationException(
             "startActivityIfNeeded can only be called from a top-level activity");
+    }
+
+    /**
+     * Same as calling {@link #startNextMatchingActivity(Intent, Bundle)} with
+     * no options.
+     *
+     * @param intent The intent to dispatch to the next activity.  For
+     * correct behavior, this must be the same as the Intent that started
+     * your own activity; the only changes you can make are to the extras
+     * inside of it.
+     *
+     * @return Returns a boolean indicating whether there was another Activity
+     * to start: true if there was a next activity to start, false if there
+     * wasn't.  In general, if true is returned you will then want to call
+     * finish() on yourself.
+     */
+    public boolean startNextMatchingActivity(Intent intent) {
+        return startNextMatchingActivity(intent, null);
     }
 
     /**
@@ -3415,18 +3732,21 @@ public class Activity extends ContextThemeWrapper
      * correct behavior, this must be the same as the Intent that started
      * your own activity; the only changes you can make are to the extras
      * inside of it.
+     * @param options Additional options for how the Activity should be started.
+     * See {@link android.content.Context#startActivity(Intent, Bundle)
+     * Context.startActivity(Intent, Bundle)} for more details.
      * 
      * @return Returns a boolean indicating whether there was another Activity
      * to start: true if there was a next activity to start, false if there
      * wasn't.  In general, if true is returned you will then want to call
      * finish() on yourself.
      */
-    public boolean startNextMatchingActivity(Intent intent) {
+    public boolean startNextMatchingActivity(Intent intent, Bundle options) {
         if (mParent == null) {
             try {
                 intent.setAllowFds(false);
                 return ActivityManagerNative.getDefault()
-                    .startNextMatchingActivity(mToken, intent);
+                    .startNextMatchingActivity(mToken, intent, options);
             } catch (RemoteException e) {
                 // Empty
             }
@@ -3436,7 +3756,25 @@ public class Activity extends ContextThemeWrapper
         throw new UnsupportedOperationException(
             "startNextMatchingActivity can only be called from a top-level activity");
     }
-    
+
+    /**
+     * Same as calling {@link #startActivityFromChild(Activity, Intent, int, Bundle)}
+     * with no options.
+     *
+     * @param child The activity making the call.
+     * @param intent The intent to start.
+     * @param requestCode Reply request code.  < 0 if reply is not requested.
+     *
+     * @throws android.content.ActivityNotFoundException
+     *
+     * @see #startActivity
+     * @see #startActivityForResult
+     */
+    public void startActivityFromChild(Activity child, Intent intent,
+            int requestCode) {
+        startActivityFromChild(child, intent, requestCode, null);
+    }
+
     /**
      * This is called when a child activity of this one calls its 
      * {@link #startActivity} or {@link #startActivityForResult} method.
@@ -3446,7 +3784,10 @@ public class Activity extends ContextThemeWrapper
      * 
      * @param child The activity making the call.
      * @param intent The intent to start.
-     * @param requestCode Reply request code.  < 0 if reply is not requested. 
+     * @param requestCode Reply request code.  < 0 if reply is not requested.
+     * @param options Additional options for how the Activity should be started.
+     * See {@link android.content.Context#startActivity(Intent, Bundle)
+     * Context.startActivity(Intent, Bundle)} for more details.
      * 
      * @throws android.content.ActivityNotFoundException
      * 
@@ -3454,16 +3795,34 @@ public class Activity extends ContextThemeWrapper
      * @see #startActivityForResult 
      */
     public void startActivityFromChild(Activity child, Intent intent, 
-            int requestCode) {
+            int requestCode, Bundle options) {
         Instrumentation.ActivityResult ar =
             mInstrumentation.execStartActivity(
                 this, mMainThread.getApplicationThread(), mToken, child,
-                intent, requestCode);
+                intent, requestCode, options);
         if (ar != null) {
             mMainThread.sendActivityResult(
                 mToken, child.mEmbeddedID, requestCode,
                 ar.getResultCode(), ar.getResultData());
         }
+    }
+
+    /**
+     * Same as calling {@link #startActivityFromFragment(Fragment, Intent, int, Bundle)}
+     * with no options.
+     *
+     * @param fragment The fragment making the call.
+     * @param intent The intent to start.
+     * @param requestCode Reply request code.  < 0 if reply is not requested.
+     *
+     * @throws android.content.ActivityNotFoundException
+     *
+     * @see Fragment#startActivity
+     * @see Fragment#startActivityForResult
+     */
+    public void startActivityFromFragment(Fragment fragment, Intent intent, 
+            int requestCode) {
+        startActivityFromFragment(fragment, intent, requestCode, null);
     }
 
     /**
@@ -3477,6 +3836,9 @@ public class Activity extends ContextThemeWrapper
      * @param fragment The fragment making the call.
      * @param intent The intent to start.
      * @param requestCode Reply request code.  < 0 if reply is not requested. 
+     * @param options Additional options for how the Activity should be started.
+     * See {@link android.content.Context#startActivity(Intent, Bundle)
+     * Context.startActivity(Intent, Bundle)} for more details.
      * 
      * @throws android.content.ActivityNotFoundException
      * 
@@ -3484,16 +3846,28 @@ public class Activity extends ContextThemeWrapper
      * @see Fragment#startActivityForResult 
      */
     public void startActivityFromFragment(Fragment fragment, Intent intent, 
-            int requestCode) {
+            int requestCode, Bundle options) {
         Instrumentation.ActivityResult ar =
             mInstrumentation.execStartActivity(
                 this, mMainThread.getApplicationThread(), mToken, fragment,
-                intent, requestCode);
+                intent, requestCode, options);
         if (ar != null) {
             mMainThread.sendActivityResult(
                 mToken, fragment.mWho, requestCode,
                 ar.getResultCode(), ar.getResultData());
         }
+    }
+
+    /**
+     * Same as calling {@link #startIntentSenderFromChild(Activity, IntentSender,
+     * int, Intent, int, int, int, Bundle)} with no options.
+     */
+    public void startIntentSenderFromChild(Activity child, IntentSender intent,
+            int requestCode, Intent fillInIntent, int flagsMask, int flagsValues,
+            int extraFlags)
+            throws IntentSender.SendIntentException {
+        startIntentSenderFromChild(child, intent, requestCode, fillInIntent,
+                flagsMask, flagsValues, extraFlags, null);
     }
 
     /**
@@ -3504,16 +3878,24 @@ public class Activity extends ContextThemeWrapper
      */
     public void startIntentSenderFromChild(Activity child, IntentSender intent,
             int requestCode, Intent fillInIntent, int flagsMask, int flagsValues,
-            int extraFlags)
+            int extraFlags, Bundle options)
             throws IntentSender.SendIntentException {
         startIntentSenderForResultInner(intent, requestCode, fillInIntent,
-                flagsMask, flagsValues, child);
+                flagsMask, flagsValues, child, options);
     }
 
     /**
      * Call immediately after one of the flavors of {@link #startActivity(Intent)}
      * or {@link #finish} to specify an explicit transition animation to
      * perform next.
+     *
+     * <p>As of {@link android.os.Build.VERSION_CODES#JELLY_BEAN} an alternative
+     * to using this with starting activities is to supply the desired animation
+     * information through a {@link ActivityOptions} bundle to
+     * {@link #startActivity(Intent, Bundle) or a related function.  This allows
+     * you to specify a custom animation even when starting an activity from
+     * outside the context of the current top activity.
+     *
      * @param enterAnim A resource ID of the animation resource to use for
      * the incoming activity.  Use 0 for no animation.
      * @param exitAnim A resource ID of the animation resource to use for
@@ -3549,7 +3931,16 @@ public class Activity extends ContextThemeWrapper
     /**
      * Call this to set the result that your activity will return to its
      * caller.
-     * 
+     *
+     * <p>As of {@link android.os.Build.VERSION_CODES#GINGERBREAD}, the Intent
+     * you supply here can have {@link Intent#FLAG_GRANT_READ_URI_PERMISSION
+     * Intent.FLAG_GRANT_READ_URI_PERMISSION} and/or {@link Intent#FLAG_GRANT_WRITE_URI_PERMISSION
+     * Intent.FLAG_GRANT_WRITE_URI_PERMISSION} set.  This will grant the
+     * Activity receiving the result access to the specific URIs in the Intent.
+     * Access will remain until the Activity has finished (it will remain across the hosting
+     * process being killed and other temporary destruction) and will be added
+     * to any existing set of URI permissions it already holds.
+     *
      * @param resultCode The result code to propagate back to the originating
      *                   activity, often RESULT_CANCELED or RESULT_OK
      * @param data The data to propagate back to the originating activity.
@@ -3714,6 +4105,36 @@ public class Activity extends ContextThemeWrapper
     }
 
     /**
+     * Finish this activity as well as all activities immediately below it
+     * in the current task that have the same affinity.  This is typically
+     * used when an application can be launched on to another task (such as
+     * from an ACTION_VIEW of a content type it understands) and the user
+     * has used the up navigation to switch out of the current task and in
+     * to its own task.  In this case, if the user has navigated down into
+     * any other activities of the second application, all of those should
+     * be removed from the original task as part of the task switch.
+     *
+     * <p>Note that this finish does <em>not</em> allow you to deliver results
+     * to the previous activity, and an exception will be thrown if you are trying
+     * to do so.</p>
+     */
+    public void finishAffinity() {
+        if (mParent != null) {
+            throw new IllegalStateException("Can not be called from an embedded activity");
+        }
+        if (mResultCode != RESULT_CANCELED || mResultData != null) {
+            throw new IllegalStateException("Can not be called to deliver a result");
+        }
+        try {
+            if (ActivityManagerNative.getDefault().finishActivityAffinity(mToken)) {
+                mFinished = true;
+            }
+        } catch (RemoteException e) {
+            // Empty
+        }
+    }
+
+    /**
      * This is called when a child activity of this one calls its 
      * {@link #finish} method.  The default implementation simply calls
      * finish() on this activity (the parent), finishing the entire group.
@@ -3824,9 +4245,9 @@ public class Activity extends ContextThemeWrapper
             data.setAllowFds(false);
             IIntentSender target =
                 ActivityManagerNative.getDefault().getIntentSender(
-                        IActivityManager.INTENT_SENDER_ACTIVITY_RESULT, packageName,
+                        ActivityManager.INTENT_SENDER_ACTIVITY_RESULT, packageName,
                         mParent == null ? mToken : mParent.mToken,
-                        mEmbeddedID, requestCode, new Intent[] { data }, null, flags);
+                        mEmbeddedID, requestCode, new Intent[] { data }, null, flags, null);
             return target != null ? new PendingIntent(target) : null;
         } catch (RemoteException e) {
             // Empty
@@ -4277,7 +4698,7 @@ public class Activity extends ContextThemeWrapper
 
     /**
      * Print the Activity's state into the given stream.  This gets invoked if
-     * you run "adb shell dumpsys activity <activity_component_name>".
+     * you run "adb shell dumpsys activity &lt;activity_component_name&gt;".
      *
      * @param prefix Desired prefix to prepend at each line of output.
      * @param fd The raw file descriptor that the dump is being sent to.
@@ -4400,6 +4821,127 @@ public class Activity extends ContextThemeWrapper
     public void onActionModeFinished(ActionMode mode) {
     }
 
+    /**
+     * Returns true if the app should recreate the task when navigating 'up' from this activity
+     * by using targetIntent.
+     *
+     * <p>If this method returns false the app can trivially call
+     * {@link #navigateUpTo(Intent)} using the same parameters to correctly perform
+     * up navigation. If this method returns false, the app should synthesize a new task stack
+     * by using {@link TaskStackBuilder} or another similar mechanism to perform up navigation.</p>
+     *
+     * @param targetIntent An intent representing the target destination for up navigation
+     * @return true if navigating up should recreate a new task stack, false if the same task
+     *         should be used for the destination
+     */
+    public boolean shouldUpRecreateTask(Intent targetIntent) {
+        try {
+            PackageManager pm = getPackageManager();
+            ComponentName cn = targetIntent.getComponent();
+            if (cn == null) {
+                cn = targetIntent.resolveActivity(pm);
+            }
+            ActivityInfo info = pm.getActivityInfo(cn, 0);
+            if (info.taskAffinity == null) {
+                return false;
+            }
+            return !ActivityManagerNative.getDefault()
+                    .targetTaskAffinityMatchesActivity(mToken, info.taskAffinity);
+        } catch (RemoteException e) {
+            return false;
+        } catch (NameNotFoundException e) {
+            return false;
+        }
+    }
+
+    /**
+     * Navigate from this activity to the activity specified by upIntent, finishing this activity
+     * in the process. If the activity indicated by upIntent already exists in the task's history,
+     * this activity and all others before the indicated activity in the history stack will be
+     * finished.
+     *
+     * <p>If the indicated activity does not appear in the history stack, this will finish
+     * each activity in this task until the root activity of the task is reached, resulting in
+     * an "in-app home" behavior. This can be useful in apps with a complex navigation hierarchy
+     * when an activity may be reached by a path not passing through a canonical parent
+     * activity.</p>
+     *
+     * <p>This method should be used when performing up navigation from within the same task
+     * as the destination. If up navigation should cross tasks in some cases, see
+     * {@link #shouldUpRecreateTask(Intent)}.</p>
+     *
+     * @param upIntent An intent representing the target destination for up navigation
+     *
+     * @return true if up navigation successfully reached the activity indicated by upIntent and
+     *         upIntent was delivered to it. false if an instance of the indicated activity could
+     *         not be found and this activity was simply finished normally.
+     */
+    public boolean navigateUpTo(Intent upIntent) {
+        if (mParent == null) {
+            ComponentName destInfo = upIntent.getComponent();
+            if (destInfo == null) {
+                destInfo = upIntent.resolveActivity(getPackageManager());
+                if (destInfo == null) {
+                    return false;
+                }
+                upIntent = new Intent(upIntent);
+                upIntent.setComponent(destInfo);
+            }
+            int resultCode;
+            Intent resultData;
+            synchronized (this) {
+                resultCode = mResultCode;
+                resultData = mResultData;
+            }
+            if (resultData != null) {
+                resultData.setAllowFds(false);
+            }
+            try {
+                return ActivityManagerNative.getDefault().navigateUpTo(mToken, upIntent,
+                        resultCode, resultData);
+            } catch (RemoteException e) {
+                return false;
+            }
+        } else {
+            return mParent.navigateUpToFromChild(this, upIntent);
+        }
+    }
+
+    /**
+     * This is called when a child activity of this one calls its
+     * {@link #navigateUpTo} method.  The default implementation simply calls
+     * navigateUpTo(upIntent) on this activity (the parent).
+     *
+     * @param child The activity making the call.
+     * @param upIntent An intent representing the target destination for up navigation
+     *
+     * @return true if up navigation successfully reached the activity indicated by upIntent and
+     *         upIntent was delivered to it. false if an instance of the indicated activity could
+     *         not be found and this activity was simply finished normally.
+     */
+    public boolean navigateUpToFromChild(Activity child, Intent upIntent) {
+        return navigateUpTo(upIntent);
+    }
+
+    /**
+     * Obtain an {@link Intent} that will launch an explicit target activity specified by
+     * this activity's logical parent. The logical parent is named in the application's manifest
+     * by the {@link android.R.attr#parentActivityName parentActivityName} attribute.
+     * Activity subclasses may override this method to modify the Intent returned by
+     * super.getParentActivityIntent() or to implement a different mechanism of retrieving
+     * the parent intent entirely.
+     *
+     * @return a new Intent targeting the defined parent of this activity or null if
+     *         there is no valid parent.
+     */
+    public Intent getParentActivityIntent() {
+        final String parentName = mActivityInfo.parentActivityName;
+        if (TextUtils.isEmpty(parentName)) {
+            return null;
+        }
+        return new Intent().setClassName(this, parentName);
+    }
+
     // ------------------ Internal API ------------------
     
     final void setParent(Activity parent) {
@@ -4457,7 +4999,8 @@ public class Activity extends ContextThemeWrapper
         mCurrentConfig = config;
     }
 
-    final IBinder getActivityToken() {
+    /** @hide */
+    public final IBinder getActivityToken() {
         return mParent != null ? mParent.getActivityToken() : mToken;
     }
 

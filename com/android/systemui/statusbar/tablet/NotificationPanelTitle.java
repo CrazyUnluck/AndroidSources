@@ -16,6 +16,8 @@
 
 package com.android.systemui.statusbar.tablet;
 
+import java.util.ArrayList;
+
 import android.content.Context;
 import android.util.AttributeSet;
 import android.view.MotionEvent;
@@ -24,11 +26,17 @@ import android.view.View;
 import android.view.accessibility.AccessibilityEvent;
 import android.widget.RelativeLayout;
 
+import com.android.systemui.R;
+
+
 public class NotificationPanelTitle extends RelativeLayout implements View.OnClickListener {
     private NotificationPanel mPanel;
+    private ArrayList<View> buttons;
+    private View mSettingsButton;
 
     public NotificationPanelTitle(Context context, AttributeSet attrs) {
         super(context, attrs);
+        buttons = new ArrayList<View>();
         setOnClickListener(this);
     }
 
@@ -37,7 +45,26 @@ public class NotificationPanelTitle extends RelativeLayout implements View.OnCli
     }
 
     @Override
+    public void onFinishInflate() {
+        super.onFinishInflate();
+        buttons.add(mSettingsButton = findViewById(R.id.settings_button));
+        buttons.add(findViewById(R.id.notification_button));
+    }
+
+    @Override
+    public void setPressed(boolean pressed) {
+        super.setPressed(pressed);
+        for (View button : buttons) {
+            if (button != null) {
+                button.setPressed(pressed);
+            }
+        }
+    }
+
+    @Override
     public boolean onTouchEvent(MotionEvent e) {
+        if (!mSettingsButton.isEnabled())
+            return false;
         switch (e.getAction()) {
             case MotionEvent.ACTION_DOWN:
                 setPressed(true);
@@ -63,7 +90,7 @@ public class NotificationPanelTitle extends RelativeLayout implements View.OnCli
 
     @Override
     public void onClick(View v) {
-        if (v == this) {
+        if (mSettingsButton.isEnabled() && v == this) {
             mPanel.swapPanels();
         }
     }

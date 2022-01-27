@@ -21,6 +21,7 @@ import android.database.Cursor;
 import android.net.Uri;
 import android.os.Bundle;
 import android.os.IBinder;
+import android.os.ICancellationSignal;
 import android.os.IInterface;
 import android.os.ParcelFileDescriptor;
 import android.os.RemoteException;
@@ -34,7 +35,8 @@ import java.util.ArrayList;
  */
 public interface IContentProvider extends IInterface {
     public Cursor query(Uri url, String[] projection, String selection,
-            String[] selectionArgs, String sortOrder) throws RemoteException;
+            String[] selectionArgs, String sortOrder, ICancellationSignal cancellationSignal)
+                    throws RemoteException;
     public String getType(Uri url) throws RemoteException;
     public Uri insert(Uri url, ContentValues initialValues)
             throws RemoteException;
@@ -50,6 +52,7 @@ public interface IContentProvider extends IInterface {
     public ContentProviderResult[] applyBatch(ArrayList<ContentProviderOperation> operations)
             throws RemoteException, OperationApplicationException;
     public Bundle call(String method, String arg, Bundle extras) throws RemoteException;
+    public ICancellationSignal createCancellationSignal() throws RemoteException;
 
     // Data interchange.
     public String[] getStreamTypes(Uri url, String mimeTypeFilter) throws RemoteException;
@@ -71,4 +74,5 @@ public interface IContentProvider extends IInterface {
     static final int CALL_TRANSACTION = IBinder.FIRST_CALL_TRANSACTION + 20;
     static final int GET_STREAM_TYPES_TRANSACTION = IBinder.FIRST_CALL_TRANSACTION + 21;
     static final int OPEN_TYPED_ASSET_FILE_TRANSACTION = IBinder.FIRST_CALL_TRANSACTION + 22;
+    static final int CREATE_CANCELATION_SIGNAL_TRANSACTION = IBinder.FIRST_CALL_TRANSACTION + 23;
 }

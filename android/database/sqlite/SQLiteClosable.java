@@ -16,27 +16,55 @@
 
 package android.database.sqlite;
 
-import android.database.CursorWindow;
+import java.io.Closeable;
 
 /**
  * An object created from a SQLiteDatabase that can be closed.
+ *
+ * This class implements a primitive reference counting scheme for database objects.
  */
-public abstract class SQLiteClosable {
+public abstract class SQLiteClosable implements Closeable {
     private int mReferenceCount = 1;
 
+    /**
+     * Called when the last reference to the object was released by
+     * a call to {@link #releaseReference()} or {@link #close()}.
+     */
     protected abstract void onAllReferencesReleased();
-    protected void onAllReferencesReleasedFromContainer() {}
 
+    /**
+     * Called when the last reference to the object was released by
+     * a call to {@link #releaseReferenceFromContainer()}.
+     *
+     * @deprecated Do not use.
+     */
+    @Deprecated
+    protected void onAllReferencesReleasedFromContainer() {
+        onAllReferencesReleased();
+    }
+
+    /**
+     * Acquires a reference to the object.
+     *
+     * @throws IllegalStateException if the last reference to the object has already
+     * been released.
+     */
     public void acquireReference() {
         synchronized(this) {
             if (mReferenceCount <= 0) {
                 throw new IllegalStateException(
-                        "attempt to re-open an already-closed object: " + getObjInfo());
+                        "attempt to re-open an already-closed object: " + this);
             }
             mReferenceCount++;
         }
     }
 
+    /**
+     * Releases a reference to the object, closing the object if the last reference
+     * was released.
+     *
+     * @see #onAllReferencesReleased()
+     */
     public void releaseReference() {
         boolean refCountIsZero = false;
         synchronized(this) {
@@ -47,6 +75,14 @@ public abstract class SQLiteClosable {
         }
     }
 
+    /**
+     * Releases a reference to the object that was owned by the container of the object,
+     * closing the object if the last reference was released.
+     *
+     * @see #onAllReferencesReleasedFromContainer()
+     * @deprecated Do not use.
+     */
+    @Deprecated
     public void releaseReferenceFromContainer() {
         boolean refCountIsZero = false;
         synchronized(this) {
@@ -57,21 +93,16 @@ public abstract class SQLiteClosable {
         }
     }
 
-    private String getObjInfo() {
-        StringBuilder buff = new StringBuilder();
-        buff.append(this.getClass().getName());
-        buff.append(" (");
-        if (this instanceof SQLiteDatabase) {
-            buff.append("database = ");
-            buff.append(((SQLiteDatabase)this).getPath());
-        } else if (this instanceof SQLiteProgram) {
-            buff.append("mSql = ");
-            buff.append(((SQLiteProgram)this).mSql);
-        } else if (this instanceof CursorWindow) {
-            buff.append("mStartPos = ");
-            buff.append(((CursorWindow)this).getStartPosition());
-        }
-        buff.append(") ");
-        return buff.toString();
+    /**
+     * Releases a reference to the object, closing the object if the last reference
+     * was released.
+     *
+     * Calling this method is equivalent to calling {@link #releaseReference}.
+     *
+     * @see #releaseReference()
+     * @see #onAllReferencesReleased()
+     */
+    public void close() {
+        releaseReference();
     }
 }

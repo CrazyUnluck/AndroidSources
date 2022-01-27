@@ -29,6 +29,8 @@ import android.view.Gravity;
 import android.view.View;
 import android.view.ViewDebug;
 import android.view.ViewGroup;
+import android.view.accessibility.AccessibilityEvent;
+import android.view.accessibility.AccessibilityNodeInfo;
 import android.widget.RemoteViews.RemoteView;
 
 
@@ -120,9 +122,24 @@ public class FrameLayout extends ViewGroup {
     }
 
     /**
+     * Describes how the foreground is positioned.
+     *
+     * @return foreground gravity.
+     *
+     * @see #setForegroundGravity(int)
+     *
+     * @attr ref android.R.styleable#FrameLayout_foregroundGravity
+     */
+    public int getForegroundGravity() {
+        return mForegroundGravity;
+    }
+
+    /**
      * Describes how the foreground is positioned. Defaults to START and TOP.
      *
      * @param foregroundGravity See {@link android.view.Gravity}
+     *
+     * @see #getForegroundGravity()
      *
      * @attr ref android.R.styleable#FrameLayout_foregroundGravity
      */
@@ -553,6 +570,19 @@ public class FrameLayout extends ViewGroup {
     @Override
     protected ViewGroup.LayoutParams generateLayoutParams(ViewGroup.LayoutParams p) {
         return new LayoutParams(p);
+    }
+
+
+    @Override
+    public void onInitializeAccessibilityEvent(AccessibilityEvent event) {
+        super.onInitializeAccessibilityEvent(event);
+        event.setClassName(FrameLayout.class.getName());
+    }
+
+    @Override
+    public void onInitializeAccessibilityNodeInfo(AccessibilityNodeInfo info) {
+        super.onInitializeAccessibilityNodeInfo(info);
+        info.setClassName(FrameLayout.class.getName());
     }
 
     /**

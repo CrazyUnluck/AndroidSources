@@ -19,6 +19,7 @@ package android.view;
 import android.graphics.Bitmap;
 import android.graphics.Canvas;
 import android.graphics.Matrix;
+import android.graphics.Rect;
 
 /**
  * A hardware layer can be used to render graphics operations into a hardware
@@ -35,6 +36,7 @@ abstract class HardwareLayer {
     
     int mWidth;
     int mHeight;
+    DisplayList mDisplayList;
 
     boolean mOpaque;
 
@@ -78,6 +80,24 @@ abstract class HardwareLayer {
     }
 
     /**
+     * Returns the DisplayList for the layer.
+     *
+     * @return The DisplayList of the hardware layer
+     */
+    DisplayList getDisplayList() {
+        return mDisplayList;
+    }
+
+    /**
+     * Sets the DisplayList for the layer.
+     *
+     * @param displayList The new DisplayList for this layer
+     */
+    void setDisplayList(DisplayList displayList) {
+        mDisplayList = displayList;
+    }
+
+    /**
      * Returns whether or not this layer is opaque.
      * 
      * @return True if the layer is opaque, false otherwise
@@ -114,6 +134,11 @@ abstract class HardwareLayer {
      * Destroys resources without waiting for a GC. 
      */
     abstract void destroy();
+
+    /**
+     * Flush the render queue associated with this layer.
+     */
+    abstract void flush();
 
     /**
      * This must be invoked before drawing onto this layer.
@@ -158,4 +183,13 @@ abstract class HardwareLayer {
      * @param matrix The transform to apply to the layer.
      */
     abstract void setTransform(Matrix matrix);
+
+    /**
+     * Specifies the display list to use to refresh the layer.
+     *
+     * @param displayList The display list containing the drawing commands to
+     *                    execute in this layer
+     * @param dirtyRect The dirty region of the layer that needs to be redrawn
+     */
+    abstract void redraw(DisplayList displayList, Rect dirtyRect);
 }

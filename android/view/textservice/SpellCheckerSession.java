@@ -92,13 +92,14 @@ public class SpellCheckerSession {
      **/
     public static final String SERVICE_META_DATA = "android.view.textservice.scs";
 
-
     private static final int MSG_ON_GET_SUGGESTION_MULTIPLE = 1;
+    private static final int MSG_ON_GET_SUGGESTION_MULTIPLE_FOR_SENTENCE = 2;
 
     private final InternalListener mInternalListener;
     private final ITextServicesManager mTextServicesManager;
     private final SpellCheckerInfo mSpellCheckerInfo;
     private final SpellCheckerSessionListenerImpl mSpellCheckerSessionListenerImpl;
+    private final SpellCheckerSubtype mSubtype;
 
     private boolean mIsUsed;
     private SpellCheckerSessionListener mSpellCheckerSessionListener;
@@ -111,6 +112,9 @@ public class SpellCheckerSession {
                 case MSG_ON_GET_SUGGESTION_MULTIPLE:
                     handleOnGetSuggestionsMultiple((SuggestionsInfo[]) msg.obj);
                     break;
+                case MSG_ON_GET_SUGGESTION_MULTIPLE_FOR_SENTENCE:
+                    handleOnGetSentenceSuggestionsMultiple((SentenceSuggestionsInfo[]) msg.obj);
+                    break;
             }
         }
     };
@@ -120,7 +124,8 @@ public class SpellCheckerSession {
      * @hide
      */
     public SpellCheckerSession(
-            SpellCheckerInfo info, ITextServicesManager tsm, SpellCheckerSessionListener listener) {
+            SpellCheckerInfo info, ITextServicesManager tsm, SpellCheckerSessionListener listener,
+            SpellCheckerSubtype subtype) {
         if (info == null || listener == null || tsm == null) {
             throw new NullPointerException();
         }
@@ -130,6 +135,7 @@ public class SpellCheckerSession {
         mTextServicesManager = tsm;
         mIsUsed = true;
         mSpellCheckerSessionListener = listener;
+        mSubtype = subtype;
     }
 
     /**
@@ -170,10 +176,22 @@ public class SpellCheckerSession {
     }
 
     /**
+     * Get suggestions from the specified sentences
+     * @param textInfos an array of text metadata for a spell checker
+     * @param suggestionsLimit the maximum number of suggestions that will be returned
+     */
+    public void getSentenceSuggestions(TextInfo[] textInfos, int suggestionsLimit) {
+        mSpellCheckerSessionListenerImpl.getSentenceSuggestionsMultiple(
+                textInfos, suggestionsLimit);
+    }
+
+    /**
      * Get candidate strings for a substring of the specified text.
      * @param textInfo text metadata for a spell checker
-     * @param suggestionsLimit the number of limit of suggestions returned
+     * @param suggestionsLimit the maximum number of suggestions that will be returned
+     * @deprecated use {@link SpellCheckerSession#getSentenceSuggestions(TextInfo[], int)} instead
      */
+    @Deprecated
     public void getSuggestions(TextInfo textInfo, int suggestionsLimit) {
         getSuggestions(new TextInfo[] {textInfo}, suggestionsLimit, false);
     }
@@ -181,15 +199,16 @@ public class SpellCheckerSession {
     /**
      * A batch process of getSuggestions
      * @param textInfos an array of text metadata for a spell checker
-     * @param suggestionsLimit the number of limit of suggestions returned
+     * @param suggestionsLimit the maximum number of suggestions that will be returned
      * @param sequentialWords true if textInfos can be treated as sequential words.
+     * @deprecated use {@link SpellCheckerSession#getSentenceSuggestions(TextInfo[], int)} instead
      */
+    @Deprecated
     public void getSuggestions(
             TextInfo[] textInfos, int suggestionsLimit, boolean sequentialWords) {
         if (DBG) {
             Log.w(TAG, "getSuggestions from " + mSpellCheckerInfo.getId());
         }
-        // TODO: Handle multiple words suggestions by using WordBreakIterator
         mSpellCheckerSessionListenerImpl.getSuggestionsMultiple(
                 textInfos, suggestionsLimit, sequentialWords);
     }
@@ -198,10 +217,15 @@ public class SpellCheckerSession {
         mSpellCheckerSessionListener.onGetSuggestions(suggestionInfos);
     }
 
+    private void handleOnGetSentenceSuggestionsMultiple(SentenceSuggestionsInfo[] suggestionInfos) {
+        mSpellCheckerSessionListener.onGetSentenceSuggestions(suggestionInfos);
+    }
+
     private static class SpellCheckerSessionListenerImpl extends ISpellCheckerSessionListener.Stub {
         private static final int TASK_CANCEL = 1;
         private static final int TASK_GET_SUGGESTIONS_MULTIPLE = 2;
         private static final int TASK_CLOSE = 3;
+        private static final int TASK_GET_SUGGESTIONS_MULTIPLE_FOR_SENTENCE = 4;
         private final Queue<SpellCheckerParams> mPendingTasks =
                 new LinkedList<SpellCheckerParams>();
         private Handler mHandler;
@@ -252,6 +276,17 @@ public class SpellCheckerSession {
                         try {
                             session.onGetSuggestionsMultiple(scp.mTextInfos,
                                     scp.mSuggestionsLimit, scp.mSequentialWords);
+                        } catch (RemoteException e) {
+                            Log.e(TAG, "Failed to get suggestions " + e);
+                        }
+                        break;
+                    case TASK_GET_SUGGESTIONS_MULTIPLE_FOR_SENTENCE:
+                        if (DBG) {
+                            Log.w(TAG, "Get sentence suggestions from the spell checker.");
+                        }
+                        try {
+                            session.onGetSentenceSuggestionsMultiple(
+                                    scp.mTextInfos, scp.mSuggestionsLimit);
                         } catch (RemoteException e) {
                             Log.e(TAG, "Failed to get suggestions " + e);
                         }
@@ -331,6 +366,15 @@ public class SpellCheckerSession {
                             suggestionsLimit, sequentialWords));
         }
 
+        public void getSentenceSuggestionsMultiple(TextInfo[] textInfos, int suggestionsLimit) {
+            if (DBG) {
+                Log.w(TAG, "getSentenceSuggestionsMultiple");
+            }
+            processOrEnqueueTask(
+                    new SpellCheckerParams(TASK_GET_SUGGESTIONS_MULTIPLE_FOR_SENTENCE,
+                            textInfos, suggestionsLimit, false));
+        }
+
         public void close() {
             if (DBG) {
                 Log.w(TAG, "close");
@@ -355,8 +399,8 @@ public class SpellCheckerSession {
                         while (!mPendingTasks.isEmpty()) {
                             final SpellCheckerParams tmp = mPendingTasks.poll();
                             if (tmp.mWhat == TASK_CLOSE) {
-                                // Only one close task should be processed, while we need to remove all
-                                // close tasks from the queue
+                                // Only one close task should be processed, while we need to remove
+                                // all close tasks from the queue
                                 closeTask = tmp;
                             }
                         }
@@ -380,6 +424,12 @@ public class SpellCheckerSession {
                 }
             }
         }
+
+        @Override
+        public void onGetSentenceSuggestions(SentenceSuggestionsInfo[] results) {
+            mHandler.sendMessage(
+                    Message.obtain(mHandler, MSG_ON_GET_SUGGESTION_MULTIPLE_FOR_SENTENCE, results));
+        }
     }
 
     /**
@@ -387,10 +437,21 @@ public class SpellCheckerSession {
      */
     public interface SpellCheckerSessionListener {
         /**
-         * Callback for "getSuggestions"
-         * @param results an array of results of getSuggestions
+         * Callback for {@link SpellCheckerSession#getSuggestions(TextInfo, int)}
+         * and {@link SpellCheckerSession#getSuggestions(TextInfo[], int, boolean)}
+         * @param results an array of {@link SuggestionsInfo}s.
+         * These results are suggestions for {@link TextInfo}s queried by
+         * {@link SpellCheckerSession#getSuggestions(TextInfo, int)} or
+         * {@link SpellCheckerSession#getSuggestions(TextInfo[], int, boolean)}
          */
         public void onGetSuggestions(SuggestionsInfo[] results);
+        /**
+         * Callback for {@link SpellCheckerSession#getSentenceSuggestions(TextInfo[], int)}
+         * @param results an array of {@link SentenceSuggestionsInfo}s.
+         * These results are suggestions for {@link TextInfo}s
+         * queried by {@link SpellCheckerSession#getSentenceSuggestions(TextInfo[], int)}.
+         */
+        public void onGetSentenceSuggestions(SentenceSuggestionsInfo[] results);
     }
 
     private static class InternalListener extends ITextServicesSessionListener.Stub {

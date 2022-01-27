@@ -216,48 +216,75 @@ public class WebChromeClient {
     }
 
    /**
-    * Tell the client that the database quota for the origin has been exceeded.
-    * @param url The URL that triggered the notification
-    * @param databaseIdentifier The identifier of the database that caused the
-    *     quota overflow.
-    * @param currentQuota The current quota for the origin.
-    * @param estimatedSize The estimated size of the database.
-    * @param totalUsedQuota is the sum of all origins' quota.
-    * @param quotaUpdater A callback to inform the WebCore thread that a new
-    *     quota is available. This callback must always be executed at some
-    *     point to ensure that the sleeping WebCore thread is woken up.
+    * Tell the client that the quota has been exceeded for the Web SQL Database
+    * API for a particular origin and request a new quota. The client must
+    * respond by invoking the
+    * {@link WebStorage.QuotaUpdater#updateQuota(long) updateQuota(long)}
+    * method of the supplied {@link WebStorage.QuotaUpdater} instance. The
+    * minimum value that can be set for the new quota is the current quota. The
+    * default implementation responds with the current quota, so the quota will
+    * not be increased.
+    * @param url The URL of the page that triggered the notification
+    * @param databaseIdentifier The identifier of the database where the quota
+    *                           was exceeded.
+    * @param quota The quota for the origin, in bytes
+    * @param estimatedDatabaseSize The estimated size of the offending
+    *                              database, in bytes
+    * @param totalQuota The total quota for all origins, in bytes
+    * @param quotaUpdater An instance of {@link WebStorage.QuotaUpdater} which
+    *                     must be used to inform the WebView of the new quota.
     */
+    // Note that the callback must always be executed at some point to ensure
+    // that the sleeping WebCore thread is woken up.
     public void onExceededDatabaseQuota(String url, String databaseIdentifier,
-        long currentQuota, long estimatedSize, long totalUsedQuota,
-        WebStorage.QuotaUpdater quotaUpdater) {
+            long quota, long estimatedDatabaseSize, long totalQuota,
+            WebStorage.QuotaUpdater quotaUpdater) {
         // This default implementation passes the current quota back to WebCore.
         // WebCore will interpret this that new quota was declined.
-        quotaUpdater.updateQuota(currentQuota);
+        quotaUpdater.updateQuota(quota);
     }
 
    /**
-    * Tell the client that the Application Cache has exceeded its max size.
-    * @param spaceNeeded is the amount of disk space that would be needed
-    * in order for the last appcache operation to succeed.
-    * @param totalUsedQuota is the sum of all origins' quota.
-    * @param quotaUpdater A callback to inform the WebCore thread that a new
-    * app cache size is available. This callback must always be executed at
-    * some point to ensure that the sleeping WebCore thread is woken up.
+    * Tell the client that the quota has been reached for the Application Cache
+    * API and request a new quota. The client must respond by invoking the
+    * {@link WebStorage.QuotaUpdater#updateQuota(long) updateQuota(long)}
+    * method of the supplied {@link WebStorage.QuotaUpdater} instance. The
+    * minimum value that can be set for the new quota is the current quota. The
+    * default implementation responds with the current quota, so the quota will
+    * not be increased.
+    * @param requiredStorage The amount of storage required by the Application
+    *                        Cache operation that triggered this notification,
+    *                        in bytes.
+    * @param quota The quota, in bytes
+    * @param quotaUpdater An instance of {@link WebStorage.QuotaUpdater} which
+    *                     must be used to inform the WebView of the new quota.
     */
-    public void onReachedMaxAppCacheSize(long spaceNeeded, long totalUsedQuota,
+    // Note that the callback must always be executed at some point to ensure
+    // that the sleeping WebCore thread is woken up.
+    public void onReachedMaxAppCacheSize(long requiredStorage, long quota,
             WebStorage.QuotaUpdater quotaUpdater) {
-        quotaUpdater.updateQuota(0);
+        quotaUpdater.updateQuota(quota);
     }
 
     /**
-     * Instructs the client to show a prompt to ask the user to set the
-     * Geolocation permission state for the specified origin.
+     * Notify the host application that web content from the specified origin
+     * is attempting to use the Geolocation API, but no permission state is
+     * currently set for that origin. The host application should invoke the
+     * specified callback with the desired permission state. See
+     * {@link GeolocationPermissions} for details.
+     * @param origin The origin of the web content attempting to use the
+     *               Geolocation API.
+     * @param callback The callback to use to set the permission state for the
+     *                 origin.
      */
     public void onGeolocationPermissionsShowPrompt(String origin,
             GeolocationPermissions.Callback callback) {}
 
     /**
-     * Instructs the client to hide the Geolocation permissions prompt.
+     * Notify the host application that a request for Geolocation permissions,
+     * made with a previous call to
+     * {@link #onGeolocationPermissionsShowPrompt(String,GeolocationPermissions.Callback) onGeolocationPermissionsShowPrompt()}
+     * has been canceled. Any related UI should therefore be hidden.
      */
     public void onGeolocationPermissionsHidePrompt() {}
 
@@ -336,9 +363,11 @@ public class WebChromeClient {
      *      onReceiveValue must be called to wake up the thread.a
      * @param acceptType The value of the 'accept' attribute of the input tag
      *         associated with this file picker.
+     * @param capture The value of the 'capture' attribute of the input tag
+     *         associated with this file picker.
      * @hide
      */
-    public void openFileChooser(ValueCallback<Uri> uploadFile, String acceptType) {
+    public void openFileChooser(ValueCallback<Uri> uploadFile, String acceptType, String capture) {
         uploadFile.onReceiveValue(null);
     }
 

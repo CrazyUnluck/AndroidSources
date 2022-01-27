@@ -71,24 +71,6 @@ public class RsBenchView extends RSSurfaceView {
         }
     }
 
-    @Override
-    public boolean onKeyDown(int keyCode, KeyEvent event) {
-        return super.onKeyDown(keyCode, event);
-    }
-
-
-    @Override
-    public boolean onTouchEvent(MotionEvent ev) {
-        boolean ret = false;
-        int act = ev.getAction();
-        if (act == ev.ACTION_DOWN) {
-            mRender.onActionDown((int)ev.getX(), (int)ev.getY());
-            ret = true;
-        }
-
-        return ret;
-    }
-
     /**
      * Set the total number of loops the benchmark tests will run
      * before the test results are collected.
@@ -106,8 +88,12 @@ public class RsBenchView extends RSSurfaceView {
         return mRender.testIsFinished();
     }
 
-    void setBenchmarkMode() {
-        mRender.setBenchmarkMode();
+    void setBenchmarkMode(int benchNum) {
+        mRender.setBenchmarkMode(benchNum);
+    }
+
+    void suspendRendering(boolean pause) {
+        mRender.pause(pause);
     }
 
     void setDebugMode(int num) {

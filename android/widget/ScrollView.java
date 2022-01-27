@@ -22,6 +22,7 @@ import android.content.Context;
 import android.content.res.TypedArray;
 import android.graphics.Canvas;
 import android.graphics.Rect;
+import android.os.Bundle;
 import android.os.StrictMode;
 import android.util.AttributeSet;
 import android.view.FocusFinder;
@@ -48,13 +49,18 @@ import java.util.List;
  * manager with a complex hierarchy of objects.  A child that is often used
  * is a {@link LinearLayout} in a vertical orientation, presenting a vertical
  * array of top-level items that the user can scroll through.
- *
+ * <p>You should never use a ScrollView with a {@link ListView}, because
+ * ListView takes care of its own vertical scrolling.  Most importantly, doing this
+ * defeats all of the important optimizations in ListView for dealing with
+ * large lists, since it effectively forces the ListView to display its entire
+ * list of items to fill up the infinite container supplied by ScrollView.
  * <p>The {@link TextView} class also
  * takes care of its own scrolling, so does not require a ScrollView, but
  * using the two together is possible to achieve the effect of a text view
  * within a larger container.
  *
- * <p>ScrollView only supports vertical scrolling.
+ * <p>ScrollView only supports vertical scrolling. For horizontal scrolling,
+ * use {@link HorizontalScrollView}.
  *
  * @attr ref android.R.styleable#ScrollView_fillViewport
  */
@@ -73,7 +79,7 @@ public class ScrollView extends FrameLayout {
     /**
      * Position of the last motion event.
      */
-    private float mLastMotionY;
+    private int mLastMotionY;
 
     /**
      * True when the layout has changed but the traversal has not come through yet.
@@ -472,8 +478,8 @@ public class ScrollView extends FrameLayout {
                 }
 
                 final int pointerIndex = ev.findPointerIndex(activePointerId);
-                final float y = ev.getY(pointerIndex);
-                final int yDiff = (int) Math.abs(y - mLastMotionY);
+                final int y = (int) ev.getY(pointerIndex);
+                final int yDiff = Math.abs(y - mLastMotionY);
                 if (yDiff > mTouchSlop) {
                     mIsBeingDragged = true;
                     mLastMotionY = y;
@@ -482,12 +488,16 @@ public class ScrollView extends FrameLayout {
                     if (mScrollStrictSpan == null) {
                         mScrollStrictSpan = StrictMode.enterCriticalSpan("ScrollView-scroll");
                     }
+                    final ViewParent parent = getParent();
+                    if (parent != null) {
+                        parent.requestDisallowInterceptTouchEvent(true);
+                    }
                 }
                 break;
             }
 
             case MotionEvent.ACTION_DOWN: {
-                final float y = ev.getY();
+                final int y = (int) ev.getY();
                 if (!inChild((int) ev.getX(), (int) y)) {
                     mIsBeingDragged = false;
                     recycleVelocityTracker();
@@ -522,7 +532,7 @@ public class ScrollView extends FrameLayout {
                 mActivePointerId = INVALID_POINTER;
                 recycleVelocityTracker();
                 if (mScroller.springBack(mScrollX, mScrollY, 0, 0, 0, getScrollRange())) {
-                    invalidate();
+                    postInvalidateOnAnimation();
                 }
                 break;
             case MotionEvent.ACTION_POINTER_UP:
@@ -546,9 +556,14 @@ public class ScrollView extends FrameLayout {
 
         switch (action & MotionEvent.ACTION_MASK) {
             case MotionEvent.ACTION_DOWN: {
-                mIsBeingDragged = getChildCount() != 0;
-                if (!mIsBeingDragged) {
+                if (getChildCount() == 0) {
                     return false;
+                }
+                if ((mIsBeingDragged = !mScroller.isFinished())) {
+                    final ViewParent parent = getParent();
+                    if (parent != null) {
+                        parent.requestDisallowInterceptTouchEvent(true);
+                    }
                 }
 
                 /*
@@ -564,16 +579,28 @@ public class ScrollView extends FrameLayout {
                 }
 
                 // Remember where the motion event started
-                mLastMotionY = ev.getY();
+                mLastMotionY = (int) ev.getY();
                 mActivePointerId = ev.getPointerId(0);
                 break;
             }
             case MotionEvent.ACTION_MOVE:
+                final int activePointerIndex = ev.findPointerIndex(mActivePointerId);
+                final int y = (int) ev.getY(activePointerIndex);
+                int deltaY = mLastMotionY - y;
+                if (!mIsBeingDragged && Math.abs(deltaY) > mTouchSlop) {
+                    final ViewParent parent = getParent();
+                    if (parent != null) {
+                        parent.requestDisallowInterceptTouchEvent(true);
+                    }
+                    mIsBeingDragged = true;
+                    if (deltaY > 0) {
+                        deltaY -= mTouchSlop;
+                    } else {
+                        deltaY += mTouchSlop;
+                    }
+                }
                 if (mIsBeingDragged) {
                     // Scroll to follow the motion event
-                    final int activePointerIndex = ev.findPointerIndex(mActivePointerId);
-                    final float y = ev.getY(activePointerIndex);
-                    final int deltaY = (int) (mLastMotionY - y);
                     mLastMotionY = y;
 
                     final int oldX = mScrollX;
@@ -605,7 +632,7 @@ public class ScrollView extends FrameLayout {
                         }
                         if (mEdgeGlowTop != null
                                 && (!mEdgeGlowTop.isFinished() || !mEdgeGlowBottom.isFinished())) {
-                            invalidate();
+                            postInvalidateOnAnimation();
                         }
                     }
                 }
@@ -622,7 +649,7 @@ public class ScrollView extends FrameLayout {
                         } else {
                             if (mScroller.springBack(mScrollX, mScrollY, 0, 0, 0,
                                     getScrollRange())) {
-                                invalidate();
+                                postInvalidateOnAnimation();
                             }
                         }
                     }
@@ -634,7 +661,7 @@ public class ScrollView extends FrameLayout {
             case MotionEvent.ACTION_CANCEL:
                 if (mIsBeingDragged && getChildCount() > 0) {
                     if (mScroller.springBack(mScrollX, mScrollY, 0, 0, 0, getScrollRange())) {
-                        invalidate();
+                        postInvalidateOnAnimation();
                     }
                     mActivePointerId = INVALID_POINTER;
                     endDrag();
@@ -642,14 +669,13 @@ public class ScrollView extends FrameLayout {
                 break;
             case MotionEvent.ACTION_POINTER_DOWN: {
                 final int index = ev.getActionIndex();
-                final float y = ev.getY(index);
-                mLastMotionY = y;
+                mLastMotionY = (int) ev.getY(index);
                 mActivePointerId = ev.getPointerId(index);
                 break;
             }
             case MotionEvent.ACTION_POINTER_UP:
                 onSecondaryPointerUp(ev);
-                mLastMotionY = ev.getY(ev.findPointerIndex(mActivePointerId));
+                mLastMotionY = (int) ev.getY(ev.findPointerIndex(mActivePointerId));
                 break;
         }
         return true;
@@ -664,7 +690,7 @@ public class ScrollView extends FrameLayout {
             // active pointer and adjust accordingly.
             // TODO: Make this decision more intelligent.
             final int newPointerIndex = pointerIndex == 0 ? 1 : 0;
-            mLastMotionY = ev.getY(newPointerIndex);
+            mLastMotionY = (int) ev.getY(newPointerIndex);
             mActivePointerId = ev.getPointerId(newPointerIndex);
             if (mVelocityTracker != null) {
                 mVelocityTracker.clear();
@@ -715,18 +741,61 @@ public class ScrollView extends FrameLayout {
         } else {
             super.scrollTo(scrollX, scrollY);
         }
+
         awakenScrollBars();
+    }
+
+    @Override
+    public boolean performAccessibilityAction(int action, Bundle arguments) {
+        if (super.performAccessibilityAction(action, arguments)) {
+            return true;
+        }
+        if (!isEnabled()) {
+            return false;
+        }
+        switch (action) {
+            case AccessibilityNodeInfo.ACTION_SCROLL_FORWARD: {
+                final int viewportHeight = getHeight() - mPaddingBottom - mPaddingTop;
+                final int targetScrollY = Math.min(mScrollY + viewportHeight, getScrollRange());
+                if (targetScrollY != mScrollY) {
+                    smoothScrollTo(0, targetScrollY);
+                    return true;
+                }
+            } return false;
+            case AccessibilityNodeInfo.ACTION_SCROLL_BACKWARD: {
+                final int viewportHeight = getHeight() - mPaddingBottom - mPaddingTop;
+                final int targetScrollY = Math.max(mScrollY - viewportHeight, 0);
+                if (targetScrollY != mScrollY) {
+                    smoothScrollTo(0, targetScrollY);
+                    return true;
+                }
+            } return false;
+        }
+        return false;
     }
 
     @Override
     public void onInitializeAccessibilityNodeInfo(AccessibilityNodeInfo info) {
         super.onInitializeAccessibilityNodeInfo(info);
-        info.setScrollable(getScrollRange() > 0);
+        info.setClassName(ScrollView.class.getName());
+        if (isEnabled()) {
+            final int scrollRange = getScrollRange();
+            if (scrollRange > 0) {
+                info.setScrollable(true);
+                if (mScrollY > 0) {
+                    info.addAction(AccessibilityNodeInfo.ACTION_SCROLL_BACKWARD);
+                }
+                if (mScrollY < scrollRange) {
+                    info.addAction(AccessibilityNodeInfo.ACTION_SCROLL_FORWARD);
+                }
+            }
+        }
     }
 
     @Override
     public void onInitializeAccessibilityEvent(AccessibilityEvent event) {
         super.onInitializeAccessibilityEvent(event);
+        event.setClassName(ScrollView.class.getName());
         final boolean scrollable = getScrollRange() > 0;
         event.setScrollable(scrollable);
         event.setScrollX(mScrollX);
@@ -743,42 +812,6 @@ public class ScrollView extends FrameLayout {
                     child.getHeight() - (getHeight() - mPaddingBottom - mPaddingTop));
         }
         return scrollRange;
-    }
-
-    /**
-     * <p>
-     * Finds the next focusable component that fits in this View's bounds
-     * (excluding fading edges) pretending that this View's top is located at
-     * the parameter top.
-     * </p>
-     *
-     * @param topFocus           look for a candidate at the top of the bounds if topFocus is true,
-     *                           or at the bottom of the bounds if topFocus is false
-     * @param top                the top offset of the bounds in which a focusable must be
-     *                           found (the fading edge is assumed to start at this position)
-     * @param preferredFocusable the View that has highest priority and will be
-     *                           returned if it is within my bounds (null is valid)
-     * @return the next focusable component in the bounds or null if none can be found
-     */
-    private View findFocusableViewInMyBounds(final boolean topFocus,
-            final int top, View preferredFocusable) {
-        /*
-         * The fading edge's transparent side should be considered for focus
-         * since it's mostly visible, so we divide the actual fading edge length
-         * by 2.
-         */
-        final int fadingEdgeLength = getVerticalFadingEdgeLength() / 2;
-        final int topWithoutFadingEdge = top + fadingEdgeLength;
-        final int bottomWithoutFadingEdge = top + getHeight() - fadingEdgeLength;
-
-        if ((preferredFocusable != null)
-                && (preferredFocusable.getTop() < bottomWithoutFadingEdge)
-                && (preferredFocusable.getBottom() > topWithoutFadingEdge)) {
-            return preferredFocusable;
-        }
-
-        return findFocusableViewInBounds(topFocus, topWithoutFadingEdge,
-                bottomWithoutFadingEdge);
     }
 
     /**
@@ -1081,7 +1114,7 @@ public class ScrollView extends FrameLayout {
             dy = Math.max(0, Math.min(scrollY + dy, maxY)) - scrollY;
 
             mScroller.startScroll(mScrollX, scrollY, 0, dy);
-            invalidate();
+            postInvalidateOnAnimation();
         } else {
             if (!mScroller.isFinished()) {
                 mScroller.abortAnimation();
@@ -1206,10 +1239,10 @@ public class ScrollView extends FrameLayout {
                 }
             }
 
-            awakenScrollBars();
-
-            // Keep on drawing until the animation has finished.
-            postInvalidate();
+            if (!awakenScrollBars()) {
+                // Keep on drawing until the animation has finished.
+                postInvalidateOnAnimation();
+            }
         } else {
             if (mFlingStrictSpan != null) {
                 mFlingStrictSpan.finish();
@@ -1410,7 +1443,7 @@ public class ScrollView extends FrameLayout {
         }
         mChildToScrollTo = null;
 
-        // Calling this with the present values causes it to re-clam them
+        // Calling this with the present values causes it to re-claim them
         scrollTo(mScrollX, mScrollY);
     }
 
@@ -1434,9 +1467,9 @@ public class ScrollView extends FrameLayout {
     }
 
     /**
-     * Return true if child is an descendant of parent, (or equal to the parent).
+     * Return true if child is a descendant of parent, (or equal to the parent).
      */
-    private boolean isViewDescendantOf(View child, View parent) {
+    private static boolean isViewDescendantOf(View child, View parent) {
         if (child == parent) {
             return true;
         }
@@ -1460,13 +1493,11 @@ public class ScrollView extends FrameLayout {
             mScroller.fling(mScrollX, mScrollY, 0, velocityY, 0, 0, 0,
                     Math.max(0, bottom - height), 0, height/2);
 
-            final boolean movingDown = velocityY > 0;
-
             if (mFlingStrictSpan == null) {
                 mFlingStrictSpan = StrictMode.enterCriticalSpan("ScrollView-fling");
             }
 
-            invalidate();
+            postInvalidateOnAnimation();
         }
     }
 
@@ -1531,7 +1562,7 @@ public class ScrollView extends FrameLayout {
                 canvas.translate(mPaddingLeft, Math.min(0, scrollY));
                 mEdgeGlowTop.setSize(width, getHeight());
                 if (mEdgeGlowTop.draw(canvas)) {
-                    invalidate();
+                    postInvalidateOnAnimation();
                 }
                 canvas.restoreToCount(restoreCount);
             }
@@ -1545,14 +1576,14 @@ public class ScrollView extends FrameLayout {
                 canvas.rotate(180, width, 0);
                 mEdgeGlowBottom.setSize(width, height);
                 if (mEdgeGlowBottom.draw(canvas)) {
-                    invalidate();
+                    postInvalidateOnAnimation();
                 }
                 canvas.restoreToCount(restoreCount);
             }
         }
     }
 
-    private int clamp(int n, int my, int child) {
+    private static int clamp(int n, int my, int child) {
         if (my >= child || n < 0) {
             /* my >= child is this case:
              *                    |--------------- me ---------------|

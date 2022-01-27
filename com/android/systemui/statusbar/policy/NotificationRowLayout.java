@@ -18,6 +18,7 @@ package com.android.systemui.statusbar.policy;
 
 import android.animation.Animator;
 import android.animation.AnimatorListenerAdapter;
+import android.animation.LayoutTransition;
 import android.animation.ObjectAnimator;
 import android.animation.ValueAnimator;
 import android.content.Context;
@@ -31,13 +32,20 @@ import android.view.MotionEvent;
 import android.view.View;
 import android.view.ViewConfiguration;
 import android.view.ViewGroup;
+import android.view.inputmethod.InputMethodManager;
+import android.widget.LinearLayout;
 
+import com.android.systemui.ExpandHelper;
 import com.android.systemui.R;
 import com.android.systemui.SwipeHelper;
+import com.android.systemui.statusbar.NotificationData;
 
 import java.util.HashMap;
 
-public class NotificationRowLayout extends ViewGroup implements SwipeHelper.Callback {
+public class NotificationRowLayout 
+        extends LinearLayout 
+        implements SwipeHelper.Callback, ExpandHelper.Callback
+{
     private static final String TAG = "NotificationRowLayout";
     private static final boolean DEBUG = false;
     private static final boolean SLOW_ANIMATIONS = DEBUG;
@@ -48,18 +56,19 @@ public class NotificationRowLayout extends ViewGroup implements SwipeHelper.Call
     boolean mAnimateBounds = true;
 
     Rect mTmpRect = new Rect();
-    int mNumRows = 0;
-    int mRowHeight = 0;
-    int mHeight = 0;
 
     HashMap<View, ValueAnimator> mAppearingViews = new HashMap<View, ValueAnimator>();
     HashMap<View, ValueAnimator> mDisappearingViews = new HashMap<View, ValueAnimator>();
 
     private SwipeHelper mSwipeHelper;
+    
+    private OnSizeChangedListener mOnSizeChangedListener;
 
     // Flag set during notification removal animation to avoid causing too much work until
     // animation is done
     boolean mRemoveViews = true;
+
+    private LayoutTransition mRealLayoutTransition;
 
     public NotificationRowLayout(Context context, AttributeSet attrs) {
         this(context, attrs, 0);
@@ -68,12 +77,10 @@ public class NotificationRowLayout extends ViewGroup implements SwipeHelper.Call
     public NotificationRowLayout(Context context, AttributeSet attrs, int defStyle) {
         super(context, attrs, defStyle);
 
-        TypedArray a = context.obtainStyledAttributes(attrs, R.styleable.NotificationRowLayout,
-                defStyle, 0);
-        mRowHeight = a.getDimensionPixelSize(R.styleable.NotificationRowLayout_rowHeight, 0);
-        a.recycle();
-
-        setLayoutTransition(null);
+        mRealLayoutTransition = new LayoutTransition();
+        setLayoutTransitionsEnabled(true);
+        
+        setOrientation(LinearLayout.VERTICAL);
 
         if (DEBUG) {
             setOnHierarchyChangeListener(new ViewGroup.OnHierarchyChangeListener() {
@@ -95,26 +102,63 @@ public class NotificationRowLayout extends ViewGroup implements SwipeHelper.Call
         mSwipeHelper = new SwipeHelper(SwipeHelper.X, this, densityScale, pagingTouchSlop);
     }
 
+    public void setLongPressListener(View.OnLongClickListener listener) {
+        mSwipeHelper.setLongPressListener(listener);
+    }
+
+    public void setOnSizeChangedListener(OnSizeChangedListener l) {
+        mOnSizeChangedListener = l;
+    }
+
+    @Override
+    public void onWindowFocusChanged(boolean hasWindowFocus) {
+        super.onWindowFocusChanged(hasWindowFocus);
+        if (!hasWindowFocus) {
+            mSwipeHelper.removeLongPressCallback();
+        }
+    }
+
     public void setAnimateBounds(boolean anim) {
         mAnimateBounds = anim;
+    }
+
+    private void logLayoutTransition() {
+        Log.v(TAG, "layout " +
+              (mRealLayoutTransition.isChangingLayout() ? "is " : "is not ") +
+              "in transition and animations " +
+              (mRealLayoutTransition.isRunning() ? "are " : "are not ") +
+              "running.");
     }
 
     @Override
     public boolean onInterceptTouchEvent(MotionEvent ev) {
         if (DEBUG) Log.v(TAG, "onInterceptTouchEvent()");
+        if (DEBUG) logLayoutTransition();
+
         return mSwipeHelper.onInterceptTouchEvent(ev) ||
-            super.onInterceptTouchEvent(ev);
+                super.onInterceptTouchEvent(ev);
     }
 
     @Override
     public boolean onTouchEvent(MotionEvent ev) {
+        if (DEBUG) Log.v(TAG, "onTouchEvent()");
+        if (DEBUG) logLayoutTransition();
+
         return mSwipeHelper.onTouchEvent(ev) ||
-            super.onTouchEvent(ev);
+                super.onTouchEvent(ev);
     }
 
     public boolean canChildBeDismissed(View v) {
         final View veto = v.findViewById(R.id.veto);
         return (veto != null && veto.getVisibility() != View.GONE);
+    }
+
+    public boolean canChildBeExpanded(View v) {
+        return NotificationData.getIsExpandable(v);
+    }
+
+    public boolean setUserExpandedChild(View v, boolean userExpanded) {
+        return NotificationData.setUserExpanded(v, userExpanded);
     }
 
     public void onChildDismissed(View v) {
@@ -134,10 +178,19 @@ public class NotificationRowLayout extends ViewGroup implements SwipeHelper.Call
     }
 
     public View getChildAtPosition(MotionEvent ev) {
+        return getChildAtPosition(ev.getX(), ev.getY());
+    }
+
+    public View getChildAtRawPosition(float touchX, float touchY) {
+        int[] location = new int[2];
+        getLocationOnScreen(location);
+        return getChildAtPosition((float) (touchX - location[0]), (float) (touchY - location[1]));
+    }
+
+    public View getChildAtPosition(float touchX, float touchY) {
         // find the view under the pointer, accounting for GONE views
         final int count = getChildCount();
         int y = 0;
-        int touchY = (int) ev.getY();
         int childIdx = 0;
         View slidingChild;
         for (; childIdx < count; childIdx++) {
@@ -145,7 +198,7 @@ public class NotificationRowLayout extends ViewGroup implements SwipeHelper.Call
             if (slidingChild.getVisibility() == GONE) {
                 continue;
             }
-            y += mRowHeight;
+            y += slidingChild.getMeasuredHeight();
             if (touchY < y) return slidingChild;
         }
         return null;
@@ -164,31 +217,6 @@ public class NotificationRowLayout extends ViewGroup implements SwipeHelper.Call
         mSwipeHelper.setPagingTouchSlop(pagingTouchSlop);
     }
 
-    //**
-    @Override
-    public void addView(View child, int index, LayoutParams params) {
-        super.addView(child, index, params);
-
-        final View childF = child;
-
-        if (mAnimateBounds) {
-            final ObjectAnimator alphaFade = ObjectAnimator.ofFloat(child, "alpha", 0f, 1f);
-            alphaFade.setDuration(APPEAR_ANIM_LEN);
-            alphaFade.addListener(new AnimatorListenerAdapter() {
-                @Override
-                public void onAnimationEnd(Animator animation) {
-                    mAppearingViews.remove(childF);
-                    requestLayout(); // pick up any final changes in position
-                }
-            });
-
-            alphaFade.start();
-
-            mAppearingViews.put(child, alphaFade);
-
-            requestLayout(); // start the container animation
-        }
-    }
 
     /**
      * Sets a flag to tell us whether to actually remove views. Removal is delayed by setting this
@@ -200,6 +228,18 @@ public class NotificationRowLayout extends ViewGroup implements SwipeHelper.Call
         mRemoveViews = removeViews;
     }
 
+    // Suppress layout transitions for a little while.
+    public void setLayoutTransitionsEnabled(boolean b) {
+        if (b) {
+            setLayoutTransition(mRealLayoutTransition);
+        } else {
+            if (mRealLayoutTransition.isRunning()) {
+                mRealLayoutTransition.cancel();
+            }
+            setLayoutTransition(null);
+        }
+    }
+
     public void dismissRowAnimated(View child) {
         dismissRowAnimated(child, 0);
     }
@@ -209,63 +249,15 @@ public class NotificationRowLayout extends ViewGroup implements SwipeHelper.Call
     }
 
     @Override
-    public void removeView(View child) {
-        if (!mRemoveViews) {
-            // This flag is cleared during an animation that removes all notifications. There
-            // should be a call to remove all notifications when the animation is done, at which
-            // time the view will be removed.
-            return;
-        }
-        if (mAnimateBounds) {
-            if (mAppearingViews.containsKey(child)) {
-                mAppearingViews.remove(child);
-            }
-
-            // Don't fade it out if it already has a low alpha value, but run a non-visual
-            // animation which is used by onLayout() to animate shrinking the gap that it left
-            // in the list
-            ValueAnimator anim;
-            float currentAlpha = child.getAlpha();
-            if (currentAlpha > .1) {
-                anim = ObjectAnimator.ofFloat(child, "alpha", currentAlpha, 0);
-            } else {
-                if (currentAlpha > 0) {
-                    // Just make it go away - no need to render it anymore
-                    child.setAlpha(0);
-                }
-                anim = ValueAnimator.ofFloat(0, 1);
-            }
-            anim.setDuration(DISAPPEAR_ANIM_LEN);
-            final View childF = child;
-            anim.addListener(new AnimatorListenerAdapter() {
-                @Override
-                public void onAnimationEnd(Animator animation) {
-                    if (DEBUG) Slog.d(TAG, "actually removing child: " + childF);
-                    NotificationRowLayout.super.removeView(childF);
-                    mDisappearingViews.remove(childF);
-                    requestLayout(); // pick up any final changes in position
-                }
-            });
-
-            anim.start();
-            mDisappearingViews.put(child, anim);
-
-            requestLayout(); // start the container animation
-        } else {
-            super.removeView(child);
-        }
-    }
-    //**
-
-    @Override
     public void onFinishInflate() {
         super.onFinishInflate();
-        setWillNotDraw(false);
+        if (DEBUG) setWillNotDraw(false);
     }
 
     @Override
     public void onDraw(android.graphics.Canvas c) {
         super.onDraw(c);
+        if (DEBUG) logLayoutTransition();
         if (DEBUG) {
             //Slog.d(TAG, "onDraw: canvas height: " + c.getHeight() + "px; measured height: "
             //        + getMeasuredHeight() + "px");
@@ -278,109 +270,9 @@ public class NotificationRowLayout extends ViewGroup implements SwipeHelper.Call
     }
 
     @Override
-    protected void onMeasure(int widthMeasureSpec, int heightMeasureSpec) {
-        final int count = getChildCount();
-
-        // pass 1: count the number of non-GONE views
-        int numRows = 0;
-        for (int i = 0; i < count; i++) {
-            final View child = getChildAt(i);
-            if (child.getVisibility() == GONE) {
-                continue;
-            }
-            if (mDisappearingViews.containsKey(child)) {
-                continue;
-            }
-            numRows++;
+    protected void onSizeChanged(int w, int h, int oldw, int oldh) {
+        if (mOnSizeChangedListener != null) {
+            mOnSizeChangedListener.onSizeChanged(this, w, h, oldw, oldh);
         }
-        if (numRows != mNumRows) {
-            // uh oh, now you made us go and do work
-            
-            final int computedHeight = numRows * mRowHeight;
-            if (DEBUG) {
-                Slog.d(TAG, String.format("rows went from %d to %d, resizing to %dpx",
-                            mNumRows, numRows, computedHeight));
-            }
-
-            mNumRows = numRows;
-
-            if (mAnimateBounds && isShown()) {
-                ObjectAnimator.ofInt(this, "forcedHeight", computedHeight)
-                    .setDuration(APPEAR_ANIM_LEN)
-                    .start();
-            } else {
-                setForcedHeight(computedHeight);
-            }
-        }
-
-        // pass 2: you know, do the measuring
-        final int childWidthMS = widthMeasureSpec;
-        final int childHeightMS = MeasureSpec.makeMeasureSpec(
-                mRowHeight, MeasureSpec.EXACTLY);
-
-        for (int i = 0; i < count; i++) {
-            final View child = getChildAt(i);
-            if (child.getVisibility() == GONE) {
-                continue;
-            }
-
-            child.measure(childWidthMS, childHeightMS);
-        }
-
-        setMeasuredDimension(
-                getDefaultSize(getSuggestedMinimumWidth(), widthMeasureSpec),
-                resolveSize(getForcedHeight(), heightMeasureSpec));
-    }
-
-    @Override
-    protected void onLayout(boolean changed, int left, int top, int right, int bottom) {
-        final int width = right - left;
-        final int height = bottom - top;
-
-        if (DEBUG) Slog.d(TAG, "onLayout: height=" + height);
-
-        final int count = getChildCount();
-        int y = 0;
-        for (int i = 0; i < count; i++) {
-            final View child = getChildAt(i);
-            if (child.getVisibility() == GONE) {
-                continue;
-            }
-            float progress = 1.0f;
-            if (mDisappearingViews.containsKey(child)) {
-                progress = 1.0f - mDisappearingViews.get(child).getAnimatedFraction();
-            } else if (mAppearingViews.containsKey(child)) {
-                progress = 1.0f - mAppearingViews.get(child).getAnimatedFraction();
-            }
-            if (progress > 1.0f) {
-                if (DEBUG) {
-                    Slog.w(TAG, "progress=" + progress + " > 1!!! " + child);
-                }
-                progress = 1f;
-            }
-            final int thisRowHeight = (int)(progress * mRowHeight);
-            if (DEBUG) {
-                Slog.d(TAG, String.format(
-                            "laying out child #%d: (0, %d, %d, %d) h=%d",
-                            i, y, width, y + thisRowHeight, thisRowHeight));
-            }
-            child.layout(0, y, width, y + thisRowHeight);
-            y += thisRowHeight;
-        }
-        if (DEBUG) {
-            Slog.d(TAG, "onLayout: final y=" + y);
-        }
-    }
-
-    public void setForcedHeight(int h) {
-        if (DEBUG) Slog.d(TAG, "forcedHeight: " + h);
-        if (h != mHeight) {
-            mHeight = h;
-            requestLayout();
-        }
-    }
-
-    public int getForcedHeight() {
-        return mHeight;
     }
 }

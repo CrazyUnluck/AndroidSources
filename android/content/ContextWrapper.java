@@ -277,8 +277,18 @@ public class ContextWrapper extends Context {
     }
 
     @Override
+    public void startActivity(Intent intent, Bundle options) {
+        mBase.startActivity(intent, options);
+    }
+
+    @Override
     public void startActivities(Intent[] intents) {
         mBase.startActivities(intents);
+    }
+
+    @Override
+    public void startActivities(Intent[] intents, Bundle options) {
+        mBase.startActivities(intents, options);
     }
 
     @Override
@@ -288,10 +298,24 @@ public class ContextWrapper extends Context {
         mBase.startIntentSender(intent, fillInIntent, flagsMask,
                 flagsValues, extraFlags);
     }
+
+    @Override
+    public void startIntentSender(IntentSender intent,
+            Intent fillInIntent, int flagsMask, int flagsValues, int extraFlags,
+            Bundle options) throws IntentSender.SendIntentException {
+        mBase.startIntentSender(intent, fillInIntent, flagsMask,
+                flagsValues, extraFlags, options);
+    }
     
     @Override
     public void sendBroadcast(Intent intent) {
         mBase.sendBroadcast(intent);
+    }
+
+    /** @hide */
+    @Override
+    public void sendBroadcast(Intent intent, int userId) {
+        mBase.sendBroadcast(intent, userId);
     }
 
     @Override
@@ -368,6 +392,12 @@ public class ContextWrapper extends Context {
     public boolean bindService(Intent service, ServiceConnection conn,
             int flags) {
         return mBase.bindService(service, conn, flags);
+    }
+
+    /** @hide */
+    @Override
+    public boolean bindService(Intent service, ServiceConnection conn, int flags, int userId) {
+        return mBase.bindService(service, conn, flags, userId);
     }
 
     @Override

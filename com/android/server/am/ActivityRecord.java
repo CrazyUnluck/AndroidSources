@@ -16,10 +16,12 @@
 
 package com.android.server.am;
 
+import com.android.internal.app.ResolverActivity;
 import com.android.server.AttributeCache;
 import com.android.server.am.ActivityStack.ActivityState;
 
 import android.app.Activity;
+import android.app.ActivityOptions;
 import android.content.ComponentName;
 import android.content.Intent;
 import android.content.pm.ActivityInfo;
@@ -27,6 +29,7 @@ import android.content.pm.ApplicationInfo;
 import android.content.res.CompatibilityInfo;
 import android.content.res.Configuration;
 import android.graphics.Bitmap;
+import android.graphics.Rect;
 import android.os.Build;
 import android.os.Bundle;
 import android.os.IBinder;
@@ -34,6 +37,7 @@ import android.os.Message;
 import android.os.Process;
 import android.os.RemoteException;
 import android.os.SystemClock;
+import android.os.UserId;
 import android.util.EventLog;
 import android.util.Log;
 import android.util.Slog;
@@ -55,6 +59,7 @@ final class ActivityRecord {
     final IApplicationToken.Stub appToken; // window manager token
     final ActivityInfo info; // all about me
     final int launchedFromUid; // always the uid who started the activity.
+    final int userId;          // Which user is this running for?
     final Intent intent;    // the original intent that generated us
     final ComponentName realActivity;  // the intent component, or target of an alias.
     final String shortComponentName; // the short component name of the intent
@@ -92,6 +97,7 @@ final class ActivityRecord {
     ArrayList results;      // pending ActivityResult objs we have received
     HashSet<WeakReference<PendingIntentRecord>> pendingResults; // all pending intents for this act
     ArrayList newIntents;   // any pending new intents for single-top mode
+    ActivityOptions pendingOptions; // most recently given options
     HashSet<ConnectionRecord> connections; // All ConnectionRecord we hold
     UriPermissionOwner uriPermissions; // current special URI access perms.
     ProcessRecord app;      // if non-null, hosting application
@@ -123,28 +129,31 @@ final class ActivityRecord {
     private boolean inHistory;  // are we in the history stack?
 
     void dump(PrintWriter pw, String prefix) {
+        final long now = SystemClock.uptimeMillis();
         pw.print(prefix); pw.print("packageName="); pw.print(packageName);
                 pw.print(" processName="); pw.println(processName);
         pw.print(prefix); pw.print("launchedFromUid="); pw.print(launchedFromUid);
-                pw.print(" app="); pw.println(app);
-        pw.print(prefix); pw.println(intent.toInsecureString());
+                pw.print(" userId="); pw.println(userId);
+        pw.print(prefix); pw.print("app="); pw.println(app);
+        pw.print(prefix); pw.println(intent.toInsecureStringWithClip());
         pw.print(prefix); pw.print("frontOfTask="); pw.print(frontOfTask);
                 pw.print(" task="); pw.println(task);
         pw.print(prefix); pw.print("taskAffinity="); pw.println(taskAffinity);
         pw.print(prefix); pw.print("realActivity=");
                 pw.println(realActivity.flattenToShortString());
-        pw.print(prefix); pw.print("base="); pw.print(baseDir);
-                if (!resDir.equals(baseDir)) pw.print(" res="); pw.print(resDir);
-                pw.print(" data="); pw.println(dataDir);
-        pw.print(prefix); pw.print("labelRes=0x");
-                pw.print(Integer.toHexString(labelRes));
-                pw.print(" icon=0x"); pw.print(Integer.toHexString(icon));
-                pw.print(" theme=0x"); pw.println(Integer.toHexString(theme));
+        pw.print(prefix); pw.print("baseDir="); pw.println(baseDir);
+        if (!resDir.equals(baseDir)) {
+            pw.print(prefix); pw.print("resDir="); pw.println(resDir);
+        }
+        pw.print(prefix); pw.print("dataDir="); pw.println(dataDir);
         pw.print(prefix); pw.print("stateNotNeeded="); pw.print(stateNotNeeded);
                 pw.print(" componentSpecified="); pw.print(componentSpecified);
                 pw.print(" isHomeActivity="); pw.println(isHomeActivity);
+        pw.print(prefix); pw.print("compat="); pw.print(compat);
+                pw.print(" labelRes=0x"); pw.print(Integer.toHexString(labelRes));
+                pw.print(" icon=0x"); pw.print(Integer.toHexString(icon));
+                pw.print(" theme=0x"); pw.println(Integer.toHexString(theme));
         pw.print(prefix); pw.print("config="); pw.println(configuration);
-        pw.print(prefix); pw.print("compat="); pw.println(compat);
         if (resultTo != null || resultWho != null) {
             pw.print(prefix); pw.print("resultTo="); pw.print(resultTo);
                     pw.print(" resultWho="); pw.print(resultWho);
@@ -153,8 +162,33 @@ final class ActivityRecord {
         if (results != null) {
             pw.print(prefix); pw.print("results="); pw.println(results);
         }
-        if (pendingResults != null) {
-            pw.print(prefix); pw.print("pendingResults="); pw.println(pendingResults);
+        if (pendingResults != null && pendingResults.size() > 0) {
+            pw.print(prefix); pw.println("Pending Results:");
+            for (WeakReference<PendingIntentRecord> wpir : pendingResults) {
+                PendingIntentRecord pir = wpir != null ? wpir.get() : null;
+                pw.print(prefix); pw.print("  - ");
+                if (pir == null) {
+                    pw.println("null");
+                } else {
+                    pw.println(pir);
+                    pir.dump(pw, prefix + "    ");
+                }
+            }
+        }
+        if (newIntents != null && newIntents.size() > 0) {
+            pw.print(prefix); pw.println("Pending New Intents:");
+            for (int i=0; i<newIntents.size(); i++) {
+                Intent intent = (Intent)newIntents.get(i);
+                pw.print(prefix); pw.print("  - ");
+                if (intent == null) {
+                    pw.println("null");
+                } else {
+                    pw.println(intent.toShortString(false, true, false, true));
+                }
+            }
+        }
+        if (pendingOptions != null) {
+            pw.print(prefix); pw.print("pendingOptions="); pw.println(pendingOptions);
         }
         if (uriPermissions != null) {
             if (uriPermissions.readUriPermissions != null) {
@@ -188,16 +222,20 @@ final class ActivityRecord {
         pw.print(prefix); pw.print("thumbHolder="); pw.println(thumbHolder);
         if (launchTime != 0 || startTime != 0) {
             pw.print(prefix); pw.print("launchTime=");
-                    TimeUtils.formatDuration(launchTime, pw); pw.print(" startTime=");
-                    TimeUtils.formatDuration(startTime, pw); pw.println("");
+                    if (launchTime == 0) pw.print("0");
+                    else TimeUtils.formatDuration(launchTime, now, pw);
+                    pw.print(" startTime=");
+                    if (startTime == 0) pw.print("0");
+                    else TimeUtils.formatDuration(startTime, now, pw);
+                    pw.println();
         }
-        if (lastVisibleTime != 0) {
-            pw.print(prefix); pw.print("lastVisibleTime=");
-                    TimeUtils.formatDuration(lastVisibleTime, pw); pw.println("");
-        }
-        if (waitingVisible || nowVisible) {
+        if (lastVisibleTime != 0 || waitingVisible || nowVisible) {
             pw.print(prefix); pw.print("waitingVisible="); pw.print(waitingVisible);
-                    pw.print(" nowVisible="); pw.println(nowVisible);
+                    pw.print(" nowVisible="); pw.print(nowVisible);
+                    pw.print(" lastVisibleTime=");
+                    if (lastVisibleTime == 0) pw.print("0");
+                    else TimeUtils.formatDuration(lastVisibleTime, now, pw);
+                    pw.println();
         }
         if (configDestroy || configChangeFlags != 0) {
             pw.print(prefix); pw.print("configDestroy="); pw.print(configDestroy);
@@ -283,6 +321,7 @@ final class ActivityRecord {
         appToken = new Token(this);
         info = aInfo;
         launchedFromUid = _launchedFromUid;
+        userId = UserId.getUserId(aInfo.applicationInfo.uid);
         intent = _intent;
         shortComponentName = _intent.getComponent().flattenToShortString();
         resolvedType = _resolvedType;
@@ -377,7 +416,7 @@ final class ActivityRecord {
                         _intent.getData() == null &&
                         _intent.getType() == null &&
                         (intent.getFlags()&Intent.FLAG_ACTIVITY_NEW_TASK) != 0 &&
-                        !"android".equals(realActivity.getClassName())) {
+                        !ResolverActivity.class.getName().equals(realActivity.getClassName())) {
                     // This sure looks like a home activity!
                     // Note the last check is so we don't count the resolver
                     // activity as being home...  really, we don't care about
@@ -446,6 +485,7 @@ final class ActivityRecord {
             if (task != null && !finishing) {
                 task.numActivities--;
             }
+            clearOptionsLocked();
         }
     }
 
@@ -458,6 +498,9 @@ final class ActivityRecord {
             finishing = true;
             if (task != null && inHistory) {
                 task.numActivities--;
+            }
+            if (stopped) {
+                clearOptionsLocked();
             }
         }
     }
@@ -511,7 +554,13 @@ final class ActivityRecord {
      */
     final void deliverNewIntentLocked(int callingUid, Intent intent) {
         boolean sent = false;
-        if (state == ActivityState.RESUMED
+        // We want to immediately deliver the intent to the activity if
+        // it is currently the top resumed activity...  however, if the
+        // device is sleeping, then all activities are stopped, so in that
+        // case we will deliver it if this is the current top activity on its
+        // stack.
+        if ((state == ActivityState.RESUMED || (service.mSleeping
+                        && stack.topRunningActivityLocked(null) == this))
                 && app != null && app.thread != null) {
             try {
                 ArrayList<Intent> ar = new ArrayList<Intent>();
@@ -531,6 +580,66 @@ final class ActivityRecord {
         }
         if (!sent) {
             addNewIntentLocked(new Intent(intent));
+        }
+    }
+
+    void updateOptionsLocked(Bundle options) {
+        if (options != null) {
+            if (pendingOptions != null) {
+                pendingOptions.abort();
+            }
+            pendingOptions = new ActivityOptions(options);
+        }
+    }
+
+    void applyOptionsLocked() {
+        if (pendingOptions != null) {
+            final int animationType = pendingOptions.getAnimationType();
+            switch (animationType) {
+                case ActivityOptions.ANIM_CUSTOM:
+                    service.mWindowManager.overridePendingAppTransition(
+                            pendingOptions.getPackageName(),
+                            pendingOptions.getCustomEnterResId(),
+                            pendingOptions.getCustomExitResId(),
+                            pendingOptions.getOnAnimationStartListener());
+                    break;
+                case ActivityOptions.ANIM_SCALE_UP:
+                    service.mWindowManager.overridePendingAppTransitionScaleUp(
+                            pendingOptions.getStartX(), pendingOptions.getStartY(),
+                            pendingOptions.getStartWidth(), pendingOptions.getStartHeight());
+                    if (intent.getSourceBounds() == null) {
+                        intent.setSourceBounds(new Rect(pendingOptions.getStartX(),
+                                pendingOptions.getStartY(),
+                                pendingOptions.getStartX()+pendingOptions.getStartWidth(),
+                                pendingOptions.getStartY()+pendingOptions.getStartHeight()));
+                    }
+                    break;
+                case ActivityOptions.ANIM_THUMBNAIL:
+                case ActivityOptions.ANIM_THUMBNAIL_DELAYED:
+                    boolean delayed = (animationType == ActivityOptions.ANIM_THUMBNAIL_DELAYED);
+                    service.mWindowManager.overridePendingAppTransitionThumb(
+                            pendingOptions.getThumbnail(),
+                            pendingOptions.getStartX(), pendingOptions.getStartY(),
+                            pendingOptions.getOnAnimationStartListener(),
+                            delayed);
+                    if (intent.getSourceBounds() == null) {
+                        intent.setSourceBounds(new Rect(pendingOptions.getStartX(),
+                                pendingOptions.getStartY(),
+                                pendingOptions.getStartX()
+                                        + pendingOptions.getThumbnail().getWidth(),
+                                pendingOptions.getStartY()
+                                        + pendingOptions.getThumbnail().getHeight()));
+                    }
+                    break;
+            }
+            pendingOptions = null;
+        }
+    }
+
+    void clearOptionsLocked() {
+        if (pendingOptions != null) {
+            pendingOptions.abort();
+            pendingOptions = null;
         }
     }
 

@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2008 The Android Open Source Project
+ * Copyright (C) 2008-2012 The Android Open Source Project
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -21,6 +21,7 @@ import android.util.Log;
 
 
 /**
+ * @deprecated in API 16
  * <p>ProgramFragmentFixedFunction is a helper class that provides
  * a way to make a simple fragment shader without writing any
  * GLSL code. This class allows for display of constant color, interpolated
@@ -34,11 +35,15 @@ public class ProgramFragmentFixedFunction extends ProgramFragment {
     }
 
     static class InternalBuilder extends BaseProgramBuilder {
+        /**
+         * @deprecated in API 16
+         */
         public InternalBuilder(RenderScript rs) {
             super(rs);
         }
 
         /**
+         * @deprecated in API 16
          * Creates ProgramFragmentFixedFunction from the current state
          * of the builder
          *
@@ -47,33 +52,41 @@ public class ProgramFragmentFixedFunction extends ProgramFragment {
         public ProgramFragmentFixedFunction create() {
             mRS.validate();
             int[] tmp = new int[(mInputCount + mOutputCount + mConstantCount + mTextureCount) * 2];
+            String[] texNames = new String[mTextureCount];
             int idx = 0;
 
             for (int i=0; i < mInputCount; i++) {
                 tmp[idx++] = ProgramParam.INPUT.mID;
-                tmp[idx++] = mInputs[i].getID();
+                tmp[idx++] = mInputs[i].getID(mRS);
             }
             for (int i=0; i < mOutputCount; i++) {
                 tmp[idx++] = ProgramParam.OUTPUT.mID;
-                tmp[idx++] = mOutputs[i].getID();
+                tmp[idx++] = mOutputs[i].getID(mRS);
             }
             for (int i=0; i < mConstantCount; i++) {
                 tmp[idx++] = ProgramParam.CONSTANT.mID;
-                tmp[idx++] = mConstants[i].getID();
+                tmp[idx++] = mConstants[i].getID(mRS);
             }
             for (int i=0; i < mTextureCount; i++) {
                 tmp[idx++] = ProgramParam.TEXTURE_TYPE.mID;
                 tmp[idx++] = mTextureTypes[i].mID;
+                texNames[i] = mTextureNames[i];
             }
 
-            int id = mRS.nProgramFragmentCreate(mShader, tmp);
+            int id = mRS.nProgramFragmentCreate(mShader, texNames, tmp);
             ProgramFragmentFixedFunction pf = new ProgramFragmentFixedFunction(id, mRS);
             initProgram(pf);
             return pf;
         }
     }
 
+    /**
+     * @deprecated in API 16
+     */
     public static class Builder {
+        /**
+         * @deprecated in API 16
+         */
         public static final int MAX_TEXTURE = 2;
         int mNumTextures;
         boolean mPointSpriteEnable;
@@ -82,13 +95,23 @@ public class ProgramFragmentFixedFunction extends ProgramFragment {
         RenderScript mRS;
 
         /**
+         * @deprecated in API 16
          * EnvMode describes how textures are combined with the existing
          * color in the fixed function fragment shader
          *
          **/
         public enum EnvMode {
+            /**
+             * @deprecated in API 16
+             **/
             REPLACE (1),
+            /**
+             * @deprecated in API 16
+             **/
             MODULATE (2),
+            /**
+             * @deprecated in API 16
+             **/
             DECAL (3);
 
             int mID;
@@ -98,14 +121,27 @@ public class ProgramFragmentFixedFunction extends ProgramFragment {
         }
 
         /**
+         * @deprecated in API 16
          * Format describes the pixel format of textures in the fixed
          * function fragment shader and how they are sampled
          *
          **/
         public enum Format {
+            /**
+             * @deprecated in API 16
+             **/
             ALPHA (1),
+            /**
+             * @deprecated in API 16
+             **/
             LUMINANCE_ALPHA (2),
+            /**
+             * @deprecated in API 16
+             **/
             RGB (3),
+            /**
+             * @deprecated in API 16
+             **/
             RGBA (4);
 
             int mID;
@@ -189,6 +225,7 @@ public class ProgramFragmentFixedFunction extends ProgramFragment {
         }
 
         /**
+         * @deprecated
          * Creates a builder for fixed function fragment program
          *
          * @param rs Context to which the program will belong.
@@ -200,6 +237,7 @@ public class ProgramFragmentFixedFunction extends ProgramFragment {
         }
 
         /**
+         * @deprecated in API 16
          * Adds a texture to be fetched as part of the fixed function
          * fragment program
          *
@@ -222,6 +260,7 @@ public class ProgramFragmentFixedFunction extends ProgramFragment {
         }
 
         /**
+         * @deprecated in API 16
          * Specifies whether the texture coordinate passed from the
          * vertex program is replaced with an openGL internal point
          * sprite texture coordinate
@@ -233,6 +272,7 @@ public class ProgramFragmentFixedFunction extends ProgramFragment {
         }
 
         /**
+         * @deprecated in API 16
          * Specifies whether the varying color passed from the vertex
          * program or the constant color set on the fragment program is
          * used in the final color calculation in the fixed function
@@ -245,6 +285,7 @@ public class ProgramFragmentFixedFunction extends ProgramFragment {
         }
 
         /**
+         * @deprecated in API 16
         * Creates the fixed function fragment program from the current
         * state of the builder.
         *

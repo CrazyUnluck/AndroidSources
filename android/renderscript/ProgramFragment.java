@@ -21,6 +21,7 @@ import android.util.Log;
 
 
 /**
+ * @deprecated in API 16
  * <p>The Renderscript fragment program, also known as fragment shader is responsible
  * for manipulating pixel data in a user defined way. It's constructed from a GLSL
  * shader string containing the program body, textures inputs, and a Type object
@@ -41,8 +42,12 @@ public class ProgramFragment extends Program {
         super(id, rs);
     }
 
+    /**
+     * @deprecated in API 16
+     */
     public static class Builder extends BaseProgramBuilder {
         /**
+         * @deprecated in API 16
          * Create a builder object.
          *
          * @param rs Context to which the program will belong.
@@ -52,6 +57,7 @@ public class ProgramFragment extends Program {
         }
 
         /**
+         * @deprecated in API 16
          * Creates ProgramFragment from the current state of the builder
          *
          * @return  ProgramFragment
@@ -59,26 +65,28 @@ public class ProgramFragment extends Program {
         public ProgramFragment create() {
             mRS.validate();
             int[] tmp = new int[(mInputCount + mOutputCount + mConstantCount + mTextureCount) * 2];
+            String[] texNames = new String[mTextureCount];
             int idx = 0;
 
             for (int i=0; i < mInputCount; i++) {
                 tmp[idx++] = ProgramParam.INPUT.mID;
-                tmp[idx++] = mInputs[i].getID();
+                tmp[idx++] = mInputs[i].getID(mRS);
             }
             for (int i=0; i < mOutputCount; i++) {
                 tmp[idx++] = ProgramParam.OUTPUT.mID;
-                tmp[idx++] = mOutputs[i].getID();
+                tmp[idx++] = mOutputs[i].getID(mRS);
             }
             for (int i=0; i < mConstantCount; i++) {
                 tmp[idx++] = ProgramParam.CONSTANT.mID;
-                tmp[idx++] = mConstants[i].getID();
+                tmp[idx++] = mConstants[i].getID(mRS);
             }
             for (int i=0; i < mTextureCount; i++) {
                 tmp[idx++] = ProgramParam.TEXTURE_TYPE.mID;
                 tmp[idx++] = mTextureTypes[i].mID;
+                texNames[i] = mTextureNames[i];
             }
 
-            int id = mRS.nProgramFragmentCreate(mShader, tmp);
+            int id = mRS.nProgramFragmentCreate(mShader, texNames, tmp);
             ProgramFragment pf = new ProgramFragment(id, mRS);
             initProgram(pf);
             return pf;

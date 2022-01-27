@@ -81,9 +81,22 @@ public class Visualizer {
      */
     public static final int STATE_ENABLED   = 2;
 
+    // to keep in sync with system/media/audio_effects/include/audio_effects/effect_visualizer.h
+    /**
+     * Defines a capture mode where amplification is applied based on the content of the captured
+     * data. This is the default Visualizer mode, and is suitable for music visualization.
+     */
+    public static final int SCALING_MODE_NORMALIZED = 0;
+    /**
+     * Defines a capture mode where the playback volume will affect (scale) the range of the
+     * captured data. A low playback volume will lead to low sample and fft values, and vice-versa.
+     */
+    public static final int SCALING_MODE_AS_PLAYED = 1;
+
     // to keep in sync with frameworks/base/media/jni/audioeffect/android_media_Visualizer.cpp
     private static final int NATIVE_EVENT_PCM_CAPTURE = 0;
     private static final int NATIVE_EVENT_FFT_CAPTURE = 1;
+    private static final int NATIVE_EVENT_SERVER_DIED = 2;
 
     // Error codes:
     /**
@@ -147,6 +160,10 @@ public class Visualizer {
      *  PCM and FFT capture listener registered by client
      */
     private OnDataCaptureListener mCaptureListener = null;
+    /**
+     *  Server Died listener registered by client
+     */
+    private OnServerDiedListener mServerDiedListener = null;
 
     // accessed by native methods
     private int mNativeVisualizer;
@@ -297,6 +314,42 @@ public class Visualizer {
     }
 
     /**
+     * Set the type of scaling applied on the captured visualization data.
+     * @param mode see {@link #SCALING_MODE_NORMALIZED}
+     *     and {@link #SCALING_MODE_AS_PLAYED}
+     * @return {@link #SUCCESS} in case of success,
+     *     {@link #ERROR_BAD_VALUE} in case of failure.
+     * @throws IllegalStateException
+     */
+    public int setScalingMode(int mode)
+    throws IllegalStateException {
+        synchronized (mStateLock) {
+            if (mState == STATE_UNINITIALIZED) {
+                throw(new IllegalStateException("setScalingMode() called in wrong state: "
+                        + mState));
+            }
+            return native_setScalingMode(mode);
+        }
+    }
+
+    /**
+     * Returns the current scaling mode on the captured visualization data.
+     * @return the scaling mode, see {@link #SCALING_MODE_NORMALIZED}
+     *     and {@link #SCALING_MODE_AS_PLAYED}.
+     * @throws IllegalStateException
+     */
+    public int getScalingMode()
+    throws IllegalStateException {
+        synchronized (mStateLock) {
+            if (mState == STATE_UNINITIALIZED) {
+                throw(new IllegalStateException("getScalingMode() called in wrong state: "
+                        + mState));
+            }
+            return native_getScalingMode();
+        }
+    }
+
+    /**
      * Returns the sampling rate of the captured audio.
      * @return the sampling rate in milliHertz.
      */
@@ -396,6 +449,9 @@ public class Visualizer {
     public interface OnDataCaptureListener  {
         /**
          * Method called when a new waveform capture is available.
+         * <p>Data in the waveform buffer is valid only within the scope of the callback.
+         * Applications which needs access to the waveform data after returning from the callback
+         * should make a copy of the data instead of holding a reference.
          * @param visualizer Visualizer object on which the listener is registered.
          * @param waveform array of bytes containing the waveform representation.
          * @param samplingRate sampling rate of the audio visualized.
@@ -404,6 +460,9 @@ public class Visualizer {
 
         /**
          * Method called when a new frequency capture is available.
+         * <p>Data in the fft buffer is valid only within the scope of the callback.
+         * Applications which needs access to the fft data after returning from the callback
+         * should make a copy of the data instead of holding a reference.
          * @param visualizer Visualizer object on which the listener is registered.
          * @param fft array of bytes containing the frequency representation.
          * @param samplingRate sampling rate of the audio visualized.
@@ -452,6 +511,43 @@ public class Visualizer {
     }
 
     /**
+     * @hide
+     *
+     * The OnServerDiedListener interface defines a method called by the Visualizer to indicate that
+     * the connection to the native media server has been broken and that the Visualizer object will
+     * need to be released and re-created.
+     * The client application can implement this interface and register the listener with the
+     * {@link #setServerDiedListener(OnServerDiedListener)} method.
+     */
+    public interface OnServerDiedListener  {
+        /**
+         * @hide
+         *
+         * Method called when the native media server has died.
+         * <p>If the native media server encounters a fatal error and needs to restart, the binder
+         * connection from the {@link #Visualizer} to the media server will be broken.  Data capture
+         * callbacks will stop happening, and client initiated calls to the {@link #Visualizer}
+         * instance will fail with the error code {@link #DEAD_OBJECT}.  To restore functionality,
+         * clients should {@link #release()} their old visualizer and create a new instance.
+         */
+        void onServerDied();
+    }
+
+    /**
+     * @hide
+     *
+     * Registers an OnServerDiedListener interface.
+     * <p>Call this method with a null listener to stop receiving server death notifications.
+     * @return {@link #SUCCESS} in case of success,
+     */
+    public int setServerDiedListener(OnServerDiedListener listener) {
+        synchronized (mListenerLock) {
+            mServerDiedListener = listener;
+        }
+        return SUCCESS;
+    }
+
+    /**
      * Helper class to handle the forwarding of native events to the appropriate listeners
      */
     private class NativeEventHandler extends Handler
@@ -463,11 +559,7 @@ public class Visualizer {
             mVisualizer = v;
         }
 
-        @Override
-        public void handleMessage(Message msg) {
-            if (mVisualizer == null) {
-                return;
-            }
+        private void handleCaptureMessage(Message msg) {
             OnDataCaptureListener l = null;
             synchronized (mListenerLock) {
                 l = mVisualizer.mCaptureListener;
@@ -476,6 +568,7 @@ public class Visualizer {
             if (l != null) {
                 byte[] data = (byte[])msg.obj;
                 int samplingRate = msg.arg1;
+
                 switch(msg.what) {
                 case NATIVE_EVENT_PCM_CAPTURE:
                     l.onWaveFormDataCapture(mVisualizer, data, samplingRate);
@@ -484,9 +577,39 @@ public class Visualizer {
                     l.onFftDataCapture(mVisualizer, data, samplingRate);
                     break;
                 default:
-                    Log.e(TAG,"Unknown native event: "+msg.what);
+                    Log.e(TAG,"Unknown native event in handleCaptureMessge: "+msg.what);
                     break;
                 }
+            }
+        }
+
+        private void handleServerDiedMessage(Message msg) {
+            OnServerDiedListener l = null;
+            synchronized (mListenerLock) {
+                l = mVisualizer.mServerDiedListener;
+            }
+
+            if (l != null)
+                l.onServerDied();
+        }
+
+        @Override
+        public void handleMessage(Message msg) {
+            if (mVisualizer == null) {
+                return;
+            }
+
+            switch(msg.what) {
+            case NATIVE_EVENT_PCM_CAPTURE:
+            case NATIVE_EVENT_FFT_CAPTURE:
+                handleCaptureMessage(msg);
+                break;
+            case NATIVE_EVENT_SERVER_DIED:
+                handleServerDiedMessage(msg);
+                break;
+            default:
+                Log.e(TAG,"Unknown native event: "+msg.what);
+                break;
             }
         }
     }
@@ -512,6 +635,10 @@ public class Visualizer {
     private native final int native_setCaptureSize(int size);
 
     private native final int native_getCaptureSize();
+
+    private native final int native_setScalingMode(int mode);
+
+    private native final int native_getScalingMode();
 
     private native final int native_getSamplingRate();
 

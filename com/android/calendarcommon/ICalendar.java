@@ -59,8 +59,8 @@ public class ICalendar {
     public static class Component {
 
         // components
-        private static final String BEGIN = "BEGIN";
-        private static final String END = "END";
+        static final String BEGIN = "BEGIN";
+        static final String END = "END";
         private static final String NEWLINE = "\n";
         public static final String VCALENDAR = "VCALENDAR";
         public static final String VEVENT = "VEVENT";

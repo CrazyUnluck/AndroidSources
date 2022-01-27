@@ -117,7 +117,7 @@ public class KeyguardViewManager implements KeyguardWindowController {
             final int stretch = ViewGroup.LayoutParams.MATCH_PARENT;
             int flags = WindowManager.LayoutParams.FLAG_FORCE_NOT_FULLSCREEN
                     | WindowManager.LayoutParams.FLAG_SHOW_WALLPAPER
-                    | WindowManager.LayoutParams.FLAG_KEEP_SURFACE_WHILE_ANIMATING
+                    | WindowManager.LayoutParams.FLAG_SLIPPERY
                     /*| WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN
                     | WindowManager.LayoutParams.FLAG_LAYOUT_INSET_DECOR*/ ;
             if (!mNeedsInput) {
@@ -157,9 +157,9 @@ public class KeyguardViewManager implements KeyguardWindowController {
 
         if (mKeyguardView == null) {
             if (DEBUG) Log.d(TAG, "keyguard view is null, creating it...");
-            mKeyguardView = mKeyguardViewProperties.createKeyguardView(mContext, mUpdateMonitor, this);
+            mKeyguardView = mKeyguardViewProperties.createKeyguardView(mContext, mCallback,
+                    mUpdateMonitor, this);
             mKeyguardView.setId(R.id.lock_screen);
-            mKeyguardView.setCallback(mCallback);
 
             final ViewGroup.LayoutParams lp = new FrameLayout.LayoutParams(
                     ViewGroup.LayoutParams.MATCH_PARENT,
@@ -180,6 +180,7 @@ public class KeyguardViewManager implements KeyguardWindowController {
                 ( View.STATUS_BAR_DISABLE_BACK
                 | View.STATUS_BAR_DISABLE_HOME
                 );
+        Log.v(TAG, "KGVM: Set visibility on " + mKeyguardHost + " to " + visFlags);
         mKeyguardHost.setSystemUiVisibility(visFlags);
 
         mViewManager.updateViewLayout(mKeyguardHost, mWindowLayoutParams);

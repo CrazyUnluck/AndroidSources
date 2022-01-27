@@ -31,8 +31,12 @@ import android.os.AsyncResult;
 import android.os.Message;
 import android.os.SystemProperties;
 import android.text.TextUtils;
+import android.util.TimeUtils;
 
+import java.io.FileDescriptor;
+import java.io.PrintWriter;
 import java.util.ArrayList;
+import java.util.Calendar;
 import java.util.HashMap;
 import java.util.List;
 
@@ -65,7 +69,7 @@ public abstract class DataConnection extends StateMachine {
     protected static int mCount;
     protected AsyncChannel mAc;
 
-    private List<ApnContext> mApnList = null;
+    protected List<ApnContext> mApnList = null;
     PendingIntent mReconnectIntent = null;
 
     private DataConnectionTracker mDataConnectionTracker = null;
@@ -206,6 +210,27 @@ public abstract class DataConnection extends StateMachine {
     protected static final int EVENT_RIL_CONNECTED = BASE + 5;
     protected static final int EVENT_DISCONNECT_ALL = BASE + 6;
 
+    private static final int CMD_TO_STRING_COUNT = EVENT_DISCONNECT_ALL - BASE + 1;
+    private static String[] sCmdToString = new String[CMD_TO_STRING_COUNT];
+    static {
+        sCmdToString[EVENT_CONNECT - BASE] = "EVENT_CONNECT";
+        sCmdToString[EVENT_SETUP_DATA_CONNECTION_DONE - BASE] =
+                "EVENT_SETUP_DATA_CONNECTION_DONE";
+        sCmdToString[EVENT_GET_LAST_FAIL_DONE - BASE] = "EVENT_GET_LAST_FAIL_DONE";
+        sCmdToString[EVENT_DEACTIVATE_DONE - BASE] = "EVENT_DEACTIVATE_DONE";
+        sCmdToString[EVENT_DISCONNECT - BASE] = "EVENT_DISCONNECT";
+        sCmdToString[EVENT_RIL_CONNECTED - BASE] = "EVENT_RIL_CONNECTED";
+        sCmdToString[EVENT_DISCONNECT_ALL - BASE] = "EVENT_DISCONNECT_ALL";
+    }
+    protected static String cmdToString(int cmd) {
+        cmd -= BASE;
+        if ((cmd >= 0) && (cmd < sCmdToString.length)) {
+            return sCmdToString[cmd];
+        } else {
+            return null;
+        }
+    }
+
     //***** Tag IDs for EventLog
     protected static final int EVENT_LOG_BAD_DNS_ADDRESS = 50100;
 
@@ -222,7 +247,7 @@ public abstract class DataConnection extends StateMachine {
     protected FailCause lastFailCause;
     protected int mRetryOverride = -1;
     protected static final String NULL_IP = "0.0.0.0";
-    private int mRefCount;
+    protected int mRefCount;
     Object userData;
 
     //***** Abstract methods
@@ -240,6 +265,7 @@ public abstract class DataConnection extends StateMachine {
     protected DataConnection(PhoneBase phone, String name, int id, RetryManager rm,
             DataConnectionTracker dct) {
         super(name);
+        setProcessedMessagesSize(100);
         if (DBG) log("DataConnection constructor E");
         this.phone = phone;
         this.mDataConnectionTracker = dct;
@@ -355,14 +381,14 @@ public abstract class DataConnection extends StateMachine {
         if (DBG) log("NotifyDisconnectCompleted DisconnectParams=" + dp);
     }
 
-    protected int getRadioTechnology(int defaultRadioTechnology) {
-        int radioTechnology;
+    protected int getRilRadioTechnology(int defaultRilRadioTechnology) {
+        int rilRadioTechnology;
         if (mRilVersion < 6) {
-            radioTechnology = defaultRadioTechnology;
+            rilRadioTechnology = defaultRilRadioTechnology;
         } else {
-            radioTechnology = phone.getServiceState().getRadioTechnology() + 2;
+            rilRadioTechnology = phone.getServiceState().getRilRadioTechnology() + 2;
         }
-        return radioTechnology;
+        return rilRadioTechnology;
     }
 
     /*
@@ -574,9 +600,8 @@ public abstract class DataConnection extends StateMachine {
         result.newLp.setHttpProxy(mLinkProperties.getHttpProxy());
 
         if (DBG && (! result.oldLp.equals(result.newLp))) {
-            if (DBG) log("updateLinkProperty old != new");
-            if (VDBG) log("updateLinkProperty old LP=" + result.oldLp);
-            if (VDBG) log("updateLinkProperty new LP=" + result.newLp);
+            log("updateLinkProperty old LP=" + result.oldLp);
+            log("updateLinkProperty new LP=" + result.newLp);
         }
         mLinkProperties = result.newLp;
 
@@ -1184,5 +1209,53 @@ public abstract class DataConnection extends StateMachine {
     public void tearDownAll(String reason, Message onCompletedMsg) {
         sendMessage(obtainMessage(EVENT_DISCONNECT_ALL,
                 new DisconnectParams(reason, onCompletedMsg)));
+    }
+
+    /**
+     * @return the string for msg.what as our info.
+     */
+    @Override
+    protected String getMessageInfo(Message msg) {
+        String info = null;
+        info = cmdToString(msg.what);
+        if (info == null) {
+            info = DataConnectionAc.cmdToString(msg.what);
+        }
+        return info;
+    }
+
+    /**
+     * Dump the current state.
+     *
+     * @param fd
+     * @param pw
+     * @param args
+     */
+    @Override
+    public void dump(FileDescriptor fd, PrintWriter pw, String[] args) {
+        pw.print("DataConnection ");
+        super.dump(fd, pw, args);
+        pw.println(" mApnList=" + mApnList);
+        pw.flush();
+        pw.println(" mDataConnectionTracker=" + mDataConnectionTracker);
+        pw.println(" mApn=" + mApn);
+        pw.println(" mTag=" + mTag);
+        pw.flush();
+        pw.println(" phone=" + phone);
+        pw.println(" mRilVersion=" + mRilVersion);
+        pw.println(" cid=" + cid);
+        pw.flush();
+        pw.println(" mLinkProperties=" + mLinkProperties);
+        pw.flush();
+        pw.println(" mCapabilities=" + mCapabilities);
+        pw.println(" createTime=" + TimeUtils.logTimeOfDay(createTime));
+        pw.println(" lastFailTime=" + TimeUtils.logTimeOfDay(lastFailTime));
+        pw.println(" lastFailCause=" + lastFailCause);
+        pw.flush();
+        pw.println(" mRetryOverride=" + mRetryOverride);
+        pw.println(" mRefCount=" + mRefCount);
+        pw.println(" userData=" + userData);
+        if (mRetryMgr != null) pw.println(" " + mRetryMgr);
+        pw.flush();
     }
 }

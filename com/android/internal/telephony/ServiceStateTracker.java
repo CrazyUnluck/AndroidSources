@@ -23,6 +23,10 @@ import android.os.Registrant;
 import android.os.RegistrantList;
 import android.telephony.ServiceState;
 import android.telephony.SignalStrength;
+import android.util.TimeUtils;
+
+import java.io.FileDescriptor;
+import java.io.PrintWriter;
 
 /**
  * {@hide}
@@ -54,10 +58,10 @@ public abstract class ServiceStateTracker extends Handler {
     protected boolean mDesiredPowerState;
 
     /**
-     *  Values correspond to ServiceState.RADIO_TECHNOLOGY_ definitions.
+     *  Values correspond to ServiceState.RIL_RADIO_TECHNOLOGY_ definitions.
      */
-    protected int mRadioTechnology = 0;
-    protected int mNewRadioTechnology = 0;
+    protected int mRilRadioTechnology = 0;
+    protected int mNewRilRadioTechnology = 0;
 
     /**
      * By default, strength polling is enabled.  However, if we're
@@ -124,6 +128,10 @@ public abstract class ServiceStateTracker extends Handler {
     protected static final int EVENT_ERI_FILE_LOADED                   = 36;
     protected static final int EVENT_OTA_PROVISION_STATUS_CHANGE       = 37;
     protected static final int EVENT_SET_RADIO_POWER_OFF               = 38;
+    protected static final int EVENT_CDMA_SUBSCRIPTION_SOURCE_CHANGED  = 39;
+    protected static final int EVENT_CDMA_PRL_VERSION_CHANGED          = 40;
+    protected static final int EVENT_RADIO_ON                          = 41;
+
 
     protected static final String TIMEZONE_PROPERTY = "persist.sys.timezone";
 
@@ -138,6 +146,7 @@ public abstract class ServiceStateTracker extends Handler {
         "ci", // Cote d'Ivoire
         "eh", // Western Sahara
         "fo", // Faroe Islands, Denmark
+        "gb", // United Kingdom of Great Britain and Northern Ireland
         "gh", // Ghana
         "gm", // Gambia
         "gn", // Guinea
@@ -153,7 +162,6 @@ public abstract class ServiceStateTracker extends Handler {
         "sn", // Senegal
         "st", // Sao Tome and Principe
         "tg", // Togo
-        "uk", // U.K
     };
 
     /** Reason for registration denial. */
@@ -454,5 +462,77 @@ public abstract class ServiceStateTracker extends Handler {
     protected void cancelPollState() {
         // This will effectively cancel the rest of the poll requests.
         pollingContext = new int[1];
+    }
+
+    /**
+     * Return true if time zone needs fixing.
+     *
+     * @param phoneBase
+     * @param operatorNumeric
+     * @param prevOperatorNumeric
+     * @param needToFixTimeZone
+     * @return true if time zone needs to be fixed
+     */
+    protected boolean shouldFixTimeZoneNow(PhoneBase phoneBase, String operatorNumeric,
+            String prevOperatorNumeric, boolean needToFixTimeZone) {
+        // Return false if the mcc isn't valid as we don't know where we are.
+        // Return true if we have an IccCard and the mcc changed or we
+        // need to fix it because when the NITZ time came in we didn't
+        // know the country code.
+
+        // If mcc is invalid then we'll return false
+        int mcc;
+        try {
+            mcc = Integer.parseInt(operatorNumeric.substring(0, 3));
+        } catch (Exception e) {
+            if (DBG) {
+                log("shouldFixTimeZoneNow: no mcc, operatorNumeric=" + operatorNumeric +
+                        " retVal=false");
+            }
+            return false;
+        }
+
+        // If prevMcc is invalid will make it different from mcc
+        // so we'll return true if the card exists.
+        int prevMcc;
+        try {
+            prevMcc = Integer.parseInt(prevOperatorNumeric.substring(0, 3));
+        } catch (Exception e) {
+            prevMcc = mcc + 1;
+        }
+
+        // Determine if the Icc card exists
+        IccCard iccCard = phoneBase.getIccCard();
+        boolean iccCardExist = (iccCard != null) && iccCard.getState().iccCardExist();
+
+        // Determine retVal
+        boolean retVal = ((iccCardExist && (mcc != prevMcc)) || needToFixTimeZone);
+        if (DBG) {
+            long ctm = System.currentTimeMillis();
+            log("shouldFixTimeZoneNow: retVal=" + retVal +
+                    " iccCard=" + iccCard +
+                    " iccCard.state=" + (iccCard == null ? "null" : iccCard.getState().toString()) +
+                    " iccCardExist=" + iccCardExist +
+                    " operatorNumeric=" + operatorNumeric + " mcc=" + mcc +
+                    " prevOperatorNumeric=" + prevOperatorNumeric + " prevMcc=" + prevMcc +
+                    " needToFixTimeZone=" + needToFixTimeZone +
+                    " ltod=" + TimeUtils.logTimeOfDay(ctm));
+        }
+        return retVal;
+    }
+
+    public void dump(FileDescriptor fd, PrintWriter pw, String[] args) {
+        pw.println("ServiceStateTracker:");
+        pw.println(" ss=" + ss);
+        pw.println(" newSS=" + newSS);
+        pw.println(" mSignalStrength=" + mSignalStrength);
+        pw.println(" mRestrictedState=" + mRestrictedState);
+        pw.println(" pollingContext=" + pollingContext);
+        pw.println(" mDesiredPowerState=" + mDesiredPowerState);
+        pw.println(" mRilRadioTechnology=" + mRilRadioTechnology);
+        pw.println(" mNewRilRadioTechnology=" + mNewRilRadioTechnology);
+        pw.println(" dontPollSignalStrength=" + dontPollSignalStrength);
+        pw.println(" mPendingRadioPowerOffAfterDataOff=" + mPendingRadioPowerOffAfterDataOff);
+        pw.println(" mPendingRadioPowerOffAfterDataOffTag=" + mPendingRadioPowerOffAfterDataOffTag);
     }
 }

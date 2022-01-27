@@ -23,11 +23,11 @@ import android.content.Context;
 import android.content.Intent;
 import android.content.IntentFilter;
 import android.content.IntentSender;
-import android.content.pm.ManifestDigest;
 import android.content.res.Resources;
 import android.content.res.XmlResourceParser;
 import android.graphics.drawable.Drawable;
 import android.net.Uri;
+import android.os.Environment;
 import android.util.AndroidException;
 import android.util.DisplayMetrics;
 
@@ -118,7 +118,7 @@ public abstract class PackageManager {
      * {@link PackageInfo} flag: return the
      * {@link PackageInfo#gids group ids} that are associated with an
      * application.
-     * This applies for any API returning an PackageInfo class, either
+     * This applies for any API returning a PackageInfo class, either
      * directly or nested inside of another.
      */
     public static final int GET_GIDS                    = 0x00000100;
@@ -141,7 +141,7 @@ public abstract class PackageManager {
      * {@link ProviderInfo} flag: return the
      * {@link ProviderInfo#uriPermissionPatterns URI permission patterns}
      * that are associated with a content provider.
-     * This applies for any API returning an ProviderInfo class, either
+     * This applies for any API returning a ProviderInfo class, either
      * directly or nested inside of another.
      */
     public static final int GET_URI_PERMISSION_PATTERNS  = 0x00000800;
@@ -520,6 +520,14 @@ public abstract class PackageManager {
     public static final int INSTALL_FAILED_PACKAGE_CHANGED = -23;
 
     /**
+     * Installation return code: this is passed to the {@link IPackageInstallObserver} by
+     * {@link #installPackage(android.net.Uri, IPackageInstallObserver, int)} if
+     * the new package is assigned a different UID than it previously held.
+     * @hide
+     */
+    public static final int INSTALL_FAILED_UID_CHANGED = -24;
+
+    /**
      * Installation parse return code: this is passed to the {@link IPackageInstallObserver} by
      * {@link #installPackage(android.net.Uri, IPackageInstallObserver, int)}
      * if the parser was given a path that is not a file, or does not end with the expected
@@ -751,13 +759,6 @@ public abstract class PackageManager {
      * package verifier does not vote to allow the installation to proceed.
      */
     public static final int VERIFICATION_REJECT = -1;
-
-    /**
-     * Range of IDs allocated for a user.
-     *
-     * @hide
-     */
-    public static final int PER_USER_RANGE = 100000;
 
     /**
      * Feature for {@link #getSystemAvailableFeatures} and {@link #hasSystemFeature}: The device's
@@ -1055,6 +1056,17 @@ public abstract class PackageManager {
      */
     @SdkConstant(SdkConstantType.FEATURE)
     public static final String FEATURE_WIFI_DIRECT = "android.hardware.wifi.direct";
+
+    /**
+     * Feature for {@link #getSystemAvailableFeatures} and
+     * {@link #hasSystemFeature}: This is a device dedicated to showing UI
+     * on a television.  Television here is defined to be a typical living
+     * room television experience: displayed on a big screen, where the user
+     * is sitting far away from it, and the dominant form of input will be
+     * something like a DPAD, not through touch or mouse.
+     */
+    @SdkConstant(SdkConstantType.FEATURE)
+    public static final String FEATURE_TELEVISION = "android.hardware.type.television";
 
     /**
      * Action to external storage service to clean out removed apps.
@@ -1479,6 +1491,29 @@ public abstract class PackageManager {
      * @see #addPermission(PermissionInfo)
      */
     public abstract void removePermission(String name);
+
+    /**
+     * Grant a permission to an application which the application does not
+     * already have.  The permission must have been requested by the application,
+     * but as an optional permission.  If the application is not allowed to
+     * hold the permission, a SecurityException is thrown.
+     * @hide
+     *
+     * @param packageName The name of the package that the permission will be
+     * granted to.
+     * @param permissionName The name of the permission.
+     */
+    public abstract void grantPermission(String packageName, String permissionName);
+
+    /**
+     * Revoke a permission that was previously granted by {@link #grantPermission}.
+     * @hide
+     *
+     * @param packageName The name of the package that the permission will be
+     * granted to.
+     * @param permissionName The name of the permission.
+     */
+    public abstract void revokePermission(String packageName, String permissionName);
 
     /**
      * Compare the signatures of two packages to determine if the same
@@ -2131,7 +2166,8 @@ public abstract class PackageManager {
         if ((flags & GET_SIGNATURES) != 0) {
             packageParser.collectCertificates(pkg, 0);
         }
-        return PackageParser.generatePackageInfo(pkg, null, flags, 0, 0);
+        return PackageParser.generatePackageInfo(pkg, null, flags, 0, 0, null, false,
+                COMPONENT_ENABLED_STATE_DEFAULT);
     }
 
     /**
@@ -2176,12 +2212,19 @@ public abstract class PackageManager {
      *            is performing the installation. This identifies which market
      *            the package came from.
      * @param verificationURI The location of the supplementary verification
-     *            file. This can be a 'file:' or a 'content:' URI.
+     *            file. This can be a 'file:' or a 'content:' URI. May be
+     *            {@code null}.
+     * @param manifestDigest an object that holds the digest of the package
+     *            which can be used to verify ownership. May be {@code null}.
+     * @param encryptionParams if the package to be installed is encrypted,
+     *            these parameters describing the encryption and authentication
+     *            used. May be {@code null}.
      * @hide
      */
     public abstract void installPackageWithVerification(Uri packageURI,
             IPackageInstallObserver observer, int flags, String installerPackageName,
-            Uri verificationURI, ManifestDigest manifestDigest);
+            Uri verificationURI, ManifestDigest manifestDigest,
+            ContainerEncryptionParams encryptionParams);
 
     /**
      * Allows a package listening to the
@@ -2615,45 +2658,32 @@ public abstract class PackageManager {
     public abstract void updateUserFlags(int id, int flags);
 
     /**
-     * Checks to see if the user id is the same for the two uids, i.e., they belong to the same
-     * user.
+     * Returns the details for the user specified by userId.
+     * @param userId the user id of the user
+     * @return UserInfo for the specified user, or null if no such user exists.
      * @hide
      */
-    public static boolean isSameUser(int uid1, int uid2) {
-        return getUserId(uid1) == getUserId(uid2);
-    }
+    public abstract UserInfo getUser(int userId);
 
     /**
-     * Returns the user id for a given uid.
-     * @hide
-     */
-    public static int getUserId(int uid) {
-        return uid / PER_USER_RANGE;
-    }
-
-    /**
-     * Returns the uid that is composed from the userId and the appId.
-     * @hide
-     */
-    public static int getUid(int userId, int appId) {
-        return userId * PER_USER_RANGE + (appId % PER_USER_RANGE);
-    }
-
-    /**
-     * Returns the app id (or base uid) for a given uid, stripping out the user id from it.
-     * @hide
-     */
-    public static int getAppId(int uid) {
-        return uid % PER_USER_RANGE;
-    }
-
-    /**
-     * Returns the device identity that verifiers can use to associate their
-     * scheme to a particular device. This should not be used by anything other
-     * than a package verifier.
-     *
+     * Returns the device identity that verifiers can use to associate their scheme to a particular
+     * device. This should not be used by anything other than a package verifier.
+     * 
      * @return identity that uniquely identifies current device
      * @hide
      */
     public abstract VerifierDeviceIdentity getVerifierDeviceIdentity();
+
+    /**
+     * Returns the data directory for a particular user and package, given the uid of the package.
+     * @param uid uid of the package, including the userId and appId
+     * @param packageName name of the package
+     * @return the user-specific data directory for the package
+     * @hide
+     */
+    public static String getDataDirForUser(int userId, String packageName) {
+        // TODO: This should be shared with Installer's knowledge of user directory
+        return Environment.getDataDirectory().toString() + "/user/" + userId
+                + "/" + packageName;
+    }
 }

@@ -80,16 +80,22 @@ public class ShareActionProvider extends ActionProvider {
 
         /**
          * Called when a share target has been selected. The client can
-         * decide whether to handle the intent or rely on the default
-         * behavior which is launching it.
+         * decide whether to perform some action before the sharing is
+         * actually performed.
          * <p>
          * <strong>Note:</strong> Modifying the intent is not permitted and
          *     any changes to the latter will be ignored.
          * </p>
+         * <p>
+         * <strong>Note:</strong> You should <strong>not</strong> handle the
+         *     intent here. This callback aims to notify the client that a
+         *     sharing is being performed, so the client can update the UI
+         *     if necessary.
+         * </p>
          *
          * @param source The source of the notification.
          * @param intent The intent for launching the chosen share target.
-         * @return Whether the client has handled the intent.
+         * @return The return result is ignored. Always return false for consistency.
          */
         public boolean onShareTargetSelected(ShareActionProvider source, Intent intent);
     }
@@ -233,8 +239,25 @@ public class ShareActionProvider extends ActionProvider {
      * <p>
      * <strong>Note:</strong> The history file name can be set any time, however
      * only the action views created by {@link #onCreateActionView()} after setting
-     * the file name will be backed by the provided file.
+     * the file name will be backed by the provided file. Therefore, if you want to
+     * use different history files for sharing specific types of content, every time
+     * you change the history file {@link #setShareHistoryFileName(String)} you must
+     * call {@link android.app.Activity#invalidateOptionsMenu()} to recreate the
+     * action view. You should <strong>not</strong> call
+     * {@link android.app.Activity#invalidateOptionsMenu()} from
+     * {@link android.app.Activity#onCreateOptionsMenu(Menu)}."
      * <p>
+     * <code>
+     * private void doShare(Intent intent) {
+     *     if (IMAGE.equals(intent.getMimeType())) {
+     *         mShareActionProvider.setHistoryFileName(SHARE_IMAGE_HISTORY_FILE_NAME);
+     *     } else if (TEXT.equals(intent.getMimeType())) {
+     *         mShareActionProvider.setHistoryFileName(SHARE_TEXT_HISTORY_FILE_NAME);
+     *     }
+     *     mShareActionProvider.setIntent(intent);
+     *     invalidateOptionsMenu();
+     * }
+     * <code>
      *
      * @param shareHistoryFile The share history file name.
      */
@@ -279,6 +302,7 @@ public class ShareActionProvider extends ActionProvider {
             final int itemId = item.getItemId();
             Intent launchIntent = dataModel.chooseActivity(itemId);
             if (launchIntent != null) {
+                launchIntent.addFlags(Intent.FLAG_ACTIVITY_CLEAR_WHEN_TASK_RESET);
                 mContext.startActivity(launchIntent);
             }
             return true;
@@ -307,7 +331,7 @@ public class ShareActionProvider extends ActionProvider {
         @Override
         public boolean onChooseActivity(ActivityChooserModel host, Intent intent) {
             if (mOnShareTargetSelectedListener != null) {
-                return mOnShareTargetSelectedListener.onShareTargetSelected(
+                mOnShareTargetSelectedListener.onShareTargetSelected(
                         ShareActionProvider.this, intent);
             }
             return false;

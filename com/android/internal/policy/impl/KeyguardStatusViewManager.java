@@ -19,8 +19,10 @@ package com.android.internal.policy.impl;
 import com.android.internal.R;
 import com.android.internal.telephony.IccCard;
 import com.android.internal.telephony.IccCard.State;
+import com.android.internal.widget.DigitalClock;
 import com.android.internal.widget.LockPatternUtils;
 import com.android.internal.widget.TransportControlView;
+import com.android.internal.policy.impl.KeyguardUpdateMonitor.InfoCallbackImpl;
 import com.android.internal.policy.impl.KeyguardUpdateMonitor.SimStateCallback;
 
 import java.util.ArrayList;
@@ -105,6 +107,7 @@ class KeyguardStatusViewManager implements OnClickListener {
     private CharSequence mPlmn;
     private CharSequence mSpn;
     protected int mPhoneState;
+    private DigitalClock mDigitalClock;
 
     private class TransientTextManager {
         private TextView mTextView;
@@ -181,6 +184,7 @@ class KeyguardStatusViewManager implements OnClickListener {
         mTransportView = (TransportControlView) findViewById(R.id.transport);
         mEmergencyCallButton = (Button) findViewById(R.id.emergencyCallButton);
         mEmergencyCallButtonEnabledInScreen = emergencyButtonEnabledInScreen;
+        mDigitalClock = (DigitalClock) findViewById(R.id.time);
 
         // Hide transport control view until we know we need to show it.
         if (mTransportView != null) {
@@ -290,9 +294,21 @@ class KeyguardStatusViewManager implements OnClickListener {
     /** {@inheritDoc} */
     public void onResume() {
         if (DEBUG) Log.v(TAG, "onResume()");
+
+        // First update the clock, if present.
+        if (mDigitalClock != null) {
+            mDigitalClock.updateTime();
+        }
+
         mUpdateMonitor.registerInfoCallback(mInfoCallback);
         mUpdateMonitor.registerSimStateCallback(mSimStateCallback);
         resetStatusInfo();
+        // Issue the biometric unlock failure message in a centralized place
+        // TODO: we either need to make the Face Unlock multiple failures string a more general
+        // 'biometric unlock' or have each biometric unlock handle this on their own.
+        if (mUpdateMonitor.getMaxBiometricUnlockAttemptsReached()) {
+            setInstructionText(getContext().getString(R.string.faceunlock_multiple_failures));
+        }
     }
 
     void resetStatusInfo() {
@@ -493,7 +509,8 @@ class KeyguardStatusViewManager implements OnClickListener {
                 break;
 
             case SimPermDisabled:
-                carrierText = getContext().getText(R.string.lockscreen_missing_sim_message_short);
+                carrierText = getContext().getText(
+                        R.string.lockscreen_permanent_disabled_sim_message_short);
                 carrierHelpTextId = R.string.lockscreen_permanent_disabled_sim_instructions;
                 mEmergencyButtonEnabledBecauseSimLocked = true;
                 break;
@@ -612,9 +629,9 @@ class KeyguardStatusViewManager implements OnClickListener {
         }
     }
 
-    private KeyguardUpdateMonitor.InfoCallback mInfoCallback
-            = new KeyguardUpdateMonitor.InfoCallback() {
+    private InfoCallbackImpl mInfoCallback = new InfoCallbackImpl() {
 
+        @Override
         public void onRefreshBatteryInfo(boolean showBatteryInfo, boolean pluggedIn,
                 int batteryLevel) {
             mShowingBatteryInfo = showBatteryInfo;
@@ -624,33 +641,24 @@ class KeyguardStatusViewManager implements OnClickListener {
             update(BATTERY_INFO, getAltTextMessage(tmpIcon));
         }
 
+        @Override
         public void onTimeChanged() {
             refreshDate();
         }
 
+        @Override
         public void onRefreshCarrierInfo(CharSequence plmn, CharSequence spn) {
             mPlmn = plmn;
             mSpn = spn;
             updateCarrierStateWithSimStatus(mSimState);
         }
 
-        public void onRingerModeChanged(int state) {
-
-        }
-
+        @Override
         public void onPhoneStateChanged(int phoneState) {
             mPhoneState = phoneState;
             updateEmergencyCallButtonState(phoneState);
         }
 
-        /** {@inheritDoc} */
-        public void onClockVisibilityChanged() {
-            // ignored
-        }
-
-        public void onDeviceProvisioned() {
-            // ignored
-        }
     };
 
     private SimStateCallback mSimStateCallback = new SimStateCallback() {

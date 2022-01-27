@@ -66,6 +66,7 @@ class HTML5VideoViewProxy extends Handler
     private static final int POSTER_FETCHED    = 202;
     private static final int PAUSED            = 203;
     private static final int STOPFULLSCREEN    = 204;
+    private static final int RESTORESTATE      = 205;
 
     // Timer thread -> UI thread
     private static final int TIMEUPDATE = 300;
@@ -74,8 +75,8 @@ class HTML5VideoViewProxy extends Handler
     int mNativePointer;
     // The handler for WebCore thread messages;
     private Handler mWebCoreHandler;
-    // The WebView instance that created this view.
-    private WebView mWebView;
+    // The WebViewClassic instance that created this view.
+    private WebViewClassic mWebView;
     // The poster image to be shown when the video is not playing.
     // This ref prevents the bitmap from being GC'ed.
     private Bitmap mPoster;
@@ -111,13 +112,14 @@ class HTML5VideoViewProxy extends Handler
                 mBaseLayer = layer;
 
                 int currentVideoLayerId = mHTML5VideoView.getVideoLayerId();
-                SurfaceTexture surfTexture = mHTML5VideoView.getSurfaceTexture(currentVideoLayerId);
+                SurfaceTexture surfTexture =
+                        HTML5VideoInline.getSurfaceTexture(currentVideoLayerId);
                 int textureName = mHTML5VideoView.getTextureName();
 
                 if (layer != 0 && surfTexture != null && currentVideoLayerId != -1) {
                     int playerState = mHTML5VideoView.getCurrentState();
                     if (mHTML5VideoView.getPlayerBuffering())
-                        playerState = HTML5VideoView.STATE_NOTPREPARED;
+                        playerState = HTML5VideoView.STATE_PREPARING;
                     boolean foundInTree = nativeSendSurfaceTexture(surfTexture,
                             layer, currentVideoLayerId, textureName,
                             playerState);
@@ -141,27 +143,51 @@ class HTML5VideoViewProxy extends Handler
         }
 
         public static void enterFullScreenVideo(int layerId, String url,
-                HTML5VideoViewProxy proxy, WebView webView) {
+                HTML5VideoViewProxy proxy, WebViewClassic webView) {
                 // Save the inline video info and inherit it in the full screen
                 int savePosition = 0;
-                boolean savedIsPlaying = false;
+                boolean canSkipPrepare = false;
+                boolean forceStart = false;
                 if (mHTML5VideoView != null) {
+                    // We don't allow enter full screen mode while the previous
+                    // full screen video hasn't finished yet.
+                    if (!mHTML5VideoView.fullScreenExited() && mHTML5VideoView.isFullScreenMode()) {
+                        Log.w(LOGTAG, "Try to reenter the full screen mode");
+                        return;
+                    }
+                    int playerState = mHTML5VideoView.getCurrentState();
                     // If we are playing the same video, then it is better to
                     // save the current position.
                     if (layerId == mHTML5VideoView.getVideoLayerId()) {
                         savePosition = mHTML5VideoView.getCurrentPosition();
-                        savedIsPlaying = mHTML5VideoView.isPlaying();
+                        canSkipPrepare = (playerState == HTML5VideoView.STATE_PREPARING
+                                || playerState == HTML5VideoView.STATE_PREPARED
+                                || playerState == HTML5VideoView.STATE_PLAYING)
+                                && !mHTML5VideoView.isFullScreenMode();
                     }
-                    mHTML5VideoView.pauseAndDispatch(mCurrentProxy);
-                    mHTML5VideoView.release();
+                    if (!canSkipPrepare) {
+                        mHTML5VideoView.reset();
+                    } else {
+                        forceStart = playerState == HTML5VideoView.STATE_PREPARING
+                                || playerState == HTML5VideoView.STATE_PLAYING;
+                    }
                 }
                 mHTML5VideoView = new HTML5VideoFullScreen(proxy.getContext(),
-                        layerId, savePosition, savedIsPlaying);
+                        layerId, savePosition, canSkipPrepare);
+                mHTML5VideoView.setStartWhenPrepared(forceStart);
                 mCurrentProxy = proxy;
-
                 mHTML5VideoView.setVideoURI(url, mCurrentProxy);
-
                 mHTML5VideoView.enterFullScreenVideoState(layerId, proxy, webView);
+        }
+
+        public static void exitFullScreenVideo(HTML5VideoViewProxy proxy,
+                WebViewClassic webView) {
+            if (!mHTML5VideoView.fullScreenExited() && mHTML5VideoView.isFullScreenMode()) {
+                WebChromeClient client = webView.getWebChromeClient();
+                if (client != null) {
+                    client.onHideCustomView();
+                }
+            }
         }
 
         // This is on the UI thread.
@@ -174,6 +200,21 @@ class HTML5VideoViewProxy extends Handler
             if (mHTML5VideoView != null) {
                 currentVideoLayerId = mHTML5VideoView.getVideoLayerId();
                 backFromFullScreenMode = mHTML5VideoView.fullScreenExited();
+
+                // When playing video back to back in full screen mode,
+                // javascript will switch the src and call play.
+                // In this case, we can just reuse the same full screen view,
+                // and play the video after prepared.
+                if (mHTML5VideoView.isFullScreenMode()
+                    && !backFromFullScreenMode
+                    && currentVideoLayerId != videoLayerId
+                    && mCurrentProxy != proxy) {
+                    mCurrentProxy = proxy;
+                    mHTML5VideoView.setStartWhenPrepared(true);
+                    mHTML5VideoView.setVideoURI(url, proxy);
+                    mHTML5VideoView.reprepareData(proxy);
+                    return;
+                }
             }
 
             if (backFromFullScreenMode
@@ -188,11 +229,10 @@ class HTML5VideoViewProxy extends Handler
                     if (!backFromFullScreenMode) {
                         mHTML5VideoView.pauseAndDispatch(mCurrentProxy);
                     }
-                    // release the media player to avoid finalize error
-                    mHTML5VideoView.release();
+                    mHTML5VideoView.reset();
                 }
                 mCurrentProxy = proxy;
-                mHTML5VideoView = new HTML5VideoInline(videoLayerId, time, false);
+                mHTML5VideoView = new HTML5VideoInline(videoLayerId, time);
 
                 mHTML5VideoView.setVideoURI(url, mCurrentProxy);
                 mHTML5VideoView.prepareDataAndDisplayMode(proxy);
@@ -235,7 +275,7 @@ class HTML5VideoViewProxy extends Handler
         }
 
         public static void onPrepared() {
-            if (!mHTML5VideoView.isFullScreenMode() || mHTML5VideoView.getAutostart()) {
+            if (!mHTML5VideoView.isFullScreenMode()) {
                 mHTML5VideoView.start();
             }
             if (mBaseLayer != 0) {
@@ -244,6 +284,7 @@ class HTML5VideoViewProxy extends Handler
         }
 
         public static void end() {
+            mHTML5VideoView.showControllerInFullScreen();
             if (mCurrentProxy != null) {
                 if (isVideoSelfEnded)
                     mCurrentProxy.dispatchOnEnded();
@@ -294,6 +335,11 @@ class HTML5VideoViewProxy extends Handler
 
     public void dispatchOnStopFullScreen() {
         Message msg = Message.obtain(mWebCoreHandler, STOPFULLSCREEN);
+        mWebCoreHandler.sendMessage(msg);
+    }
+
+    public void dispatchOnRestoreState() {
+        Message msg = Message.obtain(mWebCoreHandler, RESTORESTATE);
         mWebCoreHandler.sendMessage(msg);
     }
 
@@ -523,7 +569,7 @@ class HTML5VideoViewProxy extends Handler
      * @param webView is the WebView that hosts the video.
      * @param nativePtr is the C++ pointer to the MediaPlayerPrivate object.
      */
-    private HTML5VideoViewProxy(WebView webView, int nativePtr) {
+    private HTML5VideoViewProxy(WebViewClassic webView, int nativePtr) {
         // This handler is for the main (UI) thread.
         super(Looper.getMainLooper());
         // Save the WebView object.
@@ -568,6 +614,9 @@ class HTML5VideoViewProxy extends Handler
                         break;
                     case STOPFULLSCREEN:
                         nativeOnStopFullscreen(mNativePointer);
+                        break;
+                    case RESTORESTATE:
+                        nativeOnRestoreState(mNativePointer);
                         break;
                 }
             }
@@ -676,6 +725,10 @@ class HTML5VideoViewProxy extends Handler
         VideoPlayer.enterFullScreenVideo(layerId, url, this, mWebView);
     }
 
+    public void exitFullScreenVideo() {
+        VideoPlayer.exitFullScreenVideo(this, mWebView);
+    }
+
     /**
      * The factory for HTML5VideoViewProxy instances.
      * @param webViewCore is the WebViewCore that is requesting the proxy.
@@ -683,10 +736,10 @@ class HTML5VideoViewProxy extends Handler
      * @return a new HTML5VideoViewProxy object.
      */
     public static HTML5VideoViewProxy getInstance(WebViewCore webViewCore, int nativePtr) {
-        return new HTML5VideoViewProxy(webViewCore.getWebView(), nativePtr);
+        return new HTML5VideoViewProxy(webViewCore.getWebViewClassic(), nativePtr);
     }
 
-    /* package */ WebView getWebView() {
+    /* package */ WebViewClassic getWebView() {
         return mWebView;
     }
 
@@ -696,6 +749,7 @@ class HTML5VideoViewProxy extends Handler
     private native void nativeOnPosterFetched(Bitmap poster, int nativePointer);
     private native void nativeOnTimeupdate(int position, int nativePointer);
     private native void nativeOnStopFullscreen(int nativePointer);
+    private native void nativeOnRestoreState(int nativePointer);
     private native static boolean nativeSendSurfaceTexture(SurfaceTexture texture,
             int baseLayer, int videoLayerId, int textureName,
             int playerState);

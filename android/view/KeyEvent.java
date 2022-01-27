@@ -52,6 +52,19 @@ import android.view.KeyCharacterMap.KeyData;
  * to characters.  Be aware that there may be multiple key input devices active
  * at the same time and each will have its own key character map.
  * </p><p>
+ * As soft input methods can use multiple and inventive ways of inputting text,
+ * there is no guarantee that any key press on a soft keyboard will generate a key
+ * event: this is left to the IME's discretion, and in fact sending such events is
+ * discouraged.  You should never rely on receiving KeyEvents for any key on a soft
+ * input method.  In particular, the default software keyboard will never send any
+ * key event to any application targetting Jelly Bean or later, and will only send
+ * events for some presses of the delete and return keys to applications targetting
+ * Ice Cream Sandwich or earlier.  Be aware that other software input methods may
+ * never send key events regardless of the version.  Consider using editor actions
+ * like {@link android.view.inputmethod.EditorInfo#IME_ACTION_DONE} if you need
+ * specific interaction with the software keyboard, as it gives more visibility to
+ * the user as to how your application will react to key presses.
+ * </p><p>
  * When interacting with an IME, the framework may deliver key events
  * with the special action {@link #ACTION_MULTIPLE} that either specifies
  * that single repeated key code or a sequence of characters to insert.
@@ -591,8 +604,27 @@ public class KeyEvent extends InputEvent implements Parcelable {
     /** Key code constant: Calculator special function key.
      * Used to launch a calculator application. */
     public static final int KEYCODE_CALCULATOR      = 210;
+    /** Key code constant: Japanese full-width / half-width key. */
+    public static final int KEYCODE_ZENKAKU_HANKAKU = 211;
+    /** Key code constant: Japanese alphanumeric key. */
+    public static final int KEYCODE_EISU            = 212;
+    /** Key code constant: Japanese non-conversion key. */
+    public static final int KEYCODE_MUHENKAN        = 213;
+    /** Key code constant: Japanese conversion key. */
+    public static final int KEYCODE_HENKAN          = 214;
+    /** Key code constant: Japanese katakana / hiragana key. */
+    public static final int KEYCODE_KATAKANA_HIRAGANA = 215;
+    /** Key code constant: Japanese Yen key. */
+    public static final int KEYCODE_YEN             = 216;
+    /** Key code constant: Japanese Ro key. */
+    public static final int KEYCODE_RO              = 217;
+    /** Key code constant: Japanese kana key. */
+    public static final int KEYCODE_KANA            = 218;
+    /** Key code constant: Assist key.
+     * Launches the global assist activity.  Not delivered to applications. */
+    public static final int KEYCODE_ASSIST          = 219;
 
-    private static final int LAST_KEYCODE           = KEYCODE_CALCULATOR;
+    private static final int LAST_KEYCODE           = KEYCODE_ASSIST;
 
     // NOTE: If you add a new keycode here you must also add it to:
     //  isSystem()
@@ -825,6 +857,15 @@ public class KeyEvent extends InputEvent implements Parcelable {
         names.append(KEYCODE_CALENDAR, "KEYCODE_CALENDAR");
         names.append(KEYCODE_MUSIC, "KEYCODE_MUSIC");
         names.append(KEYCODE_CALCULATOR, "KEYCODE_CALCULATOR");
+        names.append(KEYCODE_ZENKAKU_HANKAKU, "KEYCODE_ZENKAKU_HANKAKU");
+        names.append(KEYCODE_EISU, "KEYCODE_EISU");
+        names.append(KEYCODE_MUHENKAN, "KEYCODE_MUHENKAN");
+        names.append(KEYCODE_HENKAN, "KEYCODE_HENKAN");
+        names.append(KEYCODE_KATAKANA_HIRAGANA, "KEYCODE_KATAKANA_HIRAGANA");
+        names.append(KEYCODE_YEN, "KEYCODE_YEN");
+        names.append(KEYCODE_RO, "KEYCODE_RO");
+        names.append(KEYCODE_KANA, "KEYCODE_KANA");
+        names.append(KEYCODE_ASSIST, "KEYCODE_ASSIST");
     };
 
     // Symbolic names of all metakeys in bit order from least significant to most significant.
@@ -1225,7 +1266,6 @@ public class KeyEvent extends InputEvent implements Parcelable {
     private static KeyEvent gRecyclerTop;
 
     private KeyEvent mNext;
-    private boolean mRecycled;
 
     private int mDeviceId;
     private int mSource;
@@ -1535,8 +1575,8 @@ public class KeyEvent extends InputEvent implements Parcelable {
             gRecyclerTop = ev.mNext;
             gRecyclerUsed -= 1;
         }
-        ev.mRecycled = false;
         ev.mNext = null;
+        ev.prepareForReuse();
         return ev;
     }
 
@@ -1597,11 +1637,9 @@ public class KeyEvent extends InputEvent implements Parcelable {
      *
      * @hide
      */
+    @Override
     public final void recycle() {
-        if (mRecycled) {
-            throw new RuntimeException(toString() + " recycled twice!");
-        }
-        mRecycled = true;
+        super.recycle();
         mCharacters = null;
 
         synchronized (gRecyclerLock) {
@@ -1611,6 +1649,12 @@ public class KeyEvent extends InputEvent implements Parcelable {
                 gRecyclerTop = this;
             }
         }
+    }
+
+    /** @hide */
+    @Override
+    public final void recycleIfNeededAfterDispatch() {
+        // Do nothing.
     }
 
     /**
@@ -2348,17 +2392,31 @@ public class KeyEvent extends InputEvent implements Parcelable {
     }
 
     /**
-     * Retrieve the time this event occurred, 
+     * Retrieve the time this event occurred,
      * in the {@link android.os.SystemClock#uptimeMillis} time base.
-     * 
+     *
      * @return Returns the time this event occurred, 
      * in the {@link android.os.SystemClock#uptimeMillis} time base.
      */
+    @Override
     public final long getEventTime() {
         return mEventTime;
     }
 
-    /** @hide */
+    /**
+     * Retrieve the time this event occurred,
+     * in the {@link android.os.SystemClock#uptimeMillis} time base but with
+     * nanosecond (instead of millisecond) precision.
+     * <p>
+     * The value is in nanosecond precision but it may not have nanosecond accuracy.
+     * </p>
+     *
+     * @return Returns the time this event occurred,
+     * in the {@link android.os.SystemClock#uptimeMillis} time base but with
+     * nanosecond (instead of millisecond) precision.
+     *
+     * @hide
+     */
     @Override
     public final long getEventTimeNano() {
         return mEventTime * 1000000L;

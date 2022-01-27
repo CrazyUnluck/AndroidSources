@@ -43,9 +43,10 @@ public class LockPatternKeyguardViewProperties implements KeyguardViewProperties
     }
 
     public KeyguardViewBase createKeyguardView(Context context,
+            KeyguardViewCallback callback,
             KeyguardUpdateMonitor updateMonitor,
             KeyguardWindowController controller) {
-        return new LockPatternKeyguardView(context, updateMonitor,
+        return new LockPatternKeyguardView(context, callback, updateMonitor,
                 mLockPatternUtils, controller);
     }
 
@@ -57,7 +58,6 @@ public class LockPatternKeyguardViewProperties implements KeyguardViewProperties
         final IccCard.State simState = mUpdateMonitor.getSimState();
         return (simState == IccCard.State.PIN_REQUIRED
                 || simState == IccCard.State.PUK_REQUIRED
-                || simState == IccCard.State.ABSENT
                 || simState == IccCard.State.PERM_DISABLED);
     }
 

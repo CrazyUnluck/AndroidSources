@@ -41,6 +41,26 @@ public class PermissionGroupInfo extends PackageItemInfo implements Parcelable {
      */
     public CharSequence nonLocalizedDescription;
 
+    /**
+     * Flag for {@link #flags}, corresponding to <code>personalInfo</code>
+     * value of {@link android.R.attr#permissionGroupFlags}.
+     * @hide
+     */
+    public static final int FLAG_PERSONAL_INFO = 1<<0;
+
+    /**
+     * Additional flags about this group as given by
+     * {@link android.R.attr#permissionGroupFlags}.
+     * @hide
+     */
+    public int flags;
+
+    /**
+     * Prioritization of this group, for visually sorting with other groups.
+     * @hide
+     */
+    public int priority;
+
     public PermissionGroupInfo() {
     }
 
@@ -48,6 +68,8 @@ public class PermissionGroupInfo extends PackageItemInfo implements Parcelable {
         super(orig);
         descriptionRes = orig.descriptionRes;
         nonLocalizedDescription = orig.nonLocalizedDescription;
+        flags = orig.flags;
+        priority = orig.priority;
     }
 
     /**
@@ -77,7 +99,7 @@ public class PermissionGroupInfo extends PackageItemInfo implements Parcelable {
     public String toString() {
         return "PermissionGroupInfo{"
             + Integer.toHexString(System.identityHashCode(this))
-            + " " + name + "}";
+            + " " + name + " flgs=0x" + Integer.toHexString(flags) + "}";
     }
 
     public int describeContents() {
@@ -88,6 +110,8 @@ public class PermissionGroupInfo extends PackageItemInfo implements Parcelable {
         super.writeToParcel(dest, parcelableFlags);
         dest.writeInt(descriptionRes);
         TextUtils.writeToParcel(nonLocalizedDescription, dest, parcelableFlags);
+        dest.writeInt(flags);
+        dest.writeInt(priority);
     }
 
     public static final Creator<PermissionGroupInfo> CREATOR =
@@ -104,5 +128,7 @@ public class PermissionGroupInfo extends PackageItemInfo implements Parcelable {
         super(source);
         descriptionRes = source.readInt();
         nonLocalizedDescription = TextUtils.CHAR_SEQUENCE_CREATOR.createFromParcel(source);
+        flags = source.readInt();
+        priority = source.readInt();
     }
 }

@@ -51,6 +51,9 @@ import java.util.List;
  * Apps that request downloads through this API should register a broadcast receiver for
  * {@link #ACTION_NOTIFICATION_CLICKED} to appropriately handle when the user clicks on a running
  * download in a notification or from the downloads UI.
+ *
+ * Note that the application must have the {@link android.Manifest.permission#INTERNET}
+ * permission to use this class.
  */
 public class DownloadManager {
 
@@ -347,8 +350,9 @@ public class DownloadManager {
         private CharSequence mTitle;
         private CharSequence mDescription;
         private String mMimeType;
-        private boolean mRoamingAllowed = true;
         private int mAllowedNetworkTypes = ~0; // default to all network types allowed
+        private boolean mRoamingAllowed = true;
+        private boolean mMeteredAllowed = true;
         private boolean mIsVisibleInDownloadsUi = true;
         private boolean mScannable = false;
         private boolean mUseSystemCache = false;
@@ -609,8 +613,11 @@ public class DownloadManager {
         }
 
         /**
-         * Restrict the types of networks over which this download may proceed.  By default, all
-         * network types are allowed.
+         * Restrict the types of networks over which this download may proceed.
+         * By default, all network types are allowed. Consider using
+         * {@link #setAllowedOverMetered(boolean)} instead, since it's more
+         * flexible.
+         *
          * @param flags any combination of the NETWORK_* bit flags.
          * @return this object
          */
@@ -627,6 +634,17 @@ public class DownloadManager {
          */
         public Request setAllowedOverRoaming(boolean allowed) {
             mRoamingAllowed = allowed;
+            return this;
+        }
+
+        /**
+         * Set whether this download may proceed over a metered network
+         * connection. By default, metered networks are allowed.
+         *
+         * @see ConnectivityManager#isActiveNetworkMetered()
+         */
+        public Request setAllowedOverMetered(boolean allow) {
+            mMeteredAllowed = allow;
             return this;
         }
 
@@ -675,6 +693,7 @@ public class DownloadManager {
             values.put(Downloads.Impl.COLUMN_VISIBILITY, mNotificationVisibility);
             values.put(Downloads.Impl.COLUMN_ALLOWED_NETWORK_TYPES, mAllowedNetworkTypes);
             values.put(Downloads.Impl.COLUMN_ALLOW_ROAMING, mRoamingAllowed);
+            values.put(Downloads.Impl.COLUMN_ALLOW_METERED, mMeteredAllowed);
             values.put(Downloads.Impl.COLUMN_IS_VISIBLE_IN_DOWNLOADS_UI, mIsVisibleInDownloadsUi);
 
             return values;
@@ -1097,6 +1116,18 @@ public class DownloadManager {
         }
     }
 
+    /** {@hide} */
+    public static boolean isActiveNetworkExpensive(Context context) {
+        // TODO: connect to NetworkPolicyManager
+        return false;
+    }
+
+    /** {@hide} */
+    public static long getActiveNetworkWarningBytes(Context context) {
+        // TODO: connect to NetworkPolicyManager
+        return -1;
+    }
+
     /**
      * Adds a file to the downloads database system, so it could appear in Downloads App
      * (and thus become eligible for management by the Downloads App).
@@ -1127,7 +1158,7 @@ public class DownloadManager {
         validateArgumentIsNonEmpty("description", description);
         validateArgumentIsNonEmpty("path", path);
         validateArgumentIsNonEmpty("mimeType", mimeType);
-        if (length <= 0) {
+        if (length < 0) {
             throw new IllegalArgumentException(" invalid value for param: totalBytes");
         }
 
@@ -1311,9 +1342,6 @@ public class DownloadManager {
 
                 case Downloads.Impl.STATUS_FILE_ALREADY_EXISTS_ERROR:
                     return ERROR_FILE_ALREADY_EXISTS;
-
-                case Downloads.Impl.STATUS_BLOCKED:
-                    return ERROR_BLOCKED;
 
                 default:
                     return ERROR_UNKNOWN;

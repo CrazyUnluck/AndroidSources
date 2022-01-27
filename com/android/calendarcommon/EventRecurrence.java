@@ -598,6 +598,10 @@ public class EventRecurrence {
             parts = recur.split(";");
         }
         for (String part : parts) {
+            // allow empty part (e.g., double semicolon ";;")
+            if (TextUtils.isEmpty(part)) {
+                continue;
+            }
             int equalIndex = part.indexOf('=');
             if (equalIndex <= 0) {
                 /* no '=' or no LHS */

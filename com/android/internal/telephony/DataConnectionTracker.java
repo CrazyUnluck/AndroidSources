@@ -40,6 +40,7 @@ import android.preference.PreferenceManager;
 import android.provider.Settings;
 import android.provider.Settings.SettingNotFoundException;
 import android.telephony.ServiceState;
+import android.telephony.TelephonyManager;
 import android.text.TextUtils;
 import android.util.Log;
 
@@ -48,8 +49,12 @@ import com.android.internal.telephony.DataConnection.FailCause;
 import com.android.internal.util.AsyncChannel;
 import com.android.internal.util.Protocol;
 
+import java.io.FileDescriptor;
+import java.io.PrintWriter;
 import java.util.ArrayList;
 import java.util.HashMap;
+import java.util.Map.Entry;
+import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.atomic.AtomicInteger;
 
@@ -121,7 +126,7 @@ public abstract class DataConnectionTracker extends Handler {
     protected static final int EVENT_DO_RECOVERY = BASE + 18;
     protected static final int EVENT_APN_CHANGED = BASE + 19;
     protected static final int EVENT_CDMA_DATA_DETACHED = BASE + 20;
-    protected static final int EVENT_NV_READY = BASE + 21;
+    protected static final int EVENT_CDMA_SUBSCRIPTION_SOURCE_CHANGED = BASE + 21;
     protected static final int EVENT_PS_RESTRICT_ENABLED = BASE + 22;
     protected static final int EVENT_PS_RESTRICT_DISABLED = BASE + 23;
     public static final int EVENT_CLEAN_UP_CONNECTION = BASE + 24;
@@ -225,7 +230,8 @@ public abstract class DataConnectionTracker extends Handler {
     //       having to have different values for GSM and
     //       CDMA. If so we can then remove the need for
     //       getActionIntentReconnectAlarm.
-    protected static final String INTENT_RECONNECT_ALARM_EXTRA_REASON = "reason";
+    protected static final String INTENT_RECONNECT_ALARM_EXTRA_REASON =
+        "reconnect_alarm_extra_reason";
 
     // Used for debugging. Send the INTENT with an optional counter value with the number
     // of times the setup is to fail before succeeding. If the counter isn't passed the
@@ -493,6 +499,7 @@ public abstract class DataConnectionTracker extends Handler {
      */
     protected DataConnectionTracker(PhoneBase phone) {
         super();
+        if (DBG) log("DCT.constructor");
         mPhone = phone;
 
         IntentFilter filter = new IntentFilter();
@@ -528,6 +535,7 @@ public abstract class DataConnectionTracker extends Handler {
     }
 
     public void dispose() {
+        if (DBG) log("DCT.dispose");
         for (DataConnectionAc dcac : mDataConnectionAsyncChannels.values()) {
             dcac.disconnect();
         }
@@ -559,14 +567,23 @@ public abstract class DataConnectionTracker extends Handler {
     }
 
     protected ApnSetting fetchDunApn() {
+        if (SystemProperties.getBoolean("net.tethering.noprovisioning", false)) {
+            log("fetchDunApn: net.tethering.noprovisioning=true ret: null");
+            return null;
+        }
         Context c = mPhone.getContext();
         String apnData = Settings.Secure.getString(c.getContentResolver(),
                 Settings.Secure.TETHER_DUN_APN);
         ApnSetting dunSetting = ApnSetting.fromString(apnData);
-        if (dunSetting != null) return dunSetting;
+        if (dunSetting != null) {
+            if (VDBG) log("fetchDunApn: secure TETHER_DUN_APN dunSetting=" + dunSetting);
+            return dunSetting;
+        }
 
         apnData = c.getResources().getString(R.string.config_tether_apndata);
-        return ApnSetting.fromString(apnData);
+        dunSetting = ApnSetting.fromString(apnData);
+        if (VDBG) log("fetchDunApn: config_tether_apndata dunSetting=" + dunSetting);
+        return dunSetting;
     }
 
     public String[] getActiveApnTypes() {
@@ -1124,6 +1141,14 @@ public abstract class DataConnectionTracker extends Handler {
                 mUserDataEnabled = enabled;
                 Settings.Secure.putInt(mPhone.getContext().getContentResolver(),
                         Settings.Secure.MOBILE_DATA, enabled ? 1 : 0);
+                if (getDataOnRoamingEnabled() == false &&
+                        mPhone.getServiceState().getRoaming() == true) {
+                    if (enabled) {
+                        notifyOffApnsOfAvailability(Phone.REASON_ROAMING_ON);
+                    } else {
+                        notifyOffApnsOfAvailability(Phone.REASON_DATA_DISABLED);
+                    }
+                }
                 if (prevEnabled != getAnyDataEnabled()) {
                     if (!prevEnabled) {
                         resetAllRetryCounts();
@@ -1157,15 +1182,14 @@ public abstract class DataConnectionTracker extends Handler {
     }
 
     protected String getReryConfig(boolean forDefault) {
-        int rt = mPhone.getServiceState().getRadioTechnology();
+        int nt = mPhone.getServiceState().getNetworkType();
 
-        if ((rt == ServiceState.RADIO_TECHNOLOGY_IS95A) ||
-            (rt == ServiceState.RADIO_TECHNOLOGY_IS95B) ||
-            (rt == ServiceState.RADIO_TECHNOLOGY_1xRTT) ||
-            (rt == ServiceState.RADIO_TECHNOLOGY_EVDO_0) ||
-            (rt == ServiceState.RADIO_TECHNOLOGY_EVDO_A) ||
-            (rt == ServiceState.RADIO_TECHNOLOGY_EVDO_B) ||
-            (rt == ServiceState.RADIO_TECHNOLOGY_EHRPD)) {
+        if ((nt == TelephonyManager.NETWORK_TYPE_CDMA) ||
+            (nt == TelephonyManager.NETWORK_TYPE_1xRTT) ||
+            (nt == TelephonyManager.NETWORK_TYPE_EVDO_0) ||
+            (nt == TelephonyManager.NETWORK_TYPE_EVDO_A) ||
+            (nt == TelephonyManager.NETWORK_TYPE_EVDO_B) ||
+            (nt == TelephonyManager.NETWORK_TYPE_EHRPD)) {
             // CDMA variant
             return SystemProperties.get("ro.cdma.data_retry_config");
         } else {
@@ -1182,5 +1206,80 @@ public abstract class DataConnectionTracker extends Handler {
         for (DataConnection dc : mDataConnections.values()) {
             dc.resetRetryCount();
         }
+    }
+
+    public void dump(FileDescriptor fd, PrintWriter pw, String[] args) {
+        pw.println("DataConnectionTracker:");
+        pw.println(" mInternalDataEnabled=" + mInternalDataEnabled);
+        pw.println(" mUserDataEnabled=" + mUserDataEnabled);
+        pw.println(" sPolicyDataEnabed=" + sPolicyDataEnabled);
+        pw.println(" dataEnabled:");
+        for(int i=0; i < dataEnabled.length; i++) {
+            pw.printf("  dataEnabled[%d]=%b\n", i, dataEnabled[i]);
+        }
+        pw.flush();
+        pw.println(" enabledCount=" + enabledCount);
+        pw.println(" mRequestedApnType=" + mRequestedApnType);
+        pw.println(" mPhone=" + mPhone.getPhoneName());
+        pw.println(" mActivity=" + mActivity);
+        pw.println(" mState=" + mState);
+        pw.println(" mTxPkts=" + mTxPkts);
+        pw.println(" mRxPkts=" + mRxPkts);
+        pw.println(" mNetStatPollPeriod=" + mNetStatPollPeriod);
+        pw.println(" mNetStatPollEnabled=" + mNetStatPollEnabled);
+        pw.println(" mDataStallTxRxSum=" + mDataStallTxRxSum);
+        pw.println(" mDataStallAlarmTag=" + mDataStallAlarmTag);
+        pw.println(" mSentSinceLastRecv=" + mSentSinceLastRecv);
+        pw.println(" mNoRecvPollCount=" + mNoRecvPollCount);
+        pw.println(" mIsWifiConnected=" + mIsWifiConnected);
+        pw.println(" mReconnectIntent=" + mReconnectIntent);
+        pw.println(" mCidActive=" + mCidActive);
+        pw.println(" mAutoAttachOnCreation=" + mAutoAttachOnCreation);
+        pw.println(" mIsScreenOn=" + mIsScreenOn);
+        pw.println(" mUniqueIdGenerator=" + mUniqueIdGenerator);
+        pw.flush();
+        pw.println(" ***************************************");
+        Set<Entry<Integer, DataConnection> > mDcSet = mDataConnections.entrySet();
+        pw.println(" mDataConnections: count=" + mDcSet.size());
+        for (Entry<Integer, DataConnection> entry : mDcSet) {
+            pw.printf(" *** mDataConnection[%d] \n", entry.getKey());
+            entry.getValue().dump(fd, pw, args);
+        }
+        pw.println(" ***************************************");
+        pw.flush();
+        Set<Entry<String, Integer>> mApnToDcIdSet = mApnToDataConnectionId.entrySet();
+        pw.println(" mApnToDataConnectonId size=" + mApnToDcIdSet.size());
+        for (Entry<String, Integer> entry : mApnToDcIdSet) {
+            pw.printf(" mApnToDataConnectonId[%s]=%d\n", entry.getKey(), entry.getValue());
+        }
+        pw.println(" ***************************************");
+        pw.flush();
+        if (mApnContexts != null) {
+            Set<Entry<String, ApnContext>> mApnContextsSet = mApnContexts.entrySet();
+            pw.println(" mApnContexts size=" + mApnContextsSet.size());
+            for (Entry<String, ApnContext> entry : mApnContextsSet) {
+                entry.getValue().dump(fd, pw, args);
+            }
+            pw.println(" ***************************************");
+        } else {
+            pw.println(" mApnContexts=null");
+        }
+        pw.flush();
+        pw.println(" mActiveApn=" + mActiveApn);
+        if (mAllApns != null) {
+            pw.println(" mAllApns size=" + mAllApns.size());
+            for (int i=0; i < mAllApns.size(); i++) {
+                pw.printf(" mAllApns[%d]: %s\n", i, mAllApns.get(i));
+            }
+            pw.flush();
+        } else {
+            pw.println(" mAllApns=null");
+        }
+        pw.println(" mPreferredApn=" + mPreferredApn);
+        pw.println(" mIsPsRestricted=" + mIsPsRestricted);
+        pw.println(" mIsDisposed=" + mIsDisposed);
+        pw.println(" mIntentReceiver=" + mIntentReceiver);
+        pw.println(" mDataRoamingSettingObserver=" + mDataRoamingSettingObserver);
+        pw.flush();
     }
 }

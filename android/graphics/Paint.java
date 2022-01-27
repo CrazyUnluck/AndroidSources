@@ -21,6 +21,8 @@ import android.text.SpannableString;
 import android.text.SpannedString;
 import android.text.TextUtils;
 
+import java.util.Locale;
+
 /**
  * The Paint class holds the style and color information about how to draw
  * geometries, text and bitmaps.
@@ -43,6 +45,8 @@ public class Paint {
     private boolean     mHasCompatScaling;
     private float       mCompatScaling;
     private float       mInvCompatScaling;
+
+    private Locale      mLocale;
 
     /**
      * @hide
@@ -348,6 +352,7 @@ public class Paint {
         // setHinting(DisplayMetrics.DENSITY_DEVICE >= DisplayMetrics.DENSITY_TV
         //        ? HINTING_OFF : HINTING_ON);
         mCompatScaling = mInvCompatScaling = 1;
+        setTextLocale(Locale.getDefault());
     }
 
     /**
@@ -373,6 +378,7 @@ public class Paint {
         mHasCompatScaling = false;
         mCompatScaling = mInvCompatScaling = 1;
         mBidiFlags = BIDI_DEFAULT_LTR;
+        setTextLocale(Locale.getDefault());
     }
     
     /**
@@ -412,6 +418,7 @@ public class Paint {
         shadowColor = paint.shadowColor;
 
         mBidiFlags = paint.mBidiFlags;
+        mLocale = paint.mLocale;
     }
 
     /** @hide */
@@ -528,6 +535,7 @@ public class Paint {
      *
      * @return true if the lineartext bit is set in the paint's flags
      */
+    @Deprecated
     public final boolean isLinearText() {
         return (getFlags() & LINEAR_TEXT_FLAG) != 0;
     }
@@ -538,6 +546,7 @@ public class Paint {
      * @param linearText true to set the linearText bit in the paint's flags,
      *                   false to clear it.
      */
+    @Deprecated
     public native void setLinearText(boolean linearText);
 
     /**
@@ -1040,6 +1049,52 @@ public class Paint {
      */
     public void setTextAlign(Align align) {
         native_setTextAlign(mNativePaint, align.nativeInt);
+    }
+
+    /**
+     * Get the text Locale.
+     *
+     * @return the paint's Locale used for drawing text, never null.
+     * @hide
+     */
+    public Locale getTextLocale() {
+        return mLocale;
+    }
+
+    /**
+     * Set the text locale.
+     *
+     * The text locale affects how the text is drawn for some languages.
+     *
+     * For example, if the locale is {@link Locale#CHINESE} or {@link Locale#CHINA},
+     * then the text renderer will prefer to draw text using a Chinese font. Likewise,
+     * if the locale is {@link Locale#JAPANESE} or {@link Locale#JAPAN}, then the text
+     * renderer will prefer to draw text using a Japanese font.
+     *
+     * This distinction is important because Chinese and Japanese text both use many
+     * of the same Unicode code points but their appearance is subtly different for
+     * each language.
+     *
+     * By default, the text locale is initialized to the system locale (as returned
+     * by {@link Locale#getDefault}). This assumes that the text to be rendered will
+     * most likely be in the user's preferred language.
+     *
+     * If the actual language of the text is known, then it can be provided to the
+     * text renderer using this method. The text renderer may attempt to guess the
+     * language script based on the contents of the text to be drawn independent of
+     * the text locale here. Specifying the text locale just helps it do a better
+     * job in certain ambiguous cases
+     *
+     * @param locale the paint's locale value for drawing text, must not be null.
+     * @hide
+     */
+    public void setTextLocale(Locale locale) {
+        if (locale == null) {
+            throw new IllegalArgumentException("locale cannot be null");
+        }
+        if (locale.equals(mLocale)) return;
+        mLocale = locale;
+        native_setTextLocale(mNativePaint, locale.toString());
     }
 
     /**
@@ -2142,8 +2197,9 @@ public class Paint {
     private static native void native_setTextAlign(int native_object,
                                                    int align);
 
-    private static native float native_getFontMetrics(int native_paint,
-                                                      FontMetrics metrics);
+    private static native void native_setTextLocale(int native_object,
+                                                    String locale);
+
     private static native int native_getTextWidths(int native_object,
                             char[] text, int index, int count, float[] widths);
     private static native int native_getTextWidths(int native_object,

@@ -18,10 +18,10 @@ package android.widget;
 
 import com.android.internal.R;
 
+import java.util.ArrayDeque;
 import java.util.ArrayList;
 import java.util.Comparator;
-import java.util.HashSet;
-import java.util.LinkedList;
+import java.util.HashMap;
 import java.util.SortedSet;
 import java.util.TreeSet;
 
@@ -40,6 +40,7 @@ import android.view.View;
 import android.view.ViewDebug;
 import android.view.ViewGroup;
 import android.view.accessibility.AccessibilityEvent;
+import android.view.accessibility.AccessibilityNodeInfo;
 import android.widget.RemoteViews.RemoteView;
 
 import static android.util.Log.d;
@@ -151,6 +152,15 @@ public class RelativeLayout extends ViewGroup {
 
     private static final int VERB_COUNT              = 16;
 
+
+    private static final int[] RULES_VERTICAL = {
+            ABOVE, BELOW, ALIGN_BASELINE, ALIGN_TOP, ALIGN_BOTTOM
+    };
+
+    private static final int[] RULES_HORIZONTAL = {
+            LEFT_OF, RIGHT_OF, ALIGN_LEFT, ALIGN_RIGHT
+    };
+
     private View mBaselineView = null;
     private boolean mHasBaselineAlignedChild;
 
@@ -206,6 +216,20 @@ public class RelativeLayout extends ViewGroup {
     @android.view.RemotableViewMethod
     public void setIgnoreGravity(int viewId) {
         mIgnoreGravity = viewId;
+    }
+
+    /**
+     * Describes how the child views are positioned.
+     *
+     * @return the gravity.
+     *
+     * @see #setGravity(int)
+     * @see android.view.Gravity
+     *
+     * @attr ref android.R.styleable#RelativeLayout_gravity
+     */
+    public int getGravity() {
+        return mGravity;
     }
 
     /**
@@ -284,14 +308,13 @@ public class RelativeLayout extends ViewGroup {
 
         if (DEBUG_GRAPH) {
             d(LOG_TAG, "=== Sorted vertical children");
-            graph.log(getResources(), ABOVE, BELOW, ALIGN_BASELINE, ALIGN_TOP, ALIGN_BOTTOM);
+            graph.log(getResources(), RULES_VERTICAL);
             d(LOG_TAG, "=== Sorted horizontal children");
-            graph.log(getResources(), LEFT_OF, RIGHT_OF, ALIGN_LEFT, ALIGN_RIGHT);
+            graph.log(getResources(), RULES_HORIZONTAL);
         }
 
-        graph.getSortedViews(mSortedVerticalChildren, ABOVE, BELOW, ALIGN_BASELINE,
-                ALIGN_TOP, ALIGN_BOTTOM);
-        graph.getSortedViews(mSortedHorizontalChildren, LEFT_OF, RIGHT_OF, ALIGN_LEFT, ALIGN_RIGHT);
+        graph.getSortedViews(mSortedVerticalChildren, RULES_VERTICAL);
+        graph.getSortedViews(mSortedHorizontalChildren, RULES_HORIZONTAL);
 
         if (DEBUG_GRAPH) {
             d(LOG_TAG, "=== Ordered list of vertical children");
@@ -977,6 +1000,18 @@ public class RelativeLayout extends ViewGroup {
         return false;
     }
 
+    @Override
+    public void onInitializeAccessibilityEvent(AccessibilityEvent event) {
+        super.onInitializeAccessibilityEvent(event);
+        event.setClassName(RelativeLayout.class.getName());
+    }
+
+    @Override
+    public void onInitializeAccessibilityNodeInfo(AccessibilityNodeInfo info) {
+        super.onInitializeAccessibilityNodeInfo(info);
+        info.setClassName(RelativeLayout.class.getName());
+    }
+
     /**
      * Compares two views in left-to-right and top-to-bottom fashion.
      */
@@ -1216,7 +1251,7 @@ public class RelativeLayout extends ViewGroup {
          * Temporary data structure used to build the list of roots
          * for this graph.
          */
-        private LinkedList<Node> mRoots = new LinkedList<Node>();
+        private ArrayDeque<Node> mRoots = new ArrayDeque<Node>();
 
         /**
          * Clears the graph.
@@ -1261,18 +1296,18 @@ public class RelativeLayout extends ViewGroup {
          * @param rules The list of rules to take into account.
          */
         void getSortedViews(View[] sorted, int... rules) {
-            final LinkedList<Node> roots = findRoots(rules);
+            final ArrayDeque<Node> roots = findRoots(rules);
             int index = 0;
 
-            while (roots.size() > 0) {
-                final Node node = roots.removeFirst();
+            Node node;
+            while ((node = roots.pollLast()) != null) {
                 final View view = node.view;
                 final int key = view.getId();
 
                 sorted[index++] = view;
 
-                final HashSet<Node> dependents = node.dependents;
-                for (Node dependent : dependents) {
+                final HashMap<Node, DependencyGraph> dependents = node.dependents;
+                for (Node dependent : dependents.keySet()) {
                     final SparseArray<Node> dependencies = dependent.dependencies;
 
                     dependencies.remove(key);
@@ -1297,7 +1332,7 @@ public class RelativeLayout extends ViewGroup {
          *
          * @return A list of node, each being a root of the graph
          */
-        private LinkedList<Node> findRoots(int[] rulesFilter) {
+        private ArrayDeque<Node> findRoots(int[] rulesFilter) {
             final SparseArray<Node> keyNodes = mKeyNodes;
             final ArrayList<Node> nodes = mNodes;
             final int count = nodes.size();
@@ -1330,20 +1365,20 @@ public class RelativeLayout extends ViewGroup {
                             continue;
                         }
                         // Add the current node as a dependent
-                        dependency.dependents.add(node);
+                        dependency.dependents.put(node, this);
                         // Add a dependency to the current node
                         node.dependencies.put(rule, dependency);
                     }
                 }
             }
 
-            final LinkedList<Node> roots = mRoots;
+            final ArrayDeque<Node> roots = mRoots;
             roots.clear();
 
             // Finds all the roots in the graph: all nodes with no dependencies
             for (int i = 0; i < count; i++) {
                 final Node node = nodes.get(i);
-                if (node.dependencies.size() == 0) roots.add(node);
+                if (node.dependencies.size() == 0) roots.addLast(node);
             }
 
             return roots;
@@ -1356,7 +1391,7 @@ public class RelativeLayout extends ViewGroup {
          * @param rules The list of rules to take into account.
          */
         void log(Resources resources, int... rules) {
-            final LinkedList<Node> roots = findRoots(rules);
+            final ArrayDeque<Node> roots = findRoots(rules);
             for (Node node : roots) {
                 printNode(resources, node);
             }
@@ -1382,7 +1417,7 @@ public class RelativeLayout extends ViewGroup {
             if (node.dependents.size() == 0) {
                 printViewId(resources, node.view);
             } else {
-                for (Node dependent : node.dependents) {
+                for (Node dependent : node.dependents.keySet()) {
                     StringBuilder buffer = new StringBuilder();
                     appendViewId(resources, node, buffer);
                     printdependents(resources, dependent, buffer);
@@ -1397,7 +1432,7 @@ public class RelativeLayout extends ViewGroup {
             if (node.dependents.size() == 0) {
                 d(LOG_TAG, buffer.toString());
             } else {
-                for (Node dependent : node.dependents) {
+                for (Node dependent : node.dependents.keySet()) {
                     StringBuilder subBuffer = new StringBuilder(buffer);
                     printdependents(resources, dependent, subBuffer);
                 }
@@ -1420,7 +1455,7 @@ public class RelativeLayout extends ViewGroup {
              * The list of dependents for this node; a dependent is a node
              * that needs this node to be processed first.
              */
-            final HashSet<Node> dependents = new HashSet<Node>();
+            final HashMap<Node, DependencyGraph> dependents = new HashMap<Node, DependencyGraph>();
 
             /**
              * The list of dependencies for this node.

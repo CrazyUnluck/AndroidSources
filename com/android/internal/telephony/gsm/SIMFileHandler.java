@@ -19,30 +19,25 @@ package com.android.internal.telephony.gsm;
 import android.os.Message;
 import android.util.Log;
 
+import com.android.internal.telephony.CommandsInterface;
 import com.android.internal.telephony.IccCard;
 import com.android.internal.telephony.IccCardApplication;
 import com.android.internal.telephony.IccConstants;
 import com.android.internal.telephony.IccFileHandler;
-import com.android.internal.telephony.Phone;
+import com.android.internal.telephony.PhoneBase;
 
 /**
  * {@hide}
  */
 public final class SIMFileHandler extends IccFileHandler implements IccConstants {
     static final String LOG_TAG = "GSM";
-    private Phone mPhone;
 
     //***** Instance Variables
 
     //***** Constructor
 
-    SIMFileHandler(GSMPhone phone) {
-        super(phone);
-        mPhone = phone;
-    }
-
-    public void dispose() {
-        super.dispose();
+    public SIMFileHandler(IccCard card, String aid, CommandsInterface ci) {
+        super(card, aid, ci);
     }
 
     protected void finalize() {
@@ -93,8 +88,8 @@ public final class SIMFileHandler extends IccFileHandler implements IccConstants
             // The EFids in USIM phone book entries are decided by the card manufacturer.
             // So if we don't match any of the cases above and if its a USIM return
             // the phone book path.
-            IccCard card = phone.getIccCard();
-            if (card != null && card.isApplicationOnIcc(IccCardApplication.AppType.APPTYPE_USIM)) {
+            if (mParentCard != null
+                    && mParentCard.isApplicationOnIcc(IccCardApplication.AppType.APPTYPE_USIM)) {
                 return MF_SIM + DF_TELECOM + DF_PHONEBOOK;
             }
             Log.e(LOG_TAG, "Error: EF Path being returned in null");

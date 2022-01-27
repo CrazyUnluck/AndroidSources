@@ -32,14 +32,21 @@ class DimSurface {
 
     DimSurface(SurfaceSession session) {
         if (mDimSurface == null) {
-            if (WindowManagerService.SHOW_TRANSACTIONS ||
-                    WindowManagerService.SHOW_SURFACE_ALLOC) Slog.i(WindowManagerService.TAG,
-                            "  DIM " + mDimSurface + ": CREATE");
             try {
-                mDimSurface = new Surface(session, 0,
+                if (WindowManagerService.DEBUG_SURFACE_TRACE) {
+                    mDimSurface = new WindowStateAnimator.SurfaceTrace(session, 0,
                         "DimSurface",
                         -1, 16, 16, PixelFormat.OPAQUE,
                         Surface.FX_SURFACE_DIM);
+                } else {
+                    mDimSurface = new Surface(session, 0,
+                        "DimSurface",
+                        -1, 16, 16, PixelFormat.OPAQUE,
+                        Surface.FX_SURFACE_DIM);
+                }
+                if (WindowManagerService.SHOW_TRANSACTIONS ||
+                        WindowManagerService.SHOW_SURFACE_ALLOC) Slog.i(WindowManagerService.TAG,
+                                "  DIM " + mDimSurface + ": CREATE");
                 mDimSurface.setAlpha(0.0f);
             } catch (Exception e) {
                 Slog.e(WindowManagerService.TAG, "Exception creating Dim surface", e);

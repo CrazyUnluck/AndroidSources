@@ -36,6 +36,8 @@ import android.os.IBinder;
 import android.os.Process;
 import android.os.RemoteException;
 import android.os.StrictMode;
+import android.os.Trace;
+import android.os.UserId;
 import android.util.AndroidRuntimeException;
 import android.util.Slog;
 import android.view.CompatibilityInfoHolder;
@@ -66,6 +68,8 @@ final class ServiceConnectionLeaked extends AndroidRuntimeException {
  * @hide
  */
 public final class LoadedApk {
+
+    private static final String TAG = "LoadedApk";
 
     private final ActivityThread mActivityThread;
     private final ApplicationInfo mApplicationInfo;
@@ -113,8 +117,13 @@ public final class LoadedApk {
         mApplicationInfo = aInfo;
         mPackageName = aInfo.packageName;
         mAppDir = aInfo.sourceDir;
-        mResDir = aInfo.uid == Process.myUid() ? aInfo.sourceDir
+        final int myUid = Process.myUid();
+        mResDir = aInfo.uid == myUid ? aInfo.sourceDir
                 : aInfo.publicSourceDir;
+        if (!UserId.isSameUser(aInfo.uid, myUid) && !Process.isIsolated()) {
+            aInfo.dataDir = PackageManager.getDataDirForUser(UserId.getUserId(myUid),
+                    mPackageName);
+        }
         mSharedLibraries = aInfo.sharedLibraryFiles;
         mDataDir = aInfo.dataDir;
         mDataDirFile = mDataDir != null ? new File(mDataDir) : null;
@@ -186,7 +195,7 @@ public final class LoadedApk {
         ApplicationInfo ai = null;
         try {
             ai = ActivityThread.getPackageManager().getApplicationInfo(packageName,
-                    PackageManager.GET_SHARED_LIBRARY_FILES);
+                    PackageManager.GET_SHARED_LIBRARY_FILES, UserId.myUserId());
         } catch (RemoteException e) {
             throw new AssertionError(e);
         }
@@ -253,6 +262,7 @@ public final class LoadedApk {
 
             if (mIncludeCode && !mPackageName.equals("android")) {
                 String zip = mAppDir;
+                String libraryPath = mLibDir;
 
                 /*
                  * The following is a bit of a hack to inject
@@ -265,15 +275,20 @@ public final class LoadedApk {
 
                 String instrumentationAppDir =
                         mActivityThread.mInstrumentationAppDir;
+                String instrumentationAppLibraryDir =
+                        mActivityThread.mInstrumentationAppLibraryDir;
                 String instrumentationAppPackage =
                         mActivityThread.mInstrumentationAppPackage;
                 String instrumentedAppDir =
                         mActivityThread.mInstrumentedAppDir;
+                String instrumentedAppLibraryDir =
+                        mActivityThread.mInstrumentedAppLibraryDir;
                 String[] instrumentationLibs = null;
 
                 if (mAppDir.equals(instrumentationAppDir)
                         || mAppDir.equals(instrumentedAppDir)) {
                     zip = instrumentationAppDir + ":" + instrumentedAppDir;
+                    libraryPath = instrumentationAppLibraryDir + ":" + instrumentedAppLibraryDir;
                     if (! instrumentedAppDir.equals(instrumentationAppDir)) {
                         instrumentationLibs =
                             getLibrariesFor(instrumentationAppPackage);
@@ -293,7 +308,7 @@ public final class LoadedApk {
                  */
 
                 if (ActivityThread.localLOGV)
-                    Slog.v(ActivityThread.TAG, "Class path: " + zip + ", JNI path: " + mLibDir);
+                    Slog.v(ActivityThread.TAG, "Class path: " + zip + ", JNI path: " + libraryPath);
 
                 // Temporarily disable logging of disk reads on the Looper thread
                 // as this is early and necessary.
@@ -301,7 +316,7 @@ public final class LoadedApk {
 
                 mClassLoader =
                     ApplicationLoaders.getDefault().getClassLoader(
-                        zip, mLibDir, mBaseClassLoader);
+                        zip, libraryPath, mBaseClassLoader);
                 initializeJavaContextClassLoader();
 
                 StrictMode.setThreadPolicy(oldPolicy);
@@ -343,7 +358,7 @@ public final class LoadedApk {
         IPackageManager pm = ActivityThread.getPackageManager();
         android.content.pm.PackageInfo pi;
         try {
-            pi = pm.getPackageInfo(mPackageName, 0);
+            pi = pm.getPackageInfo(mPackageName, 0, UserId.myUserId());
         } catch (RemoteException e) {
             throw new AssertionError(e);
         }
@@ -434,6 +449,10 @@ public final class LoadedApk {
         return mAppDir;
     }
 
+    public String getLibDir() {
+        return mLibDir;
+    }
+
     public String getResDir() {
         return mResDir;
     }
@@ -504,6 +523,7 @@ public final class LoadedApk {
 
     public void removeContextRegistrations(Context context,
             String who, String what) {
+        final boolean reportRegistrationLeaks = StrictMode.vmRegistrationLeaksEnabled();
         HashMap<BroadcastReceiver, LoadedApk.ReceiverDispatcher> rmap =
             mReceivers.remove(context);
         if (rmap != null) {
@@ -517,6 +537,9 @@ public final class LoadedApk {
                         "call to unregisterReceiver()?");
                 leak.setStackTrace(rd.getLocation().getStackTrace());
                 Slog.e(ActivityThread.TAG, leak.getMessage(), leak);
+                if (reportRegistrationLeaks) {
+                    StrictMode.onIntentReceiverLeaked(leak);
+                }
                 try {
                     ActivityManagerNative.getDefault().unregisterReceiver(
                             rd.getIIntentReceiver());
@@ -538,6 +561,9 @@ public final class LoadedApk {
                         + sd.getServiceConnection() + " that was originally bound here");
                 leak.setStackTrace(sd.getLocation().getStackTrace());
                 Slog.e(ActivityThread.TAG, leak.getMessage(), leak);
+                if (reportRegistrationLeaks) {
+                    StrictMode.onServiceConnectionLeaked(leak);
+                }
                 try {
                     ActivityManagerNative.getDefault().unbindService(
                             sd.getIServiceConnection());
@@ -720,6 +746,7 @@ public final class LoadedApk {
                     return;
                 }
 
+                Trace.traceBegin(Trace.TRACE_TAG_ACTIVITY_MANAGER, "broadcastReceiveReg");
                 try {
                     ClassLoader cl =  mReceiver.getClass().getClassLoader();
                     intent.setExtrasClassLoader(cl);
@@ -734,6 +761,7 @@ public final class LoadedApk {
                     }
                     if (mInstrumentation == null ||
                             !mInstrumentation.onException(mReceiver, e)) {
+                        Trace.traceEnd(Trace.TRACE_TAG_ACTIVITY_MANAGER);
                         throw new RuntimeException(
                             "Error receiving broadcast " + intent
                             + " in " + mReceiver, e);
@@ -743,6 +771,7 @@ public final class LoadedApk {
                 if (receiver.getPendingResult() != null) {
                     finish();
                 }
+                Trace.traceEnd(Trace.TRACE_TAG_ACTIVITY_MANAGER);
             }
         }
 

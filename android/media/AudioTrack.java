@@ -29,7 +29,7 @@ import android.util.Log;
 
 /**
  * The AudioTrack class manages and plays a single audio resource for Java applications.
- * It allows to stream PCM audio buffers to the audio hardware for playback. This is
+ * It allows streaming PCM audio buffers to the audio hardware for playback. This is
  * achieved by "pushing" the data to the AudioTrack object using one of the
  *  {@link #write(byte[], int, int)} and {@link #write(short[], int, int)} methods.
  *
@@ -46,7 +46,7 @@ import android.util.Log;
  *   <li>received or generated while previously queued audio is playing.</li>
  * </ul>
  *
- * The static mode is to be chosen when dealing with short sounds that fit in memory and
+ * The static mode should be chosen when dealing with short sounds that fit in memory and
  * that need to be played with the smallest latency possible. The static mode will
  * therefore be preferred for UI and game sounds that are played often, and with the
  * smallest overhead possible.
@@ -57,7 +57,7 @@ import android.util.Log;
  * For an AudioTrack using the static mode, this size is the maximum size of the sound that can
  * be played from it.<br>
  * For the streaming mode, data will be written to the hardware in chunks of
- * sizes inferior to the total buffer size.
+ * sizes less than or equal to the total buffer size.
  */
 public class AudioTrack
 {
@@ -76,6 +76,7 @@ public class AudioTrack
     /** indicates AudioTrack state is playing */
     public static final int PLAYSTATE_PLAYING = 3;  // matches SL_PLAYSTATE_PLAYING
 
+    // keep these values in sync with android_media_AudioTrack.cpp
     /**
      * Creation mode where audio data is transferred from Java to the native layer
      * only once before the audio starts playing.
@@ -180,7 +181,7 @@ public class AudioTrack
     /**
      * The audio data sampling rate in Hz.
      */
-    private int mSampleRate = 22050;
+    private int mSampleRate; // initialized by all constructors
     /**
      * The number of audio output channels (1 is mono, 2 is stereo).
      */
@@ -193,8 +194,9 @@ public class AudioTrack
     /**
      * The type of the audio stream to play. See
      *   {@link AudioManager#STREAM_VOICE_CALL}, {@link AudioManager#STREAM_SYSTEM},
-     *   {@link AudioManager#STREAM_RING}, {@link AudioManager#STREAM_MUSIC} and
-     *   {@link AudioManager#STREAM_ALARM}
+     *   {@link AudioManager#STREAM_RING}, {@link AudioManager#STREAM_MUSIC},
+     *   {@link AudioManager#STREAM_ALARM}, {@link AudioManager#STREAM_NOTIFICATION}, and
+     *   {@link AudioManager#STREAM_DTMF}.
      */
     private int mStreamType = AudioManager.STREAM_MUSIC;
     /**
@@ -240,10 +242,9 @@ public class AudioTrack
      * Class constructor.
      * @param streamType the type of the audio stream. See
      *   {@link AudioManager#STREAM_VOICE_CALL}, {@link AudioManager#STREAM_SYSTEM},
-     *   {@link AudioManager#STREAM_RING}, {@link AudioManager#STREAM_MUSIC} and
-     *   {@link AudioManager#STREAM_ALARM}
-     * @param sampleRateInHz the sample rate expressed in Hertz. Examples of rates are (but
-     *   not limited to) 44100, 22050 and 11025.
+     *   {@link AudioManager#STREAM_RING}, {@link AudioManager#STREAM_MUSIC},
+     *   {@link AudioManager#STREAM_ALARM}, and {@link AudioManager#STREAM_NOTIFICATION}.
+     * @param sampleRateInHz the sample rate expressed in Hertz.
      * @param channelConfig describes the configuration of the audio channels.
      *   See {@link AudioFormat#CHANNEL_OUT_MONO} and
      *   {@link AudioFormat#CHANNEL_OUT_STEREO}
@@ -275,14 +276,15 @@ public class AudioTrack
      * and media players in the same session and not to the output mix.
      * When an AudioTrack is created without specifying a session, it will create its own session
      * which can be retreived by calling the {@link #getAudioSessionId()} method.
-     * If a session ID is provided, this AudioTrack will share effects attached to this session
-     * with all other media players or audio tracks in the same session.
+     * If a non-zero session ID is provided, this AudioTrack will share effects attached to this
+     * session
+     * with all other media players or audio tracks in the same session, otherwise a new session
+     * will be created for this track if none is supplied.
      * @param streamType the type of the audio stream. See
      *   {@link AudioManager#STREAM_VOICE_CALL}, {@link AudioManager#STREAM_SYSTEM},
-     *   {@link AudioManager#STREAM_RING}, {@link AudioManager#STREAM_MUSIC} and
-     *   {@link AudioManager#STREAM_ALARM}
-     * @param sampleRateInHz the sample rate expressed in Hertz. Examples of rates are (but
-     *   not limited to) 44100, 22050 and 11025.
+     *   {@link AudioManager#STREAM_RING}, {@link AudioManager#STREAM_MUSIC},
+     *   {@link AudioManager#STREAM_ALARM}, and {@link AudioManager#STREAM_NOTIFICATION}.
+     * @param sampleRateInHz the sample rate expressed in Hertz.
      * @param channelConfig describes the configuration of the audio channels.
      *   See {@link AudioFormat#CHANNEL_OUT_MONO} and
      *   {@link AudioFormat#CHANNEL_OUT_STEREO}
@@ -304,8 +306,8 @@ public class AudioTrack
             int bufferSizeInBytes, int mode, int sessionId)
     throws IllegalArgumentException {
         mState = STATE_UNINITIALIZED;
-        
-        // remember which looper is associated with the AudioTrack instanciation
+
+        // remember which looper is associated with the AudioTrack instantiation
         if ((mInitializationLooper = Looper.myLooper()) == null) {
             mInitializationLooper = Looper.getMainLooper();
         }
@@ -338,6 +340,15 @@ public class AudioTrack
         }
     }
 
+    // mask of all the channels supported by this implementation
+    private static final int SUPPORTED_OUT_CHANNELS =
+            AudioFormat.CHANNEL_OUT_FRONT_LEFT |
+            AudioFormat.CHANNEL_OUT_FRONT_RIGHT |
+            AudioFormat.CHANNEL_OUT_FRONT_CENTER |
+            AudioFormat.CHANNEL_OUT_LOW_FREQUENCY |
+            AudioFormat.CHANNEL_OUT_BACK_LEFT |
+            AudioFormat.CHANNEL_OUT_BACK_RIGHT |
+            AudioFormat.CHANNEL_OUT_BACK_CENTER;
 
     // Convenience method for the constructor's parameter checks.
     // This is where constructor IllegalArgumentException-s are thrown
@@ -365,7 +376,7 @@ public class AudioTrack
         }
 
         //--------------
-        // sample rate
+        // sample rate, note these values are subject to change
         if ( (sampleRateInHz < 4000) || (sampleRateInHz > 48000) ) {
             throw (new IllegalArgumentException(sampleRateInHz
                     + "Hz is not a supported sample rate."));
@@ -390,10 +401,16 @@ public class AudioTrack
             mChannels = AudioFormat.CHANNEL_OUT_STEREO;
             break;
         default:
-            mChannelCount = 0;
-            mChannels = AudioFormat.CHANNEL_INVALID;
-            mChannelConfiguration = AudioFormat.CHANNEL_CONFIGURATION_INVALID;
-            throw(new IllegalArgumentException("Unsupported channel configuration."));
+            if (!isMultichannelConfigSupported(channelConfig)) {
+                // input channel configuration features unsupported channels
+                mChannelCount = 0;
+                mChannels = AudioFormat.CHANNEL_INVALID;
+                mChannelConfiguration = AudioFormat.CHANNEL_INVALID;
+                throw(new IllegalArgumentException("Unsupported channel configuration."));
+            } else {
+                mChannels = channelConfig;
+                mChannelCount = Integer.bitCount(channelConfig);
+            }
         }
 
         //--------------
@@ -419,6 +436,37 @@ public class AudioTrack
         } else {
             mDataLoadMode = mode;
         }
+    }
+
+    /**
+     * Convenience method to check that the channel configuration (a.k.a channel mask) is supported
+     * @param channelConfig the mask to validate
+     * @return false if the AudioTrack can't be used with such a mask
+     */
+    private static boolean isMultichannelConfigSupported(int channelConfig) {
+        // check for unsupported channels
+        if ((channelConfig & SUPPORTED_OUT_CHANNELS) != channelConfig) {
+            Log.e(TAG, "Channel configuration features unsupported channels");
+            return false;
+        }
+        // check for unsupported multichannel combinations:
+        // - FL/FR must be present
+        // - L/R channels must be paired (e.g. no single L channel)
+        final int frontPair =
+                AudioFormat.CHANNEL_OUT_FRONT_LEFT | AudioFormat.CHANNEL_OUT_FRONT_RIGHT;
+        if ((channelConfig & frontPair) != frontPair) {
+                Log.e(TAG, "Front channels must be present in multichannel configurations");
+                return false;
+        }
+        final int backPair =
+                AudioFormat.CHANNEL_OUT_BACK_LEFT | AudioFormat.CHANNEL_OUT_BACK_RIGHT;
+        if ((channelConfig & backPair) != 0) {
+            if ((channelConfig & backPair) != backPair) {
+                Log.e(TAG, "Rear channels can't be used independently");
+                return false;
+            }
+        }
+        return true;
     }
 
 
@@ -449,7 +497,7 @@ public class AudioTrack
         // AudioTrack subclasses too.
         try {
             stop();
-        } catch(IllegalStateException ise) { 
+        } catch(IllegalStateException ise) {
             // don't raise an exception, we're releasing the resources.
         }
         native_release();
@@ -488,7 +536,7 @@ public class AudioTrack
     public int getSampleRate() {
         return mSampleRate;
     }
-    
+
     /**
      * Returns the current playback rate in Hz.
      */
@@ -508,7 +556,8 @@ public class AudioTrack
      * Returns the type of audio stream this AudioTrack is configured for.
      * Compare the result against {@link AudioManager#STREAM_VOICE_CALL},
      * {@link AudioManager#STREAM_SYSTEM}, {@link AudioManager#STREAM_RING},
-     * {@link AudioManager#STREAM_MUSIC} or {@link AudioManager#STREAM_ALARM}
+     * {@link AudioManager#STREAM_MUSIC}, {@link AudioManager#STREAM_ALARM},
+     * {@link AudioManager#STREAM_NOTIFICATION}, or {@link AudioManager#STREAM_DTMF}.
      */
     public int getStreamType() {
         return mStreamType;
@@ -590,22 +639,22 @@ public class AudioTrack
     static public int getNativeOutputSampleRate(int streamType) {
         return native_get_output_sample_rate(streamType);
     }
-    
+
     /**
      * Returns the minimum buffer size required for the successful creation of an AudioTrack
      * object to be created in the {@link #MODE_STREAM} mode. Note that this size doesn't
      * guarantee a smooth playback under load, and higher values should be chosen according to
-     * the expected frequency at which the buffer will be refilled with additional data to play. 
+     * the expected frequency at which the buffer will be refilled with additional data to play.
      * @param sampleRateInHz the sample rate expressed in Hertz.
-     * @param channelConfig describes the configuration of the audio channels. 
+     * @param channelConfig describes the configuration of the audio channels.
      *   See {@link AudioFormat#CHANNEL_OUT_MONO} and
      *   {@link AudioFormat#CHANNEL_OUT_STEREO}
-     * @param audioFormat the format in which the audio data is represented. 
-     *   See {@link AudioFormat#ENCODING_PCM_16BIT} and 
+     * @param audioFormat the format in which the audio data is represented.
+     *   See {@link AudioFormat#ENCODING_PCM_16BIT} and
      *   {@link AudioFormat#ENCODING_PCM_8BIT}
      * @return {@link #ERROR_BAD_VALUE} if an invalid parameter was passed,
-     *   or {@link #ERROR} if the implementation was unable to query the hardware for its output 
-     *     properties, 
+     *   or {@link #ERROR} if the implementation was unable to query the hardware for its output
+     *     properties,
      *   or the minimum buffer size expressed in bytes.
      */
     static public int getMinBufferSize(int sampleRateInHz, int channelConfig, int audioFormat) {
@@ -620,21 +669,27 @@ public class AudioTrack
             channelCount = 2;
             break;
         default:
-            loge("getMinBufferSize(): Invalid channel configuration.");
-            return AudioTrack.ERROR_BAD_VALUE;
+            if ((channelConfig & SUPPORTED_OUT_CHANNELS) != channelConfig) {
+                // input channel configuration features unsupported channels
+                loge("getMinBufferSize(): Invalid channel configuration.");
+                return AudioTrack.ERROR_BAD_VALUE;
+            } else {
+                channelCount = Integer.bitCount(channelConfig);
+            }
         }
-        
-        if ((audioFormat != AudioFormat.ENCODING_PCM_16BIT) 
+
+        if ((audioFormat != AudioFormat.ENCODING_PCM_16BIT)
             && (audioFormat != AudioFormat.ENCODING_PCM_8BIT)) {
             loge("getMinBufferSize(): Invalid audio format.");
             return AudioTrack.ERROR_BAD_VALUE;
         }
-        
+
+        // sample rate, note these values are subject to change
         if ( (sampleRateInHz < 4000) || (sampleRateInHz > 48000) ) {
             loge("getMinBufferSize(): " + sampleRateInHz +"Hz is not a supported sample rate.");
             return AudioTrack.ERROR_BAD_VALUE;
         }
-        
+
         int size = native_get_min_buff_size(sampleRateInHz, channelCount, audioFormat);
         if ((size == -1) || (size == 0)) {
             loge("getMinBufferSize(): error querying hardware");
@@ -667,7 +722,7 @@ public class AudioTrack
     public void setPlaybackPositionUpdateListener(OnPlaybackPositionUpdateListener listener) {
         setPlaybackPositionUpdateListener(listener, null);
     }
-    
+
     /**
      * Sets the listener the AudioTrack notifies when a previously set marker is reached or
      * for each periodic playback head position update.
@@ -676,7 +731,7 @@ public class AudioTrack
      * @param listener
      * @param handler the Handler that will receive the event notification messages.
      */
-    public void setPlaybackPositionUpdateListener(OnPlaybackPositionUpdateListener listener, 
+    public void setPlaybackPositionUpdateListener(OnPlaybackPositionUpdateListener listener,
                                                     Handler handler) {
         synchronized (mPositionListenerLock) {
             mPositionListener = listener;
@@ -684,7 +739,7 @@ public class AudioTrack
         if (listener != null) {
             mEventHandlerDelegate = new NativeEventHandlerDelegate(this, handler);
         }
-        
+
     }
 
 
@@ -728,7 +783,7 @@ public class AudioTrack
      * the audio data will be consumed and played back, not the original sampling rate of the
      * content. Setting it to half the sample rate of the content will cause the playback to
      * last twice as long, but will also result in a negative pitch shift.
-     * The valid sample rate range if from 1Hz to twice the value returned by
+     * The valid sample rate range is from 1Hz to twice the value returned by
      * {@link #getNativeOutputSampleRate(int)}.
      * @param sampleRateInHz the sample rate expressed in Hz
      * @return error code or success, see {@link #SUCCESS}, {@link #ERROR_BAD_VALUE},
@@ -836,7 +891,10 @@ public class AudioTrack
 
     /**
      * Stops playing the audio data.
-     *
+     * When used on an instance created in {@link #MODE_STREAM} mode, audio will stop playing
+     * after the last buffer that was written has been played. For an immediate stop, use
+     * {@link #pause()}, followed by {@link #flush()} to discard audio data that hasn't been played
+     * back yet.
      * @throws IllegalStateException
      */
     public void stop()
@@ -855,7 +913,7 @@ public class AudioTrack
     /**
      * Pauses the playback of the audio data. Data that has not been played
      * back will not be discarded. Subsequent calls to {@link #play} will play
-     * this data back.
+     * this data back. See {@link #flush()} to discard this data.
      *
      * @throws IllegalStateException
      */
@@ -906,7 +964,7 @@ public class AudioTrack
      *    the parameters don't resolve to valid data and indexes.
      */
 
-    public int write(byte[] audioData,int offsetInBytes, int sizeInBytes) {
+    public int write(byte[] audioData, int offsetInBytes, int sizeInBytes) {
         if ((mDataLoadMode == MODE_STATIC)
                 && (mState == STATE_NO_STATIC_DATA)
                 && (sizeInBytes > 0)) {
@@ -917,7 +975,7 @@ public class AudioTrack
             return ERROR_INVALID_OPERATION;
         }
 
-        if ( (audioData == null) || (offsetInBytes < 0 ) || (sizeInBytes < 0) 
+        if ( (audioData == null) || (offsetInBytes < 0 ) || (sizeInBytes < 0)
                 || (offsetInBytes + sizeInBytes > audioData.length)) {
             return ERROR_BAD_VALUE;
         }
@@ -948,12 +1006,12 @@ public class AudioTrack
                 && (sizeInShorts > 0)) {
             mState = STATE_INITIALIZED;
         }
-        
+
         if (mState != STATE_INITIALIZED) {
             return ERROR_INVALID_OPERATION;
         }
 
-        if ( (audioData == null) || (offsetInShorts < 0 ) || (sizeInShorts < 0) 
+        if ( (audioData == null) || (offsetInShorts < 0 ) || (sizeInShorts < 0)
                 || (offsetInShorts + sizeInShorts > audioData.length)) {
             return ERROR_BAD_VALUE;
         }
@@ -1012,8 +1070,8 @@ public class AudioTrack
      * <p>Note that the passed level value is a raw scalar. UI controls should be scaled
      * logarithmically: the gain applied by audio framework ranges from -72dB to 0dB,
      * so an appropriate conversion from linear UI input x to level is:
-     * x == 0 -> level = 0
-     * 0 < x <= R -> level = 10^(72*(x-R)/20/R)
+     * x == 0 -&gt; level = 0
+     * 0 &lt; x &lt;= R -&gt; level = 10^(72*(x-R)/20/R)
      *
      * @param level send level scalar
      * @return error code or success, see {@link #SUCCESS},
@@ -1047,7 +1105,7 @@ public class AudioTrack
          * by the playback head.
          */
         void onMarkerReached(AudioTrack track);
-        
+
         /**
          * Called on the listener to periodically notify it that the playback head has reached
          * a multiple of the notification period.
@@ -1062,11 +1120,11 @@ public class AudioTrack
     /**
      * Helper class to handle the forwarding of native events to the appropriate listener
      * (potentially) handled in a different thread
-     */  
+     */
     private class NativeEventHandlerDelegate {
         private final AudioTrack mAudioTrack;
         private final Handler mHandler;
-        
+
         NativeEventHandlerDelegate(AudioTrack track, Handler handler) {
             mAudioTrack = track;
             // find the looper for our new event handler
@@ -1077,7 +1135,7 @@ public class AudioTrack
                 // no given handler, use the looper the AudioTrack was created in
                 looper = mInitializationLooper;
             }
-            
+
             // construct the event handler with this looper
             if (looper != null) {
                 // implement the event handler delegate
@@ -1111,9 +1169,9 @@ public class AudioTrack
                 };
             } else {
                 mHandler = null;
-            } 
+            }
         }
-        
+
         Handler getHandler() {
             return mHandler;
         }
@@ -1133,7 +1191,7 @@ public class AudioTrack
         }
 
         if (track.mEventHandlerDelegate != null) {
-            Message m = 
+            Message m =
                 track.mEventHandlerDelegate.getHandler().obtainMessage(what, arg1, arg2, obj);
             track.mEventHandlerDelegate.getHandler().sendMessage(m);
         }

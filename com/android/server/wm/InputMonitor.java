@@ -16,6 +16,10 @@
 
 package com.android.server.wm;
 
+import com.android.server.input.InputManagerService;
+import com.android.server.input.InputApplicationHandle;
+import com.android.server.input.InputWindowHandle;
+
 import android.graphics.Rect;
 import android.os.RemoteException;
 import android.util.Log;
@@ -27,7 +31,7 @@ import android.view.WindowManager;
 import java.util.ArrayList;
 import java.util.Arrays;
 
-final class InputMonitor {
+final class InputMonitor implements InputManagerService.Callbacks {
     private final WindowManagerService mService;
     
     // Current window with input focus for keys and other non-touch events.  May be null.
@@ -37,7 +41,9 @@ final class InputMonitor {
     private boolean mInputDispatchFrozen;
     
     // When true, input dispatch proceeds normally.  Otherwise all events are dropped.
-    private boolean mInputDispatchEnabled = true;
+    // Initially false, so that input does not get dispatched until boot is finished at
+    // which point the ActivityManager will enable dispatching.
+    private boolean mInputDispatchEnabled;
 
     // When true, need to call updateInputWindowsLw().
     private boolean mUpdateInputWindowsNeeded = true;
@@ -81,24 +87,29 @@ final class InputMonitor {
     public long notifyANR(InputApplicationHandle inputApplicationHandle,
             InputWindowHandle inputWindowHandle) {
         AppWindowToken appWindowToken = null;
-        if (inputWindowHandle != null) {
-            synchronized (mService.mWindowMap) {
-                WindowState windowState = (WindowState) inputWindowHandle.windowState;
+        synchronized (mService.mWindowMap) {
+            WindowState windowState = null;
+            if (inputWindowHandle != null) {
+                windowState = (WindowState) inputWindowHandle.windowState;
                 if (windowState != null) {
-                    Slog.i(WindowManagerService.TAG, "Input event dispatching timed out sending to "
-                            + windowState.mAttrs.getTitle());
                     appWindowToken = windowState.mAppToken;
                 }
             }
-        }
-        
-        if (appWindowToken == null && inputApplicationHandle != null) {
-            appWindowToken = inputApplicationHandle.appWindowToken;
-            if (appWindowToken != null) {
-                Slog.i(WindowManagerService.TAG,
-                        "Input event dispatching timed out sending to application "
-                                + appWindowToken.stringName);
+            if (appWindowToken == null && inputApplicationHandle != null) {
+                appWindowToken = (AppWindowToken)inputApplicationHandle.appWindowToken;
             }
+
+            if (windowState != null) {
+                Slog.i(WindowManagerService.TAG, "Input event dispatching timed out "
+                        + "sending to " + windowState.mAttrs.getTitle());
+            } else if (appWindowToken != null) {
+                Slog.i(WindowManagerService.TAG, "Input event dispatching timed out "
+                        + "sending to application " + appWindowToken.stringName);
+            } else {
+                Slog.i(WindowManagerService.TAG, "Input event dispatching timed out.");
+            }
+
+            mService.saveANRStateLocked(appWindowToken, windowState);
         }
 
         if (appWindowToken != null && appWindowToken.appToken != null) {
@@ -301,7 +312,14 @@ final class InputMonitor {
         WindowState windowState = focus != null ? (WindowState) focus.windowState : null;
         return mService.mPolicy.dispatchUnhandledKey(windowState, event, policyFlags);
     }
-    
+
+    /* Callback to get pointer layer. */
+    public int getPointerLayer() {
+        return mService.mPolicy.windowTypeToLayerLw(WindowManager.LayoutParams.TYPE_POINTER)
+                * WindowManagerService.TYPE_LAYER_MULTIPLIER
+                + WindowManagerService.TYPE_LAYER_OFFSET;
+    }
+
     /* Called when the current input focus changes.
      * Layer assignment is assumed to be complete by the time this is called.
      */

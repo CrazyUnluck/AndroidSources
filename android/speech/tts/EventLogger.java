@@ -17,6 +17,7 @@ package android.speech.tts;
 
 import android.os.SystemClock;
 import android.text.TextUtils;
+import android.util.Log;
 
 /**
  * Writes data about a given speech synthesis request to the event logs.
@@ -24,14 +25,15 @@ import android.text.TextUtils;
  * speech rate / pitch and the latency and overall time taken.
  *
  * Note that {@link EventLogger#onStopped()} and {@link EventLogger#onError()}
- * might be called from any thread, but on {@link EventLogger#onPlaybackStart()} and
+ * might be called from any thread, but on {@link EventLogger#onAudioDataWritten()} and
  * {@link EventLogger#onComplete()} must be called from a single thread
  * (usually the audio playback thread}
  */
 class EventLogger {
     private final SynthesisRequest mRequest;
-    private final String mCallingApp;
     private final String mServiceApp;
+    private final int mCallerUid;
+    private final int mCallerPid;
     private final long mReceivedTime;
     private long mPlaybackStartTime = -1;
     private volatile long mRequestProcessingStartTime = -1;
@@ -42,10 +44,10 @@ class EventLogger {
     private volatile boolean mStopped = false;
     private boolean mLogWritten = false;
 
-    EventLogger(SynthesisRequest request, String callingApp,
-            String serviceApp) {
+    EventLogger(SynthesisRequest request, int callerUid, int callerPid, String serviceApp) {
         mRequest = request;
-        mCallingApp = callingApp;
+        mCallerUid = callerUid;
+        mCallerPid = callerPid;
         mServiceApp = serviceApp;
         mReceivedTime = SystemClock.elapsedRealtime();
     }
@@ -80,10 +82,10 @@ class EventLogger {
     /**
      * Notifies the logger that audio playback has started for some section
      * of the synthesis. This is normally some amount of time after the engine
-     * has synthesized data and varides depending on utterances and
+     * has synthesized data and varies depending on utterances and
      * other audio currently in the queue.
      */
-    public void onPlaybackStart() {
+    public void onAudioDataWritten() {
         // For now, keep track of only the first chunk of audio
         // that was played.
         if (mPlaybackStartTime == -1) {
@@ -119,10 +121,10 @@ class EventLogger {
         }
 
         long completionTime = SystemClock.elapsedRealtime();
-        // onPlaybackStart() should normally always be called if an
+        // onAudioDataWritten() should normally always be called if an
         // error does not occur.
         if (mError || mPlaybackStartTime == -1 || mEngineCompleteTime == -1) {
-            EventLogTags.writeTtsSpeakFailure(mServiceApp, mCallingApp,
+            EventLogTags.writeTtsSpeakFailure(mServiceApp, mCallerUid, mCallerPid,
                     getUtteranceLength(), getLocaleString(),
                     mRequest.getSpeechRate(), mRequest.getPitch());
             return;
@@ -138,7 +140,8 @@ class EventLogger {
         final long audioLatency = mPlaybackStartTime - mReceivedTime;
         final long engineLatency = mEngineStartTime - mRequestProcessingStartTime;
         final long engineTotal = mEngineCompleteTime - mRequestProcessingStartTime;
-        EventLogTags.writeTtsSpeakSuccess(mServiceApp, mCallingApp,
+
+        EventLogTags.writeTtsSpeakSuccess(mServiceApp, mCallerUid, mCallerPid,
                 getUtteranceLength(), getLocaleString(),
                 mRequest.getSpeechRate(), mRequest.getPitch(),
                 engineLatency, engineTotal, audioLatency);

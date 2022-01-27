@@ -28,7 +28,9 @@ import android.content.pm.ApplicationInfo;
 import android.content.res.CompatibilityInfo;
 import android.os.Bundle;
 import android.os.IBinder;
+import android.os.Process;
 import android.os.SystemClock;
+import android.os.UserId;
 import android.util.PrintWriterPrinter;
 import android.util.TimeUtils;
 
@@ -44,6 +46,9 @@ import java.util.HashSet;
 class ProcessRecord {
     final BatteryStatsImpl.Uid.Proc batteryStats; // where to collect runtime statistics
     final ApplicationInfo info; // all about the first app in the process
+    final boolean isolated;     // true if this is a special isolated process
+    final int uid;              // uid of process; may be different from 'info' if isolated
+    final int userId;           // user of process.
     final String processName;   // name of the process
     // List of packages running in the process
     final HashSet<String> pkgList = new HashSet<String>();
@@ -58,11 +63,13 @@ class ProcessRecord {
     int hiddenAdj;              // If hidden, this is the adjustment to use
     int curRawAdj;              // Current OOM unlimited adjustment for this process
     int setRawAdj;              // Last set OOM unlimited adjustment for this process
+    int nonStoppingAdj;         // Adjustment not counting any stopping activities
     int curAdj;                 // Current OOM adjustment for this process
     int setAdj;                 // Last set OOM adjustment for this process
     int curSchedGroup;          // Currently desired scheduling class
     int setSchedGroup;          // Last set to background scheduling class
     int trimMemoryLevel;        // Last selected memory trimming level
+    int memImportance;          // Importance constant computed from curAdj
     boolean serviceb;           // Process currently is on the service B list
     boolean keeping;            // Actively running code so don't kill due to that?
     boolean setIsForeground;    // Running foreground UI when last set?
@@ -119,8 +126,8 @@ class ProcessRecord {
     final HashMap<String, ContentProviderRecord> pubProviders
             = new HashMap<String, ContentProviderRecord>(); 
     // All ContentProviderRecord process is using
-    final HashMap<ContentProviderRecord, Integer> conProviders
-            = new HashMap<ContentProviderRecord, Integer>(); 
+    final ArrayList<ContentProviderConnection> conProviders
+            = new ArrayList<ContentProviderConnection>();
     
     boolean persistent;         // always keep this application running?
     boolean crashing;           // are we in the process of crashing?
@@ -147,6 +154,12 @@ class ProcessRecord {
     void dump(PrintWriter pw, String prefix) {
         final long now = SystemClock.uptimeMillis();
 
+        pw.print(prefix); pw.print("user #"); pw.print(userId);
+                pw.print(" uid="); pw.print(info.uid);
+        if (uid != info.uid) {
+            pw.print(" ISOLATED uid="); pw.print(uid);
+        }
+        pw.println();
         if (info.className != null) {
             pw.print(prefix); pw.print("class="); pw.println(info.className);
         }
@@ -188,6 +201,7 @@ class ProcessRecord {
                 pw.print(" hidden="); pw.print(hiddenAdj);
                 pw.print(" curRaw="); pw.print(curRawAdj);
                 pw.print(" setRaw="); pw.print(setRawAdj);
+                pw.print(" nonStopping="); pw.print(nonStoppingAdj);
                 pw.print(" cur="); pw.print(curAdj);
                 pw.print(" set="); pw.println(setAdj);
         pw.print(prefix); pw.print("curSchedGroup="); pw.print(curSchedGroup);
@@ -244,32 +258,57 @@ class ProcessRecord {
                     pw.println();
         }
         if (activities.size() > 0) {
-            pw.print(prefix); pw.print("activities="); pw.println(activities);
+            pw.print(prefix); pw.println("Activities:");
+            for (int i=0; i<activities.size(); i++) {
+                pw.print(prefix); pw.print("  - "); pw.println(activities.get(i));
+            }
         }
         if (services.size() > 0) {
-            pw.print(prefix); pw.print("services="); pw.println(services);
+            pw.print(prefix); pw.println("Services:");
+            for (ServiceRecord sr : services) {
+                pw.print(prefix); pw.print("  - "); pw.println(sr);
+            }
         }
         if (executingServices.size() > 0) {
-            pw.print(prefix); pw.print("executingServices="); pw.println(executingServices);
+            pw.print(prefix); pw.println("Executing Services:");
+            for (ServiceRecord sr : executingServices) {
+                pw.print(prefix); pw.print("  - "); pw.println(sr);
+            }
         }
         if (connections.size() > 0) {
-            pw.print(prefix); pw.print("connections="); pw.println(connections);
+            pw.print(prefix); pw.println("Connections:");
+            for (ConnectionRecord cr : connections) {
+                pw.print(prefix); pw.print("  - "); pw.println(cr);
+            }
         }
         if (pubProviders.size() > 0) {
-            pw.print(prefix); pw.print("pubProviders="); pw.println(pubProviders);
+            pw.print(prefix); pw.println("Published Providers:");
+            for (HashMap.Entry<String, ContentProviderRecord> ent : pubProviders.entrySet()) {
+                pw.print(prefix); pw.print("  - "); pw.println(ent.getKey());
+                pw.print(prefix); pw.print("    -> "); pw.println(ent.getValue());
+            }
         }
         if (conProviders.size() > 0) {
-            pw.print(prefix); pw.print("conProviders="); pw.println(conProviders);
+            pw.print(prefix); pw.println("Connected Providers:");
+            for (int i=0; i<conProviders.size(); i++) {
+                pw.print(prefix); pw.print("  - "); pw.println(conProviders.get(i).toShortString());
+            }
         }
         if (receivers.size() > 0) {
-            pw.print(prefix); pw.print("receivers="); pw.println(receivers);
+            pw.print(prefix); pw.println("Receivers:");
+            for (ReceiverList rl : receivers) {
+                pw.print(prefix); pw.print("  - "); pw.println(rl);
+            }
         }
     }
     
     ProcessRecord(BatteryStatsImpl.Uid.Proc _batteryStats, IApplicationThread _thread,
-            ApplicationInfo _info, String _processName) {
+            ApplicationInfo _info, String _processName, int _uid) {
         batteryStats = _batteryStats;
         info = _info;
+        isolated = _info.uid != _uid;
+        uid = _uid;
+        userId = UserId.getUserId(_uid);
         processName = _processName;
         pkgList.add(_info.packageName);
         thread = _thread;
@@ -343,7 +382,18 @@ class ProcessRecord {
         sb.append(':');
         sb.append(processName);
         sb.append('/');
-        sb.append(info.uid);
+        if (info.uid < Process.FIRST_APPLICATION_UID) {
+            sb.append(uid);
+        } else {
+            sb.append('u');
+            sb.append(userId);
+            sb.append('a');
+            sb.append(info.uid%Process.FIRST_APPLICATION_UID);
+            if (uid != info.uid) {
+                sb.append('i');
+                sb.append(UserId.getAppId(uid) - Process.FIRST_ISOLATED_UID);
+            }
+        }
     }
     
     public String toString() {

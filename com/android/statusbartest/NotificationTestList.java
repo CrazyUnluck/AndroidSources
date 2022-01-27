@@ -24,6 +24,7 @@ import android.content.ContentResolver;
 import android.content.Intent;
 import android.graphics.Bitmap;
 import android.graphics.drawable.BitmapDrawable;
+import android.os.Bundle;
 import android.os.Environment;
 import android.os.Vibrator;
 import android.os.Handler;
@@ -44,10 +45,10 @@ public class NotificationTestList extends TestActivity
     private final static String TAG = "NotificationTestList";
 
     NotificationManager mNM;
-    Vibrator mVibrator = new Vibrator();
+    Vibrator mVibrator;
     Handler mHandler = new Handler();
 
-    long mActivityCreateTime = System.currentTimeMillis();
+    long mActivityCreateTime;
     long mChronometerBase = 0;
 
     boolean mProgressDone = true;
@@ -65,6 +66,13 @@ public class NotificationTestList extends TestActivity
         R.drawable.notification9
     };
     final int kUnnumberedIconResID = R.drawable.notificationx;
+
+    @Override
+    public void onCreate(Bundle icicle) {
+        super.onCreate(icicle);
+        mVibrator = (Vibrator)getSystemService(VIBRATOR_SERVICE);
+        mActivityCreateTime = System.currentTimeMillis();
+    }
 
     @Override
     protected String tag() {
@@ -707,20 +715,28 @@ public class NotificationTestList extends TestActivity
         new Test("Ten Notifications") {
             public void run() {
                 for (int i = 0; i < 2; i++) {
-                    Notification n = new Notification(NotificationTestList.this,
+                    Notification n = new Notification(
                             kNumberedIconResIDs[i],
-                            null, System.currentTimeMillis(), "Persistent #" + i,
-                            "Notify me!!!" + i, null);
-                    n.flags |= Notification.FLAG_ONGOING_EVENT;
+                            null, System.currentTimeMillis());
                     n.number = i;
+                    n.setLatestEventInfo(
+                            NotificationTestList.this,
+                            "Persistent #" + i,
+                            "Notify me!!!" + i, 
+                            null);
+                    n.flags |= Notification.FLAG_ONGOING_EVENT;
                     mNM.notify((i+1)*10, n);
                 }
                 for (int i = 2; i < 10; i++) {
-                    Notification n = new Notification(NotificationTestList.this,
+                    Notification n = new Notification(
                             kNumberedIconResIDs[i],
-                            null, System.currentTimeMillis(), "Persistent #" + i,
-                            "Notify me!!!" + i, null);
+                            null, System.currentTimeMillis());
                     n.number = i;
+                    n.setLatestEventInfo(
+                            NotificationTestList.this,
+                            "Persistent #" + i,
+                            "Notify me!!!" + i, 
+                            null);
                     mNM.notify((i+1)*10, n);
                 }
             }
@@ -765,22 +781,70 @@ public class NotificationTestList extends TestActivity
             }
         },
 
-        new Test("System priority notification") {
+        new Test("PRIORITY_HIGH") {
             public void run() {
                 Notification n = new Notification.Builder(NotificationTestList.this)
-                    .setSmallIcon(R.drawable.notification1)
-                    .setContentTitle("System priority")
+                    .setSmallIcon(R.drawable.notification5)
+                    .setContentTitle("High priority")
                     .setContentText("This should appear before all others")
+                    .setPriority(Notification.PRIORITY_HIGH)
                     .getNotification();
 
                 int[] idOut = new int[1];
                 try {
                     INotificationManager directLine = mNM.getService();
-                    directLine.enqueueNotificationWithTagPriority(
+                    directLine.enqueueNotificationWithTag(
+                            getPackageName(),
+                            null, 
+                            100, 
+                            n,
+                            idOut);
+                } catch (android.os.RemoteException ex) {
+                    // oh well
+                }
+            }
+        },
+
+        new Test("PRIORITY_MAX") {
+            public void run() {
+                Notification n = new Notification.Builder(NotificationTestList.this)
+                    .setSmallIcon(R.drawable.notification9)
+                    .setContentTitle("MAX priority")
+                    .setContentText("This might appear as an intruder alert")
+                    .setPriority(Notification.PRIORITY_MAX)
+                    .getNotification();
+
+                int[] idOut = new int[1];
+                try {
+                    INotificationManager directLine = mNM.getService();
+                    directLine.enqueueNotificationWithTag(
+                            getPackageName(),
+                            null, 
+                            200, 
+                            n,
+                            idOut);
+                } catch (android.os.RemoteException ex) {
+                    // oh well
+                }
+            }
+        },
+
+        new Test("PRIORITY_MIN") {
+            public void run() {
+                Notification n = new Notification.Builder(NotificationTestList.this)
+                    .setSmallIcon(R.drawable.notification0)
+                    .setContentTitle("MIN priority")
+                    .setContentText("You should not see this")
+                    .setPriority(Notification.PRIORITY_MIN)
+                    .getNotification();
+
+                int[] idOut = new int[1];
+                try {
+                    INotificationManager directLine = mNM.getService();
+                    directLine.enqueueNotificationWithTag(
                             getPackageName(),
                             null, 
                             1, 
-                            StatusBarNotification.PRIORITY_SYSTEM,
                             n,
                             idOut);
                 } catch (android.os.RemoteException ex) {

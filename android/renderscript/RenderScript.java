@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2008 The Android Open Source Project
+ * Copyright (C) 2008-2012 The Android Open Source Project
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -16,6 +16,7 @@
 
 package android.renderscript;
 
+import java.io.File;
 import java.lang.reflect.Field;
 
 import android.content.Context;
@@ -81,6 +82,25 @@ public class RenderScript {
     native int  nContextPeekMessage(int con, int[] subID);
     native void nContextInitToClient(int con);
     native void nContextDeinitToClient(int con);
+
+    /**
+     * Name of the file that holds the object cache.
+     */
+    private static final String CACHE_PATH = "com.android.renderscript.cache";
+    static String mCachePath;
+
+     /**
+     * Sets the directory to use as a persistent storage for the
+     * renderscript object file cache.
+     *
+     * @hide
+     * @param cacheDir A directory the current process can write to
+     */
+    public static void setupDiskCache(File cacheDir) {
+        File f = new File(cacheDir, CACHE_PATH);
+        mCachePath = f.getAbsolutePath();
+        f.mkdirs();
+    }
 
 
     // Methods below are wrapped to protect the non-threadsafe
@@ -231,10 +251,10 @@ public class RenderScript {
         rsnTypeGetNativeData(mContext, id, typeData);
     }
 
-    native int  rsnAllocationCreateTyped(int con, int type, int mip, int usage);
-    synchronized int nAllocationCreateTyped(int type, int mip, int usage) {
+    native int  rsnAllocationCreateTyped(int con, int type, int mip, int usage, int pointer);
+    synchronized int nAllocationCreateTyped(int type, int mip, int usage, int pointer) {
         validate();
-        return rsnAllocationCreateTyped(mContext, type, mip, usage);
+        return rsnAllocationCreateTyped(mContext, type, mip, usage, pointer);
     }
     native int  rsnAllocationCreateFromBitmap(int con, int type, int mip, Bitmap bmp, int usage);
     synchronized int nAllocationCreateFromBitmap(int type, int mip, Bitmap bmp, int usage) {
@@ -269,6 +289,33 @@ public class RenderScript {
         validate();
         rsnAllocationSyncAll(mContext, alloc, src);
     }
+    native int rsnAllocationGetSurfaceTextureID(int con, int alloc);
+    synchronized int nAllocationGetSurfaceTextureID(int alloc) {
+        validate();
+        return rsnAllocationGetSurfaceTextureID(mContext, alloc);
+    }
+    native void rsnAllocationGetSurfaceTextureID2(int con, int alloc, SurfaceTexture st);
+    synchronized void nAllocationGetSurfaceTextureID2(int alloc, SurfaceTexture st) {
+        validate();
+        rsnAllocationGetSurfaceTextureID2(mContext, alloc, st);
+    }
+    native void rsnAllocationSetSurface(int con, int alloc, Surface sur);
+    synchronized void nAllocationSetSurface(int alloc, Surface sur) {
+        validate();
+        rsnAllocationSetSurface(mContext, alloc, sur);
+    }
+    native void rsnAllocationIoSend(int con, int alloc);
+    synchronized void nAllocationIoSend(int alloc) {
+        validate();
+        rsnAllocationIoSend(mContext, alloc);
+    }
+    native void rsnAllocationIoReceive(int con, int alloc);
+    synchronized void nAllocationIoReceive(int alloc) {
+        validate();
+        rsnAllocationIoReceive(mContext, alloc);
+    }
+
+
     native void rsnAllocationGenerateMipmaps(int con, int alloc);
     synchronized void nAllocationGenerateMipmaps(int alloc) {
         validate();
@@ -494,6 +541,13 @@ public class RenderScript {
         validate();
         rsnScriptSetVarV(mContext, id, slot, val);
     }
+    native void rsnScriptSetVarVE(int con, int id, int slot, byte[] val,
+                                  int e, int[] dims);
+    synchronized void nScriptSetVarVE(int id, int slot, byte[] val,
+                                      int e, int[] dims) {
+        validate();
+        rsnScriptSetVarVE(mContext, id, slot, val, e, dims);
+    }
     native void rsnScriptSetVarObj(int con, int id, int slot, int val);
     synchronized void nScriptSetVarObj(int id, int slot, int val) {
         validate();
@@ -547,15 +601,15 @@ public class RenderScript {
         validate();
         rsnProgramBindSampler(mContext, vpf, slot, s);
     }
-    native int  rsnProgramFragmentCreate(int con, String shader, int[] params);
-    synchronized int nProgramFragmentCreate(String shader, int[] params) {
+    native int  rsnProgramFragmentCreate(int con, String shader, String[] texNames, int[] params);
+    synchronized int nProgramFragmentCreate(String shader, String[] texNames, int[] params) {
         validate();
-        return rsnProgramFragmentCreate(mContext, shader, params);
+        return rsnProgramFragmentCreate(mContext, shader, texNames, params);
     }
-    native int  rsnProgramVertexCreate(int con, String shader, int[] params);
-    synchronized int nProgramVertexCreate(String shader, int[] params) {
+    native int  rsnProgramVertexCreate(int con, String shader, String[] texNames, int[] params);
+    synchronized int nProgramVertexCreate(String shader, String[] texNames, int[] params) {
         validate();
-        return rsnProgramVertexCreate(mContext, shader, params);
+        return rsnProgramVertexCreate(mContext, shader, texNames, params);
     }
 
     native int  rsnMeshCreate(int con, int[] vtx, int[] idx, int[] prim);
@@ -584,6 +638,11 @@ public class RenderScript {
         rsnMeshGetIndices(mContext, id, idxIds, primitives, vtxIdCount);
     }
 
+    native int  rsnPathCreate(int con, int prim, boolean isStatic, int vtx, int loop, float q);
+    synchronized int nPathCreate(int prim, boolean isStatic, int vtx, int loop, float q) {
+        validate();
+        return rsnPathCreate(mContext, prim, isStatic, vtx, loop, q);
+    }
 
     int     mDev;
     int     mContext;
@@ -612,6 +671,7 @@ public class RenderScript {
     Element mElement_PROGRAM_VERTEX;
     Element mElement_PROGRAM_RASTER;
     Element mElement_PROGRAM_STORE;
+    Element mElement_FONT;
 
     Element mElement_A_8;
     Element mElement_RGB_565;
@@ -837,7 +897,8 @@ public class RenderScript {
                         mRS.mErrorCallback.mErrorNum = subID;
                         mRS.mErrorCallback.run();
                     } else {
-                        //throw new RSRuntimeException("Received error num " + subID + ", details: " + e);
+                        // Do not throw here. In these cases, we do not have
+                        // a fatal error.
                     }
                     continue;
                 }
@@ -856,7 +917,9 @@ public class RenderScript {
     }
 
     RenderScript(Context ctx) {
-        mApplicationContext = ctx.getApplicationContext();
+        if (ctx != null) {
+            mApplicationContext = ctx.getApplicationContext();
+        }
     }
 
     /**
@@ -868,20 +931,15 @@ public class RenderScript {
         return mApplicationContext;
     }
 
-    static int getTargetSdkVersion(Context ctx) {
-        return ctx.getApplicationInfo().targetSdkVersion;
-    }
-
     /**
      * Create a basic RenderScript context.
      *
+     * @hide
      * @param ctx The context.
      * @return RenderScript
      */
-    public static RenderScript create(Context ctx) {
+    public static RenderScript create(Context ctx, int sdkVersion) {
         RenderScript rs = new RenderScript(ctx);
-
-        int sdkVersion = getTargetSdkVersion(ctx);
 
         rs.mDev = rs.nDeviceCreate();
         rs.mContext = rs.nContextCreate(rs.mDev, 0, sdkVersion);
@@ -891,6 +949,17 @@ public class RenderScript {
         rs.mMessageThread = new MessageThread(rs);
         rs.mMessageThread.start();
         return rs;
+    }
+
+    /**
+     * Create a basic RenderScript context.
+     *
+     * @param ctx The context.
+     * @return RenderScript
+     */
+    public static RenderScript create(Context ctx) {
+        int v = ctx.getApplicationInfo().targetSdkVersion;
+        return create(ctx, v);
     }
 
     /**
@@ -939,7 +1008,7 @@ public class RenderScript {
 
     int safeID(BaseObj o) {
         if(o != null) {
-            return o.getID();
+            return o.getID(this);
         }
         return 0;
     }

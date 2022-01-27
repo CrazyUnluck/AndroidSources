@@ -26,7 +26,6 @@ import android.os.LocalPowerManager;
 import android.os.Looper;
 import android.view.animation.Animation;
 
-import java.io.FileDescriptor;
 import java.io.PrintWriter;
 
 /**
@@ -90,6 +89,11 @@ public interface WindowManagerPolicy {
     public final static int FLAG_WOKE_HERE = 0x10000000;
     public final static int FLAG_BRIGHT_HERE = 0x20000000;
     public final static int FLAG_PASS_TO_USER = 0x40000000;
+
+    // Flags used for indicating whether the internal and/or external input devices
+    // of some type are available.
+    public final static int PRESENCE_INTERNAL = 1 << 0;
+    public final static int PRESENCE_EXTERNAL = 1 << 1;
 
     public final static boolean WATCH_POINTER = false;
 
@@ -173,7 +177,7 @@ public interface WindowManagerPolicy {
          * Retrieve the frame of the display that this window was last
          * laid out in.  Must be called with the
          * window manager lock held.
-         * 
+         *
          * @return Rect The rectangle holding the display frame.
          */
         public Rect getDisplayFrameLw();
@@ -298,6 +302,12 @@ public interface WindowManagerPolicy {
         boolean isDisplayedLw();
 
         /**
+         * Return true if this window (or a window it is attached to, but not
+         * considering its app token) is currently animating.
+         */
+        public boolean isAnimatingLw();
+
+        /**
          * Is this window considered to be gone for purposes of layout?
          */
         boolean isGoneForLayoutLw();
@@ -305,8 +315,6 @@ public interface WindowManagerPolicy {
         /**
          * Returns true if this window has been shown on screen at some time in 
          * the past.  Must be called with the window manager lock held.
-         * 
-         * @return boolean
          */
         public boolean hasDrawnLw();
 
@@ -326,6 +334,11 @@ public interface WindowManagerPolicy {
          * Returns true if {@link #hideLw} was last called for the window.
          */
         public boolean showLw(boolean doAnimation);
+
+        /**
+         * Check whether the process hosting this window is currently alive.
+         */
+        public boolean isAlive();
     }
 
     /**
@@ -344,6 +357,10 @@ public interface WindowManagerPolicy {
      * between it and the policy.
      */
     public interface WindowManagerFuncs {
+        public static final int LID_ABSENT = -1;
+        public static final int LID_CLOSED = 0;
+        public static final int LID_OPEN = 1;
+
         /**
          * Ask the window manager to re-evaluate the system UI flags.
          */
@@ -353,9 +370,29 @@ public interface WindowManagerPolicy {
          * Add a fake window to the window manager.  This window sits
          * at the top of the other windows and consumes events.
          */
-        public FakeWindow addFakeWindow(Looper looper, InputHandler inputHandler,
+        public FakeWindow addFakeWindow(Looper looper,
+                InputEventReceiver.Factory inputEventReceiverFactory,
                 String name, int windowType, int layoutParamsFlags, boolean canReceiveKeys,
                 boolean hasFocus, boolean touchFullscreen);
+
+        /**
+         * Returns a code that describes the current state of the lid switch.
+         */
+        public int getLidState();
+
+        /**
+         * Creates an input channel that will receive all input from the input dispatcher.
+         */
+        public InputChannel monitorInput(String name);
+
+        /**
+         * Switch the keyboard layout for the given device.
+         * Direction should be +1 or -1 to go to the next or previous keyboard layout.
+         */
+        public void switchKeyboardLayout(int deviceId, int direction);
+
+        public void shutdown();
+        public void rebootSafeMode();
     }
 
     /**
@@ -446,7 +483,7 @@ public interface WindowManagerPolicy {
      * Called by window manager once it has the initial, default native
      * display dimensions.
      */
-    public void setInitialDisplaySize(int width, int height);
+    public void setInitialDisplaySize(Display display, int width, int height);
 
     /**
      * Check permissions when adding a window.
@@ -480,8 +517,13 @@ public interface WindowManagerPolicy {
      * 
      * @param config The Configuration being computed, for you to change as
      * desired.
+     * @param keyboardPresence Flags that indicate whether internal or external
+     * keyboards are present.
+     * @param navigationPresence Flags that indicate whether internal or external
+     * navigation devices are present.
      */
-    public void adjustConfigurationLw(Configuration config);
+    public void adjustConfigurationLw(Configuration config, int keyboardPresence,
+            int navigationPresence);
     
     /**
      * Assign a window type to a layer.  Allows you to control how different
@@ -513,10 +555,10 @@ public interface WindowManagerPolicy {
     public int getMaxWallpaperLayer();
     
     /**
-     * Return true if the policy allows the status bar to hide.  Otherwise,
-     * it is a tablet-style system bar.
+     * Return true if the policy desires a full unified system nav bar.  Otherwise,
+     * it is a phone-style status bar with optional nav bar.
      */
-    public boolean canStatusBarHide();
+    public boolean hasSystemNavBar();
 
     /**
      * Return the display width available after excluding any screen
@@ -535,7 +577,7 @@ public interface WindowManagerPolicy {
     /**
      * Return the available screen width that we should report for the
      * configuration.  This must be no larger than
-     * {@link #getNonDecorDisplayWidth(int, int)}; it may be smaller than
+     * {@link #getNonDecorDisplayWidth(int, int, int)}; it may be smaller than
      * that to account for more transient decoration like a status bar.
      */
     public int getConfigDisplayWidth(int fullWidth, int fullHeight, int rotation);
@@ -543,7 +585,7 @@ public interface WindowManagerPolicy {
     /**
      * Return the available screen height that we should report for the
      * configuration.  This must be no larger than
-     * {@link #getNonDecorDisplayHeight(int, int)}; it may be smaller than
+     * {@link #getNonDecorDisplayHeight(int, int, int)}; it may be smaller than
      * that to account for more transient decoration like a status bar.
      */
     public int getConfigDisplayHeight(int fullWidth, int fullHeight, int rotation);
@@ -647,7 +689,7 @@ public interface WindowManagerPolicy {
     /**
      * Create and return an animation to re-display a force hidden window.
      */
-    public Animation createForceHideEnterAnimation();
+    public Animation createForceHideEnterAnimation(boolean onWallpaper);
     
     /**
      * Called from the input reader thread before a key is enqueued.
@@ -724,6 +766,21 @@ public interface WindowManagerPolicy {
     public void beginLayoutLw(int displayWidth, int displayHeight, int displayRotation);
 
     /**
+     * Return the rectangle of the screen currently covered by system decorations.
+     * This will be called immediately after {@link #layoutWindowLw}.  It can
+     * fill in the rectangle to indicate any part of the screen that it knows
+     * for sure is covered by system decor such as the status bar.  The rectangle
+     * is initially set to the actual size of the screen, indicating nothing is
+     * covered.
+     *
+     * @param systemRect The rectangle of the screen that is not covered by
+     * system decoration.
+     * @return Returns the layer above which the system rectangle should
+     * not be applied.
+     */
+    public int getSystemDecorRectLw(Rect systemRect);
+
+    /**
      * Called for each window attached to the window manager as layout is
      * proceeding.  The implementation of this function must take care of
      * setting the window's frame, either here or in finishLayout().
@@ -748,17 +805,13 @@ public interface WindowManagerPolicy {
      * 
      */
     public void getContentInsetHintLw(WindowManager.LayoutParams attrs, Rect contentInset);
-    
+
     /**
      * Called when layout of the windows is finished.  After this function has
      * returned, all windows given to layoutWindow() <em>must</em> have had a
      * frame assigned.
-     *  
-     * @return Return any bit set of {@link #FINISH_LAYOUT_REDO_LAYOUT},
-     * {@link #FINISH_LAYOUT_REDO_CONFIG}, {@link #FINISH_LAYOUT_REDO_WALLPAPER},
-     * or {@link #FINISH_LAYOUT_REDO_ANIM}.
      */
-    public int finishLayoutLw();
+    public void finishLayoutLw();
 
     /** Layout state may have changed (so another layout will be performed) */
     static final int FINISH_LAYOUT_REDO_LAYOUT = 0x0001;
@@ -821,7 +874,7 @@ public interface WindowManagerPolicy {
 
     public interface ScreenOnListener {
         void onScreenOn();
-    };
+    }
 
     /**
      * Called when the power manager would like to turn the screen on.
@@ -941,10 +994,10 @@ public interface WindowManagerPolicy {
     public void setRotationLw(int rotation);
 
     /**
-     * Called when the system is mostly done booting to determine whether
+     * Called when the system is mostly done booting to set whether
      * the system should go into safe mode.
      */
-    public boolean detectSafeMode();
+    public void setSafeMode(boolean safeMode);
     
     /**
      * Called when the system is mostly done booting.
@@ -975,7 +1028,7 @@ public interface WindowManagerPolicy {
 
     /**
      * Called when we have finished booting and can now display the home
-     * screen to the user.  This wilWl happen after systemReady(), and at
+     * screen to the user.  This will happen after systemReady(), and at
      * this point the display is active.
      */
     public void enableScreenAfterBoot();
@@ -1033,13 +1086,44 @@ public interface WindowManagerPolicy {
     public void lockNow();
 
     /**
+     * Check to see if a screensaver should be run instead of powering off the screen on timeout. 
+     * 
+     * @return true if the screensaver should run, false if the screen should turn off.
+     * 
+     * @hide
+     */
+    public boolean isScreenSaverEnabled();
+
+    /**
+     * Start the screensaver (if it is enabled and not yet running).
+     * 
+     * @return Whether the screensaver was successfully started.
+     * 
+     * @hide
+     */
+    public boolean startScreenSaver();
+
+    /**
+     * Stop the screensaver if it is running.
+     * 
+     * @hide
+     */
+    public void stopScreenSaver();
+
+    /**
+     * Set the last used input method window state. This state is used to make IME transition
+     * smooth.
+     * @hide
+     */
+    public void setLastInputMethodWindowLw(WindowState ime, WindowState target);
+
+    /**
      * Print the WindowManagerPolicy's state into the given stream.
      *
      * @param prefix Text to print at the front of each line.
-     * @param fd The raw file descriptor that the dump is being sent to.
      * @param writer The PrintWriter to which you should dump your state.  This will be
      * closed for you after you return.
      * @param args additional arguments to the dump request.
      */
-    public void dump(String prefix, FileDescriptor fd, PrintWriter writer, String[] args);
+    public void dump(String prefix, PrintWriter writer, String[] args);
 }

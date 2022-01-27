@@ -317,14 +317,14 @@ public static boolean populateComponent(ContentValues values,
         if (values.containsKey(CalendarContract.Events.DTSTART)) {
             dtstart = values.getAsLong(CalendarContract.Events.DTSTART);
         }
-        String duration = values.getAsString(CalendarContract.Events.DURATION);
-        String tzid = values.getAsString(CalendarContract.Events.EVENT_TIMEZONE);
-        String rruleStr = values.getAsString(CalendarContract.Events.RRULE);
-        String rdateStr = values.getAsString(CalendarContract.Events.RDATE);
-        String exruleStr = values.getAsString(CalendarContract.Events.EXRULE);
-        String exdateStr = values.getAsString(CalendarContract.Events.EXDATE);
-        Integer allDayInteger = values.getAsInteger(CalendarContract.Events.ALL_DAY);
-        boolean allDay = (null != allDayInteger) ? (allDayInteger == 1) : false;
+        final String duration = values.getAsString(CalendarContract.Events.DURATION);
+        final String tzid = values.getAsString(CalendarContract.Events.EVENT_TIMEZONE);
+        final String rruleStr = values.getAsString(CalendarContract.Events.RRULE);
+        final String rdateStr = values.getAsString(CalendarContract.Events.RDATE);
+        final String exruleStr = values.getAsString(CalendarContract.Events.EXRULE);
+        final String exdateStr = values.getAsString(CalendarContract.Events.EXDATE);
+        final Integer allDayInteger = values.getAsInteger(CalendarContract.Events.ALL_DAY);
+        final boolean allDay = (null != allDayInteger) ? (allDayInteger == 1) : false;
 
         if ((dtstart == -1) ||
             (TextUtils.isEmpty(duration))||
@@ -370,7 +370,7 @@ public static boolean populateComponent(ContentValues values,
         return true;
     }
 
-    private static void addPropertiesForRuleStr(ICalendar.Component component,
+    public static void addPropertiesForRuleStr(ICalendar.Component component,
                                                 String propertyName,
                                                 String ruleStr) {
         if (TextUtils.isEmpty(ruleStr)) {
@@ -430,7 +430,7 @@ public static boolean populateComponent(ContentValues values,
             foldedIcalContent).replaceAll("");
     }
 
-    private static void addPropertyForDateStr(ICalendar.Component component,
+    public static void addPropertyForDateStr(ICalendar.Component component,
                                               String propertyName,
                                               String dateStr) {
         if (TextUtils.isEmpty(dateStr)) {

@@ -92,10 +92,22 @@ public class Process {
     public static final int MEDIA_UID = 1013;
 
     /**
+     * Defines the UID/GID for the DRM process.
+     * @hide
+     */
+    public static final int DRM_UID = 1019;
+
+    /**
      * Defines the GID for the group that allows write access to the SD card.
      * @hide
      */
     public static final int SDCARD_RW_GID = 1015;
+
+    /**
+     * Defines the UID/GID for the group that controls VPN services.
+     * @hide
+     */
+    public static final int VPN_UID = 1016;
 
     /**
      * Defines the UID/GID for the NFC service process.
@@ -119,7 +131,19 @@ public class Process {
      * Last of application-specific UIDs starting at
      * {@link #FIRST_APPLICATION_UID}.
      */
-    public static final int LAST_APPLICATION_UID = 99999;
+    public static final int LAST_APPLICATION_UID = 19999;
+
+    /**
+     * First uid used for fully isolated sandboxed processes (with no permissions of their own)
+     * @hide
+     */
+    public static final int FIRST_ISOLATED_UID = 99000;
+
+    /**
+     * Last uid used for fully isolated sandboxed processes (with no permissions of their own)
+     * @hide
+     */
+    public static final int LAST_ISOLATED_UID = 99999;
 
     /**
      * Defines a secondary group id for access to the bluetooth hardware.
@@ -219,24 +243,85 @@ public class Process {
     public static final int THREAD_PRIORITY_LESS_FAVORABLE = +1;
 
     /**
-     * Default thread group - gets a 'normal' share of the CPU
+     * Default scheduling policy
      * @hide
      */
-    public static final int THREAD_GROUP_DEFAULT = 0;
+    public static final int SCHED_OTHER = 0;
 
     /**
-     * Background non-interactive thread group - All threads in
+     * First-In First-Out scheduling policy
+     * @hide
+     */
+    public static final int SCHED_FIFO = 1;
+
+    /**
+     * Round-Robin scheduling policy
+     * @hide
+     */
+    public static final int SCHED_RR = 2;
+
+    /**
+     * Batch scheduling policy
+     * @hide
+     */
+    public static final int SCHED_BATCH = 3;
+
+    /**
+     * Idle scheduling policy
+     * @hide
+     */
+    public static final int SCHED_IDLE = 5;
+
+    // Keep in sync with SP_* constants of enum type SchedPolicy
+    // declared in system/core/include/cutils/sched_policy.h,
+    // except THREAD_GROUP_DEFAULT does not correspond to any SP_* value.
+
+    /**
+     * Default thread group -
+     * has meaning with setProcessGroup() only, cannot be used with setThreadGroup().
+     * When used with setProcessGroup(), the group of each thread in the process
+     * is conditionally changed based on that thread's current priority, as follows:
+     * threads with priority numerically less than THREAD_PRIORITY_BACKGROUND
+     * are moved to foreground thread group.  All other threads are left unchanged.
+     * @hide
+     */
+    public static final int THREAD_GROUP_DEFAULT = -1;
+
+    /**
+     * Background thread group - All threads in
      * this group are scheduled with a reduced share of the CPU.
+     * Value is same as constant SP_BACKGROUND of enum SchedPolicy.
+     * FIXME rename to THREAD_GROUP_BACKGROUND.
      * @hide
      */
-    public static final int THREAD_GROUP_BG_NONINTERACTIVE = 1;
+    public static final int THREAD_GROUP_BG_NONINTERACTIVE = 0;
 
     /**
-     * Foreground 'boost' thread group - All threads in
-     * this group are scheduled with an increased share of the CPU
+     * Foreground thread group - All threads in
+     * this group are scheduled with a normal share of the CPU.
+     * Value is same as constant SP_FOREGROUND of enum SchedPolicy.
+     * Not used at this level.
      * @hide
      **/
-    public static final int THREAD_GROUP_FG_BOOST = 2;
+    private static final int THREAD_GROUP_FOREGROUND = 1;
+
+    /**
+     * System thread group.
+     * @hide
+     **/
+    public static final int THREAD_GROUP_SYSTEM = 2;
+
+    /**
+     * Application audio thread group.
+     * @hide
+     **/
+    public static final int THREAD_GROUP_AUDIO_APP = 3;
+
+    /**
+     * System audio thread group.
+     * @hide
+     **/
+    public static final int THREAD_GROUP_AUDIO_SYS = 4;
 
     public static final int SIGNAL_QUIT = 3;
     public static final int SIGNAL_KILL = 9;
@@ -546,6 +631,15 @@ public class Process {
     public static final native int myUid();
 
     /**
+     * Returns whether the current process is in an isolated sandbox.
+     * @hide
+     */
+    public static final boolean isIsolated() {
+        int uid = UserId.getAppId(myUid());
+        return uid >= FIRST_ISOLATED_UID && uid <= LAST_ISOLATED_UID;
+    }
+
+    /**
      * Returns the UID assigned to a particular user name, or -1 if there is
      * none.  If the given string consists of only numbers, it is converted
      * directly to a uid.
@@ -588,6 +682,21 @@ public class Process {
     }
 
     /**
+     * Returns the thread group leader id for a currently running thread.
+     * @param tid the thread id
+     * @return the thread group leader id of the thread, or -1 if the thread is not running.
+     *         This is same as what getpid(2) would return if called by tid.
+     * @hide
+     */
+    public static final int getThreadGroupLeader(int tid) {
+        String[] procStatusLabels = { "Tgid:" };
+        long[] procStatusValues = new long[1];
+        procStatusValues[0] = -1;
+        Process.readProcLines("/proc/" + tid + "/status", procStatusLabels, procStatusValues);
+        return (int) procStatusValues[0];
+    }
+
+    /**
      * Set the priority of a thread, based on Linux priorities.
      * 
      * @param tid The identifier of the thread/process to change.
@@ -615,28 +724,37 @@ public class Process {
     /**
      * Sets the scheduling group for a thread.
      * @hide
-     * @param tid The indentifier of the thread/process to change.
-     * @param group The target group for this thread/process.
+     * @param tid The identifier of the thread to change.
+     * @param group The target group for this thread from THREAD_GROUP_*.
      * 
      * @throws IllegalArgumentException Throws IllegalArgumentException if
      * <var>tid</var> does not exist.
      * @throws SecurityException Throws SecurityException if your process does
      * not have permission to modify the given thread, or to use the given
      * priority.
+     * If the thread is a thread group leader, that is it's gettid() == getpid(),
+     * then the other threads in the same thread group are _not_ affected.
      */
     public static final native void setThreadGroup(int tid, int group)
             throws IllegalArgumentException, SecurityException;
+
     /**
      * Sets the scheduling group for a process and all child threads
      * @hide
-     * @param pid The indentifier of the process to change.
-     * @param group The target group for this process.
+     * @param pid The identifier of the process to change.
+     * @param group The target group for this process from THREAD_GROUP_*.
      * 
      * @throws IllegalArgumentException Throws IllegalArgumentException if
      * <var>tid</var> does not exist.
      * @throws SecurityException Throws SecurityException if your process does
      * not have permission to modify the given thread, or to use the given
      * priority.
+     *
+     * group == THREAD_GROUP_DEFAULT means to move all non-background priority
+     * threads to the foreground scheduling group, but to leave background
+     * priority threads alone.  group == THREAD_GROUP_BG_NONINTERACTIVE moves all
+     * threads, regardless of priority, to the background scheduling group.
+     * group == THREAD_GROUP_FOREGROUND is not allowed.
      */
     public static final native void setProcessGroup(int pid, int group)
             throws IllegalArgumentException, SecurityException;
@@ -674,6 +792,24 @@ public class Process {
     public static final native int getThreadPriority(int tid)
             throws IllegalArgumentException;
     
+    /**
+     * Set the scheduling policy and priority of a thread, based on Linux.
+     *
+     * @param tid The identifier of the thread/process to change.
+     * @param policy A Linux scheduling policy such as SCHED_OTHER etc.
+     * @param priority A Linux priority level in a range appropriate for the given policy.
+     *
+     * @throws IllegalArgumentException Throws IllegalArgumentException if
+     * <var>tid</var> does not exist, or if <var>priority</var> is out of range for the policy.
+     * @throws SecurityException Throws SecurityException if your process does
+     * not have permission to modify the given thread, or to use the given
+     * scheduling policy or priority.
+     *
+     * {@hide}
+     */
+    public static final native void setThreadScheduler(int tid, int policy, int priority)
+            throws IllegalArgumentException;
+
     /**
      * Determine whether the current environment supports multiple processes.
      * 
@@ -761,6 +897,9 @@ public class Process {
     public static final native long getFreeMemory();
     
     /** @hide */
+    public static final native long getTotalMemory();
+    
+    /** @hide */
     public static final native void readProcLines(String path,
             String[] reqFields, long[] outSizes);
     
@@ -793,6 +932,9 @@ public class Process {
     /** @hide */
     public static final native boolean parseProcLine(byte[] buffer, int startIndex, 
             int endIndex, int[] format, String[] outStrings, long[] outLongs, float[] outFloats);
+
+    /** @hide */
+    public static final native int[] getPidsForCommands(String[] cmds);
 
     /**
      * Gets the total Pss value for a given process, in bytes.

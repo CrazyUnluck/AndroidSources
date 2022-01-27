@@ -52,13 +52,17 @@ import com.android.internal.telephony.gsm.SmsBroadcastConfigInfo;
 import com.android.internal.telephony.gsm.SuppServiceNotification;
 import com.android.internal.telephony.cdma.CdmaCallWaitingNotification;
 import com.android.internal.telephony.cdma.CdmaInformationRecords;
+import com.android.internal.telephony.IccRefreshResponse;
 
 import java.io.ByteArrayInputStream;
 import java.io.DataInputStream;
+import java.io.FileDescriptor;
 import java.io.IOException;
 import java.io.InputStream;
+import java.io.PrintWriter;
 import java.util.ArrayList;
 import java.util.Collections;
+import java.util.concurrent.atomic.AtomicBoolean;
 
 /**
  * {@hide}
@@ -230,6 +234,9 @@ public final class RIL extends BaseCommands implements CommandsInterface {
     ArrayList<RILRequest> mRequestsList = new ArrayList<RILRequest>();
 
     Object     mLastNITZTimeInfo;
+
+    // When we are testing emergency calls
+    AtomicBoolean mTestingEmergencyCall = new AtomicBoolean(false);
 
     //***** Events
 
@@ -644,6 +651,15 @@ public final class RIL extends BaseCommands implements CommandsInterface {
 
     //***** CommandsInterface implementation
 
+    public void getVoiceRadioTechnology(Message result) {
+        RILRequest rr = RILRequest.obtain(RIL_REQUEST_VOICE_RADIO_TECH, result);
+
+        if (RILJ_LOGD) riljLog(rr.serialString() + "> " + requestToString(rr.mRequest));
+
+        send(rr);
+    }
+
+
     @Override public void
     setOnNITZTime(Handler h, int what, Object obj) {
         super.setOnNITZTime(h, what, obj);
@@ -870,9 +886,19 @@ public final class RIL extends BaseCommands implements CommandsInterface {
 
     public void
     getIMSI(Message result) {
+        getIMSIForApp(null, result);
+    }
+
+    public void
+    getIMSIForApp(String aid, Message result) {
         RILRequest rr = RILRequest.obtain(RIL_REQUEST_GET_IMSI, result);
 
-        if (RILJ_LOGD) riljLog(rr.serialString() + "> " + requestToString(rr.mRequest));
+        rr.mp.writeInt(1);
+        rr.mp.writeString(aid);
+
+        if (RILJ_LOGD) riljLog(rr.serialString() +
+                              "> getIMSI: " + requestToString(rr.mRequest)
+                              + " aid: " + aid);
 
         send(rr);
     }
@@ -1425,6 +1451,11 @@ public final class RIL extends BaseCommands implements CommandsInterface {
     public void
     iccIO (int command, int fileid, String path, int p1, int p2, int p3,
             String data, String pin2, Message result) {
+        iccIOForApp(command, fileid, path, p1, p2, p3, data, pin2, null, result);
+    }
+    public void
+    iccIOForApp (int command, int fileid, String path, int p1, int p2, int p3,
+            String data, String pin2, String aid, Message result) {
         //Note: This RIL request has not been renamed to ICC,
         //       but this request is also valid for SIM and RUIM
         RILRequest rr
@@ -1438,12 +1469,15 @@ public final class RIL extends BaseCommands implements CommandsInterface {
         rr.mp.writeInt(p3);
         rr.mp.writeString(data);
         rr.mp.writeString(pin2);
+        rr.mp.writeString(aid);
 
-        if (RILJ_LOGD) riljLog(rr.serialString() + "> iccIO: " + requestToString(rr.mRequest)
+        if (RILJ_LOGD) riljLog(rr.serialString() + "> iccIO: "
+                + requestToString(rr.mRequest)
                 + " 0x" + Integer.toHexString(command)
                 + " 0x" + Integer.toHexString(fileid) + " "
                 + " path: " + path + ","
-                + p1 + "," + p2 + "," + p3);
+                + p1 + "," + p2 + "," + p3
+                + " aid: " + aid);
 
         send(rr);
     }
@@ -2020,14 +2054,7 @@ public final class RIL extends BaseCommands implements CommandsInterface {
         switch(stateInt) {
             case 0: state = RadioState.RADIO_OFF; break;
             case 1: state = RadioState.RADIO_UNAVAILABLE; break;
-            case 2: state = RadioState.SIM_NOT_READY; break;
-            case 3: state = RadioState.SIM_LOCKED_OR_ABSENT; break;
-            case 4: state = RadioState.SIM_READY; break;
-            case 5: state = RadioState.RUIM_NOT_READY; break;
-            case 6: state = RadioState.RUIM_READY; break;
-            case 7: state = RadioState.RUIM_LOCKED_OR_ABSENT; break;
-            case 8: state = RadioState.NV_NOT_READY; break;
-            case 9: state = RadioState.NV_READY; break;
+            case 10: state = RadioState.RADIO_ON; break;
 
             default:
                 throw new RuntimeException(
@@ -2192,7 +2219,16 @@ public final class RIL extends BaseCommands implements CommandsInterface {
             case RIL_REQUEST_GET_IMSI: ret =  responseString(p); break;
             case RIL_REQUEST_HANGUP: ret =  responseVoid(p); break;
             case RIL_REQUEST_HANGUP_WAITING_OR_BACKGROUND: ret =  responseVoid(p); break;
-            case RIL_REQUEST_HANGUP_FOREGROUND_RESUME_BACKGROUND: ret =  responseVoid(p); break;
+            case RIL_REQUEST_HANGUP_FOREGROUND_RESUME_BACKGROUND: {
+                if (mTestingEmergencyCall.getAndSet(false)) {
+                    if (mEmergencyCallbackModeRegistrant != null) {
+                        riljLog("testing emergency call, notify ECM Registrants");
+                        mEmergencyCallbackModeRegistrant.notifyRegistrant();
+                    }
+                }
+                ret =  responseVoid(p);
+                break;
+            }
             case RIL_REQUEST_SWITCH_WAITING_OR_HOLDING_AND_ACTIVE: ret =  responseVoid(p); break;
             case RIL_REQUEST_CONFERENCE: ret =  responseVoid(p); break;
             case RIL_REQUEST_UDUB: ret =  responseVoid(p); break;
@@ -2286,6 +2322,7 @@ public final class RIL extends BaseCommands implements CommandsInterface {
             case RIL_REQUEST_ISIM_AUTHENTICATION: ret =  responseString(p); break;
             case RIL_REQUEST_ACKNOWLEDGE_INCOMING_GSM_SMS_WITH_PDU: ret = responseVoid(p); break;
             case RIL_REQUEST_STK_SEND_ENVELOPE_WITH_STATUS: ret = responseICC_IO(p); break;
+            case RIL_REQUEST_VOICE_RADIO_TECH: ret = responseInts(p); break;
             default:
                 throw new RuntimeException("Unrecognized solicited response: " + rr.mRequest);
             //break;
@@ -2416,7 +2453,7 @@ public final class RIL extends BaseCommands implements CommandsInterface {
             case RIL_UNSOL_STK_EVENT_NOTIFY: ret = responseString(p); break;
             case RIL_UNSOL_STK_CALL_SETUP: ret = responseInts(p); break;
             case RIL_UNSOL_SIM_SMS_STORAGE_FULL: ret =  responseVoid(p); break;
-            case RIL_UNSOL_SIM_REFRESH: ret =  responseInts(p); break;
+            case RIL_UNSOL_SIM_REFRESH: ret =  responseSimRefresh(p); break;
             case RIL_UNSOL_CALL_RING: ret =  responseCallRing(p); break;
             case RIL_UNSOL_RESTRICTED_STATE_CHANGED: ret = responseInts(p); break;
             case RIL_UNSOL_RESPONSE_SIM_STATUS_CHANGED:  ret =  responseVoid(p); break;
@@ -2434,6 +2471,7 @@ public final class RIL extends BaseCommands implements CommandsInterface {
             case RIL_UNSOl_CDMA_PRL_CHANGED: ret = responseInts(p); break;
             case RIL_UNSOL_EXIT_EMERGENCY_CALLBACK_MODE: ret = responseVoid(p); break;
             case RIL_UNSOL_RIL_CONNECTED: ret = responseInts(p); break;
+            case RIL_UNSOL_VOICE_RADIO_TECH_CHANGED: ret =  responseInts(p); break;
 
             default:
                 throw new RuntimeException("Unrecognized unsol response: " + response);
@@ -2530,13 +2568,20 @@ public final class RIL extends BaseCommands implements CommandsInterface {
                 result[0] = ret;
                 result[1] = Long.valueOf(nitzReceiveTime);
 
-                if (mNITZTimeRegistrant != null) {
+                boolean ignoreNitz = SystemProperties.getBoolean(
+                        TelephonyProperties.PROPERTY_IGNORE_NITZ, false);
 
-                    mNITZTimeRegistrant
-                        .notifyRegistrant(new AsyncResult (null, result, null));
+                if (ignoreNitz) {
+                    if (RILJ_LOGD) riljLog("ignoring UNSOL_NITZ_TIME_RECEIVED");
                 } else {
-                    // in case NITZ time registrant isnt registered yet
-                    mLastNITZTimeInfo = result;
+                    if (mNITZTimeRegistrant != null) {
+
+                        mNITZTimeRegistrant
+                            .notifyRegistrant(new AsyncResult (null, result, null));
+                    } else {
+                        // in case NITZ time registrant isnt registered yet
+                        mLastNITZTimeInfo = result;
+                    }
                 }
             break;
 
@@ -2735,6 +2780,15 @@ public final class RIL extends BaseCommands implements CommandsInterface {
                 if (mResendIncallMuteRegistrants != null) {
                     mResendIncallMuteRegistrants.notifyRegistrants(
                                         new AsyncResult (null, ret, null));
+                }
+                break;
+
+            case RIL_UNSOL_VOICE_RADIO_TECH_CHANGED:
+                if (RILJ_LOGD) unsljLogRet(response, ret);
+
+                if (mVoiceRadioTechChangedRegistrants != null) {
+                    mVoiceRadioTechChangedRegistrants.notifyRegistrants(
+                            new AsyncResult(null, ret, null));
                 }
                 break;
 
@@ -2963,6 +3017,16 @@ public final class RIL extends BaseCommands implements CommandsInterface {
     }
 
     private Object
+    responseSimRefresh(Parcel p) {
+        IccRefreshResponse response = new IccRefreshResponse();
+
+        response.refreshResult = p.readInt();
+        response.efId   = p.readInt();
+        response.aid = p.readString();
+        return response;
+    }
+
+    private Object
     responseCallList(Parcel p) {
         int num;
         int voiceSettings;
@@ -2972,6 +3036,11 @@ public final class RIL extends BaseCommands implements CommandsInterface {
         num = p.readInt();
         response = new ArrayList<DriverCall>(num);
 
+        if (RILJ_LOGV) {
+            riljLog("responseCallList: num=" + num +
+                    " mEmergencyCallbackModeRegistrant=" + mEmergencyCallbackModeRegistrant +
+                    " mTestingEmergencyCall=" + mTestingEmergencyCall.get());
+        }
         for (int i = 0 ; i < num ; i++) {
             dc = new DriverCall();
 
@@ -3022,6 +3091,14 @@ public final class RIL extends BaseCommands implements CommandsInterface {
         }
 
         Collections.sort(response);
+
+        if ((num == 0) && mTestingEmergencyCall.getAndSet(false)) {
+            if (mEmergencyCallbackModeRegistrant != null) {
+                riljLog("responseCallList: call ended, testing emergency call," +
+                            " notify ECM Registrants");
+                mEmergencyCallbackModeRegistrant.notifyRegistrant();
+            }
+        }
 
         return response;
     }
@@ -3495,6 +3572,7 @@ public final class RIL extends BaseCommands implements CommandsInterface {
             case RIL_REQUEST_ISIM_AUTHENTICATION: return "RIL_REQUEST_ISIM_AUTHENTICATION";
             case RIL_REQUEST_ACKNOWLEDGE_INCOMING_GSM_SMS_WITH_PDU: return "RIL_REQUEST_ACKNOWLEDGE_INCOMING_GSM_SMS_WITH_PDU";
             case RIL_REQUEST_STK_SEND_ENVELOPE_WITH_STATUS: return "RIL_REQUEST_STK_SEND_ENVELOPE_WITH_STATUS";
+            case RIL_REQUEST_VOICE_RADIO_TECH: return "RIL_REQUEST_VOICE_RADIO_TECH";
             default: return "<unknown request>";
         }
     }
@@ -3543,6 +3621,7 @@ public final class RIL extends BaseCommands implements CommandsInterface {
             case RIL_UNSOl_CDMA_PRL_CHANGED: return "UNSOL_CDMA_PRL_CHANGED";
             case RIL_UNSOL_EXIT_EMERGENCY_CALLBACK_MODE: return "UNSOL_EXIT_EMERGENCY_CALLBACK_MODE";
             case RIL_UNSOL_RIL_CONNECTED: return "UNSOL_RIL_CONNECTED";
+            case RIL_UNSOL_VOICE_RADIO_TECH_CHANGED: return "UNSOL_VOICE_RADIO_TECH_CHANGED";
             default: return "<unknown reponse>";
         }
     }
@@ -3746,5 +3825,37 @@ public final class RIL extends BaseCommands implements CommandsInterface {
         if (RILJ_LOGD) riljLog(rr.serialString() + "> " + requestToString(rr.mRequest));
 
         send(rr);
+    }
+
+    /* (non-Javadoc)
+     * @see com.android.internal.telephony.BaseCommands#testingEmergencyCall()
+     */
+    @Override
+    public void testingEmergencyCall() {
+        if (RILJ_LOGD) riljLog("testingEmergencyCall");
+        mTestingEmergencyCall.set(true);
+    }
+
+    public void dump(FileDescriptor fd, PrintWriter pw, String[] args) {
+        pw.println("RIL:");
+        pw.println(" mSocket=" + mSocket);
+        pw.println(" mSenderThread=" + mSenderThread);
+        pw.println(" mSender=" + mSender);
+        pw.println(" mReceiverThread=" + mReceiverThread);
+        pw.println(" mReceiver=" + mReceiver);
+        pw.println(" mWakeLock=" + mWakeLock);
+        pw.println(" mWakeLockTimeout=" + mWakeLockTimeout);
+        synchronized (mRequestsList) {
+          pw.println(" mRequestMessagesPending=" + mRequestMessagesPending);
+          pw.println(" mRequestMessagesWaiting=" + mRequestMessagesWaiting);
+            int count = mRequestsList.size();
+            pw.println(" mRequestList count=" + count);
+            for (int i = 0; i < count; i++) {
+                RILRequest rr = mRequestsList.get(i);
+                pw.println("  [" + rr.mSerial + "] " + requestToString(rr.mRequest));
+            }
+        }
+        pw.println(" mLastNITZTimeInfo=" + mLastNITZTimeInfo);
+        pw.println(" mTestingEmergencyCall=" + mTestingEmergencyCall.get());
     }
 }

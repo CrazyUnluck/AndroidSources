@@ -16,15 +16,24 @@
 
 package com.android.internal.content;
 
-import android.os.storage.IMountService;
-
+import android.os.FileUtils;
 import android.os.IBinder;
 import android.os.RemoteException;
 import android.os.ServiceManager;
+import android.os.storage.IMountService;
 import android.os.storage.StorageResultCode;
 import android.util.Log;
 
 import java.io.File;
+import java.io.FileOutputStream;
+import java.io.IOException;
+import java.io.InputStream;
+import java.util.Collections;
+import java.util.zip.ZipEntry;
+import java.util.zip.ZipFile;
+import java.util.zip.ZipOutputStream;
+
+import libcore.io.IoUtils;
 
 /**
  * Constants used internally between the PackageManager
@@ -48,27 +57,27 @@ public class PackageHelper {
     public static final int APP_INSTALL_INTERNAL = 1;
     public static final int APP_INSTALL_EXTERNAL = 2;
 
-    public static IMountService getMountService() {
+    public static IMountService getMountService() throws RemoteException {
         IBinder service = ServiceManager.getService("mount");
         if (service != null) {
             return IMountService.Stub.asInterface(service);
         } else {
             Log.e(TAG, "Can't get mount service");
+            throw new RemoteException("Could not contact mount service");
         }
-        return null;
     }
 
-    public static String createSdDir(int sizeMb, String cid,
-            String sdEncKey, int uid) {
+    public static String createSdDir(int sizeMb, String cid, String sdEncKey, int uid,
+            boolean isExternal) {
         // Create mount point via MountService
-        IMountService mountService = getMountService();
-
-        if (localLOGV)
-            Log.i(TAG, "Size of container " + sizeMb + " MB");
-
         try {
-            int rc = mountService.createSecureContainer(
-                    cid, sizeMb, "fat", sdEncKey, uid);
+            IMountService mountService = getMountService();
+
+            if (localLOGV)
+                Log.i(TAG, "Size of container " + sizeMb + " MB");
+
+            int rc = mountService.createSecureContainer(cid, sizeMb, "ext4", sdEncKey, uid,
+                    isExternal);
             if (rc != StorageResultCode.OperationSucceeded) {
                 Log.e(TAG, "Failed to create secure container " + cid);
                 return null;
@@ -196,4 +205,93 @@ public class PackageHelper {
        }
        return false;
    }
+
+    public static int extractPublicFiles(String packagePath, File publicZipFile)
+            throws IOException {
+        final FileOutputStream fstr;
+        final ZipOutputStream publicZipOutStream;
+
+        if (publicZipFile == null) {
+            fstr = null;
+            publicZipOutStream = null;
+        } else {
+            fstr = new FileOutputStream(publicZipFile);
+            publicZipOutStream = new ZipOutputStream(fstr);
+        }
+
+        int size = 0;
+
+        try {
+            final ZipFile privateZip = new ZipFile(packagePath);
+            try {
+                // Copy manifest, resources.arsc and res directory to public zip
+                for (final ZipEntry zipEntry : Collections.list(privateZip.entries())) {
+                    final String zipEntryName = zipEntry.getName();
+                    if ("AndroidManifest.xml".equals(zipEntryName)
+                            || "resources.arsc".equals(zipEntryName)
+                            || zipEntryName.startsWith("res/")) {
+                        size += zipEntry.getSize();
+                        if (publicZipFile != null) {
+                            copyZipEntry(zipEntry, privateZip, publicZipOutStream);
+                        }
+                    }
+                }
+            } finally {
+                try { privateZip.close(); } catch (IOException e) {}
+            }
+
+            if (publicZipFile != null) {
+                publicZipOutStream.finish();
+                publicZipOutStream.flush();
+                FileUtils.sync(fstr);
+                publicZipOutStream.close();
+                FileUtils.setPermissions(publicZipFile.getAbsolutePath(), FileUtils.S_IRUSR
+                        | FileUtils.S_IWUSR | FileUtils.S_IRGRP | FileUtils.S_IROTH, -1, -1);
+            }
+        } finally {
+            IoUtils.closeQuietly(publicZipOutStream);
+        }
+
+        return size;
+    }
+
+    private static void copyZipEntry(ZipEntry zipEntry, ZipFile inZipFile,
+            ZipOutputStream outZipStream) throws IOException {
+        byte[] buffer = new byte[4096];
+        int num;
+
+        ZipEntry newEntry;
+        if (zipEntry.getMethod() == ZipEntry.STORED) {
+            // Preserve the STORED method of the input entry.
+            newEntry = new ZipEntry(zipEntry);
+        } else {
+            // Create a new entry so that the compressed len is recomputed.
+            newEntry = new ZipEntry(zipEntry.getName());
+        }
+        outZipStream.putNextEntry(newEntry);
+
+        final InputStream data = inZipFile.getInputStream(zipEntry);
+        try {
+            while ((num = data.read(buffer)) > 0) {
+                outZipStream.write(buffer, 0, num);
+            }
+            outZipStream.flush();
+        } finally {
+            IoUtils.closeQuietly(data);
+        }
+    }
+
+    public static boolean fixSdPermissions(String cid, int gid, String filename) {
+        try {
+            int rc = getMountService().fixPermissionsSecureContainer(cid, gid, filename);
+            if (rc != StorageResultCode.OperationSucceeded) {
+                Log.i(TAG, "Failed to fixperms container " + cid);
+                return false;
+            }
+            return true;
+        } catch (RemoteException e) {
+            Log.e(TAG, "Failed to fixperms container " + cid + " with exception " + e);
+        }
+        return false;
+    }
 }

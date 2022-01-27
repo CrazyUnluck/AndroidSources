@@ -68,6 +68,8 @@ public class RemoteViewsAdapter extends BaseAdapter implements Handler.Callback 
     private RemoteViewsAdapterServiceConnection mServiceConnection;
     private WeakReference<RemoteAdapterConnectionCallback> mCallback;
     private FixedSizeRemoteViewsCache mCache;
+    private int mVisibleWindowLowerBound;
+    private int mVisibleWindowUpperBound;
 
     // A flag to determine whether we should notify data set changed after we connect
     private boolean mNotifyDataSetChangedAfterOnServiceConnected = false;
@@ -475,8 +477,11 @@ public class RemoteViewsAdapter extends BaseAdapter implements Handler.Callback 
         private static final String TAG = "FixedSizeRemoteViewsCache";
 
         // The meta data related to all the RemoteViews, ie. count, is stable, etc.
-        private RemoteViewsMetaData mMetaData;
-        private RemoteViewsMetaData mTemporaryMetaData;
+        // The meta data objects are made final so that they can be locked on independently
+        // of the FixedSizeRemoteViewsCache. If we ever lock on both meta data objects, it is in
+        // the order mTemporaryMetaData followed by mMetaData.
+        private final RemoteViewsMetaData mMetaData;
+        private final RemoteViewsMetaData mTemporaryMetaData;
 
         // The cache/mapping of position to RemoteViewsMetaData.  This set is guaranteed to be
         // greater than or equal to the set of RemoteViews.
@@ -590,7 +595,7 @@ public class RemoteViewsAdapter extends BaseAdapter implements Handler.Callback 
             for (Integer i : mIndexRemoteViews.keySet()) {
                 final RemoteViews v = mIndexRemoteViews.get(i);
                 if (v != null) {
-                    mem += v.estimateBitmapMemoryUsage();
+                    mem += v.estimateMemoryUsage();
                 }
             }
             return mem;
@@ -609,7 +614,7 @@ public class RemoteViewsAdapter extends BaseAdapter implements Handler.Callback 
                     maxDistIndexNonRequested = i;
                     maxDistNonRequested = dist;
                 }
-                if (dist > maxDist) {
+                if (dist >= maxDist) {
                     // maxDist/maxDistIndex will store the index of the farthest position
                     // regardless of whether it was directly requested or not
                     maxDistIndex = i;
@@ -765,7 +770,7 @@ public class RemoteViewsAdapter extends BaseAdapter implements Handler.Callback 
                     }
                     if (position > -1) {
                         // Load the item, and notify any existing RemoteViewsFrameLayouts
-                        updateRemoteViews(position, isRequested);
+                        updateRemoteViews(position, isRequested, true);
 
                         // Queue up for the next one to load
                         loadNextIndexInBackground();
@@ -827,8 +832,8 @@ public class RemoteViewsAdapter extends BaseAdapter implements Handler.Callback 
         }
     }
 
-    private void updateRemoteViews(final int position, boolean isRequested) {
-        if (!mServiceConnection.isConnected()) return;
+    private void updateRemoteViews(final int position, boolean isRequested, boolean
+            notifyWhenLoaded) {
         IRemoteViewsFactory factory = mServiceConnection.getRemoteViewsFactory();
 
         // Load the item information from the remote service
@@ -864,12 +869,14 @@ public class RemoteViewsAdapter extends BaseAdapter implements Handler.Callback 
             // there is new data for it.
             final RemoteViews rv = remoteViews;
             final int typeId = mCache.getMetaDataAt(position).typeId;
-            mMainQueue.post(new Runnable() {
-                @Override
-                public void run() {
-                    mRequestedViews.notifyOnRemoteViewsLoaded(position, rv, typeId);
-                }
-            });
+            if (notifyWhenLoaded) {
+                mMainQueue.post(new Runnable() {
+                    @Override
+                    public void run() {
+                        mRequestedViews.notifyOnRemoteViewsLoaded(position, rv, typeId);
+                    }
+                });
+            }
         }
     }
 
@@ -927,6 +934,16 @@ public class RemoteViewsAdapter extends BaseAdapter implements Handler.Callback 
             }
         }
         return typeId;
+    }
+
+    /**
+     * This method allows an AdapterView using this Adapter to provide information about which
+     * views are currently being displayed. This allows for certain optimizations and preloading
+     * which  wouldn't otherwise be possible.
+     */
+    public void setVisibleRangeHint(int lowerBound, int upperBound) {
+        mVisibleWindowLowerBound = lowerBound;
+        mVisibleWindowUpperBound = upperBound;
     }
 
     public View getView(int position, View convertView, ViewGroup parent) {
@@ -1058,6 +1075,21 @@ public class RemoteViewsAdapter extends BaseAdapter implements Handler.Callback 
 
         // Re-request the new metadata (only after the notification to the factory)
         updateTemporaryMetaData();
+        int newCount;
+        synchronized(mCache.getTemporaryMetaData()) {
+            newCount = mCache.getTemporaryMetaData().count;
+        }
+
+        // Pre-load (our best guess of) the views which are currently visible in the AdapterView.
+        // This mitigates flashing and flickering of loading views when a widget notifies that
+        // its data has changed.
+        for (int i = mVisibleWindowLowerBound; i <= mVisibleWindowUpperBound; i++) {
+            // Because temporary meta data is only ever modified from this thread (ie.
+            // mWorkerThread), it is safe to assume that count is a valid representation.
+            if (i < newCount) {
+                updateRemoteViews(i, false, false);
+            }
+        }
 
         // Propagate the notification back to the base adapter
         mMainQueue.post(new Runnable() {

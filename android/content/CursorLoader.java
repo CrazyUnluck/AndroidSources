@@ -19,7 +19,8 @@ package android.content;
 import android.database.ContentObserver;
 import android.database.Cursor;
 import android.net.Uri;
-import android.os.AsyncTask;
+import android.os.CancellationSignal;
+import android.os.OperationCanceledException;
 
 import java.io.FileDescriptor;
 import java.io.PrintWriter;
@@ -49,18 +50,42 @@ public class CursorLoader extends AsyncTaskLoader<Cursor> {
     String mSortOrder;
 
     Cursor mCursor;
+    CancellationSignal mCancellationSignal;
 
     /* Runs on a worker thread */
     @Override
     public Cursor loadInBackground() {
-        Cursor cursor = getContext().getContentResolver().query(mUri, mProjection, mSelection,
-                mSelectionArgs, mSortOrder);
-        if (cursor != null) {
-            // Ensure the cursor window is filled
-            cursor.getCount();
-            registerContentObserver(cursor, mObserver);
+        synchronized (this) {
+            if (isLoadInBackgroundCanceled()) {
+                throw new OperationCanceledException();
+            }
+            mCancellationSignal = new CancellationSignal();
         }
-        return cursor;
+        try {
+            Cursor cursor = getContext().getContentResolver().query(mUri, mProjection, mSelection,
+                    mSelectionArgs, mSortOrder, mCancellationSignal);
+            if (cursor != null) {
+                // Ensure the cursor window is filled
+                cursor.getCount();
+                registerContentObserver(cursor, mObserver);
+            }
+            return cursor;
+        } finally {
+            synchronized (this) {
+                mCancellationSignal = null;
+            }
+        }
+    }
+
+    @Override
+    public void cancelLoadInBackground() {
+        super.cancelLoadInBackground();
+
+        synchronized (this) {
+            if (mCancellationSignal != null) {
+                mCancellationSignal.cancel();
+            }
+        }
     }
 
     /**

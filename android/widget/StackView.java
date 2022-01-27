@@ -32,6 +32,7 @@ import android.graphics.Rect;
 import android.graphics.RectF;
 import android.graphics.Region;
 import android.graphics.TableMaskFilter;
+import android.os.Bundle;
 import android.util.AttributeSet;
 import android.util.Log;
 import android.view.InputDevice;
@@ -40,6 +41,8 @@ import android.view.VelocityTracker;
 import android.view.View;
 import android.view.ViewConfiguration;
 import android.view.ViewGroup;
+import android.view.accessibility.AccessibilityEvent;
+import android.view.accessibility.AccessibilityNodeInfo;
 import android.view.animation.LinearInterpolator;
 import android.widget.RemoteViews.RemoteView;
 
@@ -1214,6 +1217,52 @@ public class StackView extends AdapterViewAnimator {
         }
         setMeasuredDimension(widthSpecSize, heightSpecSize);
         measureChildren();
+    }
+
+    @Override
+    public void onInitializeAccessibilityEvent(AccessibilityEvent event) {
+        super.onInitializeAccessibilityEvent(event);
+        event.setClassName(StackView.class.getName());
+    }
+
+    @Override
+    public void onInitializeAccessibilityNodeInfo(AccessibilityNodeInfo info) {
+        super.onInitializeAccessibilityNodeInfo(info);
+        info.setClassName(StackView.class.getName());
+        info.setScrollable(getChildCount() > 1);
+        if (isEnabled()) {
+            if (getDisplayedChild() < getChildCount() - 1) {
+                info.addAction(AccessibilityNodeInfo.ACTION_SCROLL_FORWARD);
+            }
+            if (getDisplayedChild() > 0) {
+                info.addAction(AccessibilityNodeInfo.ACTION_SCROLL_BACKWARD);
+            }
+        }
+    }
+
+    @Override
+    public boolean performAccessibilityAction(int action, Bundle arguments) {
+        if (super.performAccessibilityAction(action, arguments)) {
+            return true;
+        }
+        if (!isEnabled()) {
+            return false;
+        }
+        switch (action) {
+            case AccessibilityNodeInfo.ACTION_SCROLL_FORWARD: {
+                if (getDisplayedChild() < getChildCount() - 1) {
+                    showNext();
+                    return true;
+                }
+            } return false;
+            case AccessibilityNodeInfo.ACTION_SCROLL_BACKWARD: {
+                if (getDisplayedChild() > 0) {
+                    showPrevious();
+                    return true;
+                }
+            } return false;
+        }
+        return false;
     }
 
     class LayoutParams extends ViewGroup.LayoutParams {

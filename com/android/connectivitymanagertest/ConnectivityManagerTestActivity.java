@@ -94,6 +94,7 @@ public class ConnectivityManagerTestActivity extends Activity {
      * Control Wifi States
      */
     public WifiManager mWifiManager;
+    public WifiManager.Channel mChannel;
 
     /*
      * Verify connectivity state
@@ -240,13 +241,17 @@ public class ConnectivityManagerTestActivity extends Activity {
         mCM = (ConnectivityManager)getSystemService(Context.CONNECTIVITY_SERVICE);
         // Get an instance of WifiManager
         mWifiManager =(WifiManager)getSystemService(Context.WIFI_SERVICE);
-        mWifiManager.asyncConnect(this, new WifiServiceHandler());
+        mContext = this;
+        mChannel = mWifiManager.initialize(mContext, mContext.getMainLooper(), null);
+
+        if (mWifiManager.isWifiApEnabled()) {
+            // if soft AP is enabled, disable it
+            mWifiManager.setWifiApEnabled(null, false);
+            log("Disable soft ap");
+        }
 
         initializeNetworkStates();
-
-        mWifiManager.setWifiEnabled(true);
         log("Clear Wifi before we start the test.");
-        sleep(SHORT_TIMEOUT);
         removeConfiguredNetworksAndDisableWifi();
         mWifiRegexs = mCM.getTetherableWifiRegexs();
      }
@@ -594,7 +599,14 @@ public class ConnectivityManagerTestActivity extends Activity {
                         log("found " + ssid + " in the scan result list");
                         log("retry: " + retry);
                         foundApInScanResults = true;
-                        mWifiManager.connectNetwork(config);
+                        mWifiManager.connect(mChannel, config,
+                                new WifiManager.ActionListener() {
+                                    public void onSuccess() {
+                                    }
+                                    public void onFailure(int reason) {
+                                        log("connect failure " + reason);
+                                    }
+                                });
                         break;
                    }
                 }
@@ -636,12 +648,23 @@ public class ConnectivityManagerTestActivity extends Activity {
      */
     public boolean disconnectAP() {
         // remove saved networks
+        if (!mWifiManager.isWifiEnabled()) {
+            log("Enabled wifi before remove configured networks");
+            mWifiManager.setWifiEnabled(true);
+            sleep(SHORT_TIMEOUT);
+        }
         List<WifiConfiguration> wifiConfigList = mWifiManager.getConfiguredNetworks();
         log("size of wifiConfigList: " + wifiConfigList.size());
         for (WifiConfiguration wifiConfig: wifiConfigList) {
             log("remove wifi configuration: " + wifiConfig.networkId);
             int netId = wifiConfig.networkId;
-            mWifiManager.forgetNetwork(netId);
+            mWifiManager.forget(mChannel, netId, new WifiManager.ActionListener() {
+                    public void onSuccess() {
+                    }
+                    public void onFailure(int reason) {
+                        log("Failed to forget " + reason);
+                    }
+                });
         }
         return true;
     }

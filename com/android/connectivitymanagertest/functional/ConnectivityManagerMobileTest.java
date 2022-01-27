@@ -16,37 +16,30 @@
 
 package com.android.connectivitymanagertest.functional;
 
-import com.android.connectivitymanagertest.ConnectivityManagerTestActivity;
-import com.android.connectivitymanagertest.UtilHelper;
-
-import android.content.Intent;
 import android.content.Context;
-import android.os.PowerManager;
-import android.os.PowerManager.WakeLock;
-import android.app.Instrumentation;
-import android.os.Handler;
-import android.os.Message;
-import android.provider.Settings;
 import android.net.ConnectivityManager;
 import android.net.NetworkInfo;
 import android.net.NetworkInfo.State;
-import android.net.NetworkInfo.DetailedState;
 import android.net.wifi.WifiManager;
-
-import android.test.suitebuilder.annotation.LargeTest;
+import android.os.PowerManager;
+import android.os.PowerManager.WakeLock;
+import android.provider.Settings;
 import android.test.ActivityInstrumentationTestCase2;
-import com.android.connectivitymanagertest.ConnectivityManagerTestRunner;
-import com.android.connectivitymanagertest.NetworkState;
+import android.test.suitebuilder.annotation.LargeTest;
 import android.util.Log;
 
-public class ConnectivityManagerMobileTest
-    extends ActivityInstrumentationTestCase2<ConnectivityManagerTestActivity> {
-    private static final String LOG_TAG = "ConnectivityManagerMobileTest";
-    private static final String PKG_NAME = "com.android.connectivitymanagertest";
+import com.android.connectivitymanagertest.ConnectivityManagerTestActivity;
+import com.android.connectivitymanagertest.ConnectivityManagerTestRunner;
+import com.android.connectivitymanagertest.NetworkState;
 
-    private String TEST_ACCESS_POINT;
+public class ConnectivityManagerMobileTest extends
+        ActivityInstrumentationTestCase2<ConnectivityManagerTestActivity> {
+    private static final String LOG_TAG = "ConnectivityManagerMobileTest";
+
+    private String mTestAccessPoint;
     private ConnectivityManagerTestActivity cmActivity;
     private WakeLock wl;
+    private boolean mWifiOnlyFlag;
 
     public ConnectivityManagerMobileTest() {
         super(ConnectivityManagerTestActivity.class);
@@ -58,7 +51,9 @@ public class ConnectivityManagerMobileTest
         cmActivity = getActivity();
         ConnectivityManagerTestRunner mRunner =
                 (ConnectivityManagerTestRunner)getInstrumentation();
-        TEST_ACCESS_POINT = mRunner.TEST_SSID;
+        mTestAccessPoint = mRunner.mTestSsid;
+        mWifiOnlyFlag = mRunner.mWifiOnlyFlag;
+
         PowerManager pm = (PowerManager)getInstrumentation().
                 getContext().getSystemService(Context.POWER_SERVICE);
         wl = pm.newWakeLock(PowerManager.SCREEN_BRIGHT_WAKE_LOCK, "CMWakeLock");
@@ -69,7 +64,8 @@ public class ConnectivityManagerMobileTest
             log("airplane is not disabled, disable it.");
             cmActivity.setAirplaneMode(getInstrumentation().getContext(), false);
         }
-        if (!UtilHelper.isWifiOnly()) {
+
+        if (!mWifiOnlyFlag) {
             if (!cmActivity.waitForNetworkState(ConnectivityManager.TYPE_MOBILE, State.CONNECTED,
                     ConnectivityManagerTestActivity.LONG_TIMEOUT)) {
                 // Note: When the test fails in setUp(), tearDown is not called. In that case,
@@ -118,6 +114,10 @@ public class ConnectivityManagerMobileTest
     //              event should be expected.
     @LargeTest
     public void test3GToWifiNotification() {
+        if (mWifiOnlyFlag) {
+            Log.v(LOG_TAG, this.getName() + " is excluded for wifi-only test");
+            return;
+        }
         // Enable Wi-Fi to avoid initial UNKNOWN state
         cmActivity.enableWifi();
         sleep(2 * ConnectivityManagerTestActivity.SHORT_TIMEOUT);
@@ -164,9 +164,9 @@ public class ConnectivityManagerMobileTest
     // Test case 2: test connection to a given AP
     @LargeTest
     public void testConnectToWifi() {
-        assertNotNull("SSID is null", TEST_ACCESS_POINT);
+        assertNotNull("SSID is null", mTestAccessPoint);
         NetworkInfo networkInfo;
-        if (!UtilHelper.isWifiOnly()) {
+        if (!mWifiOnlyFlag) {
             //Prepare for connectivity verification
             networkInfo = cmActivity.mCM.getNetworkInfo(ConnectivityManager.TYPE_MOBILE);
             cmActivity.setStateTransitionCriteria(ConnectivityManager.TYPE_MOBILE,
@@ -177,15 +177,15 @@ public class ConnectivityManagerMobileTest
                 NetworkState.TO_CONNECTION, State.CONNECTED);
 
         // Enable Wifi and connect to a test access point
-        assertTrue("failed to connect to " + TEST_ACCESS_POINT,
-                cmActivity.connectToWifi(TEST_ACCESS_POINT));
+        assertTrue("failed to connect to " + mTestAccessPoint,
+                cmActivity.connectToWifi(mTestAccessPoint));
 
         assertTrue(cmActivity.waitForWifiState(WifiManager.WIFI_STATE_ENABLED,
                 ConnectivityManagerTestActivity.LONG_TIMEOUT));
         log("wifi state is enabled");
         assertTrue(cmActivity.waitForNetworkState(ConnectivityManager.TYPE_WIFI, State.CONNECTED,
                 ConnectivityManagerTestActivity.LONG_TIMEOUT));
-        if (!UtilHelper.isWifiOnly()) {
+        if (!mWifiOnlyFlag) {
             assertTrue(cmActivity.waitForNetworkState(ConnectivityManager.TYPE_MOBILE,
                     State.DISCONNECTED, ConnectivityManagerTestActivity.LONG_TIMEOUT));
         }
@@ -197,7 +197,7 @@ public class ConnectivityManagerMobileTest
                     cmActivity.getTransitionFailureReason(ConnectivityManager.TYPE_WIFI));
             assertTrue(false);
         }
-        if (!UtilHelper.isWifiOnly()) {
+        if (!mWifiOnlyFlag) {
             if (!cmActivity.validateNetworkStates(ConnectivityManager.TYPE_MOBILE)) {
                 log("Mobile state transition validation failed.");
                 log("reason: " +
@@ -210,10 +210,10 @@ public class ConnectivityManagerMobileTest
     // Test case 3: connect to Wifi with known AP
     @LargeTest
     public void testConnectToWifWithKnownAP() {
-        assertNotNull("SSID is null", TEST_ACCESS_POINT);
-        // Connect to TEST_ACCESS_POINT
-        assertTrue("failed to connect to " + TEST_ACCESS_POINT,
-                cmActivity.connectToWifi(TEST_ACCESS_POINT));
+        assertNotNull("SSID is null", mTestAccessPoint);
+        // Connect to mTestAccessPoint
+        assertTrue("failed to connect to " + mTestAccessPoint,
+                cmActivity.connectToWifi(mTestAccessPoint));
         assertTrue(cmActivity.waitForWifiState(WifiManager.WIFI_STATE_ENABLED,
                 ConnectivityManagerTestActivity.LONG_TIMEOUT));
         assertTrue(cmActivity.waitForNetworkState(ConnectivityManager.TYPE_WIFI, State.CONNECTED,
@@ -232,13 +232,13 @@ public class ConnectivityManagerMobileTest
                 ConnectivityManagerTestActivity.LONG_TIMEOUT));
         assertTrue(cmActivity.waitForNetworkState(ConnectivityManager.TYPE_WIFI,
                 State.DISCONNECTED, ConnectivityManagerTestActivity.LONG_TIMEOUT));
-        if (!UtilHelper.isWifiOnly()) {
+        if (!mWifiOnlyFlag) {
             assertTrue(cmActivity.waitForNetworkState(ConnectivityManager.TYPE_MOBILE,
                     State.CONNECTED, ConnectivityManagerTestActivity.LONG_TIMEOUT));
         }
 
         NetworkInfo networkInfo;
-        if (!UtilHelper.isWifiOnly()) {
+        if (!mWifiOnlyFlag) {
             //Prepare for connectivity state verification
             networkInfo = cmActivity.mCM.getNetworkInfo(ConnectivityManager.TYPE_MOBILE);
             cmActivity.setStateTransitionCriteria(ConnectivityManager.TYPE_MOBILE,
@@ -258,7 +258,7 @@ public class ConnectivityManagerMobileTest
         // Wait for Wifi to be connected and mobile to be disconnected
         assertTrue(cmActivity.waitForNetworkState(ConnectivityManager.TYPE_WIFI, State.CONNECTED,
                 ConnectivityManagerTestActivity.LONG_TIMEOUT));
-        if (!UtilHelper.isWifiOnly()) {
+        if (!mWifiOnlyFlag) {
             assertTrue(cmActivity.waitForNetworkState(ConnectivityManager.TYPE_MOBILE,
                     State.DISCONNECTED, ConnectivityManagerTestActivity.LONG_TIMEOUT));
         }
@@ -275,11 +275,11 @@ public class ConnectivityManagerMobileTest
     // Test case 4:  test disconnect Wifi
     @LargeTest
     public void testDisconnectWifi() {
-        assertNotNull("SSID is null", TEST_ACCESS_POINT);
+        assertNotNull("SSID is null", mTestAccessPoint);
 
         // connect to Wifi
-        assertTrue("failed to connect to " + TEST_ACCESS_POINT,
-                   cmActivity.connectToWifi(TEST_ACCESS_POINT));
+        assertTrue("failed to connect to " + mTestAccessPoint,
+                   cmActivity.connectToWifi(mTestAccessPoint));
 
         assertTrue(cmActivity.waitForNetworkState(ConnectivityManager.TYPE_WIFI, State.CONNECTED,
             ConnectivityManagerTestActivity.LONG_TIMEOUT));
@@ -288,7 +288,7 @@ public class ConnectivityManagerMobileTest
         sleep(ConnectivityManagerTestActivity.SHORT_TIMEOUT);
 
         NetworkInfo networkInfo;
-        if (!UtilHelper.isWifiOnly()) {
+        if (!mWifiOnlyFlag) {
             networkInfo = cmActivity.mCM.getNetworkInfo(ConnectivityManager.TYPE_MOBILE);
             cmActivity.setStateTransitionCriteria(ConnectivityManager.TYPE_MOBILE,
                                                   networkInfo.getState(),
@@ -304,7 +304,7 @@ public class ConnectivityManagerMobileTest
 
         assertTrue(cmActivity.waitForNetworkState(ConnectivityManager.TYPE_WIFI, State.DISCONNECTED,
                 ConnectivityManagerTestActivity.LONG_TIMEOUT));
-        if (!UtilHelper.isWifiOnly()) {
+        if (!mWifiOnlyFlag) {
             assertTrue(cmActivity.waitForNetworkState(ConnectivityManager.TYPE_MOBILE,
                     State.CONNECTED, ConnectivityManagerTestActivity.LONG_TIMEOUT));
         }
@@ -316,7 +316,7 @@ public class ConnectivityManagerMobileTest
                     cmActivity.getTransitionFailureReason(ConnectivityManager.TYPE_WIFI));
             assertTrue(false);
         }
-        if (!UtilHelper.isWifiOnly()) {
+        if (!mWifiOnlyFlag) {
             if (!cmActivity.validateNetworkStates(ConnectivityManager.TYPE_MOBILE)) {
                 log("Mobile state transition validation failed.");
                 log("reason: " +
@@ -329,6 +329,10 @@ public class ConnectivityManagerMobileTest
     // Test case 5: test connectivity from 3G to airplane mode, then to 3G again
     @LargeTest
     public void testDataConnectionWith3GToAmTo3G() {
+        if (mWifiOnlyFlag) {
+            Log.v(LOG_TAG, this.getName() + " is excluded for wifi-only test");
+            return;
+        }
         //Prepare for state verification
         NetworkInfo networkInfo = cmActivity.mCM.getNetworkInfo(ConnectivityManager.TYPE_MOBILE);
         cmActivity.setStateTransitionCriteria(ConnectivityManager.TYPE_MOBILE,
@@ -345,7 +349,9 @@ public class ConnectivityManagerMobileTest
 
         networkInfo = cmActivity.mCM.getNetworkInfo(ConnectivityManager.TYPE_WIFI);
         assertEquals(State.DISCONNECTED, networkInfo.getState());
-
+        // wait until mobile is turn off
+        assertTrue(cmActivity.waitForNetworkState(ConnectivityManager.TYPE_MOBILE,
+                State.DISCONNECTED, ConnectivityManagerTestActivity.LONG_TIMEOUT));
         if (!cmActivity.validateNetworkStates(ConnectivityManager.TYPE_MOBILE)) {
             log("Mobile state transition validation failed.");
             log("reason: " +
@@ -387,13 +393,17 @@ public class ConnectivityManagerMobileTest
     // Test case 6: test connectivity with airplane mode Wifi connected
     @LargeTest
     public void testDataConnectionOverAMWithWifi() {
-        assertNotNull("SSID is null", TEST_ACCESS_POINT);
+        if (mWifiOnlyFlag) {
+            Log.v(LOG_TAG, this.getName() + " is excluded for wifi-only test");
+            return;
+        }
+        assertNotNull("SSID is null", mTestAccessPoint);
         // Eanble airplane mode
         log("Enable airplane mode");
         cmActivity.setAirplaneMode(getInstrumentation().getContext(), true);
 
         NetworkInfo networkInfo;
-        if (!UtilHelper.isWifiOnly()) {
+        if (!mWifiOnlyFlag) {
             assertTrue(cmActivity.waitForNetworkState(ConnectivityManager.TYPE_MOBILE,
                     State.DISCONNECTED, ConnectivityManagerTestActivity.LONG_TIMEOUT));
             networkInfo = cmActivity.mCM.getNetworkInfo(ConnectivityManager.TYPE_MOBILE);
@@ -407,8 +417,8 @@ public class ConnectivityManagerMobileTest
                                               NetworkState.TO_CONNECTION, State.CONNECTED);
 
         // Connect to Wifi
-        assertTrue("failed to connect to " + TEST_ACCESS_POINT,
-                   cmActivity.connectToWifi(TEST_ACCESS_POINT));
+        assertTrue("failed to connect to " + mTestAccessPoint,
+                   cmActivity.connectToWifi(mTestAccessPoint));
         assertTrue(cmActivity.waitForNetworkState(ConnectivityManager.TYPE_WIFI, State.CONNECTED,
                             ConnectivityManagerTestActivity.LONG_TIMEOUT));
 
@@ -419,7 +429,7 @@ public class ConnectivityManagerMobileTest
                     cmActivity.getTransitionFailureReason(ConnectivityManager.TYPE_WIFI));
             assertTrue("State validation failed", false);
         }
-        if (!UtilHelper.isWifiOnly()) {
+        if (!mWifiOnlyFlag) {
             if (!cmActivity.validateNetworkStates(ConnectivityManager.TYPE_MOBILE)) {
                 log("state validation for Mobile failed");
                 log("reason: " +
@@ -433,11 +443,15 @@ public class ConnectivityManagerMobileTest
     // Test case 7: test connectivity while transit from Wifi->AM->Wifi
     @LargeTest
     public void testDataConnectionWithWifiToAMToWifi () {
-        // Connect to TEST_ACCESS_POINT
-        assertNotNull("SSID is null", TEST_ACCESS_POINT);
+        if (mWifiOnlyFlag) {
+            Log.v(LOG_TAG, this.getName() + " is excluded for wifi-only test");
+            return;
+        }
+        // Connect to mTestAccessPoint
+        assertNotNull("SSID is null", mTestAccessPoint);
         // Connect to Wifi
-        assertTrue("failed to connect to " + TEST_ACCESS_POINT,
-                cmActivity.connectToWifi(TEST_ACCESS_POINT));
+        assertTrue("failed to connect to " + mTestAccessPoint,
+                cmActivity.connectToWifi(mTestAccessPoint));
 
         assertTrue(cmActivity.waitForNetworkState(ConnectivityManager.TYPE_WIFI, State.CONNECTED,
                 ConnectivityManagerTestActivity.LONG_TIMEOUT));
@@ -471,7 +485,7 @@ public class ConnectivityManagerMobileTest
 
         assertTrue(cmActivity.waitForNetworkState(ConnectivityManager.TYPE_WIFI, State.CONNECTED,
                             ConnectivityManagerTestActivity.LONG_TIMEOUT));
-        if (!UtilHelper.isWifiOnly()) {
+        if (!mWifiOnlyFlag) {
             assertTrue(cmActivity.waitForNetworkState(ConnectivityManager.TYPE_MOBILE,
                     State.DISCONNECTED, ConnectivityManagerTestActivity.LONG_TIMEOUT));
         }
@@ -488,10 +502,10 @@ public class ConnectivityManagerMobileTest
     // Test case 8: test wifi state change while connecting/disconnecting to/from an AP
     @LargeTest
     public void testWifiStateChange () {
-        assertNotNull("SSID is null", TEST_ACCESS_POINT);
-        //Connect to TEST_ACCESS_POINT
-        assertTrue("failed to connect to " + TEST_ACCESS_POINT,
-                   cmActivity.connectToWifi(TEST_ACCESS_POINT));
+        assertNotNull("SSID is null", mTestAccessPoint);
+        //Connect to mTestAccessPoint
+        assertTrue("failed to connect to " + mTestAccessPoint,
+                   cmActivity.connectToWifi(mTestAccessPoint));
         assertTrue(cmActivity.waitForWifiState(WifiManager.WIFI_STATE_ENABLED,
                 ConnectivityManagerTestActivity.LONG_TIMEOUT));
         assertTrue(cmActivity.waitForNetworkState(ConnectivityManager.TYPE_WIFI, State.CONNECTED,
@@ -508,7 +522,7 @@ public class ConnectivityManagerMobileTest
         // Disconnect from the current AP
         log("disconnect from the AP");
         if (!cmActivity.disconnectAP()) {
-            log("failed to disconnect from " + TEST_ACCESS_POINT);
+            log("failed to disconnect from " + mTestAccessPoint);
         }
 
         // Verify the connectivity state for Wifi is DISCONNECTED

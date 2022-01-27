@@ -16,10 +16,6 @@
 
 package android.widget;
 
-import android.animation.Animator;
-import android.animation.AnimatorListenerAdapter;
-import android.animation.AnimatorSet;
-import android.animation.ObjectAnimator;
 import android.annotation.Widget;
 import android.content.Context;
 import android.content.res.ColorStateList;
@@ -30,6 +26,7 @@ import android.graphics.Paint;
 import android.graphics.Paint.Align;
 import android.graphics.Rect;
 import android.graphics.drawable.Drawable;
+import android.os.Bundle;
 import android.text.InputFilter;
 import android.text.InputType;
 import android.text.Spanned;
@@ -47,28 +44,53 @@ import android.view.View;
 import android.view.ViewConfiguration;
 import android.view.accessibility.AccessibilityEvent;
 import android.view.accessibility.AccessibilityManager;
+import android.view.accessibility.AccessibilityNodeInfo;
+import android.view.accessibility.AccessibilityNodeProvider;
 import android.view.animation.DecelerateInterpolator;
 import android.view.inputmethod.EditorInfo;
 import android.view.inputmethod.InputMethodManager;
 
 import com.android.internal.R;
 
+import java.util.ArrayList;
+import java.util.Collections;
+import java.util.List;
+
 /**
  * A widget that enables the user to select a number form a predefined range.
- * The widget presents an input field and up and down buttons for selecting the
- * current value. Pressing/long-pressing the up and down buttons increments and
- * decrements the current value respectively. Touching the input field shows a
- * scroll wheel, which when touched allows direct edit
- * of the current value. Sliding gestures up or down hide the buttons and the
- * input filed, show and rotates the scroll wheel. Flinging is
- * also supported. The widget enables mapping from positions to strings such
- * that, instead of the position index, the corresponding string is displayed.
+ * There are two flavors of this widget and which one is presented to the user
+ * depends on the current theme.
+ * <ul>
+ * <li>
+ * If the current theme is derived from {@link android.R.style#Theme} the widget
+ * presents the current value as an editable input field with an increment button
+ * above and a decrement button below. Long pressing the buttons allows for a quick
+ * change of the current value. Tapping on the input field allows to type in
+ * a desired value.
+ * </li>
+ * <li>
+ * If the current theme is derived from {@link android.R.style#Theme_Holo} or
+ * {@link android.R.style#Theme_Holo_Light} the widget presents the current
+ * value as an editable input field with a lesser value above and a greater
+ * value below. Tapping on the lesser or greater value selects it by animating
+ * the number axis up or down to make the chosen value current. Flinging up
+ * or down allows for multiple increments or decrements of the current value.
+ * Long pressing on the lesser and greater values also allows for a quick change
+ * of the current value. Tapping on the current value allows to type in a
+ * desired value.
+ * </li>
+ * </ul>
  * <p>
  * For an example of using this widget, see {@link android.widget.TimePicker}.
  * </p>
  */
 @Widget
 public class NumberPicker extends LinearLayout {
+
+    /**
+     * The number of items show in the selector wheel.
+     */
+    private static final int SELECTOR_WHEEL_ITEM_COUNT = 3;
 
     /**
      * The default update interval during long press.
@@ -78,7 +100,7 @@ public class NumberPicker extends LinearLayout {
     /**
      * The index of the middle selector item.
      */
-    private static final int SELECTOR_MIDDLE_ITEM_INDEX = 2;
+    private static final int SELECTOR_MIDDLE_ITEM_INDEX = SELECTOR_WHEEL_ITEM_COUNT / 2;
 
     /**
      * The coefficient by which to adjust (divide) the max fling velocity.
@@ -91,17 +113,9 @@ public class NumberPicker extends LinearLayout {
     private static final int SELECTOR_ADJUSTMENT_DURATION_MILLIS = 800;
 
     /**
-     * The duration of scrolling to the next/previous value while changing
-     * the current value by one, i.e. increment or decrement.
+     * The duration of scrolling while snapping to a given position.
      */
-    private static final int CHANGE_CURRENT_BY_ONE_SCROLL_DURATION = 300;
-
-    /**
-     * The the delay for showing the input controls after a single tap on the
-     * input text.
-     */
-    private static final int SHOW_INPUT_CONTROLS_DELAY_MILLIS = ViewConfiguration
-            .getDoubleTapTimeout();
+    private static final int SNAP_SCROLL_DURATION = 300;
 
     /**
      * The strength of fading in the top and bottom while drawing the selector.
@@ -114,49 +128,14 @@ public class NumberPicker extends LinearLayout {
     private static final int UNSCALED_DEFAULT_SELECTION_DIVIDER_HEIGHT = 2;
 
     /**
-     * In this state the selector wheel is not shown.
+     * The default unscaled distance between the selection dividers.
      */
-    private static final int SELECTOR_WHEEL_STATE_NONE = 0;
+    private static final int UNSCALED_DEFAULT_SELECTION_DIVIDERS_DISTANCE = 48;
 
     /**
-     * In this state the selector wheel is small.
+     * The resource id for the default layout.
      */
-    private static final int SELECTOR_WHEEL_STATE_SMALL = 1;
-
-    /**
-     * In this state the selector wheel is large.
-     */
-    private static final int SELECTOR_WHEEL_STATE_LARGE = 2;
-
-    /**
-     * The alpha of the selector wheel when it is bright.
-     */
-    private static final int SELECTOR_WHEEL_BRIGHT_ALPHA = 255;
-
-    /**
-     * The alpha of the selector wheel when it is dimmed.
-     */
-    private static final int SELECTOR_WHEEL_DIM_ALPHA = 60;
-
-    /**
-     * The alpha for the increment/decrement button when it is transparent.
-     */
-    private static final int BUTTON_ALPHA_TRANSPARENT = 0;
-
-    /**
-     * The alpha for the increment/decrement button when it is opaque.
-     */
-    private static final int BUTTON_ALPHA_OPAQUE = 1;
-
-    /**
-     * The property for setting the selector paint.
-     */
-    private static final String PROPERTY_SELECTOR_PAINT_ALPHA = "selectorPaintAlpha";
-
-    /**
-     * The property for setting the increment/decrement button alpha.
-     */
-    private static final String PROPERTY_BUTTON_ALPHA = "alpha";
+    private static final int DEFAULT_LAYOUT_RESOURCE_ID = R.layout.number_picker;
 
     /**
      * The numbers accepted by the input text's {@link Filter}
@@ -207,6 +186,11 @@ public class NumberPicker extends LinearLayout {
      * The text for showing the current value.
      */
     private final EditText mInputText;
+
+    /**
+     * The distance between the two selection dividers.
+     */
+    private final int mSelectionDividersDistance;
 
     /**
      * The min height of this widget.
@@ -291,15 +275,17 @@ public class NumberPicker extends LinearLayout {
     /**
      * The selector indices whose value are show by the selector.
      */
-    private final int[] mSelectorIndices = new int[] {
-            Integer.MIN_VALUE, Integer.MIN_VALUE, Integer.MIN_VALUE, Integer.MIN_VALUE,
-            Integer.MIN_VALUE
-    };
+    private final int[] mSelectorIndices = new int[SELECTOR_WHEEL_ITEM_COUNT];
 
     /**
      * The {@link Paint} for drawing the selector.
      */
     private final Paint mSelectorWheelPaint;
+
+    /**
+     * The {@link Drawable} for pressed virtual (increment/decrement) buttons.
+     */
+    private final Drawable mVirtualButtonPressedDrawable;
 
     /**
      * The height of a selector element (text + gap).
@@ -337,25 +323,15 @@ public class NumberPicker extends LinearLayout {
     private SetSelectionCommand mSetSelectionCommand;
 
     /**
-     * Handle to the reusable command for adjusting the scroller.
-     */
-    private AdjustScrollerCommand mAdjustScrollerCommand;
-
-    /**
      * Handle to the reusable command for changing the current value from long
      * press by one.
      */
     private ChangeCurrentByOneFromLongPressCommand mChangeCurrentByOneFromLongPressCommand;
 
     /**
-     * {@link Animator} for showing the up/down arrows.
+     * Command for beginning an edit of the current value via IME on long press.
      */
-    private final AnimatorSet mShowInputControlsAnimator;
-
-    /**
-     * {@link Animator} for dimming the selector wheel.
-     */
-    private final Animator mDimSelectorWheelAnimator;
+    private BeginSoftInputOnLongPressCommand mBeginSoftInputOnLongPressCommand;
 
     /**
      * The Y position of the last down event.
@@ -363,24 +339,14 @@ public class NumberPicker extends LinearLayout {
     private float mLastDownEventY;
 
     /**
-     * The Y position of the last motion event.
+     * The time of the last down event.
      */
-    private float mLastMotionEventY;
+    private long mLastDownEventTime;
 
     /**
-     * Flag if to check for double tap and potentially start edit.
+     * The Y position of the last down or move event.
      */
-    private boolean mCheckBeginEditOnUpEvent;
-
-    /**
-     * Flag if to adjust the selector wheel on next up event.
-     */
-    private boolean mAdjustScrollerOnUpEvent;
-
-    /**
-     * The state of the selector wheel.
-     */
-    private int mSelectorWheelState;
+    private float mLastDownOrMoveEventY;
 
     /**
      * Determines speed during touch scrolling.
@@ -413,9 +379,9 @@ public class NumberPicker extends LinearLayout {
     private final int mSolidColor;
 
     /**
-     * Flag indicating if this widget supports flinging.
+     * Flag whether this widget has a selector wheel.
      */
-    private final boolean mFlingable;
+    private final boolean mHasSelectorWheel;
 
     /**
      * Divider for showing item to be selected while scrolling
@@ -428,29 +394,55 @@ public class NumberPicker extends LinearLayout {
     private final int mSelectionDividerHeight;
 
     /**
-     * Reusable {@link Rect} instance.
-     */
-    private final Rect mTempRect = new Rect();
-
-    /**
      * The current scroll state of the number picker.
      */
     private int mScrollState = OnScrollListener.SCROLL_STATE_IDLE;
 
     /**
-     * The duration of the animation for showing the input controls.
+     * Flag whether to ignore move events - we ignore such when we show in IME
+     * to prevent the content from scrolling.
      */
-    private final long mShowInputControlsAnimimationDuration;
+    private boolean mIngonreMoveEvents;
 
     /**
-     * Flag whether the scoll wheel and the fading edges have been initialized.
+     * Flag whether to show soft input on tap.
      */
-    private boolean mScrollWheelAndFadingEdgesInitialized;
+    private boolean mShowSoftInputOnTap;
 
     /**
-     * The time of the last up event.
+     * The top of the top selection divider.
      */
-    private long mLastUpEventTimeMillis;
+    private int mTopSelectionDividerTop;
+
+    /**
+     * The bottom of the bottom selection divider.
+     */
+    private int mBottomSelectionDividerBottom;
+
+    /**
+     * The virtual id of the last hovered child.
+     */
+    private int mLastHoveredChildVirtualViewId;
+
+    /**
+     * Whether the increment virtual button is pressed.
+     */
+    private boolean mIncrementVirtualButtonPressed;
+
+    /**
+     * Whether the decrement virtual button is pressed.
+     */
+    private boolean mDecrementVirtualButtonPressed;
+
+    /**
+     * Provider to report to clients the semantic structure of this widget.
+     */
+    private AccessibilityNodeProviderImpl mAccessibilityNodeProvider;
+
+    /**
+     * Helper class for managing pressed state of the virtual buttons.
+     */
+    private final PressedStateHelper mPressedStateHelper;
 
     /**
      * Interface to listen for changes of the current value.
@@ -478,7 +470,7 @@ public class NumberPicker extends LinearLayout {
         public static int SCROLL_STATE_IDLE = 0;
 
         /**
-         * The user is scrolling using touch, and their finger is still on the screen.
+         * The user is scrolling using touch, and his finger is still on the screen.
          */
         public static int SCROLL_STATE_TOUCH_SCROLL = 1;
 
@@ -543,86 +535,111 @@ public class NumberPicker extends LinearLayout {
         super(context, attrs, defStyle);
 
         // process style attributes
-        TypedArray attributesArray = context.obtainStyledAttributes(attrs,
-                R.styleable.NumberPicker, defStyle, 0);
+        TypedArray attributesArray = context.obtainStyledAttributes(
+                attrs, R.styleable.NumberPicker, defStyle, 0);
+        final int layoutResId = attributesArray.getResourceId(
+                R.styleable.NumberPicker_internalLayout, DEFAULT_LAYOUT_RESOURCE_ID);
+
+        mHasSelectorWheel = (layoutResId != DEFAULT_LAYOUT_RESOURCE_ID);
+
         mSolidColor = attributesArray.getColor(R.styleable.NumberPicker_solidColor, 0);
-        mFlingable = attributesArray.getBoolean(R.styleable.NumberPicker_flingable, true);
+
         mSelectionDivider = attributesArray.getDrawable(R.styleable.NumberPicker_selectionDivider);
-        int defSelectionDividerHeight = (int) TypedValue.applyDimension(TypedValue.COMPLEX_UNIT_DIP,
-                UNSCALED_DEFAULT_SELECTION_DIVIDER_HEIGHT,
+
+        final int defSelectionDividerHeight = (int) TypedValue.applyDimension(
+                TypedValue.COMPLEX_UNIT_DIP, UNSCALED_DEFAULT_SELECTION_DIVIDER_HEIGHT,
                 getResources().getDisplayMetrics());
         mSelectionDividerHeight = attributesArray.getDimensionPixelSize(
                 R.styleable.NumberPicker_selectionDividerHeight, defSelectionDividerHeight);
-        mMinHeight = attributesArray.getDimensionPixelSize(R.styleable.NumberPicker_minHeight,
-                SIZE_UNSPECIFIED);
-        mMaxHeight = attributesArray.getDimensionPixelSize(R.styleable.NumberPicker_maxHeight,
-                SIZE_UNSPECIFIED);
+
+        final int defSelectionDividerDistance = (int) TypedValue.applyDimension(
+                TypedValue.COMPLEX_UNIT_DIP, UNSCALED_DEFAULT_SELECTION_DIVIDERS_DISTANCE,
+                getResources().getDisplayMetrics());
+        mSelectionDividersDistance = attributesArray.getDimensionPixelSize(
+                R.styleable.NumberPicker_selectionDividersDistance, defSelectionDividerDistance);
+
+        mMinHeight = attributesArray.getDimensionPixelSize(
+                R.styleable.NumberPicker_internalMinHeight, SIZE_UNSPECIFIED);
+
+        mMaxHeight = attributesArray.getDimensionPixelSize(
+                R.styleable.NumberPicker_internalMaxHeight, SIZE_UNSPECIFIED);
         if (mMinHeight != SIZE_UNSPECIFIED && mMaxHeight != SIZE_UNSPECIFIED
                 && mMinHeight > mMaxHeight) {
             throw new IllegalArgumentException("minHeight > maxHeight");
         }
-        mMinWidth = attributesArray.getDimensionPixelSize(R.styleable.NumberPicker_minWidth,
-                SIZE_UNSPECIFIED);
-        mMaxWidth = attributesArray.getDimensionPixelSize(R.styleable.NumberPicker_maxWidth,
-                SIZE_UNSPECIFIED);
+
+        mMinWidth = attributesArray.getDimensionPixelSize(
+                R.styleable.NumberPicker_internalMinWidth, SIZE_UNSPECIFIED);
+
+        mMaxWidth = attributesArray.getDimensionPixelSize(
+                R.styleable.NumberPicker_internalMaxWidth, SIZE_UNSPECIFIED);
         if (mMinWidth != SIZE_UNSPECIFIED && mMaxWidth != SIZE_UNSPECIFIED
                 && mMinWidth > mMaxWidth) {
             throw new IllegalArgumentException("minWidth > maxWidth");
         }
-        mComputeMaxWidth = (mMaxWidth == Integer.MAX_VALUE);
+
+        mComputeMaxWidth = (mMaxWidth == SIZE_UNSPECIFIED);
+
+        mVirtualButtonPressedDrawable = attributesArray.getDrawable(
+                R.styleable.NumberPicker_virtualButtonPressedDrawable);
+
         attributesArray.recycle();
 
-        mShowInputControlsAnimimationDuration = getResources().getInteger(
-                R.integer.config_longAnimTime);
+        mPressedStateHelper = new PressedStateHelper();
 
         // By default Linearlayout that we extend is not drawn. This is
         // its draw() method is not called but dispatchDraw() is called
         // directly (see ViewGroup.drawChild()). However, this class uses
         // the fading edge effect implemented by View and we need our
         // draw() method to be called. Therefore, we declare we will draw.
-        setWillNotDraw(false);
-        setSelectorWheelState(SELECTOR_WHEEL_STATE_NONE);
+        setWillNotDraw(!mHasSelectorWheel);
 
         LayoutInflater inflater = (LayoutInflater) getContext().getSystemService(
                 Context.LAYOUT_INFLATER_SERVICE);
-        inflater.inflate(R.layout.number_picker, this, true);
+        inflater.inflate(layoutResId, this, true);
 
         OnClickListener onClickListener = new OnClickListener() {
             public void onClick(View v) {
-                InputMethodManager inputMethodManager = InputMethodManager.peekInstance();
-                if (inputMethodManager != null && inputMethodManager.isActive(mInputText)) {
-                    inputMethodManager.hideSoftInputFromWindow(getWindowToken(), 0);
-                }
+                hideSoftInput();
                 mInputText.clearFocus();
                 if (v.getId() == R.id.increment) {
-                    changeCurrentByOne(true);
+                    changeValueByOne(true);
                 } else {
-                    changeCurrentByOne(false);
+                    changeValueByOne(false);
                 }
             }
         };
 
         OnLongClickListener onLongClickListener = new OnLongClickListener() {
             public boolean onLongClick(View v) {
+                hideSoftInput();
                 mInputText.clearFocus();
                 if (v.getId() == R.id.increment) {
-                    postChangeCurrentByOneFromLongPress(true);
+                    postChangeCurrentByOneFromLongPress(true, 0);
                 } else {
-                    postChangeCurrentByOneFromLongPress(false);
+                    postChangeCurrentByOneFromLongPress(false, 0);
                 }
                 return true;
             }
         };
 
         // increment button
-        mIncrementButton = (ImageButton) findViewById(R.id.increment);
-        mIncrementButton.setOnClickListener(onClickListener);
-        mIncrementButton.setOnLongClickListener(onLongClickListener);
+        if (!mHasSelectorWheel) {
+            mIncrementButton = (ImageButton) findViewById(R.id.increment);
+            mIncrementButton.setOnClickListener(onClickListener);
+            mIncrementButton.setOnLongClickListener(onLongClickListener);
+        } else {
+            mIncrementButton = null;
+        }
 
         // decrement button
-        mDecrementButton = (ImageButton) findViewById(R.id.decrement);
-        mDecrementButton.setOnClickListener(onClickListener);
-        mDecrementButton.setOnLongClickListener(onLongClickListener);
+        if (!mHasSelectorWheel) {
+            mDecrementButton = (ImageButton) findViewById(R.id.decrement);
+            mDecrementButton.setOnClickListener(onClickListener);
+            mDecrementButton.setOnLongClickListener(onLongClickListener);
+        } else {
+            mDecrementButton = null;
+        }
 
         // input text
         mInputText = (EditText) findViewById(R.id.numberpicker_input);
@@ -644,7 +661,6 @@ public class NumberPicker extends LinearLayout {
         mInputText.setImeOptions(EditorInfo.IME_ACTION_DONE);
 
         // initialize constants
-        mTouchSlop = ViewConfiguration.getTapTimeout();
         ViewConfiguration configuration = ViewConfiguration.get(context);
         mTouchSlop = configuration.getScaledTouchSlop();
         mMinimumFlingVelocity = configuration.getScaledMinimumFlingVelocity();
@@ -663,68 +679,26 @@ public class NumberPicker extends LinearLayout {
         paint.setColor(color);
         mSelectorWheelPaint = paint;
 
-        // create the animator for showing the input controls
-        mDimSelectorWheelAnimator = ObjectAnimator.ofInt(this, PROPERTY_SELECTOR_PAINT_ALPHA,
-                SELECTOR_WHEEL_BRIGHT_ALPHA, SELECTOR_WHEEL_DIM_ALPHA);
-        final ObjectAnimator showIncrementButton = ObjectAnimator.ofFloat(mIncrementButton,
-                PROPERTY_BUTTON_ALPHA, BUTTON_ALPHA_TRANSPARENT, BUTTON_ALPHA_OPAQUE);
-        final ObjectAnimator showDecrementButton = ObjectAnimator.ofFloat(mDecrementButton,
-                PROPERTY_BUTTON_ALPHA, BUTTON_ALPHA_TRANSPARENT, BUTTON_ALPHA_OPAQUE);
-        mShowInputControlsAnimator = new AnimatorSet();
-        mShowInputControlsAnimator.playTogether(mDimSelectorWheelAnimator, showIncrementButton,
-                showDecrementButton);
-        mShowInputControlsAnimator.addListener(new AnimatorListenerAdapter() {
-            private boolean mCanceled = false;
-
-            @Override
-            public void onAnimationEnd(Animator animation) {
-                if (!mCanceled) {
-                    // if canceled => we still want the wheel drawn
-                    setSelectorWheelState(SELECTOR_WHEEL_STATE_SMALL);
-                }
-                mCanceled = false;
-            }
-
-            @Override
-            public void onAnimationCancel(Animator animation) {
-                if (mShowInputControlsAnimator.isRunning()) {
-                    mCanceled = true;
-                }
-            }
-        });
-
         // create the fling and adjust scrollers
         mFlingScroller = new Scroller(getContext(), null, true);
         mAdjustScroller = new Scroller(getContext(), new DecelerateInterpolator(2.5f));
 
         updateInputTextView();
-        updateIncrementAndDecrementButtonsVisibilityState();
 
-        if (mFlingable) {
-           if (isInEditMode()) {
-               setSelectorWheelState(SELECTOR_WHEEL_STATE_SMALL);
-           } else {
-                // Start with shown selector wheel and hidden controls. When made
-                // visible hide the selector and fade-in the controls to suggest
-                // fling interaction.
-                setSelectorWheelState(SELECTOR_WHEEL_STATE_LARGE);
-                hideInputControls();
-           }
+        // If not explicitly specified this view is important for accessibility.
+        if (getImportantForAccessibility() == IMPORTANT_FOR_ACCESSIBILITY_AUTO) {
+            setImportantForAccessibility(IMPORTANT_FOR_ACCESSIBILITY_YES);
         }
     }
 
     @Override
     protected void onLayout(boolean changed, int left, int top, int right, int bottom) {
+        if (!mHasSelectorWheel) {
+            super.onLayout(changed, left, top, right, bottom);
+            return;
+        }
         final int msrdWdth = getMeasuredWidth();
         final int msrdHght = getMeasuredHeight();
-
-        // Increment button at the top.
-        final int inctBtnMsrdWdth = mIncrementButton.getMeasuredWidth();
-        final int incrBtnLeft = (msrdWdth - inctBtnMsrdWdth) / 2;
-        final int incrBtnTop = 0;
-        final int incrBtnRight = incrBtnLeft + inctBtnMsrdWdth;
-        final int incrBtnBottom = incrBtnTop + mIncrementButton.getMeasuredHeight();
-        mIncrementButton.layout(incrBtnLeft, incrBtnTop, incrBtnRight, incrBtnBottom);
 
         // Input text centered horizontally.
         final int inptTxtMsrdWdth = mInputText.getMeasuredWidth();
@@ -735,24 +709,23 @@ public class NumberPicker extends LinearLayout {
         final int inptTxtBottom = inptTxtTop + inptTxtMsrdHght;
         mInputText.layout(inptTxtLeft, inptTxtTop, inptTxtRight, inptTxtBottom);
 
-        // Decrement button at the top.
-        final int decrBtnMsrdWdth = mIncrementButton.getMeasuredWidth();
-        final int decrBtnLeft = (msrdWdth - decrBtnMsrdWdth) / 2;
-        final int decrBtnTop = msrdHght - mDecrementButton.getMeasuredHeight();
-        final int decrBtnRight = decrBtnLeft + decrBtnMsrdWdth;
-        final int decrBtnBottom = msrdHght;
-        mDecrementButton.layout(decrBtnLeft, decrBtnTop, decrBtnRight, decrBtnBottom);
-
-        if (!mScrollWheelAndFadingEdgesInitialized) {
-            mScrollWheelAndFadingEdgesInitialized = true;
+        if (changed) {
             // need to do all this when we know our size
             initializeSelectorWheel();
             initializeFadingEdges();
+            mTopSelectionDividerTop = (getHeight() - mSelectionDividersDistance) / 2
+                    - mSelectionDividerHeight;
+            mBottomSelectionDividerBottom = mTopSelectionDividerTop + 2 * mSelectionDividerHeight
+                    + mSelectionDividersDistance;
         }
     }
 
     @Override
     protected void onMeasure(int widthMeasureSpec, int heightMeasureSpec) {
+        if (!mHasSelectorWheel) {
+            super.onMeasure(widthMeasureSpec, heightMeasureSpec);
+            return;
+        }
         // Try greedily to fit the max width and height.
         final int newWidthMeasureSpec = makeMeasureSpec(widthMeasureSpec, mMaxWidth);
         final int newHeightMeasureSpec = makeMeasureSpec(heightMeasureSpec, mMaxHeight);
@@ -765,98 +738,120 @@ public class NumberPicker extends LinearLayout {
         setMeasuredDimension(widthSize, heightSize);
     }
 
-    @Override
-    public boolean onInterceptTouchEvent(MotionEvent event) {
-        if (!isEnabled() || !mFlingable) {
-            return false;
-        }
-        switch (event.getActionMasked()) {
-            case MotionEvent.ACTION_DOWN:
-                mLastMotionEventY = mLastDownEventY = event.getY();
-                removeAllCallbacks();
-                mShowInputControlsAnimator.cancel();
-                mDimSelectorWheelAnimator.cancel();
-                mCheckBeginEditOnUpEvent = false;
-                mAdjustScrollerOnUpEvent = true;
-                if (mSelectorWheelState == SELECTOR_WHEEL_STATE_LARGE) {
-                    mSelectorWheelPaint.setAlpha(SELECTOR_WHEEL_BRIGHT_ALPHA);
-                    boolean scrollersFinished = mFlingScroller.isFinished()
-                            && mAdjustScroller.isFinished();
-                    if (!scrollersFinished) {
-                        mFlingScroller.forceFinished(true);
-                        mAdjustScroller.forceFinished(true);
-                        onScrollStateChange(OnScrollListener.SCROLL_STATE_IDLE);
-                    }
-                    mCheckBeginEditOnUpEvent = scrollersFinished;
-                    mAdjustScrollerOnUpEvent = true;
-                    hideInputControls();
-                    return true;
+    /**
+     * Move to the final position of a scroller. Ensures to force finish the scroller
+     * and if it is not at its final position a scroll of the selector wheel is
+     * performed to fast forward to the final position.
+     *
+     * @param scroller The scroller to whose final position to get.
+     * @return True of the a move was performed, i.e. the scroller was not in final position.
+     */
+    private boolean moveToFinalScrollerPosition(Scroller scroller) {
+        scroller.forceFinished(true);
+        int amountToScroll = scroller.getFinalY() - scroller.getCurrY();
+        int futureScrollOffset = (mCurrentScrollOffset + amountToScroll) % mSelectorElementHeight;
+        int overshootAdjustment = mInitialScrollOffset - futureScrollOffset;
+        if (overshootAdjustment != 0) {
+            if (Math.abs(overshootAdjustment) > mSelectorElementHeight / 2) {
+                if (overshootAdjustment > 0) {
+                    overshootAdjustment -= mSelectorElementHeight;
+                } else {
+                    overshootAdjustment += mSelectorElementHeight;
                 }
-                if (isEventInVisibleViewHitRect(event, mIncrementButton)
-                        || isEventInVisibleViewHitRect(event, mDecrementButton)) {
-                    return false;
-                }
-                mAdjustScrollerOnUpEvent = false;
-                setSelectorWheelState(SELECTOR_WHEEL_STATE_LARGE);
-                hideInputControls();
-                return true;
-            case MotionEvent.ACTION_MOVE:
-                float currentMoveY = event.getY();
-                int deltaDownY = (int) Math.abs(currentMoveY - mLastDownEventY);
-                if (deltaDownY > mTouchSlop) {
-                    mCheckBeginEditOnUpEvent = false;
-                    onScrollStateChange(OnScrollListener.SCROLL_STATE_TOUCH_SCROLL);
-                    setSelectorWheelState(SELECTOR_WHEEL_STATE_LARGE);
-                    hideInputControls();
-                    return true;
-                }
-                break;
+            }
+            amountToScroll += overshootAdjustment;
+            scrollBy(0, amountToScroll);
+            return true;
         }
         return false;
     }
 
     @Override
-    public boolean onTouchEvent(MotionEvent ev) {
-        if (!isEnabled()) {
+    public boolean onInterceptTouchEvent(MotionEvent event) {
+        if (!mHasSelectorWheel || !isEnabled()) {
+            return false;
+        }
+        final int action = event.getActionMasked();
+        switch (action) {
+            case MotionEvent.ACTION_DOWN: {
+                removeAllCallbacks();
+                mInputText.setVisibility(View.INVISIBLE);
+                mLastDownOrMoveEventY = mLastDownEventY = event.getY();
+                mLastDownEventTime = event.getEventTime();
+                mIngonreMoveEvents = false;
+                mShowSoftInputOnTap = false;
+                // Handle pressed state before any state change.
+                if (mLastDownEventY < mTopSelectionDividerTop) {
+                    if (mScrollState == OnScrollListener.SCROLL_STATE_IDLE) {
+                        mPressedStateHelper.buttonPressDelayed(
+                                PressedStateHelper.BUTTON_DECREMENT);
+                    }
+                } else if (mLastDownEventY > mBottomSelectionDividerBottom) {
+                    if (mScrollState == OnScrollListener.SCROLL_STATE_IDLE) {
+                        mPressedStateHelper.buttonPressDelayed(
+                                PressedStateHelper.BUTTON_INCREMENT);
+                    }
+                }
+                // Make sure we support flinging inside scrollables.
+                getParent().requestDisallowInterceptTouchEvent(true);
+                if (!mFlingScroller.isFinished()) {
+                    mFlingScroller.forceFinished(true);
+                    mAdjustScroller.forceFinished(true);
+                    onScrollStateChange(OnScrollListener.SCROLL_STATE_IDLE);
+                } else if (!mAdjustScroller.isFinished()) {
+                    mFlingScroller.forceFinished(true);
+                    mAdjustScroller.forceFinished(true);
+                } else if (mLastDownEventY < mTopSelectionDividerTop) {
+                    hideSoftInput();
+                    postChangeCurrentByOneFromLongPress(
+                            false, ViewConfiguration.getLongPressTimeout());
+                } else if (mLastDownEventY > mBottomSelectionDividerBottom) {
+                    hideSoftInput();
+                    postChangeCurrentByOneFromLongPress(
+                            true, ViewConfiguration.getLongPressTimeout());
+                } else {
+                    mShowSoftInputOnTap = true;
+                    postBeginSoftInputOnLongPressCommand();
+                }
+                return true;
+            }
+        }
+        return false;
+    }
+
+    @Override
+    public boolean onTouchEvent(MotionEvent event) {
+        if (!isEnabled() || !mHasSelectorWheel) {
             return false;
         }
         if (mVelocityTracker == null) {
             mVelocityTracker = VelocityTracker.obtain();
         }
-        mVelocityTracker.addMovement(ev);
-        int action = ev.getActionMasked();
+        mVelocityTracker.addMovement(event);
+        int action = event.getActionMasked();
         switch (action) {
-            case MotionEvent.ACTION_MOVE:
-                float currentMoveY = ev.getY();
-                if (mCheckBeginEditOnUpEvent
-                        || mScrollState != OnScrollListener.SCROLL_STATE_TOUCH_SCROLL) {
+            case MotionEvent.ACTION_MOVE: {
+                if (mIngonreMoveEvents) {
+                    break;
+                }
+                float currentMoveY = event.getY();
+                if (mScrollState != OnScrollListener.SCROLL_STATE_TOUCH_SCROLL) {
                     int deltaDownY = (int) Math.abs(currentMoveY - mLastDownEventY);
                     if (deltaDownY > mTouchSlop) {
-                        mCheckBeginEditOnUpEvent = false;
+                        removeAllCallbacks();
                         onScrollStateChange(OnScrollListener.SCROLL_STATE_TOUCH_SCROLL);
                     }
+                } else {
+                    int deltaMoveY = (int) ((currentMoveY - mLastDownOrMoveEventY));
+                    scrollBy(0, deltaMoveY);
+                    invalidate();
                 }
-                int deltaMoveY = (int) (currentMoveY - mLastMotionEventY);
-                scrollBy(0, deltaMoveY);
-                invalidate();
-                mLastMotionEventY = currentMoveY;
-                break;
-            case MotionEvent.ACTION_UP:
-                if (mCheckBeginEditOnUpEvent) {
-                    mCheckBeginEditOnUpEvent = false;
-                    final long deltaTapTimeMillis = ev.getEventTime() - mLastUpEventTimeMillis;
-                    if (deltaTapTimeMillis < ViewConfiguration.getDoubleTapTimeout()) {
-                        setSelectorWheelState(SELECTOR_WHEEL_STATE_SMALL);
-                        showInputControls(mShowInputControlsAnimimationDuration);
-                        mInputText.requestFocus();
-                        InputMethodManager inputMethodManager = InputMethodManager.peekInstance();
-                        if (inputMethodManager != null) {
-                            inputMethodManager.showSoftInput(mInputText, 0);
-                        }
-                        mLastUpEventTimeMillis = ev.getEventTime();
-                        return true;
-                    }
-                }
+                mLastDownOrMoveEventY = currentMoveY;
+            } break;
+            case MotionEvent.ACTION_UP: {
+                removeBeginSoftInputCommand();
+                removeChangeCurrentByOneFromLongPress();
+                mPressedStateHelper.cancel();
                 VelocityTracker velocityTracker = mVelocityTracker;
                 velocityTracker.computeCurrentVelocity(1000, mMaximumFlingVelocity);
                 int initialVelocity = (int) velocityTracker.getYVelocity();
@@ -864,18 +859,34 @@ public class NumberPicker extends LinearLayout {
                     fling(initialVelocity);
                     onScrollStateChange(OnScrollListener.SCROLL_STATE_FLING);
                 } else {
-                    if (mAdjustScrollerOnUpEvent) {
-                        if (mFlingScroller.isFinished() && mAdjustScroller.isFinished()) {
-                            postAdjustScrollerCommand(0);
+                    int eventY = (int) event.getY();
+                    int deltaMoveY = (int) Math.abs(eventY - mLastDownEventY);
+                    long deltaTime = event.getEventTime() - mLastDownEventTime;
+                    if (deltaMoveY <= mTouchSlop && deltaTime < ViewConfiguration.getTapTimeout()) {
+                        if (mShowSoftInputOnTap) {
+                            mShowSoftInputOnTap = false;
+                            showSoftInput();
+                        } else {
+                            int selectorIndexOffset = (eventY / mSelectorElementHeight)
+                                    - SELECTOR_MIDDLE_ITEM_INDEX;
+                            if (selectorIndexOffset > 0) {
+                                changeValueByOne(true);
+                                mPressedStateHelper.buttonTapped(
+                                        PressedStateHelper.BUTTON_INCREMENT);
+                            } else if (selectorIndexOffset < 0) {
+                                changeValueByOne(false);
+                                mPressedStateHelper.buttonTapped(
+                                        PressedStateHelper.BUTTON_DECREMENT);
+                            }
                         }
                     } else {
-                        postAdjustScrollerCommand(SHOW_INPUT_CONTROLS_DELAY_MILLIS);
+                        ensureScrollWheelAdjusted();
                     }
+                    onScrollStateChange(OnScrollListener.SCROLL_STATE_IDLE);
                 }
                 mVelocityTracker.recycle();
                 mVelocityTracker = null;
-                mLastUpEventTimeMillis = ev.getEventTime();
-                break;
+            } break;
         }
         return true;
     }
@@ -884,12 +895,6 @@ public class NumberPicker extends LinearLayout {
     public boolean dispatchTouchEvent(MotionEvent event) {
         final int action = event.getActionMasked();
         switch (action) {
-            case MotionEvent.ACTION_MOVE:
-                if (mSelectorWheelState == SELECTOR_WHEEL_STATE_LARGE) {
-                    removeAllCallbacks();
-                    forceCompleteChangeCurrentByOneViaScroll();
-                }
-                break;
             case MotionEvent.ACTION_CANCEL:
             case MotionEvent.ACTION_UP:
                 removeAllCallbacks();
@@ -900,27 +905,79 @@ public class NumberPicker extends LinearLayout {
 
     @Override
     public boolean dispatchKeyEvent(KeyEvent event) {
-        int keyCode = event.getKeyCode();
-        if (keyCode == KeyEvent.KEYCODE_DPAD_CENTER || keyCode == KeyEvent.KEYCODE_ENTER) {
-            removeAllCallbacks();
+        final int keyCode = event.getKeyCode();
+        switch (keyCode) {
+            case KeyEvent.KEYCODE_DPAD_CENTER:
+            case KeyEvent.KEYCODE_ENTER:
+                removeAllCallbacks();
+                break;
         }
         return super.dispatchKeyEvent(event);
     }
 
     @Override
     public boolean dispatchTrackballEvent(MotionEvent event) {
-        int action = event.getActionMasked();
-        if (action == MotionEvent.ACTION_CANCEL || action == MotionEvent.ACTION_UP) {
-            removeAllCallbacks();
+        final int action = event.getActionMasked();
+        switch (action) {
+            case MotionEvent.ACTION_CANCEL:
+            case MotionEvent.ACTION_UP:
+                removeAllCallbacks();
+                break;
         }
         return super.dispatchTrackballEvent(event);
     }
 
     @Override
-    public void computeScroll() {
-        if (mSelectorWheelState == SELECTOR_WHEEL_STATE_NONE) {
-            return;
+    protected boolean dispatchHoverEvent(MotionEvent event) {
+        if (!mHasSelectorWheel) {
+            return super.dispatchHoverEvent(event);
         }
+        if (AccessibilityManager.getInstance(mContext).isEnabled()) {
+            final int eventY = (int) event.getY();
+            final int hoveredVirtualViewId;
+            if (eventY < mTopSelectionDividerTop) {
+                hoveredVirtualViewId = AccessibilityNodeProviderImpl.VIRTUAL_VIEW_ID_DECREMENT;
+            } else if (eventY > mBottomSelectionDividerBottom) {
+                hoveredVirtualViewId = AccessibilityNodeProviderImpl.VIRTUAL_VIEW_ID_INCREMENT;
+            } else {
+                hoveredVirtualViewId = AccessibilityNodeProviderImpl.VIRTUAL_VIEW_ID_INPUT;
+            }
+            final int action = event.getActionMasked();
+            AccessibilityNodeProviderImpl provider =
+                (AccessibilityNodeProviderImpl) getAccessibilityNodeProvider();
+            switch (action) {
+                case MotionEvent.ACTION_HOVER_ENTER: {
+                    provider.sendAccessibilityEventForVirtualView(hoveredVirtualViewId,
+                            AccessibilityEvent.TYPE_VIEW_HOVER_ENTER);
+                    mLastHoveredChildVirtualViewId = hoveredVirtualViewId;
+                    provider.performAction(hoveredVirtualViewId,
+                            AccessibilityNodeInfo.ACTION_ACCESSIBILITY_FOCUS, null);
+                } break;
+                case MotionEvent.ACTION_HOVER_MOVE: {
+                    if (mLastHoveredChildVirtualViewId != hoveredVirtualViewId
+                            && mLastHoveredChildVirtualViewId != View.NO_ID) {
+                        provider.sendAccessibilityEventForVirtualView(
+                                mLastHoveredChildVirtualViewId,
+                                AccessibilityEvent.TYPE_VIEW_HOVER_EXIT);
+                        provider.sendAccessibilityEventForVirtualView(hoveredVirtualViewId,
+                                AccessibilityEvent.TYPE_VIEW_HOVER_ENTER);
+                        mLastHoveredChildVirtualViewId = hoveredVirtualViewId;
+                        provider.performAction(hoveredVirtualViewId,
+                                AccessibilityNodeInfo.ACTION_ACCESSIBILITY_FOCUS, null);
+                    }
+                } break;
+                case MotionEvent.ACTION_HOVER_EXIT: {
+                    provider.sendAccessibilityEventForVirtualView(hoveredVirtualViewId,
+                            AccessibilityEvent.TYPE_VIEW_HOVER_EXIT);
+                    mLastHoveredChildVirtualViewId = View.NO_ID;
+                } break;
+            }
+        }
+        return false;
+    }
+
+    @Override
+    public void computeScroll() {
         Scroller scroller = mFlingScroller;
         if (scroller.isFinished()) {
             scroller = mAdjustScroller;
@@ -945,16 +1002,17 @@ public class NumberPicker extends LinearLayout {
     @Override
     public void setEnabled(boolean enabled) {
         super.setEnabled(enabled);
-        mIncrementButton.setEnabled(enabled);
-        mDecrementButton.setEnabled(enabled);
+        if (!mHasSelectorWheel) {
+            mIncrementButton.setEnabled(enabled);
+        }
+        if (!mHasSelectorWheel) {
+            mDecrementButton.setEnabled(enabled);
+        }
         mInputText.setEnabled(enabled);
     }
 
     @Override
     public void scrollBy(int x, int y) {
-        if (mSelectorWheelState == SELECTOR_WHEEL_STATE_NONE) {
-            return;
-        }
         int[] selectorIndices = mSelectorIndices;
         if (!mWrapSelectorWheel && y > 0
                 && selectorIndices[SELECTOR_MIDDLE_ITEM_INDEX] <= mMinValue) {
@@ -970,7 +1028,7 @@ public class NumberPicker extends LinearLayout {
         while (mCurrentScrollOffset - mInitialScrollOffset > mSelectorTextGapHeight) {
             mCurrentScrollOffset -= mSelectorElementHeight;
             decrementSelectorIndices(selectorIndices);
-            changeCurrent(selectorIndices[SELECTOR_MIDDLE_ITEM_INDEX]);
+            setValueInternal(selectorIndices[SELECTOR_MIDDLE_ITEM_INDEX], true);
             if (!mWrapSelectorWheel && selectorIndices[SELECTOR_MIDDLE_ITEM_INDEX] <= mMinValue) {
                 mCurrentScrollOffset = mInitialScrollOffset;
             }
@@ -978,7 +1036,7 @@ public class NumberPicker extends LinearLayout {
         while (mCurrentScrollOffset - mInitialScrollOffset < -mSelectorTextGapHeight) {
             mCurrentScrollOffset += mSelectorElementHeight;
             incrementSelectorIndices(selectorIndices);
-            changeCurrent(selectorIndices[SELECTOR_MIDDLE_ITEM_INDEX]);
+            setValueInternal(selectorIndices[SELECTOR_MIDDLE_ITEM_INDEX], true);
             if (!mWrapSelectorWheel && selectorIndices[SELECTOR_MIDDLE_ITEM_INDEX] >= mMaxValue) {
                 mCurrentScrollOffset = mInitialScrollOffset;
             }
@@ -1017,8 +1075,7 @@ public class NumberPicker extends LinearLayout {
      *
      * @param formatter The formatter object. If formatter is <code>null</code>,
      *            {@link String#valueOf(int)} will be used.
-     *
-     * @see #setDisplayedValues(String[])
+     *@see #setDisplayedValues(String[])
      */
     public void setFormatter(Formatter formatter) {
         if (formatter == mFormatter) {
@@ -1058,20 +1115,34 @@ public class NumberPicker extends LinearLayout {
      * @see #setMaxValue(int)
      */
     public void setValue(int value) {
-        if (mValue == value) {
-            return;
+        setValueInternal(value, false);
+    }
+
+    /**
+     * Shows the soft input for its input text.
+     */
+    private void showSoftInput() {
+        InputMethodManager inputMethodManager = InputMethodManager.peekInstance();
+        if (inputMethodManager != null) {
+            if (mHasSelectorWheel) {
+                mInputText.setVisibility(View.VISIBLE);
+            }
+            mInputText.requestFocus();
+            inputMethodManager.showSoftInput(mInputText, 0);
         }
-        if (value < mMinValue) {
-            value = mWrapSelectorWheel ? mMaxValue : mMinValue;
+    }
+
+    /**
+     * Hides the soft input if it is active for the input text.
+     */
+    private void hideSoftInput() {
+        InputMethodManager inputMethodManager = InputMethodManager.peekInstance();
+        if (inputMethodManager != null && inputMethodManager.isActive(mInputText)) {
+            inputMethodManager.hideSoftInputFromWindow(getWindowToken(), 0);
+            if (mHasSelectorWheel) {
+                mInputText.setVisibility(View.INVISIBLE);
+            }
         }
-        if (value > mMaxValue) {
-            value = mWrapSelectorWheel ? mMinValue : mMaxValue;
-        }
-        mValue = value;
-        initializeSelectorWheelIndices();
-        updateInputTextView();
-        updateIncrementAndDecrementButtonsVisibilityState();
-        invalidate();
     }
 
     /**
@@ -1134,20 +1205,22 @@ public class NumberPicker extends LinearLayout {
      * wrap around the {@link NumberPicker#getMinValue()} and
      * {@link NumberPicker#getMaxValue()} values.
      * <p>
-     * By default if the range (max - min) is more than five (the number of
-     * items shown on the selector wheel) the selector wheel wrapping is
-     * enabled.
+     * By default if the range (max - min) is more than the number of items shown
+     * on the selector wheel the selector wheel wrapping is enabled.
+     * </p>
+     * <p>
+     * <strong>Note:</strong> If the number of items, i.e. the range (
+     * {@link #getMaxValue()} - {@link #getMinValue()}) is less than
+     * the number of items shown on the selector wheel, the selector wheel will
+     * not wrap. Hence, in such a case calling this method is a NOP.
      * </p>
      *
      * @param wrapSelectorWheel Whether to wrap.
      */
     public void setWrapSelectorWheel(boolean wrapSelectorWheel) {
-        if (wrapSelectorWheel && (mMaxValue - mMinValue) < mSelectorIndices.length) {
-            throw new IllegalStateException("Range less than selector items count.");
-        }
-        if (wrapSelectorWheel != mWrapSelectorWheel) {
+        final boolean wrappingAllowed = (mMaxValue - mMinValue) >= mSelectorIndices.length;
+        if ((!wrapSelectorWheel || wrappingAllowed) && wrapSelectorWheel != mWrapSelectorWheel) {
             mWrapSelectorWheel = wrapSelectorWheel;
-            updateIncrementAndDecrementButtonsVisibilityState();
         }
     }
 
@@ -1204,6 +1277,7 @@ public class NumberPicker extends LinearLayout {
         initializeSelectorWheelIndices();
         updateInputTextView();
         tryComputeMaxWidth();
+        invalidate();
     }
 
     /**
@@ -1236,6 +1310,7 @@ public class NumberPicker extends LinearLayout {
         initializeSelectorWheelIndices();
         updateInputTextView();
         tryComputeMaxWidth();
+        invalidate();
     }
 
     /**
@@ -1280,68 +1355,33 @@ public class NumberPicker extends LinearLayout {
     }
 
     @Override
-    protected void onAttachedToWindow() {
-        super.onAttachedToWindow();
-        // make sure we show the controls only the very
-        // first time the user sees this widget
-        if (mFlingable && !isInEditMode()) {
-            // animate a bit slower the very first time
-            showInputControls(mShowInputControlsAnimimationDuration * 2);
-        }
-    }
-
-    @Override
     protected void onDetachedFromWindow() {
         removeAllCallbacks();
     }
 
     @Override
-    protected void dispatchDraw(Canvas canvas) {
-        // There is a good reason for doing this. See comments in draw().
-    }
-
-    @Override
-    public void draw(Canvas canvas) {
-        // Dispatch draw to our children only if we are not currently running
-        // the animation for simultaneously dimming the scroll wheel and
-        // showing in the buttons. This class takes advantage of the View
-        // implementation of fading edges effect to draw the selector wheel.
-        // However, in View.draw(), the fading is applied after all the children
-        // have been drawn and we do not want this fading to be applied to the
-        // buttons. Therefore, we draw our children after we have completed
-        // drawing ourselves.
-        super.draw(canvas);
-
-        // Draw our children if we are not showing the selector wheel of fading
-        // it out
-        if (mShowInputControlsAnimator.isRunning()
-                || mSelectorWheelState != SELECTOR_WHEEL_STATE_LARGE) {
-            long drawTime = getDrawingTime();
-            for (int i = 0, count = getChildCount(); i < count; i++) {
-                View child = getChildAt(i);
-                if (!child.isShown()) {
-                    continue;
-                }
-                drawChild(canvas, getChildAt(i), drawTime);
-            }
-        }
-    }
-
-    @Override
     protected void onDraw(Canvas canvas) {
-        if (mSelectorWheelState == SELECTOR_WHEEL_STATE_NONE) {
+        if (!mHasSelectorWheel) {
+            super.onDraw(canvas);
             return;
         }
-
         float x = (mRight - mLeft) / 2;
         float y = mCurrentScrollOffset;
 
-        final int restoreCount = canvas.save();
-
-        if (mSelectorWheelState == SELECTOR_WHEEL_STATE_SMALL) {
-            Rect clipBounds = canvas.getClipBounds();
-            clipBounds.inset(0, mSelectorElementHeight);
-            canvas.clipRect(clipBounds);
+        // draw the virtual buttons pressed state if needed
+        if (mVirtualButtonPressedDrawable != null
+                && mScrollState == OnScrollListener.SCROLL_STATE_IDLE) {
+            if (mDecrementVirtualButtonPressed) {
+                mVirtualButtonPressedDrawable.setState(PRESSED_STATE_SET);
+                mVirtualButtonPressedDrawable.setBounds(0, 0, mRight, mTopSelectionDividerTop);
+                mVirtualButtonPressedDrawable.draw(canvas);
+            }
+            if (mIncrementVirtualButtonPressed) {
+                mVirtualButtonPressedDrawable.setState(PRESSED_STATE_SET);
+                mVirtualButtonPressedDrawable.setBounds(0, mBottomSelectionDividerBottom, mRight,
+                        mBottom);
+                mVirtualButtonPressedDrawable.draw(canvas);
+            }
         }
 
         // draw the selector wheel
@@ -1349,39 +1389,64 @@ public class NumberPicker extends LinearLayout {
         for (int i = 0; i < selectorIndices.length; i++) {
             int selectorIndex = selectorIndices[i];
             String scrollSelectorValue = mSelectorIndexToStringCache.get(selectorIndex);
-            // Do not draw the middle item if input is visible since the input is shown only
-            // if the wheel is static and it covers the middle item. Otherwise, if the user
-            // starts editing the text via the IME he may see a dimmed version of the old
-            // value intermixed with the new one.
+            // Do not draw the middle item if input is visible since the input
+            // is shown only if the wheel is static and it covers the middle
+            // item. Otherwise, if the user starts editing the text via the
+            // IME he may see a dimmed version of the old value intermixed
+            // with the new one.
             if (i != SELECTOR_MIDDLE_ITEM_INDEX || mInputText.getVisibility() != VISIBLE) {
                 canvas.drawText(scrollSelectorValue, x, y, mSelectorWheelPaint);
             }
             y += mSelectorElementHeight;
         }
 
-        // draw the selection dividers (only if scrolling and drawable specified)
+        // draw the selection dividers
         if (mSelectionDivider != null) {
             // draw the top divider
-            int topOfTopDivider =
-                (getHeight() - mSelectorElementHeight - mSelectionDividerHeight) / 2;
+            int topOfTopDivider = mTopSelectionDividerTop;
             int bottomOfTopDivider = topOfTopDivider + mSelectionDividerHeight;
             mSelectionDivider.setBounds(0, topOfTopDivider, mRight, bottomOfTopDivider);
             mSelectionDivider.draw(canvas);
 
             // draw the bottom divider
-            int topOfBottomDivider =  topOfTopDivider + mSelectorElementHeight;
-            int bottomOfBottomDivider = bottomOfTopDivider + mSelectorElementHeight;
+            int bottomOfBottomDivider = mBottomSelectionDividerBottom;
+            int topOfBottomDivider = bottomOfBottomDivider - mSelectionDividerHeight;
             mSelectionDivider.setBounds(0, topOfBottomDivider, mRight, bottomOfBottomDivider);
             mSelectionDivider.draw(canvas);
         }
-
-        canvas.restoreToCount(restoreCount);
     }
 
     @Override
-    public void sendAccessibilityEvent(int eventType) {
-        // Do not send accessibility events - we want the user to
-        // perceive this widget as several controls rather as a whole.
+    public void addFocusables(ArrayList<View> views, int direction, int focusableMode) {
+        // We do not want the real descendant to be considered focus search
+        // since it is managed by the accessibility node provider.
+        if ((focusableMode & FOCUSABLES_ACCESSIBILITY) == FOCUSABLES_ACCESSIBILITY) {
+            if (isAccessibilityFocusable()) {
+                views.add(this);
+                return;
+            }
+        }
+        super.addFocusables(views, direction, focusableMode);
+    }
+
+    @Override
+    public void onInitializeAccessibilityEvent(AccessibilityEvent event) {
+        super.onInitializeAccessibilityEvent(event);
+        event.setClassName(NumberPicker.class.getName());
+        event.setScrollable(true);
+        event.setScrollY((mMinValue + mValue) * mSelectorElementHeight);
+        event.setMaxScrollY((mMaxValue - mMinValue) * mSelectorElementHeight);
+    }
+
+    @Override
+    public AccessibilityNodeProvider getAccessibilityNodeProvider() {
+        if (!mHasSelectorWheel) {
+            return super.getAccessibilityNodeProvider();
+        }
+        if (mAccessibilityNodeProvider == null) {
+            mAccessibilityNodeProvider = new AccessibilityNodeProviderImpl();
+        }
+        return mAccessibilityNodeProvider;
     }
 
     /**
@@ -1410,17 +1475,17 @@ public class NumberPicker extends LinearLayout {
     }
 
     /**
-     * Utility to reconcile a desired size and state, with constraints imposed by
-     * a MeasureSpec. Tries to respect the min size, unless a different size is
-     * imposed by the constraints.
+     * Utility to reconcile a desired size and state, with constraints imposed
+     * by a MeasureSpec. Tries to respect the min size, unless a different size
+     * is imposed by the constraints.
      *
      * @param minSize The minimal desired size.
      * @param measuredSize The currently measured size.
      * @param measureSpec The current measure spec.
      * @return The resolved size and state.
      */
-    private int resolveSizeAndStateRespectingMinSize(int minSize, int measuredSize,
-            int measureSpec) {
+    private int resolveSizeAndStateRespectingMinSize(
+            int minSize, int measuredSize, int measureSpec) {
         if (minSize != SIZE_UNSPECIFIED) {
             final int desiredWidth = Math.max(minSize, measuredSize);
             return resolveSizeAndState(desiredWidth, measureSpec, 0);
@@ -1430,127 +1495,76 @@ public class NumberPicker extends LinearLayout {
     }
 
     /**
-     * Resets the selector indices and clear the cached
-     * string representation of these indices.
+     * Resets the selector indices and clear the cached string representation of
+     * these indices.
      */
     private void initializeSelectorWheelIndices() {
         mSelectorIndexToStringCache.clear();
-        int[] selectorIdices = mSelectorIndices;
+        int[] selectorIndices = mSelectorIndices;
         int current = getValue();
         for (int i = 0; i < mSelectorIndices.length; i++) {
             int selectorIndex = current + (i - SELECTOR_MIDDLE_ITEM_INDEX);
             if (mWrapSelectorWheel) {
                 selectorIndex = getWrappedSelectorIndex(selectorIndex);
             }
-            mSelectorIndices[i] = selectorIndex;
-            ensureCachedScrollSelectorValue(mSelectorIndices[i]);
+            selectorIndices[i] = selectorIndex;
+            ensureCachedScrollSelectorValue(selectorIndices[i]);
         }
     }
 
     /**
-     * Sets the current value of this NumberPicker, and sets mPrevious to the
-     * previous value. If current is greater than mEnd less than mStart, the
-     * value of mCurrent is wrapped around. Subclasses can override this to
-     * change the wrapping behavior
+     * Sets the current value of this NumberPicker.
      *
-     * @param current the new value of the NumberPicker
+     * @param current The new value of the NumberPicker.
+     * @param notifyChange Whether to notify if the current value changed.
      */
-    private void changeCurrent(int current) {
+    private void setValueInternal(int current, boolean notifyChange) {
         if (mValue == current) {
             return;
         }
         // Wrap around the values if we go past the start or end
         if (mWrapSelectorWheel) {
             current = getWrappedSelectorIndex(current);
+        } else {
+            current = Math.max(current, mMinValue);
+            current = Math.min(current, mMaxValue);
         }
         int previous = mValue;
-        setValue(current);
-        notifyChange(previous, current);
+        mValue = current;
+        updateInputTextView();
+        if (notifyChange) {
+            notifyChange(previous, current);
+        }
+        initializeSelectorWheelIndices();
+        invalidate();
     }
 
     /**
      * Changes the current value by one which is increment or
      * decrement based on the passes argument.
+     * decrement the current value.
      *
      * @param increment True to increment, false to decrement.
      */
-    private void changeCurrentByOne(boolean increment) {
-        if (mFlingable) {
-            mDimSelectorWheelAnimator.cancel();
+     private void changeValueByOne(boolean increment) {
+        if (mHasSelectorWheel) {
             mInputText.setVisibility(View.INVISIBLE);
-            mSelectorWheelPaint.setAlpha(SELECTOR_WHEEL_BRIGHT_ALPHA);
+            if (!moveToFinalScrollerPosition(mFlingScroller)) {
+                moveToFinalScrollerPosition(mAdjustScroller);
+            }
             mPreviousScrollerY = 0;
-            forceCompleteChangeCurrentByOneViaScroll();
             if (increment) {
-                mFlingScroller.startScroll(0, 0, 0, -mSelectorElementHeight,
-                        CHANGE_CURRENT_BY_ONE_SCROLL_DURATION);
+                mFlingScroller.startScroll(0, 0, 0, -mSelectorElementHeight, SNAP_SCROLL_DURATION);
             } else {
-                mFlingScroller.startScroll(0, 0, 0, mSelectorElementHeight,
-                        CHANGE_CURRENT_BY_ONE_SCROLL_DURATION);
+                mFlingScroller.startScroll(0, 0, 0, mSelectorElementHeight, SNAP_SCROLL_DURATION);
             }
             invalidate();
         } else {
             if (increment) {
-                changeCurrent(mValue + 1);
+                setValueInternal(mValue + 1, true);
             } else {
-                changeCurrent(mValue - 1);
+                setValueInternal(mValue - 1, true);
             }
-        }
-    }
-
-    /**
-     * Ensures that if we are in the process of changing the current value
-     * by one via scrolling the scroller gets to its final state and the
-     * value is updated.
-     */
-    private void forceCompleteChangeCurrentByOneViaScroll() {
-        Scroller scroller = mFlingScroller;
-        if (!scroller.isFinished()) {
-            final int yBeforeAbort = scroller.getCurrY();
-            scroller.abortAnimation();
-            final int yDelta = scroller.getCurrY() - yBeforeAbort;
-            scrollBy(0, yDelta);
-        }
-    }
-
-    /**
-     * Sets the <code>alpha</code> of the {@link Paint} for drawing the selector
-     * wheel.
-     */
-    @SuppressWarnings("unused")
-    // Called via reflection
-    private void setSelectorPaintAlpha(int alpha) {
-        mSelectorWheelPaint.setAlpha(alpha);
-        invalidate();
-    }
-
-    /**
-     * @return If the <code>event</code> is in the visible <code>view</code>.
-     */
-    private boolean isEventInVisibleViewHitRect(MotionEvent event, View view) {
-        if (view.getVisibility() == VISIBLE) {
-            view.getHitRect(mTempRect);
-            return mTempRect.contains((int) event.getX(), (int) event.getY());
-        }
-        return false;
-    }
-
-    /**
-     * Sets the <code>selectorWheelState</code>.
-     */
-    private void setSelectorWheelState(int selectorWheelState) {
-        mSelectorWheelState = selectorWheelState;
-        if (selectorWheelState == SELECTOR_WHEEL_STATE_LARGE) {
-            mSelectorWheelPaint.setAlpha(SELECTOR_WHEEL_BRIGHT_ALPHA);
-        }
-
-        if (mFlingable && selectorWheelState == SELECTOR_WHEEL_STATE_LARGE
-                && AccessibilityManager.getInstance(mContext).isEnabled()) {
-            AccessibilityManager.getInstance(mContext).interrupt();
-            String text = mContext.getString(R.string.number_picker_increment_scroll_action);
-            mInputText.setContentDescription(text);
-            mInputText.sendAccessibilityEvent(AccessibilityEvent.TYPE_VIEW_SELECTED);
-            mInputText.setContentDescription(null);
         }
     }
 
@@ -1559,13 +1573,14 @@ public class NumberPicker extends LinearLayout {
         int[] selectorIndices = mSelectorIndices;
         int totalTextHeight = selectorIndices.length * mTextSize;
         float totalTextGapHeight = (mBottom - mTop) - totalTextHeight;
-        float textGapCount = selectorIndices.length - 1;
+        float textGapCount = selectorIndices.length;
         mSelectorTextGapHeight = (int) (totalTextGapHeight / textGapCount + 0.5f);
         mSelectorElementHeight = mTextSize + mSelectorTextGapHeight;
-        // Ensure that the middle item is positioned the same as the text in mInputText
+        // Ensure that the middle item is positioned the same as the text in
+        // mInputText
         int editTextTextPosition = mInputText.getBaseline() + mInputText.getTop();
-        mInitialScrollOffset = editTextTextPosition -
-                (mSelectorElementHeight * SELECTOR_MIDDLE_ITEM_INDEX);
+        mInitialScrollOffset = editTextTextPosition
+                - (mSelectorElementHeight * SELECTOR_MIDDLE_ITEM_INDEX);
         mCurrentScrollOffset = mInitialScrollOffset;
         updateInputTextView();
     }
@@ -1580,16 +1595,14 @@ public class NumberPicker extends LinearLayout {
      */
     private void onScrollerFinished(Scroller scroller) {
         if (scroller == mFlingScroller) {
-            if (mSelectorWheelState == SELECTOR_WHEEL_STATE_LARGE) {
-                postAdjustScrollerCommand(0);
-                onScrollStateChange(OnScrollListener.SCROLL_STATE_IDLE);
-            } else {
+            if (!ensureScrollWheelAdjusted()) {
                 updateInputTextView();
-                fadeSelectorWheel(mShowInputControlsAnimimationDuration);
             }
+            onScrollStateChange(OnScrollListener.SCROLL_STATE_IDLE);
         } else {
-            updateInputTextView();
-            showInputControls(mShowInputControlsAnimimationDuration);
+            if (mScrollState != OnScrollListener.SCROLL_STATE_TOUCH_SCROLL) {
+                updateInputTextView();
+            }
         }
     }
 
@@ -1619,56 +1632,6 @@ public class NumberPicker extends LinearLayout {
         }
 
         invalidate();
-    }
-
-    /**
-     * Hides the input controls which is the up/down arrows and the text field.
-     */
-    private void hideInputControls() {
-        mShowInputControlsAnimator.cancel();
-        mIncrementButton.setVisibility(INVISIBLE);
-        mDecrementButton.setVisibility(INVISIBLE);
-        mInputText.setVisibility(INVISIBLE);
-    }
-
-    /**
-     * Show the input controls by making them visible and animating the alpha
-     * property up/down arrows.
-     *
-     * @param animationDuration The duration of the animation.
-     */
-    private void showInputControls(long animationDuration) {
-        updateIncrementAndDecrementButtonsVisibilityState();
-        mInputText.setVisibility(VISIBLE);
-        mShowInputControlsAnimator.setDuration(animationDuration);
-        mShowInputControlsAnimator.start();
-    }
-
-    /**
-     * Fade the selector wheel via an animation.
-     *
-     * @param animationDuration The duration of the animation.
-     */
-    private void fadeSelectorWheel(long animationDuration) {
-        mInputText.setVisibility(VISIBLE);
-        mDimSelectorWheelAnimator.setDuration(animationDuration);
-        mDimSelectorWheelAnimator.start();
-    }
-
-    /**
-     * Updates the visibility state of the increment and decrement buttons.
-     */
-    private void updateIncrementAndDecrementButtonsVisibilityState() {
-        if (mWrapSelectorWheel || mValue < mMaxValue) {
-            mIncrementButton.setVisibility(VISIBLE);
-        } else {
-            mIncrementButton.setVisibility(INVISIBLE);
-        }
-        if (mWrapSelectorWheel || mValue > mMinValue) {
-            mDecrementButton.setVisibility(VISIBLE);
-        } else {
-            mDecrementButton.setVisibility(INVISIBLE);
-        }
     }
 
     /**
@@ -1717,8 +1680,7 @@ public class NumberPicker extends LinearLayout {
 
     /**
      * Ensures we have a cached string representation of the given <code>
-     * selectorIndex</code>
-     * to avoid multiple instantiations of the same string.
+     * selectorIndex</code> to avoid multiple instantiations of the same string.
      */
     private void ensureCachedScrollSelectorValue(int selectorIndex) {
         SparseArray<String> cache = mSelectorIndexToStringCache;
@@ -1751,7 +1713,7 @@ public class NumberPicker extends LinearLayout {
         } else {
             // Check the new value and ensure it's in range
             int current = getSelectedPos(str.toString());
-            changeCurrent(current);
+            setValueInternal(current, true);
         }
     }
 
@@ -1760,25 +1722,23 @@ public class NumberPicker extends LinearLayout {
      * the string corresponding to the index specified by the current value will
      * be returned. Otherwise, the formatter specified in {@link #setFormatter}
      * will be used to format the number.
+     *
+     * @return Whether the text was updated.
      */
-    private void updateInputTextView() {
+    private boolean updateInputTextView() {
         /*
          * If we don't have displayed values then use the current number else
          * find the correct value in the displayed values for the current
          * number.
          */
-        if (mDisplayedValues == null) {
-            mInputText.setText(formatNumber(mValue));
-        } else {
-            mInputText.setText(mDisplayedValues[mValue - mMinValue]);
+        String text = (mDisplayedValues == null) ? formatNumber(mValue)
+                : mDisplayedValues[mValue - mMinValue];
+        if (!TextUtils.isEmpty(text) && !text.equals(mInputText.getText().toString())) {
+            mInputText.setText(text);
+            return true;
         }
-        mInputText.setSelection(mInputText.getText().length());
 
-        if (mFlingable && AccessibilityManager.getInstance(mContext).isEnabled()) {
-            String text = mContext.getString(R.string.number_picker_increment_scroll_mode,
-                    mInputText.getText());
-            mInputText.setContentDescription(text);
-        }
+        return false;
     }
 
     /**
@@ -1796,14 +1756,45 @@ public class NumberPicker extends LinearLayout {
      *
      * @param increment Whether to increment or decrement the value.
      */
-    private void postChangeCurrentByOneFromLongPress(boolean increment) {
-        mInputText.clearFocus();
-        removeAllCallbacks();
+    private void postChangeCurrentByOneFromLongPress(boolean increment, long delayMillis) {
         if (mChangeCurrentByOneFromLongPressCommand == null) {
             mChangeCurrentByOneFromLongPressCommand = new ChangeCurrentByOneFromLongPressCommand();
+        } else {
+            removeCallbacks(mChangeCurrentByOneFromLongPressCommand);
         }
-        mChangeCurrentByOneFromLongPressCommand.setIncrement(increment);
-        post(mChangeCurrentByOneFromLongPressCommand);
+        mChangeCurrentByOneFromLongPressCommand.setStep(increment);
+        postDelayed(mChangeCurrentByOneFromLongPressCommand, delayMillis);
+    }
+
+    /**
+     * Removes the command for changing the current value by one.
+     */
+    private void removeChangeCurrentByOneFromLongPress() {
+        if (mChangeCurrentByOneFromLongPressCommand != null) {
+            removeCallbacks(mChangeCurrentByOneFromLongPressCommand);
+        }
+    }
+
+    /**
+     * Posts a command for beginning an edit of the current value via IME on
+     * long press.
+     */
+    private void postBeginSoftInputOnLongPressCommand() {
+        if (mBeginSoftInputOnLongPressCommand == null) {
+            mBeginSoftInputOnLongPressCommand = new BeginSoftInputOnLongPressCommand();
+        } else {
+            removeCallbacks(mBeginSoftInputOnLongPressCommand);
+        }
+        postDelayed(mBeginSoftInputOnLongPressCommand, ViewConfiguration.getLongPressTimeout());
+    }
+
+    /**
+     * Removes the command for beginning an edit of the current value via IME.
+     */
+    private void removeBeginSoftInputCommand() {
+        if (mBeginSoftInputOnLongPressCommand != null) {
+            removeCallbacks(mBeginSoftInputOnLongPressCommand);
+        }
     }
 
     /**
@@ -1813,12 +1804,13 @@ public class NumberPicker extends LinearLayout {
         if (mChangeCurrentByOneFromLongPressCommand != null) {
             removeCallbacks(mChangeCurrentByOneFromLongPressCommand);
         }
-        if (mAdjustScrollerCommand != null) {
-            removeCallbacks(mAdjustScrollerCommand);
-        }
         if (mSetSelectionCommand != null) {
             removeCallbacks(mSetSelectionCommand);
         }
+        if (mBeginSoftInputOnLongPressCommand != null) {
+            removeCallbacks(mBeginSoftInputOnLongPressCommand);
+        }
+        mPressedStateHelper.cancel();
     }
 
     /**
@@ -1856,8 +1848,7 @@ public class NumberPicker extends LinearLayout {
 
     /**
      * Posts an {@link SetSelectionCommand} from the given <code>selectionStart
-     * </code> to
-     * <code>selectionEnd</code>.
+     * </code> to <code>selectionEnd</code>.
      */
     private void postSetSelectionCommand(int selectionStart, int selectionEnd) {
         if (mSetSelectionCommand == null) {
@@ -1868,20 +1859,6 @@ public class NumberPicker extends LinearLayout {
         mSetSelectionCommand.mSelectionStart = selectionStart;
         mSetSelectionCommand.mSelectionEnd = selectionEnd;
         post(mSetSelectionCommand);
-    }
-
-    /**
-     * Posts an {@link AdjustScrollerCommand} within the given <code>
-     * delayMillis</code>
-     * .
-     */
-    private void postAdjustScrollerCommand(int delayMillis) {
-        if (mAdjustScrollerCommand == null) {
-            mAdjustScrollerCommand = new AdjustScrollerCommand();
-        } else {
-            removeCallbacks(mAdjustScrollerCommand);
-        }
-        postDelayed(mAdjustScrollerCommand, delayMillis);
     }
 
     /**
@@ -1902,8 +1879,8 @@ public class NumberPicker extends LinearLayout {
         }
 
         @Override
-        public CharSequence filter(CharSequence source, int start, int end, Spanned dest,
-                int dstart, int dend) {
+        public CharSequence filter(
+                CharSequence source, int start, int end, Spanned dest, int dstart, int dend) {
             if (mDisplayedValues == null) {
                 CharSequence filtered = super.filter(source, start, end, dest, dstart, dend);
                 if (filtered == null) {
@@ -1949,6 +1926,104 @@ public class NumberPicker extends LinearLayout {
     }
 
     /**
+     * Ensures that the scroll wheel is adjusted i.e. there is no offset and the
+     * middle element is in the middle of the widget.
+     *
+     * @return Whether an adjustment has been made.
+     */
+    private boolean ensureScrollWheelAdjusted() {
+        // adjust to the closest value
+        int deltaY = mInitialScrollOffset - mCurrentScrollOffset;
+        if (deltaY != 0) {
+            mPreviousScrollerY = 0;
+            if (Math.abs(deltaY) > mSelectorElementHeight / 2) {
+                deltaY += (deltaY > 0) ? -mSelectorElementHeight : mSelectorElementHeight;
+            }
+            mAdjustScroller.startScroll(0, 0, 0, deltaY, SELECTOR_ADJUSTMENT_DURATION_MILLIS);
+            invalidate();
+            return true;
+        }
+        return false;
+    }
+
+    class PressedStateHelper implements Runnable {
+        public static final int BUTTON_INCREMENT = 1;
+        public static final int BUTTON_DECREMENT = 2;
+
+        private final int MODE_PRESS = 1;
+        private final int MODE_TAPPED = 2;
+
+        private int mManagedButton;
+        private int mMode;
+
+        public void cancel() {
+            mMode = 0;
+            mManagedButton = 0;
+            NumberPicker.this.removeCallbacks(this);
+            if (mIncrementVirtualButtonPressed) {
+                mIncrementVirtualButtonPressed = false;
+                invalidate(0, mBottomSelectionDividerBottom, mRight, mBottom);
+            }
+            mDecrementVirtualButtonPressed = false;
+            if (mDecrementVirtualButtonPressed) {
+                invalidate(0, 0, mRight, mTopSelectionDividerTop);
+            }
+        }
+
+        public void buttonPressDelayed(int button) {
+            cancel();
+            mMode = MODE_PRESS;
+            mManagedButton = button;
+            NumberPicker.this.postDelayed(this, ViewConfiguration.getTapTimeout());
+        }
+
+        public void buttonTapped(int button) {
+            cancel();
+            mMode = MODE_TAPPED;
+            mManagedButton = button;
+            NumberPicker.this.post(this);
+        }
+
+        @Override
+        public void run() {
+            switch (mMode) {
+                case MODE_PRESS: {
+                    switch (mManagedButton) {
+                        case BUTTON_INCREMENT: {
+                            mIncrementVirtualButtonPressed = true;
+                            invalidate(0, mBottomSelectionDividerBottom, mRight, mBottom);
+                        } break;
+                        case BUTTON_DECREMENT: {
+                            mDecrementVirtualButtonPressed = true;
+                            invalidate(0, 0, mRight, mTopSelectionDividerTop);
+                        }
+                    }
+                } break;
+                case MODE_TAPPED: {
+                    switch (mManagedButton) {
+                        case BUTTON_INCREMENT: {
+                            if (!mIncrementVirtualButtonPressed) {
+                                NumberPicker.this.postDelayed(this,
+                                        ViewConfiguration.getPressedStateDuration());
+                            }
+                            mIncrementVirtualButtonPressed ^= true;
+                            invalidate(0, mBottomSelectionDividerBottom, mRight, mBottom);
+                        } break;
+                        case BUTTON_DECREMENT: {
+                            if (!mDecrementVirtualButtonPressed) {
+                                NumberPicker.this.postDelayed(this,
+                                        ViewConfiguration.getPressedStateDuration());
+                            }
+                            mDecrementVirtualButtonPressed ^= true;
+                            invalidate(0, 0, mRight, mTopSelectionDividerTop);
+                        }
+                    }
+                } break;
+            }
+        }
+    }
+
+    /**
      * Command for setting the input text selection.
      */
     class SetSelectionCommand implements Runnable {
@@ -1962,39 +2037,18 @@ public class NumberPicker extends LinearLayout {
     }
 
     /**
-     * Command for adjusting the scroller to show in its center the closest of
-     * the displayed items.
-     */
-    class AdjustScrollerCommand implements Runnable {
-        public void run() {
-            mPreviousScrollerY = 0;
-            if (mInitialScrollOffset == mCurrentScrollOffset) {
-                updateInputTextView();
-                showInputControls(mShowInputControlsAnimimationDuration);
-                return;
-            }
-            // adjust to the closest value
-            int deltaY = mInitialScrollOffset - mCurrentScrollOffset;
-            if (Math.abs(deltaY) > mSelectorElementHeight / 2) {
-                deltaY += (deltaY > 0) ? -mSelectorElementHeight : mSelectorElementHeight;
-            }
-            mAdjustScroller.startScroll(0, 0, 0, deltaY, SELECTOR_ADJUSTMENT_DURATION_MILLIS);
-            invalidate();
-        }
-    }
-
-    /**
      * Command for changing the current value from a long press by one.
      */
     class ChangeCurrentByOneFromLongPressCommand implements Runnable {
         private boolean mIncrement;
 
-        private void setIncrement(boolean increment) {
+        private void setStep(boolean increment) {
             mIncrement = increment;
         }
 
+        @Override
         public void run() {
-            changeCurrentByOne(mIncrement);
+            changeValueByOne(mIncrement);
             postDelayed(this, mLongPressUpdateInterval);
         }
     }
@@ -2014,6 +2068,502 @@ public class NumberPicker extends LinearLayout {
             if (actionCode == EditorInfo.IME_ACTION_DONE) {
                 clearFocus();
             }
+        }
+    }
+
+    /**
+     * Command for beginning soft input on long press.
+     */
+    class BeginSoftInputOnLongPressCommand implements Runnable {
+
+        @Override
+        public void run() {
+            showSoftInput();
+            mIngonreMoveEvents = true;
+        }
+    }
+
+    /**
+     * Class for managing virtual view tree rooted at this picker.
+     */
+    class AccessibilityNodeProviderImpl extends AccessibilityNodeProvider {
+        private static final int UNDEFINED = Integer.MIN_VALUE;
+
+        private static final int VIRTUAL_VIEW_ID_INCREMENT = 1;
+
+        private static final int VIRTUAL_VIEW_ID_INPUT = 2;
+
+        private static final int VIRTUAL_VIEW_ID_DECREMENT = 3;
+
+        private final Rect mTempRect = new Rect();
+
+        private final int[] mTempArray = new int[2];
+
+        private int mAccessibilityFocusedView = UNDEFINED;
+
+        @Override
+        public AccessibilityNodeInfo createAccessibilityNodeInfo(int virtualViewId) {
+            switch (virtualViewId) {
+                case View.NO_ID:
+                    return createAccessibilityNodeInfoForNumberPicker( mScrollX, mScrollY,
+                            mScrollX + (mRight - mLeft), mScrollY + (mBottom - mTop));
+                case VIRTUAL_VIEW_ID_DECREMENT:
+                    return createAccessibilityNodeInfoForVirtualButton(VIRTUAL_VIEW_ID_DECREMENT,
+                            getVirtualDecrementButtonText(), mScrollX, mScrollY,
+                            mScrollX + (mRight - mLeft),
+                            mTopSelectionDividerTop + mSelectionDividerHeight);
+                case VIRTUAL_VIEW_ID_INPUT:
+                    return createAccessibiltyNodeInfoForInputText();
+                case VIRTUAL_VIEW_ID_INCREMENT:
+                    return createAccessibilityNodeInfoForVirtualButton(VIRTUAL_VIEW_ID_INCREMENT,
+                            getVirtualIncrementButtonText(), mScrollX,
+                            mBottomSelectionDividerBottom - mSelectionDividerHeight,
+                            mScrollX + (mRight - mLeft), mScrollY + (mBottom - mTop));
+            }
+            return super.createAccessibilityNodeInfo(virtualViewId);
+        }
+
+        @Override
+        public List<AccessibilityNodeInfo> findAccessibilityNodeInfosByText(String searched,
+                int virtualViewId) {
+            if (TextUtils.isEmpty(searched)) {
+                return Collections.emptyList();
+            }
+            String searchedLowerCase = searched.toLowerCase();
+            List<AccessibilityNodeInfo> result = new ArrayList<AccessibilityNodeInfo>();
+            switch (virtualViewId) {
+                case View.NO_ID: {
+                    findAccessibilityNodeInfosByTextInChild(searchedLowerCase,
+                            VIRTUAL_VIEW_ID_DECREMENT, result);
+                    findAccessibilityNodeInfosByTextInChild(searchedLowerCase,
+                            VIRTUAL_VIEW_ID_INPUT, result);
+                    findAccessibilityNodeInfosByTextInChild(searchedLowerCase,
+                            VIRTUAL_VIEW_ID_INCREMENT, result);
+                    return result;
+                }
+                case VIRTUAL_VIEW_ID_DECREMENT:
+                case VIRTUAL_VIEW_ID_INCREMENT:
+                case VIRTUAL_VIEW_ID_INPUT: {
+                    findAccessibilityNodeInfosByTextInChild(searchedLowerCase, virtualViewId,
+                            result);
+                    return result;
+                }
+            }
+            return super.findAccessibilityNodeInfosByText(searched, virtualViewId);
+        }
+
+        @Override
+        public boolean performAction(int virtualViewId, int action, Bundle arguments) {
+            switch (virtualViewId) {
+                case View.NO_ID: {
+                    switch (action) {
+                        case AccessibilityNodeInfo.ACTION_ACCESSIBILITY_FOCUS: {
+                            if (mAccessibilityFocusedView != virtualViewId) {
+                                mAccessibilityFocusedView = virtualViewId;
+                                requestAccessibilityFocus();
+                                return true;
+                            }
+                        } return false;
+                        case AccessibilityNodeInfo.ACTION_CLEAR_ACCESSIBILITY_FOCUS: {
+                            if (mAccessibilityFocusedView == virtualViewId) {
+                                mAccessibilityFocusedView = UNDEFINED;
+                                clearAccessibilityFocus();
+                                return true;
+                            }
+                            return false;
+                        }
+                        case AccessibilityNodeInfo.ACTION_SCROLL_FORWARD: {
+                            if (NumberPicker.this.isEnabled()
+                                    && (getWrapSelectorWheel() || getValue() < getMaxValue())) {
+                                changeValueByOne(true);
+                                return true;
+                            }
+                        } return false;
+                        case AccessibilityNodeInfo.ACTION_SCROLL_BACKWARD: {
+                            if (NumberPicker.this.isEnabled()
+                                    && (getWrapSelectorWheel() || getValue() > getMinValue())) {
+                                changeValueByOne(false);
+                                return true;
+                            }
+                        } return false;
+                    }
+                } break;
+                case VIRTUAL_VIEW_ID_INPUT: {
+                    switch (action) {
+                        case AccessibilityNodeInfo.ACTION_FOCUS: {
+                            if (NumberPicker.this.isEnabled() && !mInputText.isFocused()) {
+                                return mInputText.requestFocus();
+                            }
+                        } break;
+                        case AccessibilityNodeInfo.ACTION_CLEAR_FOCUS: {
+                            if (NumberPicker.this.isEnabled() && mInputText.isFocused()) {
+                                mInputText.clearFocus();
+                                return true;
+                            }
+                            return false;
+                        }
+                        case AccessibilityNodeInfo.ACTION_CLICK: {
+                            if (NumberPicker.this.isEnabled()) {
+                                showSoftInput();
+                                return true;
+                            }
+                            return false;
+                        }
+                        case AccessibilityNodeInfo.ACTION_ACCESSIBILITY_FOCUS: {
+                            if (mAccessibilityFocusedView != virtualViewId) {
+                                mAccessibilityFocusedView = virtualViewId;
+                                sendAccessibilityEventForVirtualView(virtualViewId,
+                                        AccessibilityEvent.TYPE_VIEW_ACCESSIBILITY_FOCUSED);
+                                mInputText.invalidate();
+                                return true;
+                            }
+                        } return false;
+                        case  AccessibilityNodeInfo.ACTION_CLEAR_ACCESSIBILITY_FOCUS: {
+                            if (mAccessibilityFocusedView == virtualViewId) {
+                                mAccessibilityFocusedView = UNDEFINED;
+                                sendAccessibilityEventForVirtualView(virtualViewId,
+                                        AccessibilityEvent.TYPE_VIEW_ACCESSIBILITY_FOCUS_CLEARED);
+                                mInputText.invalidate();
+                                return true;
+                            }
+                        } return false;
+                        default: {
+                            return mInputText.performAccessibilityAction(action, arguments);
+                        }
+                    }
+                } return false;
+                case VIRTUAL_VIEW_ID_INCREMENT: {
+                    switch (action) {
+                        case AccessibilityNodeInfo.ACTION_CLICK: {
+                            if (NumberPicker.this.isEnabled()) {
+                                NumberPicker.this.changeValueByOne(true);
+                                sendAccessibilityEventForVirtualView(virtualViewId,
+                                        AccessibilityEvent.TYPE_VIEW_CLICKED);
+                                return true;
+                            }
+                        } return false;
+                        case AccessibilityNodeInfo.ACTION_ACCESSIBILITY_FOCUS: {
+                            if (mAccessibilityFocusedView != virtualViewId) {
+                                mAccessibilityFocusedView = virtualViewId;
+                                sendAccessibilityEventForVirtualView(virtualViewId,
+                                        AccessibilityEvent.TYPE_VIEW_ACCESSIBILITY_FOCUSED);
+                                invalidate(0, mBottomSelectionDividerBottom, mRight, mBottom);
+                                return true;
+                            }
+                        } return false;
+                        case  AccessibilityNodeInfo.ACTION_CLEAR_ACCESSIBILITY_FOCUS: {
+                            if (mAccessibilityFocusedView == virtualViewId) {
+                                mAccessibilityFocusedView = UNDEFINED;
+                                sendAccessibilityEventForVirtualView(virtualViewId,
+                                        AccessibilityEvent.TYPE_VIEW_ACCESSIBILITY_FOCUS_CLEARED);
+                                invalidate(0, mBottomSelectionDividerBottom, mRight, mBottom);
+                                return true;
+                            }
+                        } return false;
+                    }
+                } return false;
+                case VIRTUAL_VIEW_ID_DECREMENT: {
+                    switch (action) {
+                        case AccessibilityNodeInfo.ACTION_CLICK: {
+                            if (NumberPicker.this.isEnabled()) {
+                                final boolean increment = (virtualViewId == VIRTUAL_VIEW_ID_INCREMENT);
+                                NumberPicker.this.changeValueByOne(increment);
+                                sendAccessibilityEventForVirtualView(virtualViewId,
+                                        AccessibilityEvent.TYPE_VIEW_CLICKED);
+                                return true;
+                            }
+                        } return false;
+                        case AccessibilityNodeInfo.ACTION_ACCESSIBILITY_FOCUS: {
+                            if (mAccessibilityFocusedView != virtualViewId) {
+                                mAccessibilityFocusedView = virtualViewId;
+                                sendAccessibilityEventForVirtualView(virtualViewId,
+                                        AccessibilityEvent.TYPE_VIEW_ACCESSIBILITY_FOCUSED);
+                                invalidate(0, 0, mRight, mTopSelectionDividerTop);
+                                return true;
+                            }
+                        } return false;
+                        case  AccessibilityNodeInfo.ACTION_CLEAR_ACCESSIBILITY_FOCUS: {
+                            if (mAccessibilityFocusedView == virtualViewId) {
+                                mAccessibilityFocusedView = UNDEFINED;
+                                sendAccessibilityEventForVirtualView(virtualViewId,
+                                        AccessibilityEvent.TYPE_VIEW_ACCESSIBILITY_FOCUS_CLEARED);
+                                invalidate(0, 0, mRight, mTopSelectionDividerTop);
+                                return true;
+                            }
+                        } return false;
+                    }
+                } return false;
+            }
+            return super.performAction(virtualViewId, action, arguments);
+        }
+
+        @Override
+        public AccessibilityNodeInfo findAccessibilityFocus(int virtualViewId) {
+            return createAccessibilityNodeInfo(mAccessibilityFocusedView);
+        }
+
+        @Override
+        public AccessibilityNodeInfo accessibilityFocusSearch(int direction, int virtualViewId) {
+            switch (direction) {
+                case View.ACCESSIBILITY_FOCUS_DOWN:
+                case View.ACCESSIBILITY_FOCUS_FORWARD: {
+                    switch (mAccessibilityFocusedView) {
+                        case UNDEFINED: {
+                            return createAccessibilityNodeInfo(View.NO_ID);
+                        }
+                        case View.NO_ID: {
+                            if (hasVirtualDecrementButton()) {
+                                return createAccessibilityNodeInfo(VIRTUAL_VIEW_ID_DECREMENT);
+                            }
+                        }
+                        //$FALL-THROUGH$
+                        case VIRTUAL_VIEW_ID_DECREMENT: {
+                            return createAccessibilityNodeInfo(VIRTUAL_VIEW_ID_INPUT);
+                        }
+                        case VIRTUAL_VIEW_ID_INPUT: {
+                            if (hasVirtualIncrementButton()) {
+                                return createAccessibilityNodeInfo(VIRTUAL_VIEW_ID_INCREMENT);
+                            }
+                        }
+                        //$FALL-THROUGH$
+                        case VIRTUAL_VIEW_ID_INCREMENT: {
+                            View nextFocus = NumberPicker.this.focusSearch(direction);
+                            if (nextFocus != null) {
+                                return nextFocus.createAccessibilityNodeInfo();
+                            }
+                            return null;
+                        }
+                    }
+                } break;
+                case View.ACCESSIBILITY_FOCUS_UP:
+                case View.ACCESSIBILITY_FOCUS_BACKWARD: {
+                    switch (mAccessibilityFocusedView) {
+                        case UNDEFINED: {
+                            return createAccessibilityNodeInfo(View.NO_ID);
+                        }
+                        case View.NO_ID: {
+                            if (hasVirtualIncrementButton()) {
+                                return createAccessibilityNodeInfo(VIRTUAL_VIEW_ID_INCREMENT);
+                            }
+                        }
+                        //$FALL-THROUGH$
+                        case VIRTUAL_VIEW_ID_INCREMENT: {
+                            return createAccessibilityNodeInfo(VIRTUAL_VIEW_ID_INPUT);
+                        }
+                        case VIRTUAL_VIEW_ID_INPUT: {
+                            if (hasVirtualDecrementButton()) {
+                                return createAccessibilityNodeInfo(VIRTUAL_VIEW_ID_DECREMENT);
+                            }
+                        }
+                        //$FALL-THROUGH$
+                        case VIRTUAL_VIEW_ID_DECREMENT: {
+                            View nextFocus = NumberPicker.this.focusSearch(direction);
+                            if (nextFocus != null) {
+                                return nextFocus.createAccessibilityNodeInfo();
+                            }
+                            return null;
+                        }
+                    }
+                } break;
+            }
+            return null;
+        }
+
+        public void sendAccessibilityEventForVirtualView(int virtualViewId, int eventType) {
+            switch (virtualViewId) {
+                case VIRTUAL_VIEW_ID_DECREMENT: {
+                    if (hasVirtualDecrementButton()) {
+                        sendAccessibilityEventForVirtualButton(virtualViewId, eventType,
+                                getVirtualDecrementButtonText());
+                    }
+                } break;
+                case VIRTUAL_VIEW_ID_INPUT: {
+                    sendAccessibilityEventForVirtualText(eventType);
+                } break;
+                case VIRTUAL_VIEW_ID_INCREMENT: {
+                    if (hasVirtualIncrementButton()) {
+                        sendAccessibilityEventForVirtualButton(virtualViewId, eventType,
+                                getVirtualIncrementButtonText());
+                    }
+                } break;
+            }
+        }
+
+        private void sendAccessibilityEventForVirtualText(int eventType) {
+            AccessibilityEvent event = AccessibilityEvent.obtain(eventType);
+            mInputText.onInitializeAccessibilityEvent(event);
+            mInputText.onPopulateAccessibilityEvent(event);
+            event.setSource(NumberPicker.this, VIRTUAL_VIEW_ID_INPUT);
+            requestSendAccessibilityEvent(NumberPicker.this, event);
+        }
+
+        private void sendAccessibilityEventForVirtualButton(int virtualViewId, int eventType,
+                String text) {
+            AccessibilityEvent event = AccessibilityEvent.obtain(eventType);
+            event.setClassName(Button.class.getName());
+            event.setPackageName(mContext.getPackageName());
+            event.getText().add(text);
+            event.setEnabled(NumberPicker.this.isEnabled());
+            event.setSource(NumberPicker.this, virtualViewId);
+            requestSendAccessibilityEvent(NumberPicker.this, event);
+        }
+
+        private void findAccessibilityNodeInfosByTextInChild(String searchedLowerCase,
+                int virtualViewId, List<AccessibilityNodeInfo> outResult) {
+            switch (virtualViewId) {
+                case VIRTUAL_VIEW_ID_DECREMENT: {
+                    String text = getVirtualDecrementButtonText();
+                    if (!TextUtils.isEmpty(text)
+                            && text.toString().toLowerCase().contains(searchedLowerCase)) {
+                        outResult.add(createAccessibilityNodeInfo(VIRTUAL_VIEW_ID_DECREMENT));
+                    }
+                } return;
+                case VIRTUAL_VIEW_ID_INPUT: {
+                    CharSequence text = mInputText.getText();
+                    if (!TextUtils.isEmpty(text) &&
+                            text.toString().toLowerCase().contains(searchedLowerCase)) {
+                        outResult.add(createAccessibilityNodeInfo(VIRTUAL_VIEW_ID_INPUT));
+                        return;
+                    }
+                    CharSequence contentDesc = mInputText.getText();
+                    if (!TextUtils.isEmpty(contentDesc) &&
+                            contentDesc.toString().toLowerCase().contains(searchedLowerCase)) {
+                        outResult.add(createAccessibilityNodeInfo(VIRTUAL_VIEW_ID_INPUT));
+                        return;
+                    }
+                } break;
+                case VIRTUAL_VIEW_ID_INCREMENT: {
+                    String text = getVirtualIncrementButtonText();
+                    if (!TextUtils.isEmpty(text)
+                            && text.toString().toLowerCase().contains(searchedLowerCase)) {
+                        outResult.add(createAccessibilityNodeInfo(VIRTUAL_VIEW_ID_INCREMENT));
+                    }
+                } return;
+            }
+        }
+
+        private AccessibilityNodeInfo createAccessibiltyNodeInfoForInputText() {
+            AccessibilityNodeInfo info = mInputText.createAccessibilityNodeInfo();
+            info.setSource(NumberPicker.this, VIRTUAL_VIEW_ID_INPUT);
+            if (mAccessibilityFocusedView != VIRTUAL_VIEW_ID_INPUT) {
+                info.addAction(AccessibilityNodeInfo.ACTION_ACCESSIBILITY_FOCUS);
+            }
+            if (mAccessibilityFocusedView == VIRTUAL_VIEW_ID_INPUT) {
+                info.addAction(AccessibilityNodeInfo.ACTION_CLEAR_ACCESSIBILITY_FOCUS);
+            }
+            return info;
+        }
+
+        private AccessibilityNodeInfo createAccessibilityNodeInfoForVirtualButton(int virtualViewId,
+                String text, int left, int top, int right, int bottom) {
+            AccessibilityNodeInfo info = AccessibilityNodeInfo.obtain();
+            info.setClassName(Button.class.getName());
+            info.setPackageName(mContext.getPackageName());
+            info.setSource(NumberPicker.this, virtualViewId);
+            info.setParent(NumberPicker.this);
+            info.setText(text);
+            info.setClickable(true);
+            info.setLongClickable(true);
+            info.setEnabled(NumberPicker.this.isEnabled());
+            Rect boundsInParent = mTempRect;
+            boundsInParent.set(left, top, right, bottom);
+            info.setVisibleToUser(isVisibleToUser(boundsInParent));
+            info.setBoundsInParent(boundsInParent);
+            Rect boundsInScreen = boundsInParent;
+            int[] locationOnScreen = mTempArray;
+            getLocationOnScreen(locationOnScreen);
+            boundsInScreen.offset(locationOnScreen[0], locationOnScreen[1]);
+            info.setBoundsInScreen(boundsInScreen);
+
+            if (mAccessibilityFocusedView != virtualViewId) {
+                info.addAction(AccessibilityNodeInfo.ACTION_ACCESSIBILITY_FOCUS);
+            }
+            if (mAccessibilityFocusedView == virtualViewId) {
+                info.addAction(AccessibilityNodeInfo.ACTION_CLEAR_ACCESSIBILITY_FOCUS);
+            }
+            if (NumberPicker.this.isEnabled()) {
+                info.addAction(AccessibilityNodeInfo.ACTION_CLICK);
+            }
+
+            return info;
+        }
+
+        private AccessibilityNodeInfo createAccessibilityNodeInfoForNumberPicker(int left, int top,
+                int right, int bottom) {
+            AccessibilityNodeInfo info = AccessibilityNodeInfo.obtain();
+            info.setClassName(NumberPicker.class.getName());
+            info.setPackageName(mContext.getPackageName());
+            info.setSource(NumberPicker.this);
+
+            if (hasVirtualDecrementButton()) {
+                info.addChild(NumberPicker.this, VIRTUAL_VIEW_ID_DECREMENT);
+            }
+            info.addChild(NumberPicker.this, VIRTUAL_VIEW_ID_INPUT);
+            if (hasVirtualIncrementButton()) {
+                info.addChild(NumberPicker.this, VIRTUAL_VIEW_ID_INCREMENT);
+            }
+
+            info.setParent((View) getParentForAccessibility());
+            info.setEnabled(NumberPicker.this.isEnabled());
+            info.setScrollable(true);
+            Rect boundsInParent = mTempRect;
+            boundsInParent.set(left, top, right, bottom);
+            info.setBoundsInParent(boundsInParent);
+            info.setVisibleToUser(isVisibleToUser());
+            Rect boundsInScreen = boundsInParent;
+            int[] locationOnScreen = mTempArray;
+            getLocationOnScreen(locationOnScreen);
+            boundsInScreen.offset(locationOnScreen[0], locationOnScreen[1]);
+            info.setBoundsInScreen(boundsInScreen);
+
+            if (mAccessibilityFocusedView != View.NO_ID) {
+                info.addAction(AccessibilityNodeInfo.ACTION_ACCESSIBILITY_FOCUS);
+            }
+            if (mAccessibilityFocusedView == View.NO_ID) {
+                info.addAction(AccessibilityNodeInfo.ACTION_CLEAR_ACCESSIBILITY_FOCUS);
+            }
+            if (NumberPicker.this.isEnabled()) {
+                if (getWrapSelectorWheel() || getValue() < getMaxValue()) {
+                    info.addAction(AccessibilityNodeInfo.ACTION_SCROLL_FORWARD);
+                }
+                if (getWrapSelectorWheel() || getValue() > getMinValue()) {
+                    info.addAction(AccessibilityNodeInfo.ACTION_SCROLL_BACKWARD);
+                }
+            }
+
+            return info;
+        }
+
+        private boolean hasVirtualDecrementButton() {
+            return getWrapSelectorWheel() || getValue() > getMinValue();
+        }
+
+        private boolean hasVirtualIncrementButton() {
+            return getWrapSelectorWheel() || getValue() < getMaxValue();
+        }
+
+        private String getVirtualDecrementButtonText() {
+            int value = mValue - 1;
+            if (mWrapSelectorWheel) {
+                value = getWrappedSelectorIndex(value);
+            }
+            if (value >= mMinValue) {
+                return (mDisplayedValues == null) ? formatNumber(value)
+                        : mDisplayedValues[value - mMinValue];
+            }
+            return null;
+        }
+
+        private String getVirtualIncrementButtonText() {
+            int value = mValue + 1;
+            if (mWrapSelectorWheel) {
+                value = getWrappedSelectorIndex(value);
+            }
+            if (value <= mMaxValue) {
+                return (mDisplayedValues == null) ? formatNumber(value)
+                        : mDisplayedValues[value - mMinValue];
+            }
+            return null;
         }
     }
 }

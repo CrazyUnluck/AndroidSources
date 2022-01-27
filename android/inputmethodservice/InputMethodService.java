@@ -402,7 +402,7 @@ public class InputMethodService extends AbstractInputMethodService {
             mShowInputFlags = 0;
             mShowInputRequested = false;
             mShowInputForced = false;
-            hideWindow();
+            doHideWindow();
             if (resultReceiver != null) {
                 resultReceiver.send(wasVis != isInputViewShown()
                         ? InputMethodManager.RESULT_HIDDEN
@@ -737,7 +737,7 @@ public class InputMethodService extends AbstractInputMethodService {
                         onDisplayCompletions(completions);
                     }
                 } else {
-                    hideWindow();
+                    doHideWindow();
                 }
             } else if (mCandidatesVisibility == View.VISIBLE) {
                 // If the candidates are currently visible, make sure the
@@ -745,7 +745,7 @@ public class InputMethodService extends AbstractInputMethodService {
                 showWindow(false);
             } else {
                 // Otherwise hide the window.
-                hideWindow();
+                doHideWindow();
             }
             // If user uses hard keyboard, IME button should always be shown.
             boolean showing = onEvaluateInputViewShown();
@@ -1096,7 +1096,7 @@ public class InputMethodService extends AbstractInputMethodService {
             if (shown) {
                 showWindow(false);
             } else {
-                hideWindow();
+                doHideWindow();
             }
         }
     }
@@ -1449,9 +1449,13 @@ public class InputMethodService extends AbstractInputMethodService {
         mCandidatesViewStarted = false;
     }
 
+    private void doHideWindow() {
+        mImm.setImeWindowStatus(mToken, 0, mBackDisposition);
+        hideWindow();
+    }
+
     public void hideWindow() {
         finishViews();
-        mImm.setImeWindowStatus(mToken, 0, mBackDisposition);
         if (mWindowVisible) {
             mWindow.hide();
             mWindowVisible = false;
@@ -1703,7 +1707,7 @@ public class InputMethodService extends AbstractInputMethodService {
                 // If we have the window visible for some other reason --
                 // most likely to show candidates -- then just get rid
                 // of it.  This really shouldn't happen, but just in case...
-                if (doIt) hideWindow();
+                if (doIt) doHideWindow();
             }
             return true;
         }
@@ -1712,8 +1716,8 @@ public class InputMethodService extends AbstractInputMethodService {
     
     /**
      * Override this to intercept key down events before they are processed by the
-     * application.  If you return true, the application will not itself
-     * process the event.  If you return true, the normal application processing
+     * application.  If you return true, the application will not 
+     * process the event itself.  If you return false, the normal application processing
      * will occur as if the IME had not seen the event at all.
      * 
      * <p>The default implementation intercepts {@link KeyEvent#KEYCODE_BACK
@@ -1888,6 +1892,13 @@ public class InputMethodService extends AbstractInputMethodService {
      * {@link KeyEvent#FLAG_KEEP_TOUCH_MODE KeyEvent.FLAG_KEEP_TOUCH_MODE}, so
      * that they don't impact the current touch mode of the UI.
      *
+     * <p>Note that it's discouraged to send such key events in normal operation;
+     * this is mainly for use with {@link android.text.InputType#TYPE_NULL} type
+     * text fields, or for non-rich input methods. A reasonably capable software
+     * input method should use the
+     * {@link android.view.inputmethod.InputConnection#commitText} family of methods
+     * to send text to an application, rather than sending key events.</p>
+     *
      * @param keyEventCode The raw key code to send, as defined by
      * {@link KeyEvent}.
      */
@@ -1945,7 +1956,11 @@ public class InputMethodService extends AbstractInputMethodService {
      * {@link InputConnection#commitText InputConnection.commitText()} with
      * the character; some, however, may be handled different.  In particular,
      * the enter character ('\n') will either be delivered as an action code
-     * or a raw key event, as appropriate.
+     * or a raw key event, as appropriate.  Consider this as a convenience
+     * method for IMEs that do not have a full implementation of actions; a
+     * fully complying IME will decide of the right action for each event and
+     * will likely never call this method except maybe to handle events coming
+     * from an actual hardware keyboard.
      * 
      * @param charCode The UTF-16 character code to send.
      */
@@ -2173,7 +2188,7 @@ public class InputMethodService extends AbstractInputMethodService {
      * This is called when, while currently displayed in extract mode, the
      * current input target changes.  The default implementation will
      * auto-hide the IME if the new target is not a full editor, since this
-     * can be an confusing experience for the user.
+     * can be a confusing experience for the user.
      */
     public void onExtractingInputChanged(EditorInfo ei) {
         if (ei.inputType == InputType.TYPE_NULL) {

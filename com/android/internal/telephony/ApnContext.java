@@ -17,6 +17,9 @@
 package com.android.internal.telephony;
 
 import android.util.Log;
+
+import java.io.FileDescriptor;
+import java.io.PrintWriter;
 import java.util.ArrayList;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
@@ -75,8 +78,11 @@ public class ApnContext {
         return mDataConnection;
     }
 
-    public synchronized void setDataConnection(DataConnection dataConnection) {
-        mDataConnection = dataConnection;
+    public synchronized void setDataConnection(DataConnection dc) {
+        if (DBG) {
+            log("setDataConnection: old dc=" + mDataConnection + " new dc=" + dc + " this=" + this);
+        }
+        mDataConnection = dc;
     }
 
 
@@ -85,10 +91,15 @@ public class ApnContext {
     }
 
     public synchronized void setDataConnectionAc(DataConnectionAc dcac) {
+        if (DBG) {
+            log("setDataConnectionAc: old dcac=" + mDataConnectionAc + " new dcac=" + dcac);
+        }
         if (dcac != null) {
             dcac.addApnContextSync(this);
         } else {
-            if (mDataConnectionAc != null) mDataConnectionAc.removeApnContextSync(this);
+            if (mDataConnectionAc != null) {
+                mDataConnectionAc.removeApnContextSync(this);
+            }
         }
         mDataConnectionAc = dcac;
     }
@@ -126,9 +137,9 @@ public class ApnContext {
         return apn;
     }
 
-    public synchronized void removeNextWaitingApn() {
-        if ((mWaitingApns != null) && (!mWaitingApns.isEmpty())) {
-            mWaitingApns.remove(0);
+    public synchronized void removeWaitingApn(ApnSetting apn) {
+        if (mWaitingApns != null) {
+            mWaitingApns.remove(apn);
         }
     }
 
@@ -138,7 +149,7 @@ public class ApnContext {
 
     public synchronized void setState(DataConnectionTracker.State s) {
         if (DBG) {
-            log("setState: " + s + " for type " + mApnType + ", previous state:" + mState);
+            log("setState: " + s + ", previous state:" + mState);
         }
 
         mState = s;
@@ -162,7 +173,7 @@ public class ApnContext {
 
     public synchronized void setReason(String reason) {
         if (DBG) {
-            log("set reason as " + reason + ", for type " + mApnType + ",current state " + mState);
+            log("set reason as " + reason + ",current state " + mState);
         }
         mReason = reason;
     }
@@ -177,8 +188,7 @@ public class ApnContext {
 
     public void setEnabled(boolean enabled) {
         if (DBG) {
-            log("set enabled as " + enabled + ", for type " +
-                    mApnType + ", current state is " + mDataEnabled.get());
+            log("set enabled as " + enabled + ", current state is " + mDataEnabled.get());
         }
         mDataEnabled.set(enabled);
     }
@@ -189,8 +199,7 @@ public class ApnContext {
 
     public void setDependencyMet(boolean met) {
         if (DBG) {
-            log("set mDependencyMet as " + met + ", for type " + mApnType +
-                    ", current state is " + mDependencyMet.get());
+            log("set mDependencyMet as " + met + " current state is " + mDependencyMet.get());
         }
         mDependencyMet.set(met);
     }
@@ -201,10 +210,19 @@ public class ApnContext {
 
     @Override
     public String toString() {
-        return "state=" + getState() + " apnType=" + mApnType;
+        // We don't print mDataConnection because its recursive.
+        return "{mApnType=" + mApnType + " mState=" + getState() + " mWaitingApns=" + mWaitingApns +
+                " mWaitingApnsPermanentFailureCountDown=" + mWaitingApnsPermanentFailureCountDown +
+                " mApnSetting=" + mApnSetting + " mDataConnectionAc=" + mDataConnectionAc +
+                " mReason=" + mReason + " mDataEnabled=" + mDataEnabled +
+                " mDependencyMet=" + mDependencyMet + "}";
     }
 
     protected void log(String s) {
-        Log.d(LOG_TAG, "[ApnContext] " + s);
+        Log.d(LOG_TAG, "[ApnContext:" + mApnType + "] " + s);
+    }
+
+    public void dump(FileDescriptor fd, PrintWriter pw, String[] args) {
+        pw.println("ApnContext: " + this.toString());
     }
 }

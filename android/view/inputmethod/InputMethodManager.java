@@ -62,6 +62,9 @@ import java.util.concurrent.TimeUnit;
  * <p>Topics covered here:
  * <ol>
  * <li><a href="#ArchitectureOverview">Architecture Overview</a>
+ * <li><a href="#Applications">Applications</a>
+ * <li><a href="#InputMethods">Input Methods</a>
+ * <li><a href="#Security">Security</a>
  * </ol>
  * 
  * <a name="ArchitectureOverview"></a>
@@ -280,6 +283,7 @@ public final class InputMethodManager {
      * The InputConnection that was last retrieved from the served view.
      */
     InputConnection mServedInputConnection;
+    ControlledInputConnectionWrapper mServedInputConnectionWrapper;
     /**
      * The completions that were last provided by the served view.
      */
@@ -400,6 +404,11 @@ public final class InputMethodManager {
                                 mIInputContext.finishComposingText();
                             } catch (RemoteException e) {
                             }
+                            // Check focus again in case that "onWindowFocus" is called before
+                            // handling this message.
+                            if (mServedView != null && mServedView.hasWindowFocus()) {
+                                checkFocus(mHasBeenInactive);
+                            }
                         }
                     }
                     return;
@@ -410,16 +419,22 @@ public final class InputMethodManager {
     
     private static class ControlledInputConnectionWrapper extends IInputConnectionWrapper {
         private final InputMethodManager mParentInputMethodManager;
+        private boolean mActive;
 
         public ControlledInputConnectionWrapper(final Looper mainLooper, final InputConnection conn,
                 final InputMethodManager inputMethodManager) {
             super(mainLooper, conn);
             mParentInputMethodManager = inputMethodManager;
+            mActive = true;
         }
 
         @Override
         public boolean isActive() {
-            return mParentInputMethodManager.mActive;
+            return mParentInputMethodManager.mActive && mActive;
+        }
+
+        void deactivate() {
+            mActive = false;
         }
     }
     
@@ -658,12 +673,17 @@ public final class InputMethodManager {
     void clearConnectionLocked() {
         mCurrentTextBoxAttribute = null;
         mServedInputConnection = null;
+        if (mServedInputConnectionWrapper != null) {
+            mServedInputConnectionWrapper.deactivate();
+            mServedInputConnectionWrapper = null;
+        }
     }
     
     /**
      * Disconnect any existing input connection, clearing the served view.
      */
     void finishInputLocked() {
+        mCurRootView = null;
         mNextServedView = null;
         if (mServedView != null) {
             if (DEBUG) Log.v(TAG, "FINISH INPUT: " + mServedView);
@@ -675,19 +695,7 @@ public final class InputMethodManager {
                 }
             }
             
-            if (mServedInputConnection != null) {
-                // We need to tell the previously served view that it is no
-                // longer the input target, so it can reset its state.  Schedule
-                // this call on its window's Handler so it will be on the correct
-                // thread and outside of our lock.
-                Handler vh = mServedView.getHandler();
-                if (vh != null) {
-                    // This will result in a call to reportFinishInputConnection()
-                    // below.
-                    vh.sendMessage(vh.obtainMessage(ViewRootImpl.FINISH_INPUT_CONNECTION,
-                            mServedInputConnection));
-                }
-            }
+            notifyInputConnectionFinished();
             
             mServedView = null;
             mCompletions = null;
@@ -695,7 +703,24 @@ public final class InputMethodManager {
             clearConnectionLocked();
         }
     }
-    
+
+    /**
+     * Notifies the served view that the current InputConnection will no longer be used.
+     */
+    private void notifyInputConnectionFinished() {
+        if (mServedView != null && mServedInputConnection != null) {
+            // We need to tell the previously served view that it is no
+            // longer the input target, so it can reset its state.  Schedule
+            // this call on its window's Handler so it will be on the correct
+            // thread and outside of our lock.
+            ViewRootImpl viewRootImpl = mServedView.getViewRootImpl();
+            if (viewRootImpl != null) {
+                // This will result in a call to reportFinishInputConnection() below.
+                viewRootImpl.dispatchFinishInputConnection(mServedInputConnection);
+            }
+        }
+    }
+
     /**
      * Called from the FINISH_INPUT_CONNECTION message above.
      * @hide
@@ -703,9 +728,13 @@ public final class InputMethodManager {
     public void reportFinishInputConnection(InputConnection ic) {
         if (mServedInputConnection != ic) {
             ic.finishComposingText();
+            // To avoid modifying the public InputConnection interface
+            if (ic instanceof BaseInputConnection) {
+                ((BaseInputConnection) ic).reportFinish();
+            }
         }
     }
-    
+
     public void displayCompletions(View view, CompletionInfo[] completions) {
         checkFocus();
         synchronized (mH) {
@@ -855,7 +884,7 @@ public final class InputMethodManager {
      * shown with {@link #SHOW_FORCED}.
      */
     public static final int HIDE_NOT_ALWAYS = 0x0002;
-    
+
     /**
      * Synonym for {@link #hideSoftInputFromWindow(IBinder, int, ResultReceiver)}
      * without a result: request to hide the soft input window from the
@@ -1018,7 +1047,7 @@ public final class InputMethodManager {
         tba.fieldId = view.getId();
         InputConnection ic = view.onCreateInputConnection(tba);
         if (DEBUG) Log.v(TAG, "Starting input: tba=" + tba + " ic=" + ic);
-        
+
         synchronized (mH) {
             // Now that we are locked again, validate that our state hasn't
             // changed.
@@ -1039,8 +1068,10 @@ public final class InputMethodManager {
             // Hook 'em up and let 'er rip.
             mCurrentTextBoxAttribute = tba;
             mServedConnecting = false;
+            // Notify the served view that its previous input connection is finished
+            notifyInputConnectionFinished();
             mServedInputConnection = ic;
-            IInputContext servedContext;
+            ControlledInputConnectionWrapper servedContext;
             if (ic != null) {
                 mCursorSelStart = tba.initialSelStart;
                 mCursorSelEnd = tba.initialSelEnd;
@@ -1051,6 +1082,10 @@ public final class InputMethodManager {
             } else {
                 servedContext = null;
             }
+            if (mServedInputConnectionWrapper != null) {
+                mServedInputConnectionWrapper.deactivate();
+            }
+            mServedInputConnectionWrapper = servedContext;
             
             try {
                 if (DEBUG) Log.v(TAG, "START INPUT: " + view + " ic="
@@ -1152,21 +1187,24 @@ public final class InputMethodManager {
         }
     }
 
-    void scheduleCheckFocusLocked(View view) {
-        Handler vh = view.getHandler();
-        if (vh != null && !vh.hasMessages(ViewRootImpl.CHECK_FOCUS)) {
-            // This will result in a call to checkFocus() below.
-            vh.sendMessage(vh.obtainMessage(ViewRootImpl.CHECK_FOCUS));
+    static void scheduleCheckFocusLocked(View view) {
+        ViewRootImpl viewRootImpl = view.getViewRootImpl();
+        if (viewRootImpl != null) {
+            viewRootImpl.dispatchCheckFocus();
         }
     }
-    
+
+    private void checkFocus(boolean forceNewFocus) {
+        if (checkFocusNoStartInput(forceNewFocus)) {
+            startInputInner(null, 0, 0, 0);
+        }
+    }
+
     /**
      * @hide
      */
     public void checkFocus() {
-        if (checkFocusNoStartInput(false)) {
-            startInputInner(null, 0, 0, 0);
-        }
+        checkFocus(false);
     }
 
     private boolean checkFocusNoStartInput(boolean forceNewFocus) {
@@ -1182,7 +1220,9 @@ public final class InputMethodManager {
             }
             if (DEBUG) Log.v(TAG, "checkFocus: view=" + mServedView
                     + " next=" + mNextServedView
-                    + " forceNewFocus=" + forceNewFocus);
+                    + " forceNewFocus=" + forceNewFocus
+                    + " package="
+                    + (mServedView != null ? mServedView.getContext().getPackageName() : "<none>"));
 
             if (mNextServedView == null) {
                 finishInputLocked();
@@ -1261,6 +1301,7 @@ public final class InputMethodManager {
         // we'll just do a window focus gain and call it a day.
         synchronized (mH) {
             try {
+                if (DEBUG) Log.v(TAG, "Reporting focus gain, without startInput");
                 mService.windowGainedFocus(mClient, rootView.getWindowToken(),
                         controlFlags, softInputMode, windowFlags, null, null);
             } catch (RemoteException e) {
@@ -1639,6 +1680,27 @@ public final class InputMethodManager {
         synchronized (mH) {
             try {
                 return mService.switchToLastInputMethod(imeToken);
+            } catch (RemoteException e) {
+                Log.w(TAG, "IME died: " + mCurId, e);
+                return false;
+            }
+        }
+    }
+
+    /**
+     * Force switch to the next input method and subtype. If there is no IME enabled except
+     * current IME and subtype, do nothing.
+     * @param imeToken Supplies the identifying token given to an input method when it was started,
+     * which allows it to perform this operation on itself.
+     * @param onlyCurrentIme if true, the framework will find the next subtype which
+     * belongs to the current IME
+     * @return true if the current input method and subtype was successfully switched to the next
+     * input method and subtype.
+     */
+    public boolean switchToNextInputMethod(IBinder imeToken, boolean onlyCurrentIme) {
+        synchronized (mH) {
+            try {
+                return mService.switchToNextInputMethod(imeToken, onlyCurrentIme);
             } catch (RemoteException e) {
                 Log.w(TAG, "IME died: " + mCurId, e);
                 return false;

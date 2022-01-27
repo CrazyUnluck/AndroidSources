@@ -24,12 +24,17 @@ import android.graphics.PixelFormat;
 import android.graphics.PorterDuff;
 import android.graphics.drawable.Drawable;
 import android.media.AudioManager;
+import android.media.IAudioService;
+import android.os.RemoteException;
+import android.os.ServiceManager;
 import android.telephony.TelephonyManager;
 import android.view.KeyEvent;
 import android.view.View;
 import android.view.Gravity;
 import android.widget.FrameLayout;
 import android.util.AttributeSet;
+import android.util.Log;
+import android.util.Slog;
 
 /**
  * Base class for keyguard views.  {@link #reset} is where you should
@@ -72,18 +77,14 @@ public abstract class KeyguardViewBase extends FrameLayout {
         }
     };
 
-    public KeyguardViewBase(Context context) {
+    public KeyguardViewBase(Context context, KeyguardViewCallback callback) {
         super(context);
+        mCallback = callback;
         resetBackground();
     }
 
     public void resetBackground() {
         setBackgroundDrawable(mBackgroundDrawable);
-    }
-
-    // used to inject callback
-    void setCallback(KeyguardViewCallback callback) {
-        mCallback = callback;
     }
 
     public KeyguardViewCallback getCallback() {
@@ -198,9 +199,7 @@ public abstract class KeyguardViewBase extends FrameLayout {
                 case KeyEvent.KEYCODE_MEDIA_REWIND:
                 case KeyEvent.KEYCODE_MEDIA_RECORD:
                 case KeyEvent.KEYCODE_MEDIA_FAST_FORWARD: {
-                    Intent intent = new Intent(Intent.ACTION_MEDIA_BUTTON, null);
-                    intent.putExtra(Intent.EXTRA_KEY_EVENT, event);
-                    getContext().sendOrderedBroadcast(intent, null);
+                    handleMediaKeyEvent(event);
                     return true;
                 }
 
@@ -214,16 +213,13 @@ public abstract class KeyguardViewBase extends FrameLayout {
                                         Context.AUDIO_SERVICE);
                             }
                         }
-                        // Volume buttons should only function for music.
-                        if (mAudioManager.isMusicActive()) {
-                            // TODO: Actually handle MUTE.
-                            mAudioManager.adjustStreamVolume(
-                                        AudioManager.STREAM_MUSIC,
-                                        keyCode == KeyEvent.KEYCODE_VOLUME_UP
-                                                ? AudioManager.ADJUST_RAISE
-                                                : AudioManager.ADJUST_LOWER,
-                                        0);
-                        }
+                        // Volume buttons should only function for music (local or remote).
+                        // TODO: Actually handle MUTE.
+                        mAudioManager.adjustLocalOrRemoteStreamVolume(
+                                AudioManager.STREAM_MUSIC,
+                                keyCode == KeyEvent.KEYCODE_VOLUME_UP
+                                        ? AudioManager.ADJUST_RAISE
+                                        : AudioManager.ADJUST_LOWER);
                         // Don't execute default volume behavior
                         return true;
                     } else {
@@ -244,14 +240,26 @@ public abstract class KeyguardViewBase extends FrameLayout {
                 case KeyEvent.KEYCODE_MEDIA_REWIND:
                 case KeyEvent.KEYCODE_MEDIA_RECORD:
                 case KeyEvent.KEYCODE_MEDIA_FAST_FORWARD: {
-                    Intent intent = new Intent(Intent.ACTION_MEDIA_BUTTON, null);
-                    intent.putExtra(Intent.EXTRA_KEY_EVENT, event);
-                    getContext().sendOrderedBroadcast(intent, null);
+                    handleMediaKeyEvent(event);
                     return true;
                 }
             }
         }
         return false;
+    }
+
+    void handleMediaKeyEvent(KeyEvent keyEvent) {
+        IAudioService audioService = IAudioService.Stub.asInterface(
+                ServiceManager.checkService(Context.AUDIO_SERVICE));
+        if (audioService != null) {
+            try {
+                audioService.dispatchMediaKeyEvent(keyEvent);
+            } catch (RemoteException e) {
+                Log.e("KeyguardViewBase", "dispatchMediaKeyEvent threw exception " + e);
+            }
+        } else {
+            Slog.w("KeyguardViewBase", "Unable to find IAudioService for media key event");
+        }
     }
 
     @Override

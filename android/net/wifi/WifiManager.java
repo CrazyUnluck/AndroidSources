@@ -23,11 +23,15 @@ import android.net.DhcpInfo;
 import android.os.Binder;
 import android.os.IBinder;
 import android.os.Handler;
+import android.os.Looper;
+import android.os.Message;
 import android.os.RemoteException;
 import android.os.WorkSource;
 import android.os.Messenger;
+import android.util.SparseArray;
 
 import com.android.internal.util.AsyncChannel;
+import com.android.internal.util.Protocol;
 
 import java.util.List;
 
@@ -289,30 +293,53 @@ public class WifiManager {
     public static final String EXTRA_SUPPLICANT_ERROR = "supplicantError";
 
     /**
-     * Broadcast intent action for reporting errors
-     * @hide
-     */
-    @SdkConstant(SdkConstantType.BROADCAST_INTENT_ACTION)
-    public static final String ERROR_ACTION = "android.net.wifi.ERROR";
-    /**
-     * The type of error being reported
-     * @hide
-     */
-    public static final String EXTRA_ERROR_CODE = "errorCode";
-
-    /**
-     * Valid error codes
-     * @hide
-     */
-    public static final int WPS_OVERLAP_ERROR = 1;
-
-    /**
      * Broadcast intent action indicating that the configured networks changed.
-     * This can be as a result of adding/updating/deleting a network
+     * This can be as a result of adding/updating/deleting a network. If
+     * {@link #EXTRA_MULTIPLE_NETWORKS_CHANGED} is set to true the new configuration
+     * can be retreived with the {@link #EXTRA_WIFI_CONFIGURATION} extra. If multiple
+     * Wi-Fi configurations changed, {@link #EXTRA_WIFI_CONFIGURATION} will not be present.
      * @hide
      */
     public static final String CONFIGURED_NETWORKS_CHANGED_ACTION =
         "android.net.wifi.CONFIGURED_NETWORKS_CHANGE";
+    /**
+     * The lookup key for a (@link android.net.wifi.WifiConfiguration} object representing
+     * the changed Wi-Fi configuration when the {@link #CONFIGURED_NETWORKS_CHANGED_ACTION}
+     * broadcast is sent.
+     * @hide
+     */
+    public static final String EXTRA_WIFI_CONFIGURATION = "wifiConfiguration";
+    /**
+     * Multiple network configurations have changed.
+     * @see #CONFIGURED_NETWORKS_CHANGED_ACTION
+     *
+     * @hide
+     */
+    public static final String EXTRA_MULTIPLE_NETWORKS_CHANGED = "multipleChanges";
+    /**
+     * The lookup key for an integer indicating the reason a Wi-Fi network configuration
+     * has changed. Only present if {@link #EXTRA_MULTIPLE_NETWORKS_CHANGED} is {@code false}
+     * @see #CONFIGURED_NETWORKS_CHANGED_ACTION
+     * @hide
+     */
+    public static final String EXTRA_CHANGE_REASON = "changeReason";
+    /**
+     * The configuration is new and was added.
+     * @hide
+     */
+    public static final int CHANGE_REASON_ADDED = 0;
+    /**
+     * The configuration was removed and is no longer present in the system's list of
+     * configured networks.
+     * @hide
+     */
+    public static final int CHANGE_REASON_REMOVED = 1;
+    /**
+     * The configuration has changed as a result of explicit action or because the system
+     * took an automated action such as disabling a malfunctioning configuration.
+     * @hide
+     */
+    public static final int CHANGE_REASON_CONFIG_CHANGE = 2;
     /**
      * An access point scan has completed, and results are available from the supplicant.
      * Call {@link #getScanResults()} to obtain the results.
@@ -413,6 +440,13 @@ public class WifiManager {
     private static final int MAX_RSSI = -55;
 
     /**
+     * Number of RSSI levels used in the framework to initiate
+     * {@link #RSSI_CHANGED_ACTION} broadcast
+     * @hide
+     */
+    public static final int RSSI_LEVELS = 5;
+
+    /**
      * Auto settings in the driver. The driver could choose to operate on both
      * 2.4 GHz and 5 GHz or make a dynamic decision on selecting the band.
      * @hide
@@ -458,9 +492,6 @@ public class WifiManager {
 
     /* Number of currently active WifiLocks and MulticastLocks */
     private int mActiveLockCount;
-
-    /* For communication with WifiService */
-    private AsyncChannel mAsyncChannel = new AsyncChannel();
 
     /**
      * Create a new WifiManager instance.
@@ -612,17 +643,6 @@ public class WifiManager {
         } catch (RemoteException e) {
             return false;
         }
-    }
-
-    /**
-     * Disable a configured network asynchronously.  This call is for abnormal network
-     * events, and the user may be notified of network change, if they recently attempted
-     * to connect to the specified network.
-     * @param netId the ID of the network as returned by {@link #addNetwork}.
-     * @hide
-     */
-    public void disableNetwork(int netId, int reason) {
-        mAsyncChannel.sendMessage(CMD_DISABLE_NETWORK, netId, reason);
     }
 
     /**
@@ -1060,37 +1080,258 @@ public class WifiManager {
 
     /* TODO: deprecate synchronous API and open up the following API */
 
+    private static final int BASE = Protocol.BASE_WIFI_MANAGER;
+
     /* Commands to WifiService */
     /** @hide */
-    public static final int CMD_CONNECT_NETWORK             = 1;
+    public static final int CONNECT_NETWORK                 = BASE + 1;
     /** @hide */
-    public static final int CMD_FORGET_NETWORK              = 2;
+    public static final int CONNECT_NETWORK_FAILED          = BASE + 2;
     /** @hide */
-    public static final int CMD_SAVE_NETWORK                = 3;
-    /** @hide */
-    public static final int CMD_START_WPS                   = 4;
-    /** @hide */
-    public static final int CMD_DISABLE_NETWORK             = 5;
+    public static final int CONNECT_NETWORK_SUCCEEDED       = BASE + 3;
 
-    /* Events from WifiService */
     /** @hide */
-    public static final int CMD_WPS_COMPLETED               = 11;
+    public static final int FORGET_NETWORK                  = BASE + 4;
+    /** @hide */
+    public static final int FORGET_NETWORK_FAILED           = BASE + 5;
+    /** @hide */
+    public static final int FORGET_NETWORK_SUCCEEDED        = BASE + 6;
+
+    /** @hide */
+    public static final int SAVE_NETWORK                    = BASE + 7;
+    /** @hide */
+    public static final int SAVE_NETWORK_FAILED             = BASE + 8;
+    /** @hide */
+    public static final int SAVE_NETWORK_SUCCEEDED          = BASE + 9;
+
+    /** @hide */
+    public static final int START_WPS                       = BASE + 10;
+    /** @hide */
+    public static final int START_WPS_SUCCEEDED             = BASE + 11;
+    /** @hide */
+    public static final int WPS_FAILED                      = BASE + 12;
+    /** @hide */
+    public static final int WPS_COMPLETED                   = BASE + 13;
+
+    /** @hide */
+    public static final int CANCEL_WPS                      = BASE + 14;
+    /** @hide */
+    public static final int CANCEL_WPS_FAILED               = BASE + 15;
+    /** @hide */
+    public static final int CANCEL_WPS_SUCCEDED             = BASE + 16;
+
+    /** @hide */
+    public static final int DISABLE_NETWORK                 = BASE + 17;
+    /** @hide */
+    public static final int DISABLE_NETWORK_FAILED          = BASE + 18;
+    /** @hide */
+    public static final int DISABLE_NETWORK_SUCCEEDED       = BASE + 19;
 
     /* For system use only */
     /** @hide */
-    public static final int CMD_ENABLE_TRAFFIC_STATS_POLL   = 21;
+    public static final int ENABLE_TRAFFIC_STATS_POLL       = BASE + 21;
     /** @hide */
-    public static final int CMD_TRAFFIC_STATS_POLL          = 22;
+    public static final int TRAFFIC_STATS_POLL              = BASE + 22;
+
 
     /**
-     * Initiate an asynchronous channel connection setup
-     * @param srcContext is the context of the source
-     * @param srcHandler is the handler on which the source receives messages
+     * Passed with {@link ActionListener#onFailure}.
+     * Indicates that the operation failed due to an internal error.
      * @hide
      */
-     public void asyncConnect(Context srcContext, Handler srcHandler) {
-        mAsyncChannel.connect(srcContext, srcHandler, getMessenger());
-     }
+    public static final int ERROR                       = 0;
+
+    /**
+     * Passed with {@link ActionListener#onFailure}.
+     * Indicates that the operation is already in progress
+     * @hide
+     */
+    public static final int IN_PROGRESS                 = 1;
+
+    /**
+     * Passed with {@link ActionListener#onFailure}.
+     * Indicates that the operation failed because the framework is busy and
+     * unable to service the request
+     * @hide
+     */
+    public static final int BUSY                        = 2;
+
+    /* WPS specific errors */
+    /** WPS overlap detected {@hide} */
+    public static final int WPS_OVERLAP_ERROR           = 3;
+    /** WEP on WPS is prohibited {@hide} */
+    public static final int WPS_WEP_PROHIBITED          = 4;
+    /** TKIP only prohibited {@hide} */
+    public static final int WPS_TKIP_ONLY_PROHIBITED    = 5;
+    /** Authentication failure on WPS {@hide} */
+    public static final int WPS_AUTH_FAILURE            = 6;
+    /** WPS timed out {@hide} */
+    public static final int WPS_TIMED_OUT               = 7;
+
+    /** Interface for callback invocation when framework channel is lost {@hide} */
+    public interface ChannelListener {
+        /**
+         * The channel to the framework has been disconnected.
+         * Application could try re-initializing using {@link #initialize}
+         */
+        public void onChannelDisconnected();
+    }
+
+    /** Interface for callback invocation on an application action {@hide} */
+    public interface ActionListener {
+        /** The operation succeeded */
+        public void onSuccess();
+        /**
+         * The operation failed
+         * @param reason The reason for failure could be one of
+         * {@link #ERROR}, {@link #IN_PROGRESS} or {@link #BUSY}
+         */
+        public void onFailure(int reason);
+    }
+
+    /** Interface for callback invocation on a start WPS action {@hide} */
+    public interface WpsListener {
+        /** WPS start succeeded */
+        public void onStartSuccess(String pin);
+
+        /** WPS operation completed succesfully */
+        public void onCompletion();
+
+        /**
+         * WPS operation failed
+         * @param reason The reason for failure could be one of
+         * {@link #IN_PROGRESS}, {@link #WPS_OVERLAP_ERROR},{@link #ERROR} or {@link #BUSY}
+         */
+        public void onFailure(int reason);
+    }
+
+    /**
+     * A channel that connects the application to the Wifi framework.
+     * Most operations require a Channel as an argument. An instance of Channel is obtained
+     * by doing a call on {@link #initialize}
+     * @hide
+     */
+    public static class Channel {
+        Channel(Looper looper, ChannelListener l) {
+            mAsyncChannel = new AsyncChannel();
+            mHandler = new WifiHandler(looper);
+            mChannelListener = l;
+        }
+        private ChannelListener mChannelListener;
+        private SparseArray<Object> mListenerMap = new SparseArray<Object>();
+        private Object mListenerMapLock = new Object();
+        private int mListenerKey = 0;
+        private static final int INVALID_KEY = -1;
+
+        AsyncChannel mAsyncChannel;
+        WifiHandler mHandler;
+        class WifiHandler extends Handler {
+            WifiHandler(Looper looper) {
+                super(looper);
+            }
+
+            @Override
+            public void handleMessage(Message message) {
+                Object listener = removeListener(message.arg2);
+                switch (message.what) {
+                    case AsyncChannel.CMD_CHANNEL_DISCONNECTED:
+                        if (mChannelListener != null) {
+                            mChannelListener.onChannelDisconnected();
+                            mChannelListener = null;
+                        }
+                        break;
+                        /* ActionListeners grouped together */
+                    case WifiManager.CONNECT_NETWORK_FAILED:
+                    case WifiManager.FORGET_NETWORK_FAILED:
+                    case WifiManager.SAVE_NETWORK_FAILED:
+                    case WifiManager.CANCEL_WPS_FAILED:
+                    case WifiManager.DISABLE_NETWORK_FAILED:
+                        if (listener != null) {
+                            ((ActionListener) listener).onFailure(message.arg1);
+                        }
+                        break;
+                        /* ActionListeners grouped together */
+                    case WifiManager.CONNECT_NETWORK_SUCCEEDED:
+                    case WifiManager.FORGET_NETWORK_SUCCEEDED:
+                    case WifiManager.SAVE_NETWORK_SUCCEEDED:
+                    case WifiManager.CANCEL_WPS_SUCCEDED:
+                    case WifiManager.DISABLE_NETWORK_SUCCEEDED:
+                        if (listener != null) {
+                            ((ActionListener) listener).onSuccess();
+                        }
+                        break;
+                    case WifiManager.START_WPS_SUCCEEDED:
+                        if (listener != null) {
+                            WpsResult result = (WpsResult) message.obj;
+                            ((WpsListener) listener).onStartSuccess(result.pin);
+                            //Listener needs to stay until completion or failure
+                            synchronized(mListenerMapLock) {
+                                mListenerMap.put(message.arg2, listener);
+                            }
+                        }
+                        break;
+                    case WifiManager.WPS_COMPLETED:
+                        if (listener != null) {
+                            ((WpsListener) listener).onCompletion();
+                        }
+                        break;
+                    case WifiManager.WPS_FAILED:
+                        if (listener != null) {
+                            ((WpsListener) listener).onFailure(message.arg1);
+                        }
+                        break;
+                    default:
+                        //ignore
+                        break;
+                }
+            }
+        }
+
+        int putListener(Object listener) {
+            if (listener == null) return INVALID_KEY;
+            int key;
+            synchronized (mListenerMapLock) {
+                do {
+                    key = mListenerKey++;
+                } while (key == INVALID_KEY);
+                mListenerMap.put(key, listener);
+            }
+            return key;
+        }
+
+        Object removeListener(int key) {
+            if (key == INVALID_KEY) return null;
+            synchronized (mListenerMapLock) {
+                Object listener = mListenerMap.get(key);
+                mListenerMap.remove(key);
+                return listener;
+            }
+        }
+    }
+
+    /**
+     * Registers the application with the Wi-Fi framework. This function
+     * must be the first to be called before any Wi-Fi operations are performed.
+     *
+     * @param srcContext is the context of the source
+     * @param srcLooper is the Looper on which the callbacks are receivied
+     * @param listener for callback at loss of framework communication. Can be null.
+     * @return Channel instance that is necessary for performing any further Wi-Fi operations.
+     *         A null is returned upon failure to initialize.
+     * @hide
+     */
+    public Channel initialize(Context srcContext, Looper srcLooper, ChannelListener listener) {
+        Messenger messenger = getWifiServiceMessenger();
+        if (messenger == null) return null;
+
+        Channel c = new Channel(srcLooper, listener);
+        if (c.mAsyncChannel.connectSync(srcContext, c.mHandler, messenger)
+                == AsyncChannel.STATUS_SUCCESSFUL) {
+            return c;
+        } else {
+            return null;
+        }
+    }
 
     /**
      * Connect to a network with the given configuration. The network also
@@ -1100,15 +1341,20 @@ public class WifiManager {
      * sequence of addNetwork(), enableNetwork(), saveConfiguration() and
      * reconnect()
      *
+     * @param c is the channel created at {@link #initialize}
      * @param config the set of variables that describe the configuration,
      *            contained in a {@link WifiConfiguration} object.
+     * @param listener for callbacks on success or failure. Can be null.
      * @hide
      */
-    public void connectNetwork(WifiConfiguration config) {
-        if (config == null) {
-            return;
-        }
-        mAsyncChannel.sendMessage(CMD_CONNECT_NETWORK, config);
+    public void connect(Channel c, WifiConfiguration config, ActionListener listener) {
+        if (c == null) throw new IllegalArgumentException("Channel needs to be initialized");
+        if (config == null) throw new IllegalArgumentException("config cannot be null");
+
+        // Use INVALID_NETWORK_ID for arg1 when passing a config object
+        // arg1 is used to pass network id when the network already exists
+        c.mAsyncChannel.sendMessage(CONNECT_NETWORK, WifiConfiguration.INVALID_NETWORK_ID,
+                c.putListener(listener), config);
     }
 
     /**
@@ -1117,15 +1363,17 @@ public class WifiManager {
      * This function is used instead of a enableNetwork(), saveConfiguration() and
      * reconnect()
      *
+     * @param c is the channel created at {@link #initialize}
      * @param networkId the network id identifiying the network in the
      *                supplicant configuration list
+     * @param listener for callbacks on success or failure. Can be null.
      * @hide
      */
-    public void connectNetwork(int networkId) {
-        if (networkId < 0) {
-            return;
-        }
-        mAsyncChannel.sendMessage(CMD_CONNECT_NETWORK, networkId);
+    public void connect(Channel c, int networkId, ActionListener listener) {
+        if (c == null) throw new IllegalArgumentException("Channel needs to be initialized");
+        if (networkId < 0) throw new IllegalArgumentException("Network id cannot be negative");
+
+        c.mAsyncChannel.sendMessage(CONNECT_NETWORK, networkId, c.putListener(listener));
     }
 
     /**
@@ -1139,16 +1387,17 @@ public class WifiManager {
      * For an existing network, it accomplishes the task of updateNetwork()
      * and saveConfiguration()
      *
+     * @param c is the channel created at {@link #initialize}
      * @param config the set of variables that describe the configuration,
      *            contained in a {@link WifiConfiguration} object.
+     * @param listener for callbacks on success or failure. Can be null.
      * @hide
      */
-    public void saveNetwork(WifiConfiguration config) {
-        if (config == null) {
-            return;
-        }
+    public void save(Channel c, WifiConfiguration config, ActionListener listener) {
+        if (c == null) throw new IllegalArgumentException("Channel needs to be initialized");
+        if (config == null) throw new IllegalArgumentException("config cannot be null");
 
-        mAsyncChannel.sendMessage(CMD_SAVE_NETWORK, config);
+        c.mAsyncChannel.sendMessage(SAVE_NETWORK, 0, c.putListener(listener), config);
     }
 
     /**
@@ -1157,31 +1406,63 @@ public class WifiManager {
      * This function is used instead of a sequence of removeNetwork()
      * and saveConfiguration().
      *
+     * @param c is the channel created at {@link #initialize}
      * @param config the set of variables that describe the configuration,
      *            contained in a {@link WifiConfiguration} object.
+     * @param listener for callbacks on success or failure. Can be null.
      * @hide
      */
-    public void forgetNetwork(int netId) {
-        if (netId < 0) {
-            return;
-        }
+    public void forget(Channel c, int netId, ActionListener listener) {
+        if (c == null) throw new IllegalArgumentException("Channel needs to be initialized");
+        if (netId < 0) throw new IllegalArgumentException("Network id cannot be negative");
 
-        mAsyncChannel.sendMessage(CMD_FORGET_NETWORK, netId);
+        c.mAsyncChannel.sendMessage(FORGET_NETWORK, netId, c.putListener(listener));
+    }
+
+    /**
+     * Disable network
+     *
+     * @param c is the channel created at {@link #initialize}
+     * @param netId is the network Id
+     * @param listener for callbacks on success or failure. Can be null.
+     * @hide
+     */
+    public void disable(Channel c, int netId, ActionListener listener) {
+        if (c == null) throw new IllegalArgumentException("Channel needs to be initialized");
+        if (netId < 0) throw new IllegalArgumentException("Network id cannot be negative");
+
+        c.mAsyncChannel.sendMessage(DISABLE_NETWORK, netId, c.putListener(listener));
     }
 
     /**
      * Start Wi-fi Protected Setup
      *
+     * @param c is the channel created at {@link #initialize}
      * @param config WPS configuration
+     * @param listener for callbacks on success or failure. Can be null.
      * @hide
      */
-    public void startWps(WpsInfo config) {
-        if (config == null) {
-            return;
-        }
+    public void startWps(Channel c, WpsInfo config, WpsListener listener) {
+        if (c == null) throw new IllegalArgumentException("Channel needs to be initialized");
+        if (config == null) throw new IllegalArgumentException("config cannot be null");
 
-        mAsyncChannel.sendMessage(CMD_START_WPS, config);
+        c.mAsyncChannel.sendMessage(START_WPS, 0, c.putListener(listener), config);
     }
+
+    /**
+     * Cancel any ongoing Wi-fi Protected Setup
+     *
+     * @param c is the channel created at {@link #initialize}
+     * @param listener for callbacks on success or failure. Can be null.
+     * @hide
+     */
+    public void cancelWps(Channel c, ActionListener listener) {
+        if (c == null) throw new IllegalArgumentException("Channel needs to be initialized");
+
+        c.mAsyncChannel.sendMessage(CANCEL_WPS, 0, c.putListener(listener));
+    }
+
+
 
     /**
      * Get a reference to WifiService handler. This is used by a client to establish
@@ -1190,13 +1471,28 @@ public class WifiManager {
      * @return Messenger pointing to the WifiService handler
      * @hide
      */
-    public Messenger getMessenger() {
+    public Messenger getWifiServiceMessenger() {
         try {
-            return mService.getMessenger();
+            return mService.getWifiServiceMessenger();
         } catch (RemoteException e) {
             return null;
         }
     }
+
+    /**
+     * Get a reference to WifiStateMachine handler.
+     * @return Messenger pointing to the WifiService handler
+     * @hide
+     */
+    public Messenger getWifiStateMachineMessenger() {
+        try {
+            return mService.getWifiStateMachineMessenger();
+        } catch (RemoteException e) {
+            return null;
+        }
+    }
+
+
 
     /**
      * Returns the file in which IP and proxy configuration data is stored
@@ -1261,7 +1557,7 @@ public class WifiManager {
          */
         public void acquire() {
             synchronized (mBinder) {
-                if (mRefCounted ? (++mRefCount > 0) : (!mHeld)) {
+                if (mRefCounted ? (++mRefCount == 1) : (!mHeld)) {
                     try {
                         mService.acquireWifiLock(mBinder, mLockType, mTag, mWorkSource);
                         synchronized (WifiManager.this) {
@@ -1490,7 +1786,7 @@ public class WifiManager {
          */
         public void acquire() {
             synchronized (mBinder) {
-                if (mRefCounted ? (++mRefCount > 0) : (!mHeld)) {
+                if (mRefCounted ? (++mRefCount == 1) : (!mHeld)) {
                     try {
                         mService.acquireMulticastLock(mBinder, mTag);
                         synchronized (WifiManager.this) {

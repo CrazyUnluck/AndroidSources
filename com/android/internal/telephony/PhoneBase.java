@@ -41,9 +41,11 @@ import com.android.internal.telephony.gsm.UsimServiceTable;
 import com.android.internal.telephony.ims.IsimRecords;
 import com.android.internal.telephony.test.SimulatedRadioControl;
 import com.android.internal.telephony.gsm.SIMRecords;
-import com.android.internal.telephony.gsm.SimCard;
 
+import java.io.FileDescriptor;
+import java.io.PrintWriter;
 import java.util.Locale;
+import java.util.concurrent.atomic.AtomicReference;
 
 
 /**
@@ -103,6 +105,11 @@ public abstract class PhoneBase extends Handler implements Phone {
     protected static final int EVENT_SET_ENHANCED_VP                = 24;
     protected static final int EVENT_EMERGENCY_CALLBACK_MODE_ENTER  = 25;
     protected static final int EVENT_EXIT_EMERGENCY_CALLBACK_RESPONSE = 26;
+    protected static final int EVENT_CDMA_SUBSCRIPTION_SOURCE_CHANGED = 27;
+    // other
+    protected static final int EVENT_SET_NETWORK_AUTOMATIC          = 28;
+    protected static final int EVENT_NEW_ICC_SMS                    = 29;
+    protected static final int EVENT_ICC_RECORD_EVENTS              = 30;
 
     // Key used to read/write current CLIR setting
     public static final String CLIR_KEY = "clir_key";
@@ -112,7 +119,6 @@ public abstract class PhoneBase extends Handler implements Phone {
 
     /* Instance Variables */
     public CommandsInterface mCM;
-    protected IccFileHandler mIccFileHandler;
     boolean mDnsCheckDisabled;
     public DataConnectionTracker mDataConnectionTracker;
     boolean mDoesRilSendMultipleCallRing;
@@ -121,7 +127,7 @@ public abstract class PhoneBase extends Handler implements Phone {
     public boolean mIsTheCurrentActivePhone = true;
     boolean mIsVoiceCapable = true;
     public IccRecords mIccRecords;
-    public IccCard mIccCard;
+    protected AtomicReference<IccCard> mIccCard = new AtomicReference<IccCard>();
     public SmsStorageMonitor mSmsStorageMonitor;
     public SmsUsageMonitor mSmsUsageMonitor;
     public SMSDispatcher mSMS;
@@ -244,7 +250,7 @@ public abstract class PhoneBase extends Handler implements Phone {
 
         // Initialize device storage and outgoing SMS usage monitors for SMSDispatchers.
         mSmsStorageMonitor = new SmsStorageMonitor(this);
-        mSmsUsageMonitor = new SmsUsageMonitor(context.getContentResolver());
+        mSmsUsageMonitor = new SmsUsageMonitor(context);
     }
 
     public void dispose() {
@@ -262,6 +268,10 @@ public abstract class PhoneBase extends Handler implements Phone {
     public void removeReferences() {
         mSmsStorageMonitor = null;
         mSmsUsageMonitor = null;
+        mSMS = null;
+        mIccRecords = null;
+        mIccCard.set(null);
+        mDataConnectionTracker = null;
     }
 
     /**
@@ -596,7 +606,7 @@ public abstract class PhoneBase extends Handler implements Phone {
                 if (l.length() >=5) {
                     country = l.substring(3, 5);
                 }
-                setSystemLocale(language, country, false);
+                MccTable.setSystemLocale(mContext, language, country);
 
                 if (!country.isEmpty()) {
                     try {
@@ -615,62 +625,6 @@ public abstract class PhoneBase extends Handler implements Phone {
     }
 
     /**
-     * Utility code to set the system locale if it's not set already
-     * @param language Two character language code desired
-     * @param country Two character country code desired
-     * @param fromMcc Indicating whether the locale is set according to MCC table.
-     *                This flag wil be ignored by default implementation.
-     *                TODO: Use a source enumeration so that source of the locale
-     *                      can be prioritized.
-     *
-     *  {@hide}
-     */
-    public void setSystemLocale(String language, String country, boolean fromMcc) {
-        String l = SystemProperties.get("persist.sys.language");
-        String c = SystemProperties.get("persist.sys.country");
-
-        if (null == language) {
-            return; // no match possible
-        }
-        language = language.toLowerCase();
-        if (null == country) {
-            country = "";
-        }
-        country = country.toUpperCase();
-
-        if((null == l || 0 == l.length()) && (null == c || 0 == c.length())) {
-            try {
-                // try to find a good match
-                String[] locales = mContext.getAssets().getLocales();
-                final int N = locales.length;
-                String bestMatch = null;
-                for(int i = 0; i < N; i++) {
-                    // only match full (lang + country) locales
-                    if (locales[i]!=null && locales[i].length() >= 5 &&
-                            locales[i].substring(0,2).equals(language)) {
-                        if (locales[i].substring(3,5).equals(country)) {
-                            bestMatch = locales[i];
-                            break;
-                        } else if (null == bestMatch) {
-                            bestMatch = locales[i];
-                        }
-                    }
-                }
-                if (null != bestMatch) {
-                    IActivityManager am = ActivityManagerNative.getDefault();
-                    Configuration config = am.getConfiguration();
-                    config.locale = new Locale(bestMatch.substring(0,2),
-                                               bestMatch.substring(3,5));
-                    config.userSetLocale = true;
-                    am.updateConfiguration(config);
-                }
-            } catch (Exception e) {
-                // Intentionally left blank
-            }
-        }
-    }
-
-    /**
      * Get state
      */
     public abstract Phone.State getState();
@@ -678,7 +632,11 @@ public abstract class PhoneBase extends Handler implements Phone {
     /**
      * Retrieves the IccFileHandler of the Phone instance
      */
-    public abstract IccFileHandler getIccFileHandler();
+    public IccFileHandler getIccFileHandler(){
+        IccCard iccCard = mIccCard.get();
+        if (iccCard == null) return null;
+        return iccCard.getIccFileHandler();
+    }
 
     /*
      * Retrieves the Handler of the Phone instance
@@ -703,7 +661,7 @@ public abstract class PhoneBase extends Handler implements Phone {
 
     @Override
     public IccCard getIccCard() {
-        return mIccCard;
+        return mIccCard.get();
     }
 
     @Override
@@ -1187,5 +1145,44 @@ public abstract class PhoneBase extends Handler implements Phone {
     @Override
     public UsimServiceTable getUsimServiceTable() {
         return mIccRecords.getUsimServiceTable();
+    }
+
+    public void dump(FileDescriptor fd, PrintWriter pw, String[] args) {
+        pw.println("PhoneBase:");
+        pw.println(" mCM=" + mCM);
+        pw.println(" mDnsCheckDisabled=" + mDnsCheckDisabled);
+        pw.println(" mDataConnectionTracker=" + mDataConnectionTracker);
+        pw.println(" mDoesRilSendMultipleCallRing=" + mDoesRilSendMultipleCallRing);
+        pw.println(" mCallRingContinueToken=" + mCallRingContinueToken);
+        pw.println(" mCallRingDelay=" + mCallRingDelay);
+        pw.println(" mIsTheCurrentActivePhone=" + mIsTheCurrentActivePhone);
+        pw.println(" mIsVoiceCapable=" + mIsVoiceCapable);
+        pw.println(" mIccRecords=" + mIccRecords);
+        pw.println(" mIccCard=" + mIccCard.get());
+        pw.println(" mSmsStorageMonitor=" + mSmsStorageMonitor);
+        pw.println(" mSmsUsageMonitor=" + mSmsUsageMonitor);
+        pw.println(" mSMS=" + mSMS);
+        pw.flush();
+        pw.println(" mLooper=" + mLooper);
+        pw.println(" mContext=" + mContext);
+        pw.println(" mNotifier=" + mNotifier);
+        pw.println(" mSimulatedRadioControl=" + mSimulatedRadioControl);
+        pw.println(" mUnitTestMode=" + mUnitTestMode);
+        pw.println(" isDnsCheckDisabled()=" + isDnsCheckDisabled());
+        pw.println(" getUnitTestMode()=" + getUnitTestMode());
+        pw.println(" getState()=" + getState());
+        pw.println(" getIccSerialNumber()=" + getIccSerialNumber());
+        pw.println(" getIccRecordsLoaded()=" + getIccRecordsLoaded());
+        pw.println(" getMessageWaitingIndicator()=" + getMessageWaitingIndicator());
+        pw.println(" getCallForwardingIndicator()=" + getCallForwardingIndicator());
+        pw.println(" isInEmergencyCall()=" + isInEmergencyCall());
+        pw.flush();
+        pw.println(" isInEcm()=" + isInEcm());
+        pw.println(" getPhoneName()=" + getPhoneName());
+        pw.println(" getPhoneType()=" + getPhoneType());
+        pw.println(" getVoiceMessageCount()=" + getVoiceMessageCount());
+        pw.println(" getActiveApnTypes()=" + getActiveApnTypes());
+        pw.println(" isDataConnectivityPossible()=" + isDataConnectivityPossible());
+        pw.println(" needsOtaServiceProvisioning=" + needsOtaServiceProvisioning());
     }
 }

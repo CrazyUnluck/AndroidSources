@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2011 The Android Open Source Project
+ * Copyright (C) 2011-2012 The Android Open Source Project
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -48,6 +48,9 @@ public class UT_foreach extends UnitTest {
         pRS.setMessageHandler(mRsMessage);
         initializeGlobals(pRS, s);
         s.forEach_root(A);
+        s.invoke_verify_root();
+        s.forEach_foo(A, A);
+        s.invoke_verify_foo();
         s.invoke_foreach_test();
         pRS.finish();
         waitForMessage();

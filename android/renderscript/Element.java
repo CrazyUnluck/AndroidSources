@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2008 The Android Open Source Project
+ * Copyright (C) 2008-2012 The Android Open Source Project
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -54,26 +54,59 @@ public class Element extends BaseObj {
     int[] mArraySizes;
     int[] mOffsetInBytes;
 
+    int[] mVisibleElementMap;
+
     DataType mType;
     DataKind mKind;
     boolean mNormalized;
     int mVectorSize;
 
+    private void updateVisibleSubElements() {
+        if (mElements == null) {
+            return;
+        }
+
+        int noPaddingFieldCount = 0;
+        int fieldCount = mElementNames.length;
+        // Find out how many elements are not padding
+        for (int ct = 0; ct < fieldCount; ct ++) {
+            if (mElementNames[ct].charAt(0) != '#') {
+                noPaddingFieldCount ++;
+            }
+        }
+        mVisibleElementMap = new int[noPaddingFieldCount];
+
+        // Make a map that points us at non-padding elements
+        for (int ct = 0, ctNoPadding = 0; ct < fieldCount; ct ++) {
+            if (mElementNames[ct].charAt(0) != '#') {
+                mVisibleElementMap[ctNoPadding ++] = ct;
+            }
+        }
+    }
+
     /**
-    * @hide
     * @return element size in bytes
     */
-    public int getSizeBytes() {return mSize;}
+    public int getBytesSize() {return mSize;}
+
+    /**
+    * Returns the number of vector components. 2 for float2, 4 for
+    * float4, etc.
+    * @return element vector size
+    */
+    public int getVectorSize() {return mVectorSize;}
 
 
     /**
      * DataType represents the basic type information for a basic element.  The
-     * naming convention follows.  For numeric types its FLOAT, SIGNED, UNSIGNED
-     * followed by the _BITS where BITS is the size of the data.  BOOLEAN is a
-     * true / false (1,0) represented in an 8 bit container.  The UNSIGNED
-     * variants with multiple bit definitions are for packed graphical data
-     * formats and represents vectors with per vector member sizes which are
-     * treated as a single unit for packing and alignment purposes.
+     * naming convention follows.  For numeric types it is FLOAT,
+     * SIGNED, or UNSIGNED followed by the _BITS where BITS is the
+     * size of the data.  BOOLEAN is a true / false (1,0)
+     * represented in an 8 bit container.  The UNSIGNED variants
+     * with multiple bit definitions are for packed graphical data
+     * formats and represent vectors with per vector member sizes
+     * which are treated as a single unit for packing and alignment
+     * purposes.
      *
      * MATRIX the three matrix types contain FLOAT_32 elements and are treated
      * as 32 bits for alignment purposes.
@@ -81,6 +114,7 @@ public class Element extends BaseObj {
      * RS_* objects.  32 bit opaque handles.
      */
     public enum DataType {
+        NONE (0, 0),
         //FLOAT_16 (1, 2),
         FLOAT_32 (2, 4),
         FLOAT_64 (3, 8),
@@ -112,7 +146,8 @@ public class Element extends BaseObj {
         RS_PROGRAM_FRAGMENT (1006, 4),
         RS_PROGRAM_VERTEX (1007, 4),
         RS_PROGRAM_RASTER (1008, 4),
-        RS_PROGRAM_STORE (1009, 4);
+        RS_PROGRAM_STORE (1009, 4),
+        RS_FONT (1010, 4);
 
         int mID;
         int mSize;
@@ -163,74 +198,96 @@ public class Element extends BaseObj {
     }
 
     /**
-    * @hide
+    * Elements could be simple, such as an int or a float, or a
+    * structure with multiple sub elements, such as a collection of
+    * floats, float2, float4. This function returns zero for simple
+    * elements or the number of sub-elements otherwise.
     * @return number of sub-elements in this element
     */
     public int getSubElementCount() {
-        if (mElements == null) {
+        if (mVisibleElementMap == null) {
             return 0;
         }
-        return mElements.length;
+        return mVisibleElementMap.length;
     }
 
     /**
-    * @hide
+    * For complex elements, this function will return the
+    * sub-element at index
     * @param index index of the sub-element to return
     * @return sub-element in this element at given index
     */
     public Element getSubElement(int index) {
-        if (mElements == null) {
+        if (mVisibleElementMap == null) {
             throw new RSIllegalArgumentException("Element contains no sub-elements");
         }
-        if (index < 0 || index >= mElements.length) {
+        if (index < 0 || index >= mVisibleElementMap.length) {
             throw new RSIllegalArgumentException("Illegal sub-element index");
         }
-        return mElements[index];
+        return mElements[mVisibleElementMap[index]];
     }
 
     /**
-    * @hide
+    * For complex elements, this function will return the
+    * sub-element name at index
     * @param index index of the sub-element
     * @return sub-element in this element at given index
     */
     public String getSubElementName(int index) {
-        if (mElements == null) {
+        if (mVisibleElementMap == null) {
             throw new RSIllegalArgumentException("Element contains no sub-elements");
         }
-        if (index < 0 || index >= mElements.length) {
+        if (index < 0 || index >= mVisibleElementMap.length) {
             throw new RSIllegalArgumentException("Illegal sub-element index");
         }
-        return mElementNames[index];
+        return mElementNames[mVisibleElementMap[index]];
     }
 
     /**
-    * @hide
+    * For complex elements, some sub-elements could be statically
+    * sized arrays. This function will return the array size for
+    * sub-element at index
     * @param index index of the sub-element
     * @return array size of sub-element in this element at given index
     */
     public int getSubElementArraySize(int index) {
-        if (mElements == null) {
+        if (mVisibleElementMap == null) {
             throw new RSIllegalArgumentException("Element contains no sub-elements");
         }
-        if (index < 0 || index >= mElements.length) {
+        if (index < 0 || index >= mVisibleElementMap.length) {
             throw new RSIllegalArgumentException("Illegal sub-element index");
         }
-        return mArraySizes[index];
+        return mArraySizes[mVisibleElementMap[index]];
     }
 
     /**
-    * @hide
+    * This function specifies the location of a sub-element within
+    * the element
     * @param index index of the sub-element
     * @return offset in bytes of sub-element in this element at given index
     */
     public int getSubElementOffsetBytes(int index) {
-        if (mElements == null) {
+        if (mVisibleElementMap == null) {
             throw new RSIllegalArgumentException("Element contains no sub-elements");
         }
-        if (index < 0 || index >= mElements.length) {
+        if (index < 0 || index >= mVisibleElementMap.length) {
             throw new RSIllegalArgumentException("Illegal sub-element index");
         }
-        return mOffsetInBytes[index];
+        return mOffsetInBytes[mVisibleElementMap[index]];
+    }
+
+    /**
+    * @return element data type
+    */
+    public DataType getDataType() {
+        return mType;
+    }
+
+    /**
+    * @return element data kind
+    */
+    public DataKind getDataKind() {
+        return mKind;
     }
 
     /**
@@ -399,6 +456,13 @@ public class Element extends BaseObj {
             rs.mElement_PROGRAM_STORE = createUser(rs, DataType.RS_PROGRAM_STORE);
         }
         return rs.mElement_PROGRAM_STORE;
+    }
+
+    public static Element FONT(RenderScript rs) {
+        if(rs.mElement_FONT == null) {
+            rs.mElement_FONT = createUser(rs, DataType.RS_FONT);
+        }
+        return rs.mElement_FONT;
     }
 
 
@@ -660,6 +724,9 @@ public class Element extends BaseObj {
         }
         return rs.mElement_MATRIX_4X4;
     }
+
+    /** @deprecated use MATRIX_4X4
+    */
     public static Element MATRIX4X4(RenderScript rs) {
         return MATRIX_4X4(rs);
     }
@@ -681,14 +748,18 @@ public class Element extends BaseObj {
     Element(int id, RenderScript rs, Element[] e, String[] n, int[] as) {
         super(id, rs);
         mSize = 0;
+        mVectorSize = 1;
         mElements = e;
         mElementNames = n;
         mArraySizes = as;
+        mType = DataType.NONE;
+        mKind = DataKind.USER;
         mOffsetInBytes = new int[mElements.length];
         for (int ct = 0; ct < mElements.length; ct++ ) {
             mOffsetInBytes[ct] = mSize;
             mSize += mElements[ct].mSize * mArraySizes[ct];
         }
+        updateVisibleSubElements();
     }
 
     Element(int id, RenderScript rs, DataType dt, DataKind dk, boolean norm, int size) {
@@ -696,7 +767,11 @@ public class Element extends BaseObj {
         if ((dt != DataType.UNSIGNED_5_6_5) &&
             (dt != DataType.UNSIGNED_4_4_4_4) &&
             (dt != DataType.UNSIGNED_5_5_5_1)) {
-            mSize = dt.mSize * size;
+            if (size == 3) {
+                mSize = dt.mSize * 4;
+            } else {
+                mSize = dt.mSize * size;
+            }
         } else {
             mSize = dt.mSize;
         }
@@ -716,7 +791,7 @@ public class Element extends BaseObj {
 
         // we will pack mType; mKind; mNormalized; mVectorSize; NumSubElements
         int[] dataBuffer = new int[5];
-        mRS.nElementGetNativeData(getID(), dataBuffer);
+        mRS.nElementGetNativeData(getID(mRS), dataBuffer);
 
         mNormalized = dataBuffer[2] == 1 ? true : false;
         mVectorSize = dataBuffer[3];
@@ -741,7 +816,7 @@ public class Element extends BaseObj {
             mOffsetInBytes = new int[numSubElements];
 
             int[] subElementIds = new int[numSubElements];
-            mRS.nElementGetSubElements(getID(), subElementIds, mElementNames, mArraySizes);
+            mRS.nElementGetSubElements(getID(mRS), subElementIds, mElementNames, mArraySizes);
             for(int i = 0; i < numSubElements; i ++) {
                 mElements[i] = new Element(subElementIds[i], mRS);
                 mElements[i].updateFromNative();
@@ -749,7 +824,7 @@ public class Element extends BaseObj {
                 mSize += mElements[i].mSize * mArraySizes[i];
             }
         }
-
+        updateVisibleSubElements();
     }
 
     /**
@@ -770,10 +845,12 @@ public class Element extends BaseObj {
 
     /**
      * Create a custom vector element of the specified DataType and vector size.
-     *  DataKind will be set to USER.
+     * DataKind will be set to USER. Only primitive types (FLOAT_32, FLOAT_64,
+     * SIGNED_8, SIGNED_16, SIGNED_32, SIGNED_64, UNSIGNED_8, UNSIGNED_16,
+     * UNSIGNED_32, UNSIGNED_64, BOOLEAN) are supported.
      *
      * @param rs The context associated with the new Element.
-     * @param dt The DataType for the new element.
+     * @param dt The DataType for the new Element.
      * @param size Vector size for the new Element.  Range 2-4 inclusive
      *             supported.
      *
@@ -783,10 +860,31 @@ public class Element extends BaseObj {
         if (size < 2 || size > 4) {
             throw new RSIllegalArgumentException("Vector size out of range 2-4.");
         }
-        DataKind dk = DataKind.USER;
-        boolean norm = false;
-        int id = rs.nElementCreate(dt.mID, dk.mID, norm, size);
-        return new Element(id, rs, dt, dk, norm, size);
+
+        switch (dt) {
+        // Support only primitive integer/float/boolean types as vectors.
+        case FLOAT_32:
+        case FLOAT_64:
+        case SIGNED_8:
+        case SIGNED_16:
+        case SIGNED_32:
+        case SIGNED_64:
+        case UNSIGNED_8:
+        case UNSIGNED_16:
+        case UNSIGNED_32:
+        case UNSIGNED_64:
+        case BOOLEAN: {
+            DataKind dk = DataKind.USER;
+            boolean norm = false;
+            int id = rs.nElementCreate(dt.mID, dk.mID, norm, size);
+            return new Element(id, rs, dt, dk, norm, size);
+        }
+
+        default: {
+            throw new RSIllegalArgumentException("Cannot create vector of " +
+                "non-primitive type.");
+        }
+        }
     }
 
     /**
@@ -871,10 +969,10 @@ public class Element extends BaseObj {
 
         // Ignore mKind because it is allowed to be different (user vs. pixel).
         // We also ignore mNormalized because it can be different. The mType
-        // field must be non-null since we require name equivalence for
-        // user-created Elements.
+        // field must not be NONE since we require name equivalence for
+        // all user-created Elements.
         return ((mSize == e.mSize) &&
-                (mType != null) &&
+                (mType != DataType.NONE) &&
                 (mType == e.mType) &&
                 (mVectorSize == e.mVectorSize));
     }
@@ -891,6 +989,7 @@ public class Element extends BaseObj {
         String[] mElementNames;
         int[] mArraySizes;
         int mCount;
+        int mSkipPadding;
 
         /**
          * Create a builder object.
@@ -916,6 +1015,21 @@ public class Element extends BaseObj {
             if (arraySize < 1) {
                 throw new RSIllegalArgumentException("Array size cannot be less than 1.");
             }
+
+            // Skip padding fields after a vector 3 type.
+            if (mSkipPadding != 0) {
+                if (name.startsWith("#padding_")) {
+                    mSkipPadding = 0;
+                    return this;
+                }
+            }
+
+            if (element.mVectorSize == 3) {
+                mSkipPadding = 1;
+            } else {
+                mSkipPadding = 0;
+            }
+
             if(mCount == mElements.length) {
                 Element[] e = new Element[mCount + 8];
                 String[] s = new String[mCount + 8];
@@ -961,7 +1075,7 @@ public class Element extends BaseObj {
 
             int[] ids = new int[ein.length];
             for (int ct = 0; ct < ein.length; ct++ ) {
-                ids[ct] = ein[ct].getID();
+                ids[ct] = ein[ct].getID(mRS);
             }
             int id = mRS.nElementCreate2(ids, sin, asin);
             return new Element(id, mRS, ein, sin, asin);

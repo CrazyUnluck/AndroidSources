@@ -243,7 +243,7 @@ public class ZygoteInit {
     private static void preloadClasses() {
         final VMRuntime runtime = VMRuntime.getRuntime();
 
-        InputStream is = ZygoteInit.class.getClassLoader().getResourceAsStream(
+        InputStream is = ClassLoader.getSystemClassLoader().getResourceAsStream(
                 PRELOADED_CLASSES);
         if (is == null) {
             Log.e(TAG, "Couldn't find " + PRELOADED_CLASSES + ".");
@@ -348,6 +348,7 @@ public class ZygoteInit {
                 TypedArray ar = mResources.obtainTypedArray(
                         com.android.internal.R.array.preloaded_drawables);
                 int N = preloadDrawables(runtime, ar);
+                ar.recycle();
                 Log.i(TAG, "...preloaded " + N + " resources in "
                         + (SystemClock.uptimeMillis()-startTime) + "ms.");
 
@@ -355,6 +356,7 @@ public class ZygoteInit {
                 ar = mResources.obtainTypedArray(
                         com.android.internal.R.array.preloaded_color_state_lists);
                 N = preloadColorStateLists(runtime, ar);
+                ar.recycle();
                 Log.i(TAG, "...preloaded " + N + " resources in "
                         + (SystemClock.uptimeMillis()-startTime) + "ms.");
             }

@@ -29,6 +29,7 @@ import android.view.View;
 import android.view.View.OnFocusChangeListener;
 import android.view.ViewGroup;
 import android.view.accessibility.AccessibilityEvent;
+import android.view.accessibility.AccessibilityNodeInfo;
 
 /**
  *
@@ -41,9 +42,6 @@ import android.view.accessibility.AccessibilityEvent;
  * handler, and manage callbacks. You might call this object to iterate the list
  * of tabs, or to tweak the layout of the tab list, but most methods should be
  * called on the containing TabHost object.
- *
- * <p>See the <a href="{@docRoot}resources/tutorials/views/hello-tabwidget.html">Tab Layout
- * tutorial</a>.</p>
  * 
  * @attr ref android.R.styleable#TabWidget_divider
  * @attr ref android.R.styleable#TabWidget_tabStripEnabled
@@ -416,8 +414,26 @@ public class TabWidget extends LinearLayout implements OnFocusChangeListener {
     @Override
     public void onInitializeAccessibilityEvent(AccessibilityEvent event) {
         super.onInitializeAccessibilityEvent(event);
+        event.setClassName(TabWidget.class.getName());
         event.setItemCount(getTabCount());
         event.setCurrentItemIndex(mSelectedTab);
+    }
+
+
+    @Override
+    public void sendAccessibilityEventUnchecked(AccessibilityEvent event) {
+        // this class fires events only when tabs are focused or selected
+        if (event.getEventType() == AccessibilityEvent.TYPE_VIEW_FOCUSED && isFocused()) {
+            event.recycle();
+            return;
+        }
+        super.sendAccessibilityEventUnchecked(event);
+    }
+
+    @Override
+    public void onInitializeAccessibilityNodeInfo(AccessibilityNodeInfo info) {
+        super.onInitializeAccessibilityNodeInfo(info);
+        info.setClassName(TabWidget.class.getName());
     }
 
     /**
@@ -483,16 +499,6 @@ public class TabWidget extends LinearLayout implements OnFocusChangeListener {
     public void removeAllViews() {
         super.removeAllViews();
         mSelectedTab = -1;
-    }
-
-    @Override
-    public void sendAccessibilityEventUnchecked(AccessibilityEvent event) {
-        // this class fires events only when tabs are focused or selected
-        if (event.getEventType() == AccessibilityEvent.TYPE_VIEW_FOCUSED && isFocused()) {
-            event.recycle();
-            return;
-        }
-        super.sendAccessibilityEventUnchecked(event);
     }
 
     /**

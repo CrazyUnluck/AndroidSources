@@ -16,6 +16,10 @@
 
 package com.android.systemui.statusbar.tablet;
 
+import com.android.systemui.R;
+import com.android.systemui.statusbar.BaseStatusBar;
+import com.android.systemui.statusbar.DelegateViewHelper;
+
 import android.content.Context;
 import android.os.Handler;
 import android.util.AttributeSet;
@@ -31,13 +35,45 @@ public class TabletStatusBarView extends FrameLayout {
     private final View[] mIgnoreChildren = new View[MAX_PANELS];
     private final View[] mPanels = new View[MAX_PANELS];
     private final int[] mPos = new int[2];
+    private DelegateViewHelper mDelegateHelper;
 
     public TabletStatusBarView(Context context) {
-        super(context);
+        this(context, null);
     }
 
     public TabletStatusBarView(Context context, AttributeSet attrs) {
         super(context, attrs);
+        mDelegateHelper = new DelegateViewHelper(this);
+    }
+
+    public void setDelegateView(View view) {
+        mDelegateHelper.setDelegateView(view);
+    }
+
+    public void setBar(BaseStatusBar phoneStatusBar) {
+        mDelegateHelper.setBar(phoneStatusBar);
+    }
+
+    @Override
+    public boolean onTouchEvent(MotionEvent event) {
+        if (mDelegateHelper != null) {
+            mDelegateHelper.onInterceptTouchEvent(event);
+        }
+        return true;
+    }
+
+    @Override
+    protected void onLayout(boolean changed, int left, int top, int right, int bottom) {
+        super.onLayout(changed, left, top, right, bottom);
+        // Find the view we wish to grab events from in order to detect search gesture.
+        // Depending on the device, this will be one of the id's listed below.
+        // If we don't find one, we'll use the view provided in the constructor above (this view).
+        View view = findViewById(R.id.navigationArea);
+        if (view == null) {
+            view = findViewById(R.id.nav_buttons);
+        }
+        mDelegateHelper.setSourceView(view);
+        mDelegateHelper.setInitialTouchRegion(view);
     }
 
     @Override
@@ -46,10 +82,11 @@ public class TabletStatusBarView extends FrameLayout {
             if (TabletStatusBar.DEBUG) {
                 Slog.d(TabletStatusBar.TAG, "TabletStatusBarView intercepting touch event: " + ev);
             }
+            // do not close the recents panel here- the intended behavior is that recents is dismissed
+            // on touch up when clicking on status bar buttons
+            // TODO: should we be closing the notification panel and input methods panel?
             mHandler.removeMessages(TabletStatusBar.MSG_CLOSE_NOTIFICATION_PANEL);
             mHandler.sendEmptyMessage(TabletStatusBar.MSG_CLOSE_NOTIFICATION_PANEL);
-            mHandler.removeMessages(TabletStatusBar.MSG_CLOSE_RECENTS_PANEL);
-            mHandler.sendEmptyMessage(TabletStatusBar.MSG_CLOSE_RECENTS_PANEL);
             mHandler.removeMessages(TabletStatusBar.MSG_CLOSE_INPUT_METHODS_PANEL);
             mHandler.sendEmptyMessage(TabletStatusBar.MSG_CLOSE_INPUT_METHODS_PANEL);
             mHandler.removeMessages(TabletStatusBar.MSG_STOP_TICKER);
@@ -70,6 +107,9 @@ public class TabletStatusBarView extends FrameLayout {
         }
         if (TabletStatusBar.DEBUG) {
             Slog.d(TabletStatusBar.TAG, "TabletStatusBarView not intercepting event");
+        }
+        if (mDelegateHelper != null && mDelegateHelper.onInterceptTouchEvent(ev)) {
+            return true;
         }
         return super.onInterceptTouchEvent(ev);
     }
@@ -96,7 +136,7 @@ public class TabletStatusBarView extends FrameLayout {
 
     /**
      * Let the status bar know that if you tap on ignore while panel is showing, don't do anything.
-     * 
+     *
      * Debounces taps on, say, a popup's trigger when the popup is already showing.
      */
     public void setIgnoreChildren(int index, View ignore, View panel) {

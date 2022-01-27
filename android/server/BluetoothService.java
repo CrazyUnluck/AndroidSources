@@ -46,6 +46,7 @@ import android.content.Context;
 import android.content.Intent;
 import android.content.IntentFilter;
 import android.content.SharedPreferences;
+import android.content.res.Resources;
 import android.os.Binder;
 import android.os.Handler;
 import android.os.IBinder;
@@ -163,6 +164,8 @@ public class BluetoothService extends IBluetooth.Stub {
 
     private static String mDockAddress;
     private String mDockPin;
+
+    private boolean mAllowConnect = true;
 
     private int mAdapterConnectionState = BluetoothAdapter.STATE_DISCONNECTED;
     private BluetoothPanProfileHandler mBluetoothPanProfileHandler;
@@ -471,7 +474,7 @@ public class BluetoothService extends IBluetooth.Stub {
 
     /** Bring up BT and persist BT on in settings */
     public boolean enable() {
-        return enable(true);
+        return enable(true, true);
     }
 
     /**
@@ -479,9 +482,11 @@ public class BluetoothService extends IBluetooth.Stub {
      * This turns on/off the underlying hardware.
      *
      * @param saveSetting If true, persist the new state of BT in settings
+     * @param allowConnect If true, auto-connects device when BT is turned on
+     *                     and allows incoming A2DP/HSP connections
      * @return True on success (so far)
      */
-    public synchronized boolean enable(boolean saveSetting) {
+    public synchronized boolean enable(boolean saveSetting, boolean allowConnect) {
         mContext.enforceCallingOrSelfPermission(BLUETOOTH_ADMIN_PERM,
                                                 "Need BLUETOOTH_ADMIN permission");
 
@@ -489,8 +494,26 @@ public class BluetoothService extends IBluetooth.Stub {
         if (mIsAirplaneSensitive && isAirplaneModeOn() && !mIsAirplaneToggleable) {
             return false;
         }
+        mAllowConnect = allowConnect;
         mBluetoothState.sendMessage(BluetoothAdapterStateMachine.USER_TURN_ON, saveSetting);
         return true;
+    }
+
+    /**
+     * Enable this Bluetooth device, asynchronously, but does not
+     * auto-connect devices. In this state the Bluetooth adapter
+     * also does not allow incoming A2DP/HSP connections (that
+     * must go through this service), but does allow communication
+     * on RFCOMM sockets implemented outside of this service (ie BTOPP).
+     * This method is used to temporarily enable Bluetooth
+     * for data transfer, without changing
+     *
+     * This turns on/off the underlying hardware.
+     *
+     * @return True on success (so far)
+     */
+    public boolean enableNoAutoConnect() {
+        return enable(false, false);
     }
 
     /**
@@ -503,6 +526,12 @@ public class BluetoothService extends IBluetooth.Stub {
             return false;
         }
         switchConnectable(false);
+
+        // Bluetooth stack needs a small delay here before adding
+        // SDP records, otherwise dbus stalls for over 30 seconds 1 out of 50 runs
+        try {
+            Thread.sleep(50);
+        } catch (InterruptedException e) {}
         updateSdpRecords();
         return true;
     }
@@ -554,12 +583,15 @@ public class BluetoothService extends IBluetooth.Stub {
     private synchronized void updateSdpRecords() {
         ArrayList<ParcelUuid> uuids = new ArrayList<ParcelUuid>();
 
-        // Add the default records
-        uuids.add(BluetoothUuid.HSP_AG);
-        uuids.add(BluetoothUuid.ObexObjectPush);
+        Resources R = mContext.getResources();
 
-        if (mContext.getResources().
-                getBoolean(com.android.internal.R.bool.config_voice_capable)) {
+        // Add the default records
+        if (R.getBoolean(com.android.internal.R.bool.config_bluetooth_default_profiles)) {
+            uuids.add(BluetoothUuid.HSP_AG);
+            uuids.add(BluetoothUuid.ObexObjectPush);
+        }
+
+        if (R.getBoolean(com.android.internal.R.bool.config_voice_capable)) {
             uuids.add(BluetoothUuid.Handsfree_AG);
             uuids.add(BluetoothUuid.PBAP_PSE);
         }
@@ -567,14 +599,22 @@ public class BluetoothService extends IBluetooth.Stub {
         // Add SDP records for profiles maintained by Android userspace
         addReservedSdpRecords(uuids);
 
-        // Enable profiles maintained by Bluez userspace.
-        setBluetoothTetheringNative(true, BluetoothPanProfileHandler.NAP_ROLE,
-                BluetoothPanProfileHandler.NAP_BRIDGE);
+        // Bluetooth stack need some a small delay here before adding more
+        // SDP records, otherwise dbus stalls for over 30 seconds 1 out of 50 runs
+        try {
+            Thread.sleep(50);
+        } catch (InterruptedException e) {}
 
-        // Add SDP records for profiles maintained by Bluez userspace
-        uuids.add(BluetoothUuid.AudioSource);
-        uuids.add(BluetoothUuid.AvrcpTarget);
-        uuids.add(BluetoothUuid.NAP);
+        if (R.getBoolean(com.android.internal.R.bool.config_bluetooth_default_profiles)) {
+            // Enable profiles maintained by Bluez userspace.
+            setBluetoothTetheringNative(true, BluetoothPanProfileHandler.NAP_ROLE,
+                   BluetoothPanProfileHandler.NAP_BRIDGE);
+
+            // Add SDP records for profiles maintained by Bluez userspace
+            uuids.add(BluetoothUuid.AudioSource);
+            uuids.add(BluetoothUuid.AvrcpTarget);
+            uuids.add(BluetoothUuid.NAP);
+        }
 
         // Cannot cast uuids.toArray directly since ParcelUuid is parcelable
         mAdapterUuids = new ParcelUuid[uuids.size()];
@@ -605,6 +645,11 @@ public class BluetoothService extends IBluetooth.Stub {
     /*package*/ void initBluetoothAfterTurningOn() {
         String discoverable = getProperty("Discoverable", false);
         String timeout = getProperty("DiscoverableTimeout", false);
+        if (timeout == null) {
+            Log.w(TAG, "Null DiscoverableTimeout property");
+            // assign a number, anything not 0
+            timeout = "1";
+        }
         if (discoverable.equals("true") && Integer.valueOf(timeout) != 0) {
             setAdapterPropertyBooleanNative("Discoverable", 0);
         }
@@ -1742,6 +1787,8 @@ public class BluetoothService extends IBluetooth.Stub {
 
     @Override
     protected void dump(FileDescriptor fd, PrintWriter pw, String[] args) {
+        mContext.enforceCallingOrSelfPermission(android.Manifest.permission.DUMP, TAG);
+
         if (getBluetoothStateInternal() != BluetoothAdapter.STATE_ON) {
             return;
         }
@@ -2430,6 +2477,13 @@ public class BluetoothService extends IBluetooth.Stub {
     }
 
     private void autoConnect() {
+        synchronized (this) {
+            if (!mAllowConnect) {
+                Log.d(TAG, "Not auto-connecting devices because of temporary BT on state.");
+                return;
+            }
+        }
+
         String[] bonds = getKnownDevices();
         if (bonds == null) {
             return;
@@ -2446,6 +2500,12 @@ public class BluetoothService extends IBluetooth.Stub {
     }
 
     public boolean notifyIncomingConnection(String address, boolean rejected) {
+        synchronized (this) {
+            if (!mAllowConnect) {
+                Log.d(TAG, "Not allowing incoming connection because of temporary BT on state.");
+                return false;
+            }
+        }
         BluetoothDeviceProfileState state = mDeviceProfileState.get(address);
         if (state != null) {
             Message msg = new Message();
@@ -2467,6 +2527,13 @@ public class BluetoothService extends IBluetooth.Stub {
     }
 
     /*package*/ boolean notifyIncomingA2dpConnection(String address, boolean rejected) {
+        synchronized (this) {
+            if (!mAllowConnect) {
+                Log.d(TAG, "Not allowing a2dp connection because of temporary BT on state.");
+                return false;
+            }
+        }
+
        BluetoothDeviceProfileState state = mDeviceProfileState.get(address);
        if (state != null) {
            Message msg = new Message();

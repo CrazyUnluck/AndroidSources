@@ -16,14 +16,16 @@
 
 package com.android.server.accessibility;
 
-import com.android.server.wm.InputFilter;
+import com.android.server.input.InputFilter;
 
 import android.content.Context;
+import android.os.PowerManager;
 import android.util.Slog;
 import android.view.InputDevice;
 import android.view.InputEvent;
 import android.view.MotionEvent;
 import android.view.WindowManagerPolicy;
+import android.view.accessibility.AccessibilityEvent;
 
 /**
  * Input filter for accessibility.
@@ -35,6 +37,10 @@ public class AccessibilityInputFilter extends InputFilter {
     private static final boolean DEBUG = false;
 
     private final Context mContext;
+
+    private final PowerManager mPm;
+
+    private final AccessibilityManagerService mAms;
 
     /**
      * This is an interface for explorers that take a {@link MotionEvent}
@@ -64,11 +70,14 @@ public class AccessibilityInputFilter extends InputFilter {
     }
 
     private TouchExplorer mTouchExplorer;
+
     private int mTouchscreenSourceDeviceId;
 
-    public AccessibilityInputFilter(Context context) {
+    public AccessibilityInputFilter(Context context, AccessibilityManagerService service) {
         super(context.getMainLooper());
         mContext = context;
+        mAms = service;
+        mPm = (PowerManager)context.getSystemService(Context.POWER_SERVICE);
     }
 
     @Override
@@ -76,7 +85,7 @@ public class AccessibilityInputFilter extends InputFilter {
         if (DEBUG) {
             Slog.d(TAG, "Accessibility input filter installed.");
         }
-        mTouchExplorer = new TouchExplorer(this, mContext);
+        mTouchExplorer = new TouchExplorer(this, mContext, mAms);
         super.onInstalled();
     }
 
@@ -103,12 +112,19 @@ public class AccessibilityInputFilter extends InputFilter {
                 mTouchExplorer.clear(motionEvent, policyFlags);
             }
             if ((policyFlags & WindowManagerPolicy.FLAG_PASS_TO_USER) != 0) {
+                mPm.userActivity(event.getEventTime(), false);
                 mTouchExplorer.onMotionEvent(motionEvent, policyFlags);
             } else {
                 mTouchExplorer.clear(motionEvent, policyFlags);
             }
         } else {
             super.onInputEvent(event, policyFlags);
+        }
+    }
+
+    public void onAccessibilityEvent(AccessibilityEvent event) {
+        if (mTouchExplorer != null) {
+            mTouchExplorer.onAccessibilityEvent(event);
         }
     }
 }

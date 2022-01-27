@@ -17,6 +17,7 @@
 package android.net;
 
 import static android.content.pm.PackageManager.GET_SIGNATURES;
+import static android.net.NetworkPolicy.CYCLE_NONE;
 import static android.text.format.Time.MONTH_DAY;
 
 import android.content.Context;
@@ -66,45 +67,36 @@ public class NetworkPolicyManager {
         mService = service;
     }
 
-    public static NetworkPolicyManager getSystemService(Context context) {
+    public static NetworkPolicyManager from(Context context) {
         return (NetworkPolicyManager) context.getSystemService(Context.NETWORK_POLICY_SERVICE);
     }
 
-    /** {@hide} */
-    public void setNetworkPolicies(NetworkPolicy[] policies) {
-        try {
-            mService.setNetworkPolicies(policies);
-        } catch (RemoteException e) {
-        }
-    }
-
-    /** {@hide} */
-    public NetworkPolicy[] getNetworkPolicies() {
-        try {
-            return mService.getNetworkPolicies();
-        } catch (RemoteException e) {
-            return null;
-        }
-    }
-
     /**
-     * Set policy flags for specific UID.
+     * Set policy flags for specific application.
      *
      * @param policy {@link #POLICY_NONE} or combination of flags like
      *            {@link #POLICY_REJECT_METERED_BACKGROUND}.
      */
-    public void setUidPolicy(int uid, int policy) {
+    public void setAppPolicy(int appId, int policy) {
         try {
-            mService.setUidPolicy(uid, policy);
+            mService.setAppPolicy(appId, policy);
         } catch (RemoteException e) {
         }
     }
 
-    public int getUidPolicy(int uid) {
+    public int getAppPolicy(int appId) {
         try {
-            return mService.getUidPolicy(uid);
+            return mService.getAppPolicy(appId);
         } catch (RemoteException e) {
             return POLICY_NONE;
+        }
+    }
+
+    public int[] getAppsWithPolicy(int policy) {
+        try {
+            return mService.getAppsWithPolicy(policy);
+        } catch (RemoteException e) {
+            return new int[0];
         }
     }
 
@@ -122,6 +114,36 @@ public class NetworkPolicyManager {
         }
     }
 
+    public void setNetworkPolicies(NetworkPolicy[] policies) {
+        try {
+            mService.setNetworkPolicies(policies);
+        } catch (RemoteException e) {
+        }
+    }
+
+    public NetworkPolicy[] getNetworkPolicies() {
+        try {
+            return mService.getNetworkPolicies();
+        } catch (RemoteException e) {
+            return null;
+        }
+    }
+
+    public void setRestrictBackground(boolean restrictBackground) {
+        try {
+            mService.setRestrictBackground(restrictBackground);
+        } catch (RemoteException e) {
+        }
+    }
+
+    public boolean getRestrictBackground() {
+        try {
+            return mService.getRestrictBackground();
+        } catch (RemoteException e) {
+            return false;
+        }
+    }
+
     /**
      * Compute the last cycle boundary for the given {@link NetworkPolicy}. For
      * example, if cycle day is 20th, and today is June 15th, it will return May
@@ -131,7 +153,11 @@ public class NetworkPolicyManager {
      * @hide
      */
     public static long computeLastCycleBoundary(long currentTime, NetworkPolicy policy) {
-        final Time now = new Time(Time.TIMEZONE_UTC);
+        if (policy.cycleDay == CYCLE_NONE) {
+            throw new IllegalArgumentException("Unable to compute boundary without cycleDay");
+        }
+
+        final Time now = new Time(policy.cycleTimezone);
         now.set(currentTime);
 
         // first, find cycle boundary for current month
@@ -157,7 +183,11 @@ public class NetworkPolicyManager {
 
     /** {@hide} */
     public static long computeNextCycleBoundary(long currentTime, NetworkPolicy policy) {
-        final Time now = new Time(Time.TIMEZONE_UTC);
+        if (policy.cycleDay == CYCLE_NONE) {
+            throw new IllegalArgumentException("Unable to compute boundary without cycleDay");
+        }
+
+        final Time now = new Time(policy.cycleTimezone);
         now.set(currentTime);
 
         // first, find cycle boundary for current month
@@ -183,7 +213,7 @@ public class NetworkPolicyManager {
 
     /**
      * Snap to the cycle day for the current month given; when cycle day doesn't
-     * exist, it snaps to 1st of following month.
+     * exist, it snaps to last second of current month.
      *
      * @hide
      */
@@ -203,6 +233,7 @@ public class NetworkPolicyManager {
      * Check if given UID can have a {@link #setUidPolicy(int, int)} defined,
      * usually to protect critical system services.
      */
+    @Deprecated
     public static boolean isUidValidForPolicy(Context context, int uid) {
         // first, quick-reject non-applications
         if (uid < android.os.Process.FIRST_APPLICATION_UID

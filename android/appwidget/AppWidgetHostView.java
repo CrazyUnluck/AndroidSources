@@ -28,6 +28,7 @@ import android.graphics.Color;
 import android.graphics.Paint;
 import android.graphics.Rect;
 import android.os.Build;
+import android.os.Bundle;
 import android.os.Parcel;
 import android.os.Parcelable;
 import android.os.SystemClock;
@@ -37,6 +38,7 @@ import android.util.SparseArray;
 import android.view.Gravity;
 import android.view.LayoutInflater;
 import android.view.View;
+import android.view.accessibility.AccessibilityNodeInfo;
 import android.widget.Adapter;
 import android.widget.AdapterView;
 import android.widget.BaseAdapter;
@@ -204,6 +206,54 @@ public class AppWidgetHostView extends FrameLayout {
         if (jail == null) jail = new ParcelableSparseArray();
 
         super.dispatchRestoreInstanceState(jail);
+    }
+
+    /**
+     * Provide guidance about the size of this widget to the AppWidgetManager. The widths and
+     * heights should correspond to the full area the AppWidgetHostView is given. Padding added by
+     * the framework will be accounted for automatically. This information gets embedded into the
+     * AppWidget options and causes a callback to the AppWidgetProvider.
+     * @see AppWidgetProvider#onAppWidgetOptionsChanged(Context, AppWidgetManager, int, Bundle)
+     *
+     * @param options The bundle of options, in addition to the size information,
+     *          can be null.
+     * @param minWidth The minimum width that the widget will be displayed at.
+     * @param minHeight The maximum height that the widget will be displayed at.
+     * @param maxWidth The maximum width that the widget will be displayed at.
+     * @param maxHeight The maximum height that the widget will be displayed at.
+     *
+     */
+    public void updateAppWidgetSize(Bundle options, int minWidth, int minHeight, int maxWidth,
+            int maxHeight) {
+        if (options == null) {
+            options = new Bundle();
+        }
+
+        Rect padding = new Rect();
+        if (mInfo != null) {
+            padding = getDefaultPaddingForWidget(mContext, mInfo.provider, padding);
+        }
+        float density = getResources().getDisplayMetrics().density;
+
+        int xPaddingDips = (int) ((padding.left + padding.right) / density);
+        int yPaddingDips = (int) ((padding.top + padding.bottom) / density);
+
+        options.putInt(AppWidgetManager.OPTION_APPWIDGET_MIN_WIDTH, minWidth - xPaddingDips);
+        options.putInt(AppWidgetManager.OPTION_APPWIDGET_MIN_HEIGHT, minHeight - yPaddingDips);
+        options.putInt(AppWidgetManager.OPTION_APPWIDGET_MAX_WIDTH, maxWidth - xPaddingDips);
+        options.putInt(AppWidgetManager.OPTION_APPWIDGET_MAX_HEIGHT, maxHeight - yPaddingDips);
+        updateAppWidgetOptions(options);
+    }
+
+    /**
+     * Specify some extra information for the widget provider. Causes a callback to the
+     * AppWidgetProvider.
+     * @see AppWidgetProvider#onAppWidgetOptionsChanged(Context, AppWidgetManager, int, Bundle)
+     *
+     * @param options The bundle of options information.
+     */
+    public void updateAppWidgetOptions(Bundle options) {
+        AppWidgetManager.getInstance(mContext).updateAppWidgetOptions(mAppWidgetId, options);
     }
 
     /** {@inheritDoc} */
@@ -472,6 +522,12 @@ public class AppWidgetHostView extends FrameLayout {
         // TODO: get this color from somewhere.
         tv.setBackgroundColor(Color.argb(127, 0, 0, 0));
         return tv;
+    }
+
+    @Override
+    public void onInitializeAccessibilityNodeInfo(AccessibilityNodeInfo info) {
+        super.onInitializeAccessibilityNodeInfo(info);
+        info.setClassName(AppWidgetHostView.class.getName());
     }
 
     private static class ParcelableSparseArray extends SparseArray<Parcelable> implements Parcelable {

@@ -20,9 +20,13 @@ import android.os.Handler;
 import android.os.HandlerThread;
 import android.os.Looper;
 import android.os.Message;
+import android.text.TextUtils;
 import android.util.Log;
 
+import java.io.FileDescriptor;
+import java.io.PrintWriter;
 import java.util.ArrayList;
+import java.util.Calendar;
 import java.util.HashMap;
 import java.util.Vector;
 
@@ -44,10 +48,14 @@ import java.util.Vector;
  * <p>When a state machine is created <code>addState</code> is used to build the
  * hierarchy and <code>setInitialState</code> is used to identify which of these
  * is the initial state. After construction the programmer calls <code>start</code>
- * which initializes the state machine and calls <code>enter</code> for all of the initial
- * state's hierarchy, starting at its eldest parent. For example given the simple
- * state machine below after start is called mP1.enter will have been called and
- * then mS1.enter.</p>
+ * which initializes and starts the state machine. The first action the StateMachine
+ * is to the invoke <code>enter</code> for all of the initial state's hierarchy,
+ * starting at its eldest parent. The calls to enter will be done in the context
+ * of the StateMachines Handler not in the context of the call to start and they
+ * will be invoked before any messages are processed. For example, given the simple
+ * state machine below mP1.enter will be invoked and then mS1.enter. Finally,
+ * messages sent to the state machine will be processed by the current state,
+ * in our simple state machine below that would initially be mS1.processMessage.</p>
 <code>
         mP1
        /   \
@@ -440,9 +448,11 @@ public class StateMachine {
      * The information maintained for a processed message.
      */
     public static class ProcessedMessageInfo {
-        private int what;
-        private State state;
-        private State orgState;
+        private long mTime;
+        private int mWhat;
+        private String mInfo;
+        private State mState;
+        private State mOrgState;
 
         /**
          * Constructor
@@ -451,8 +461,8 @@ public class StateMachine {
          * @param orgState is the first state the received the message but
          * did not processes the message.
          */
-        ProcessedMessageInfo(Message message, State state, State orgState) {
-            update(message, state, orgState);
+        ProcessedMessageInfo(Message msg, String info, State state, State orgState) {
+            update(msg, info, state, orgState);
         }
 
         /**
@@ -461,31 +471,47 @@ public class StateMachine {
          * @param orgState is the first state the received the message but
          * did not processes the message.
          */
-        public void update(Message message, State state, State orgState) {
-            this.what = message.what;
-            this.state = state;
-            this.orgState = orgState;
+        public void update(Message msg, String info, State state, State orgState) {
+            mTime = System.currentTimeMillis();
+            mWhat = msg.what;
+            mInfo = info;
+            mState = state;
+            mOrgState = orgState;
+        }
+
+        /**
+         * @return time stamp
+         */
+        public long getTime() {
+            return mTime;
+        }
+
+        /**
+         * @return msg.what
+         */
+        public long getWhat() {
+            return mWhat;
         }
 
         /**
          * @return the command that was executing
          */
-        public int getWhat() {
-            return what;
+        public String getInfo() {
+            return mInfo;
         }
 
         /**
          * @return the state that handled this message
          */
         public State getState() {
-            return state;
+            return mState;
         }
 
         /**
          * @return the original state that received the message.
          */
         public State getOriginalState() {
-            return orgState;
+            return mOrgState;
         }
 
         /**
@@ -494,26 +520,24 @@ public class StateMachine {
         @Override
         public String toString() {
             StringBuilder sb = new StringBuilder();
-            sb.append("what=");
-            sb.append(what);
+            sb.append("time=");
+            Calendar c = Calendar.getInstance();
+            c.setTimeInMillis(mTime);
+            sb.append(String.format("%tm-%td %tH:%tM:%tS.%tL", c, c, c, c, c, c));
             sb.append(" state=");
-            sb.append(cn(state));
+            sb.append(mState == null ? "<null>" : mState.getName());
             sb.append(" orgState=");
-            sb.append(cn(orgState));
-            return sb.toString();
-        }
-
-        /**
-         * @return an objects class name
-         */
-        private String cn(Object n) {
-            if (n == null) {
-                return "null";
-            } else {
-                String name = n.getClass().getName();
-                int lastDollar = name.lastIndexOf('$');
-                return name.substring(lastDollar + 1);
+            sb.append(mOrgState == null ? "<null>" : mOrgState.getName());
+            sb.append(" what=");
+            sb.append(mWhat);
+            sb.append("(0x");
+            sb.append(Integer.toHexString(mWhat));
+            sb.append(")");
+            if ( ! TextUtils.isEmpty(mInfo)) {
+                sb.append(" ");
+                sb.append(mInfo);
             }
+            return sb.toString();
         }
     }
 
@@ -538,9 +562,9 @@ public class StateMachine {
         private int mCount = 0;
 
         /**
-         * Constructor
+         * private constructor use add
          */
-        ProcessedMessages() {
+        private ProcessedMessages() {
         }
 
         /**
@@ -595,22 +619,23 @@ public class StateMachine {
         /**
          * Add a processed message.
          *
-         * @param message
+         * @param msg
+         * @param messageInfo to be stored
          * @param state that handled the message
          * @param orgState is the first state the received the message but
          * did not processes the message.
          */
-        void add(Message message, State state, State orgState) {
+        void add(Message msg, String messageInfo, State state, State orgState) {
             mCount += 1;
             if (mMessages.size() < mMaxSize) {
-                mMessages.add(new ProcessedMessageInfo(message, state, orgState));
+                mMessages.add(new ProcessedMessageInfo(msg, messageInfo, state, orgState));
             } else {
                 ProcessedMessageInfo pmi = mMessages.get(mOldestIndex);
                 mOldestIndex += 1;
                 if (mOldestIndex >= mMaxSize) {
                     mOldestIndex = 0;
                 }
-                pmi.update(message, state, orgState);
+                pmi.update(msg, messageInfo, state, orgState);
             }
         }
     }
@@ -621,8 +646,8 @@ public class StateMachine {
         /** The debug flag */
         private boolean mDbg = false;
 
-        /** The quit object */
-        private static final Object mQuitObj = new Object();
+        /** The SmHandler object, identifies that message is internal */
+        private static final Object mSmHandlerObj = new Object();
 
         /** The current message */
         private Message mMsg;
@@ -726,19 +751,18 @@ public class StateMachine {
             /** Save the current message */
             mMsg = msg;
 
-            /**
-             * Check that construction was completed
-             */
-            if (!mIsConstructionCompleted) {
-                Log.e(TAG, "The start method not called, ignore msg: " + msg);
-                return;
+            if (mIsConstructionCompleted) {
+                /** Normal path */
+                processMsg(msg);
+            } else if (!mIsConstructionCompleted &&
+                    (mMsg.what == SM_INIT_CMD) && (mMsg.obj == mSmHandlerObj)) {
+                /** Initial one time path. */
+                mIsConstructionCompleted = true;
+                invokeEnterMethods(0);
+            } else {
+                throw new RuntimeException("StateMachine.handleMessage: " +
+                            "The start method not called, received msg: " + msg);
             }
-
-            /**
-             * Process the message abiding by the hierarchical semantics
-             * and perform any requested transitions.
-             */
-            processMsg(msg);
             performTransitions();
 
             if (mDbg) Log.d(TAG, "handleMessage: X");
@@ -852,18 +876,8 @@ public class StateMachine {
             mTempStateStack = new StateInfo[maxDepth];
             setupInitialStateStack();
 
-            /**
-             * Construction is complete call all enter methods
-             * starting at the first entry.
-             */
-            mIsConstructionCompleted = true;
-            mMsg = obtainMessage(SM_INIT_CMD);
-            invokeEnterMethods(0);
-
-            /**
-             * Perform any transitions requested by the enter methods
-             */
-            performTransitions();
+            /** Sending SM_INIT_CMD message to invoke enter methods asynchronously */
+            sendMessageAtFrontOfQueue(obtainMessage(SM_INIT_CMD, mSmHandlerObj));
 
             if (mDbg) Log.d(TAG, "completeConstruction: X");
         }
@@ -901,11 +915,14 @@ public class StateMachine {
             /**
              * Record that we processed the message
              */
-            if (curStateInfo != null) {
-                State orgState = mStateStack[mStateStackTopIndex].state;
-                mProcessedMessages.add(msg, curStateInfo.state, orgState);
-            } else {
-                mProcessedMessages.add(msg, null, null);
+            if (mSm.recordProcessedMessage(msg)) {
+                if (curStateInfo != null) {
+                    State orgState = mStateStack[mStateStackTopIndex].state;
+                    mProcessedMessages.add(msg, mSm.getMessageInfo(msg), curStateInfo.state,
+                            orgState);
+                } else {
+                    mProcessedMessages.add(msg, mSm.getMessageInfo(msg), null, null);
+                }
             }
         }
 
@@ -1103,14 +1120,14 @@ public class StateMachine {
 
         /** @see StateMachine#setInitialState(State) */
         private final void setInitialState(State initialState) {
-            if (mDbg) Log.d(TAG, "setInitialState: initialState" + initialState.getName());
+            if (mDbg) Log.d(TAG, "setInitialState: initialState=" + initialState.getName());
             mInitialState = initialState;
         }
 
         /** @see StateMachine#transitionTo(IState) */
         private final void transitionTo(IState destState) {
             mDestState = (State) destState;
-            if (mDbg) Log.d(TAG, "StateMachine.transitionTo EX destState" + mDestState.getName());
+            if (mDbg) Log.d(TAG, "transitionTo: destState=" + mDestState.getName());
         }
 
         /** @see StateMachine#deferMessage(Message) */
@@ -1127,12 +1144,12 @@ public class StateMachine {
         /** @see StateMachine#deferMessage(Message) */
         private final void quit() {
             if (mDbg) Log.d(TAG, "quit:");
-            sendMessage(obtainMessage(SM_QUIT_CMD, mQuitObj));
+            sendMessage(obtainMessage(SM_QUIT_CMD, mSmHandlerObj));
         }
 
         /** @see StateMachine#isQuit(Message) */
         private final boolean isQuit(Message msg) {
-            return (msg.what == SM_QUIT_CMD) && (msg.obj == mQuitObj);
+            return (msg.what == SM_QUIT_CMD) && (msg.obj == mSmHandlerObj);
         }
 
         /** @see StateMachine#isDbg() */
@@ -1195,7 +1212,7 @@ public class StateMachine {
     }
 
     /**
-     * Constructor creates an StateMachine using the looper.
+     * Constructor creates a StateMachine using the looper.
      *
      * @param name of the state machine
      */
@@ -1553,6 +1570,24 @@ public class StateMachine {
     }
 
     /**
+     * @return true if msg should be saved in ProcessedMessage, default is true.
+     */
+    protected boolean recordProcessedMessage(Message msg) {
+        return true;
+    }
+
+    /**
+     * Return message info to be logged by ProcessedMessageInfo, default
+     * is an empty string. Override if additional information is desired.
+     *
+     * @param msg that was processed
+     * @return information to be logged as a String
+     */
+    protected String getMessageInfo(Message msg) {
+        return "";
+    }
+
+    /**
      * @return if debugging is enabled
      */
     public boolean isDbg() {
@@ -1583,5 +1618,22 @@ public class StateMachine {
 
         /** Send the complete construction message */
         mSmHandler.completeConstruction();
+    }
+
+    /**
+     * Dump the current state.
+     *
+     * @param fd
+     * @param pw
+     * @param args
+     */
+    public void dump(FileDescriptor fd, PrintWriter pw, String[] args) {
+        pw.println(getName() + ":");
+        pw.println(" total messages=" + getProcessedMessagesCount());
+        for (int i=0; i < getProcessedMessagesSize(); i++) {
+            pw.printf(" msg[%d]: %s\n", i, getProcessedMessageInfo(i));
+            pw.flush();
+        }
+        pw.println("curState=" + getCurrentState().getName());
     }
 }

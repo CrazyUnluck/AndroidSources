@@ -405,6 +405,25 @@ public final class BluetoothAdapter {
     }
 
     /**
+     * Get a {@link BluetoothDevice} object for the given Bluetooth hardware
+     * address.
+     * <p>Valid Bluetooth hardware addresses must be 6 bytes. This method
+     * expects the address in network byte order (MSB first).
+     * <p>A {@link BluetoothDevice} will always be returned for a valid
+     * hardware address, even if this adapter has never seen that device.
+     *
+     * @param address Bluetooth MAC address (6 bytes)
+     * @throws IllegalArgumentException if address is invalid
+     */
+    public BluetoothDevice getRemoteDevice(byte[] address) {
+        if (address == null || address.length != 6) {
+            throw new IllegalArgumentException("Bluetooth address must have 6 bytes");
+        }
+        return new BluetoothDevice(String.format("%02X:%02X:%02X:%02X:%02X:%02X",
+                address[0], address[1], address[2], address[3], address[4], address[5]));
+    }
+
+    /**
      * Return true if Bluetooth is currently enabled and ready for use.
      * <p>Equivalent to:
      * <code>getBluetoothState() == STATE_ON</code>
@@ -1213,6 +1232,18 @@ public final class BluetoothAdapter {
     }
 
     /**
+     * Enable the Bluetooth Adapter, but don't auto-connect devices
+     * and don't persist state. Only for use by system applications.
+     * @hide
+     */
+    public boolean enableNoAutoConnect() {
+        try {
+            return mService.enableNoAutoConnect();
+        } catch (RemoteException e) {Log.e(TAG, "", e);}
+        return false;
+    }
+
+    /**
      * Enable control of the Bluetooth Adapter for a single application.
      *
      * <p>Some applications need to use Bluetooth for short periods of time to
@@ -1287,7 +1318,7 @@ public final class BluetoothAdapter {
     }
 
     /**
-     * Validate a Bluetooth address, such as "00:43:A8:23:10:F0"
+     * Validate a String Bluetooth address, such as "00:43:A8:23:10:F0"
      * <p>Alphabetic characters must be uppercase to be valid.
      *
      * @param address Bluetooth address as string

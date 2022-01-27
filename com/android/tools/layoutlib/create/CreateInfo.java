@@ -27,6 +27,7 @@ public final class CreateInfo implements ICreateInfo {
      * Returns the list of class from layoutlib_create to inject in layoutlib.
      * The list can be empty but must not be null.
      */
+    @Override
     public Class<?>[] getInjectedClasses() {
         return INJECTED_CLASSES;
     }
@@ -35,6 +36,7 @@ public final class CreateInfo implements ICreateInfo {
      * Returns the list of methods to rewrite as delegates.
      * The list can be empty but must not be null.
      */
+    @Override
     public String[] getDelegateMethods() {
         return DELEGATE_METHODS;
     }
@@ -43,6 +45,7 @@ public final class CreateInfo implements ICreateInfo {
      * Returns the list of classes on which to delegate all native methods.
      * The list can be empty but must not be null.
      */
+    @Override
     public String[] getDelegateClassNatives() {
         return DELEGATE_CLASS_NATIVES;
     }
@@ -54,6 +57,7 @@ public final class CreateInfo implements ICreateInfo {
      * <p/>
      * This usage is deprecated. Please use method 'delegates' instead.
      */
+    @Override
     public String[] getOverriddenMethods() {
         return OVERRIDDEN_METHODS;
     }
@@ -63,6 +67,7 @@ public final class CreateInfo implements ICreateInfo {
      * of class to replace followed by the new FQCN.
      * The list can be empty but must not be null.
      */
+    @Override
     public String[] getRenamedClasses() {
         return RENAMED_CLASSES;
     }
@@ -74,6 +79,7 @@ public final class CreateInfo implements ICreateInfo {
      * the methods to delete.
      * The list can be empty but must not be null.
      */
+    @Override
     public String[] getDeleteReturns() {
         return DELETE_RETURNS;
     }
@@ -108,6 +114,7 @@ public final class CreateInfo implements ICreateInfo {
         "android.view.LayoutInflater#rInflate",
         "android.view.LayoutInflater#parseInclude",
         "android.view.View#isInEditMode",
+        "android.view.ViewRootImpl#isInTouchMode",
         "android.view.inputmethod.InputMethodManager#getInstance",
         "android.util.Log#println_native",
         "com.android.internal.util.XmlUtils#convertValueToInt",
@@ -177,10 +184,11 @@ public final class CreateInfo implements ICreateInfo {
      */
     private final static String[] RENAMED_CLASSES =
         new String[] {
-            "android.os.ServiceManager",            "android.os._Original_ServiceManager",
-            "android.view.SurfaceView",             "android.view._Original_SurfaceView",
+            "android.os.ServiceManager",                       "android.os._Original_ServiceManager",
+            "android.view.SurfaceView",                        "android.view._Original_SurfaceView",
             "android.view.accessibility.AccessibilityManager", "android.view.accessibility._Original_AccessibilityManager",
-            "android.webkit.WebView",               "android.webkit._Original_WebView",
+            "android.webkit.WebView",                          "android.webkit._Original_WebView",
+            "com.android.internal.policy.PolicyManager",       "com.android.internal.policy._Original_PolicyManager",
         };
 
     /**

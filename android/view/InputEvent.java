@@ -19,6 +19,8 @@ package android.view;
 import android.os.Parcel;
 import android.os.Parcelable;
 
+import java.util.concurrent.atomic.AtomicInteger;
+
 /**
  * Common base class for input events.
  */
@@ -27,8 +29,21 @@ public abstract class InputEvent implements Parcelable {
     protected static final int PARCEL_TOKEN_MOTION_EVENT = 1;
     /** @hide */
     protected static final int PARCEL_TOKEN_KEY_EVENT = 2;
-    
+
+    // Next sequence number.
+    private static final AtomicInteger mNextSeq = new AtomicInteger();
+
+    /** @hide */
+    protected int mSeq;
+
+    /** @hide */
+    protected boolean mRecycled;
+
+    private static final boolean TRACK_RECYCLED_LOCATION = false;
+    private RuntimeException mRecycledLocation;
+
     /*package*/ InputEvent() {
+        mSeq = mNextSeq.getAndIncrement();
     }
 
     /**
@@ -82,7 +97,44 @@ public abstract class InputEvent implements Parcelable {
      * objects are fine.  See {@link KeyEvent#recycle()} for details.
      * @hide
      */
-    public abstract void recycle();
+    public void recycle() {
+        if (TRACK_RECYCLED_LOCATION) {
+            if (mRecycledLocation != null) {
+                throw new RuntimeException(toString() + " recycled twice!", mRecycledLocation);
+            }
+            mRecycledLocation = new RuntimeException("Last recycled here");
+        } else {
+            if (mRecycled) {
+                throw new RuntimeException(toString() + " recycled twice!");
+            }
+            mRecycled = true;
+        }
+    }
+
+    /**
+     * Conditionally recycled the event if it is appropriate to do so after
+     * dispatching the event to an application.
+     *
+     * If the event is a {@link MotionEvent} then it is recycled.
+     *
+     * If the event is a {@link KeyEvent} then it is NOT recycled, because applications
+     * expect key events to be immutable so once the event has been dispatched to
+     * the application we can no longer recycle it.
+     * @hide
+     */
+    public void recycleIfNeededAfterDispatch() {
+        recycle();
+    }
+
+    /**
+     * Reinitializes the event on reuse (after recycling).
+     * @hide
+     */
+    protected void prepareForReuse() {
+        mRecycled = false;
+        mRecycledLocation = null;
+        mSeq = mNextSeq.getAndIncrement();
+    }
 
     /**
      * Gets a private flag that indicates when the system has detected that this input event
@@ -107,11 +159,45 @@ public abstract class InputEvent implements Parcelable {
     public abstract void setTainted(boolean tainted);
 
     /**
-     * Returns the time (in ns) when this specific event was generated.
+     * Retrieve the time this event occurred,
+     * in the {@link android.os.SystemClock#uptimeMillis} time base.
+     *
+     * @return Returns the time this event occurred,
+     * in the {@link android.os.SystemClock#uptimeMillis} time base.
+     */
+    public abstract long getEventTime();
+
+    /**
+     * Retrieve the time this event occurred,
+     * in the {@link android.os.SystemClock#uptimeMillis} time base but with
+     * nanosecond (instead of millisecond) precision.
+     * <p>
      * The value is in nanosecond precision but it may not have nanosecond accuracy.
+     * </p>
+     *
+     * @return Returns the time this event occurred,
+     * in the {@link android.os.SystemClock#uptimeMillis} time base but with
+     * nanosecond (instead of millisecond) precision.
+     *
      * @hide
      */
     public abstract long getEventTimeNano();
+
+    /**
+     * Gets the unique sequence number of this event.
+     * Every input event that is created or received by a process has a
+     * unique sequence number.  Moreover, a new sequence number is obtained
+     * each time an event object is recycled.
+     *
+     * Sequence numbers are only guaranteed to be locally unique within a process.
+     * Sequence numbers are not preserved when events are parceled.
+     *
+     * @return The unique sequence number of this event.
+     * @hide
+     */
+    public int getSequenceNumber() {
+        return mSeq;
+    }
 
     public int describeContents() {
         return 0;

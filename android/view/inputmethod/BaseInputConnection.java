@@ -19,7 +19,6 @@ package android.view.inputmethod;
 import android.content.Context;
 import android.content.res.TypedArray;
 import android.os.Bundle;
-import android.os.Handler;
 import android.os.SystemClock;
 import android.text.Editable;
 import android.text.NoCopySpan;
@@ -153,6 +152,15 @@ public class BaseInputConnection implements InputConnection {
     }
 
     /**
+     * Called when this InputConnection is no longer used by the InputMethodManager.
+     *
+     * @hide
+     */
+    protected void reportFinish() {
+        // Intentionaly empty
+    }
+
+    /**
      * Default implementation uses
      * {@link MetaKeyKeyListener#clearMetaKeyState(long, int)
      * MetaKeyKeyListener.clearMetaKeyState(long, int)} to clear the state.
@@ -193,10 +201,12 @@ public class BaseInputConnection implements InputConnection {
     /**
      * The default implementation performs the deletion around the current
      * selection position of the editable text.
+     * @param beforeLength
+     * @param afterLength
      */
-    public boolean deleteSurroundingText(int leftLength, int rightLength) {
-        if (DEBUG) Log.v(TAG, "deleteSurroundingText " + leftLength
-                + " / " + rightLength);
+    public boolean deleteSurroundingText(int beforeLength, int afterLength) {
+        if (DEBUG) Log.v(TAG, "deleteSurroundingText " + beforeLength
+                + " / " + afterLength);
         final Editable content = getEditable();
         if (content == null) return false;
 
@@ -226,17 +236,17 @@ public class BaseInputConnection implements InputConnection {
 
         int deleted = 0;
 
-        if (leftLength > 0) {
-            int start = a - leftLength;
+        if (beforeLength > 0) {
+            int start = a - beforeLength;
             if (start < 0) start = 0;
             content.delete(start, a);
             deleted = a - start;
         }
 
-        if (rightLength > 0) {
+        if (afterLength > 0) {
             b = b - deleted;
 
-            int end = b + rightLength;
+            int end = b + afterLength;
             if (end > content.length()) end = content.length();
 
             content.delete(b, end);
@@ -495,15 +505,14 @@ public class BaseInputConnection implements InputConnection {
      */
     public boolean sendKeyEvent(KeyEvent event) {
         synchronized (mIMM.mH) {
-            Handler h = mTargetView != null ? mTargetView.getHandler() : null;
-            if (h == null) {
+            ViewRootImpl viewRootImpl = mTargetView != null ? mTargetView.getViewRootImpl() : null;
+            if (viewRootImpl == null) {
                 if (mIMM.mServedView != null) {
-                    h = mIMM.mServedView.getHandler();
+                    viewRootImpl = mIMM.mServedView.getViewRootImpl();
                 }
             }
-            if (h != null) {
-                h.sendMessage(h.obtainMessage(ViewRootImpl.DISPATCH_KEY_FROM_IME,
-                        event));
+            if (viewRootImpl != null) {
+                viewRootImpl.dispatchKeyFromIme(event);
             }
         }
         return false;

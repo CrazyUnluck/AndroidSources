@@ -20,6 +20,7 @@ import static com.android.internal.util.Preconditions.checkNotNull;
 
 import android.annotation.SdkConstant;
 import android.annotation.SdkConstant.SdkConstantType;
+import android.content.Context;
 import android.os.Binder;
 import android.os.Build.VERSION_CODES;
 import android.os.RemoteException;
@@ -142,8 +143,19 @@ public class ConnectivityManager {
      * If an application uses the network in the background, it should listen
      * for this broadcast and stop using the background data if the value is
      * {@code false}.
+     * <p>
+     *
+     * @deprecated As of {@link VERSION_CODES#ICE_CREAM_SANDWICH}, availability
+     *             of background data depends on several combined factors, and
+     *             this broadcast is no longer sent. Instead, when background
+     *             data is unavailable, {@link #getActiveNetworkInfo()} will now
+     *             appear disconnected. During first boot after a platform
+     *             upgrade, this broadcast will be sent once if
+     *             {@link #getBackgroundDataSetting()} was {@code false} before
+     *             the upgrade.
      */
     @SdkConstant(SdkConstantType.BROADCAST_INTENT_ACTION)
+    @Deprecated
     public static final String ACTION_BACKGROUND_DATA_SETTING_CHANGED =
             "android.net.conn.BACKGROUND_DATA_SETTING_CHANGED";
 
@@ -360,6 +372,14 @@ public class ConnectivityManager {
         }
     }
 
+    /**
+     * Returns details about the currently active data network. When connected,
+     * this network is the default route for outgoing connections. You should
+     * always check {@link NetworkInfo#isConnected()} before initiating network
+     * traffic. This may return {@code null} when no networks are available.
+     * <p>This method requires the caller to hold the permission
+     * {@link android.Manifest.permission#ACCESS_NETWORK_STATE}.
+     */
     public NetworkInfo getActiveNetworkInfo() {
         try {
             return mService.getActiveNetworkInfo();
@@ -433,6 +453,8 @@ public class ConnectivityManager {
      * Tells the underlying networking system that the caller wants to
      * begin using the named feature. The interpretation of {@code feature}
      * is completely up to each networking implementation.
+     * <p>This method requires the caller to hold the permission
+     * {@link android.Manifest.permission#CHANGE_NETWORK_STATE}.
      * @param networkType specifies which network the request pertains to
      * @param feature the name of the feature to be used
      * @return an integer value representing the outcome of the request.
@@ -453,6 +475,8 @@ public class ConnectivityManager {
      * Tells the underlying networking system that the caller is finished
      * using the named feature. The interpretation of {@code feature}
      * is completely up to each networking implementation.
+     * <p>This method requires the caller to hold the permission
+     * {@link android.Manifest.permission#CHANGE_NETWORK_STATE}.
      * @param networkType specifies which network the request pertains to
      * @param feature the name of the feature that is no longer needed
      * @return an integer value representing the outcome of the request.
@@ -472,6 +496,8 @@ public class ConnectivityManager {
      * Ensure that a network route exists to deliver traffic to the specified
      * host via the specified network interface. An attempt to add a route that
      * already exists is ignored, but treated as successful.
+     * <p>This method requires the caller to hold the permission
+     * {@link android.Manifest.permission#CHANGE_NETWORK_STATE}.
      * @param networkType the type of the network over which traffic to the specified
      * host is to be routed
      * @param hostAddress the IP address of the host to which the route is desired
@@ -592,6 +618,11 @@ public class ConnectivityManager {
      */
     public ConnectivityManager(IConnectivityManager service) {
         mService = checkNotNull(service, "missing IConnectivityManager");
+    }
+
+    /** {@hide} */
+    public static ConnectivityManager from(Context context) {
+        return (ConnectivityManager) context.getSystemService(Context.CONNECTIVITY_SERVICE);
     }
 
     /**
@@ -833,5 +864,20 @@ public class ConnectivityManager {
             return mService.isNetworkSupported(networkType);
         } catch (RemoteException e) {}
         return false;
+    }
+
+    /**
+     * Returns if the currently active data network is metered. A network is
+     * classified as metered when the user is sensitive to heavy data usage on
+     * that connection. You should check this before doing large data transfers,
+     * and warn the user or delay the operation until another network is
+     * available.
+     */
+    public boolean isActiveNetworkMetered() {
+        try {
+            return mService.isActiveNetworkMetered();
+        } catch (RemoteException e) {
+            return false;
+        }
     }
 }

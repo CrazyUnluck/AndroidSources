@@ -56,6 +56,8 @@ import java.util.Map;
 import java.util.Set;
 
 import org.apache.harmony.security.provider.cert.X509CertImpl;
+import org.apache.harmony.xnet.provider.jsse.OpenSSLDSAPrivateKey;
+import org.apache.harmony.xnet.provider.jsse.OpenSSLRSAPrivateKey;
 
 class BrowserFrame extends Handler {
 
@@ -70,9 +72,8 @@ class BrowserFrame extends Handler {
     private final static int MAX_OUTSTANDING_REQUESTS = 300;
 
     private final CallbackProxy mCallbackProxy;
-    private final WebSettings mSettings;
+    private final WebSettingsClassic mSettings;
     private final Context mContext;
-    private final WebViewDatabase mDatabase;
     private final WebViewCore mWebViewCore;
     /* package */ boolean mLoadInitFromJava;
     private int mLoadType;
@@ -200,7 +201,7 @@ class BrowserFrame extends Handler {
      * XXX: Called by WebCore thread.
      */
     public BrowserFrame(Context context, WebViewCore w, CallbackProxy proxy,
-            WebSettings settings, Map<String, Object> javascriptInterfaces) {
+            WebSettingsClassic settings, Map<String, Object> javascriptInterfaces) {
 
         Context appContext = context.getApplicationContext();
 
@@ -241,7 +242,6 @@ class BrowserFrame extends Handler {
         mSettings = settings;
         mContext = context;
         mCallbackProxy = proxy;
-        mDatabase = WebViewDatabase.getInstance(appContext);
         mWebViewCore = w;
 
         mSearchBox = new SearchBoxImpl(mWebViewCore, mCallbackProxy);
@@ -410,6 +410,7 @@ class BrowserFrame extends Handler {
                 mCommitted = false;
                 // remove pending draw to block update until mFirstLayoutDone is
                 // set to true in didFirstLayout()
+                mWebViewCore.clearContent();
                 mWebViewCore.removeMessages(WebViewCore.EventHub.WEBKIT_DRAW);
             }
         }
@@ -423,7 +424,8 @@ class BrowserFrame extends Handler {
             if (h != null) {
                 String url = WebTextView.urlForAutoCompleteData(h.getUrl());
                 if (url != null) {
-                    mDatabase.setFormData(url, data);
+                    WebViewDatabaseClassic.getInstance(mContext).setFormData(
+                            url, data);
                 }
             }
         }
@@ -447,7 +449,7 @@ class BrowserFrame extends Handler {
         // loadType is not used yet
         if (isMainFrame) {
             mCommitted = true;
-            mWebViewCore.getWebView().mViewManager.postResetStateAll();
+            mWebViewCore.getWebViewClassic().mViewManager.postResetStateAll();
         }
     }
 
@@ -466,18 +468,6 @@ class BrowserFrame extends Handler {
                 mCallbackProxy.switchOutDrawHistory();
                 mCallbackProxy.onPageFinished(url);
             }
-        }
-    }
-
-    /**
-     * We have received an SSL certificate for the main top-level page.
-     * Used by the Android HTTP stack only.
-     */
-    void certificate(SslCertificate certificate) {
-        if (mIsMainFrame) {
-            // we want to make this call even if the certificate is null
-            // (ie, the site is not secure)
-            mCallbackProxy.onReceivedCertificate(certificate);
         }
     }
 
@@ -508,15 +498,12 @@ class BrowserFrame extends Handler {
                         WebAddress uri = new WebAddress(item.getUrl());
                         String schemePlusHost = uri.getScheme() + uri.getHost();
                         String[] up =
-                                mDatabase.getUsernamePassword(schemePlusHost);
+                                WebViewDatabaseClassic.getInstance(mContext)
+                                        .getUsernamePassword(schemePlusHost);
                         if (up != null && up[0] != null) {
                             setUsernamePassword(up[0], up[1]);
                         }
                     }
-                }
-                if (!JniUtil.useChromiumHttpStack()) {
-                    WebViewWorker.getHandler().sendEmptyMessage(
-                            WebViewWorker.MSG_TRIM_CACHE);
                 }
                 break;
             }
@@ -707,13 +694,10 @@ class BrowserFrame extends Handler {
      * @return An InputStream to the android resource
      */
     private InputStream inputStreamForAndroidResource(String url) {
-        // This list needs to be kept in sync with the list in
-        // external/webkit/WebKit/android/WebCoreSupport/WebUrlLoaderClient.cpp
-        final String ANDROID_ASSET = "file:///android_asset/";
-        final String ANDROID_RESOURCE = "file:///android_res/";
-        final String ANDROID_CONTENT = "content:";
+        final String ANDROID_ASSET = URLUtil.ASSET_BASE;
+        final String ANDROID_RESOURCE = URLUtil.RESOURCE_BASE;
+        final String ANDROID_CONTENT = URLUtil.CONTENT_BASE;
 
-        // file:///android_res
         if (url.startsWith(ANDROID_RESOURCE)) {
             url = url.replaceFirst(ANDROID_RESOURCE, "");
             if (url == null || url.length() == 0) {
@@ -751,25 +735,21 @@ class BrowserFrame extends Handler {
                 Log.e(LOGTAG, "Exception: " + url);
                 return null;
             }
-
-        // file:///android_asset
         } else if (url.startsWith(ANDROID_ASSET)) {
             url = url.replaceFirst(ANDROID_ASSET, "");
             try {
                 AssetManager assets = mContext.getAssets();
-                return assets.open(url, AssetManager.ACCESS_STREAMING);
+                Uri uri = Uri.parse(url);
+                return assets.open(uri.getPath(), AssetManager.ACCESS_STREAMING);
             } catch (IOException e) {
                 return null;
             }
-
-        // content://
         } else if (mSettings.getAllowContentAccess() &&
                    url.startsWith(ANDROID_CONTENT)) {
             try {
-                // Strip off mimetype, for compatibility with ContentLoader.java
-                // If we don't do this, we can fail to load Gmail attachments,
-                // because the URL being loaded doesn't exactly match the URL we
-                // have permission to read.
+                // Strip off MIME type. If we don't do this, we can fail to
+                // load Gmail attachments, because the URL being loaded doesn't
+                // exactly match the URL we have permission to read.
                 int mimeIndex = url.lastIndexOf('?');
                 if (mimeIndex != -1) {
                     url = url.substring(0, mimeIndex);
@@ -786,100 +766,11 @@ class BrowserFrame extends Handler {
     }
 
     /**
-     * Start loading a resource.
-     * @param loaderHandle The native ResourceLoader that is the target of the
-     *                     data.
-     * @param url The url to load.
-     * @param method The http method.
-     * @param headers The http headers.
-     * @param postData If the method is "POST" postData is sent as the request
-     *                 body. Is null when empty.
-     * @param postDataIdentifier If the post data contained form this is the form identifier, otherwise it is 0.
-     * @param cacheMode The cache mode to use when loading this resource. See WebSettings.setCacheMode
-     * @param mainResource True if the this resource is the main request, not a supporting resource
-     * @param userGesture
-     * @param synchronous True if the load is synchronous.
-     * @return A newly created LoadListener object.
-     */
-    private LoadListener startLoadingResource(int loaderHandle,
-                                              String url,
-                                              String method,
-                                              HashMap headers,
-                                              byte[] postData,
-                                              long postDataIdentifier,
-                                              int cacheMode,
-                                              boolean mainResource,
-                                              boolean userGesture,
-                                              boolean synchronous,
-                                              String username,
-                                              String password) {
-        if (mSettings.getCacheMode() != WebSettings.LOAD_DEFAULT) {
-            cacheMode = mSettings.getCacheMode();
-        }
-
-        if (method.equals("POST")) {
-            // Don't use the cache on POSTs when issuing a normal POST
-            // request.
-            if (cacheMode == WebSettings.LOAD_NORMAL) {
-                cacheMode = WebSettings.LOAD_NO_CACHE;
-            }
-            String[] ret = getUsernamePassword();
-            if (ret != null) {
-                String domUsername = ret[0];
-                String domPassword = ret[1];
-                maybeSavePassword(postData, domUsername, domPassword);
-            }
-        }
-
-        // is this resource the main-frame top-level page?
-        boolean isMainFramePage = mIsMainFrame;
-
-        if (DebugFlags.BROWSER_FRAME) {
-            Log.v(LOGTAG, "startLoadingResource: url=" + url + ", method="
-                    + method + ", postData=" + postData + ", isMainFramePage="
-                    + isMainFramePage + ", mainResource=" + mainResource
-                    + ", userGesture=" + userGesture);
-        }
-
-        // Create a LoadListener
-        LoadListener loadListener = LoadListener.getLoadListener(mContext,
-                this, url, loaderHandle, synchronous, isMainFramePage,
-                mainResource, userGesture, postDataIdentifier, username, password);
-
-        if (LoadListener.getNativeLoaderCount() > MAX_OUTSTANDING_REQUESTS) {
-            // send an error message, so that loadListener can be deleted
-            // after this is returned. This is important as LoadListener's 
-            // nativeError will remove the request from its DocLoader's request
-            // list. But the set up is not done until this method is returned.
-            loadListener.error(
-                    android.net.http.EventHandler.ERROR, mContext.getString(
-                            com.android.internal.R.string.httpErrorTooManyRequests));
-            return loadListener;
-        }
-
-        // Note that we are intentionally skipping
-        // inputStreamForAndroidResource.  This is so that FrameLoader will use
-        // the various StreamLoader classes to handle assets.
-        FrameLoader loader = new FrameLoader(loadListener, mSettings, method,
-                mCallbackProxy.shouldInterceptRequest(url));
-        loader.setHeaders(headers);
-        loader.setPostData(postData);
-        // Set the load mode to the mode used for the current page.
-        // If WebKit wants validation, go to network directly.
-        loader.setCacheMode(headers.containsKey("If-Modified-Since")
-                || headers.containsKey("If-None-Match") ? 
-                        WebSettings.LOAD_NO_CACHE : cacheMode);
-        // Set referrer to current URL?
-        return !synchronous ? loadListener : null;
-    }
-
-    /**
      * If this looks like a POST request (form submission) containing a username
      * and password, give the user the option of saving them. Will either do
      * nothing, or block until the UI interaction is complete.
      *
-     * Called by startLoadingResource when using the Apache HTTP stack.
-     * Called directly by WebKit when using the Chrome HTTP stack.
+     * Called directly by WebKit.
      *
      * @param postData The data about to be sent as the body of a POST request.
      * @param username The username entered by the user (sniffed from the DOM).
@@ -909,10 +800,10 @@ class BrowserFrame extends Handler {
             // the post data (there could be another form on the
             // page and that was posted instead.
             String postString = new String(postData);
+            WebViewDatabaseClassic db = WebViewDatabaseClassic.getInstance(mContext);
             if (postString.contains(URLEncoder.encode(username)) &&
                     postString.contains(URLEncoder.encode(password))) {
-                String[] saved = mDatabase.getUsernamePassword(
-                        schemePlusHost);
+                String[] saved = db.getUsernamePassword(schemePlusHost);
                 if (saved != null) {
                     // null username implies that user has chosen not to
                     // save password
@@ -920,8 +811,8 @@ class BrowserFrame extends Handler {
                         // non-null username implies that user has
                         // chosen to save password, so update the
                         // recorded password
-                        mDatabase.setUsernamePassword(
-                                schemePlusHost, username, password);
+                        db.setUsernamePassword(schemePlusHost, username,
+                                password);
                     }
                 } else {
                     // CallbackProxy will handle creating the resume
@@ -1014,7 +905,7 @@ class BrowserFrame extends Handler {
      * Close this frame and window.
      */
     private void closeWindow(WebViewCore w) {
-        mCallbackProxy.onCloseWindow(w.getWebView());
+        mCallbackProxy.onCloseWindow(w.getWebViewClassic());
     }
 
     // XXX: Must match PolicyAction in FrameLoaderTypes.h in webcore
@@ -1216,12 +1107,23 @@ class BrowserFrame extends Handler {
         SslClientCertLookupTable table = SslClientCertLookupTable.getInstance();
         if (table.IsAllowed(hostAndPort)) {
             // previously allowed
-            nativeSslClientCert(handle,
-                                table.PrivateKey(hostAndPort),
-                                table.CertificateChain(hostAndPort));
+            PrivateKey pkey = table.PrivateKey(hostAndPort);
+            if (pkey instanceof OpenSSLRSAPrivateKey) {
+                nativeSslClientCert(handle,
+                                    ((OpenSSLRSAPrivateKey)pkey).getPkeyContext(),
+                                    table.CertificateChain(hostAndPort));
+            } else if (pkey instanceof OpenSSLDSAPrivateKey) {
+                nativeSslClientCert(handle,
+                                    ((OpenSSLDSAPrivateKey)pkey).getPkeyContext(),
+                                    table.CertificateChain(hostAndPort));
+            } else {
+                nativeSslClientCert(handle,
+                                    pkey.getEncoded(),
+                                    table.CertificateChain(hostAndPort));
+            }
         } else if (table.IsDenied(hostAndPort)) {
             // previously denied
-            nativeSslClientCert(handle, null, null);
+            nativeSslClientCert(handle, 0, null);
         } else {
             // previously ignored or new
             mCallbackProxy.onReceivedClientCertRequest(
@@ -1349,15 +1251,6 @@ class BrowserFrame extends Handler {
     private native void nativeAddJavascriptInterface(int nativeFramePointer,
             Object obj, String interfaceName);
 
-    /**
-     * Enable or disable the native cache.
-     */
-    /* FIXME: The native cache is always on for now until we have a better
-     * solution for our 2 caches. */
-    private native void setCacheDisabled(boolean disabled);
-
-    public native boolean cacheDisabled();
-
     public native void clearCache();
 
     /**
@@ -1417,7 +1310,11 @@ class BrowserFrame extends Handler {
     private native void nativeSslCertErrorCancel(int handle, int certError);
 
     native void nativeSslClientCert(int handle,
-                                    byte[] pkcs8EncodedPrivateKey,
+                                    int ctx,
+                                    byte[][] asn1DerEncodedCertificateChain);
+
+    native void nativeSslClientCert(int handle,
+                                    byte[] pkey,
                                     byte[][] asn1DerEncodedCertificateChain);
 
     /**

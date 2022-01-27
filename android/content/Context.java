@@ -99,6 +99,16 @@ public abstract class Context {
     public static final int MODE_MULTI_PROCESS = 0x0004;
 
     /**
+     * Database open flag: when set, the database is opened with write-ahead
+     * logging enabled by default.
+     *
+     * @see #openOrCreateDatabase(String, int, CursorFactory)
+     * @see #openOrCreateDatabase(String, int, CursorFactory, DatabaseErrorHandler)
+     * @see SQLiteDatabase#enableWriteAheadLogging
+     */
+    public static final int MODE_ENABLE_WRITE_AHEAD_LOGGING = 0x0008;
+
+    /**
      * Flag for {@link #bindService}: automatically create the service as long
      * as the binding exists.  Note that while this will create the service,
      * its {@link android.app.Service#onStartCommand}
@@ -691,6 +701,7 @@ public abstract class Context {
      * @param mode Operating mode.  Use 0 or {@link #MODE_PRIVATE} for the
      *     default operation, {@link #MODE_WORLD_READABLE}
      *     and {@link #MODE_WORLD_WRITEABLE} to control permissions.
+     *     Use {@link #MODE_ENABLE_WRITE_AHEAD_LOGGING} to enable write-ahead logging by default.
      * @param factory An optional factory class that is called to instantiate a
      *     cursor when query is called.
      *
@@ -700,6 +711,7 @@ public abstract class Context {
      * @see #MODE_PRIVATE
      * @see #MODE_WORLD_READABLE
      * @see #MODE_WORLD_WRITEABLE
+     * @see #MODE_ENABLE_WRITE_AHEAD_LOGGING
      * @see #deleteDatabase
      */
     public abstract SQLiteDatabase openOrCreateDatabase(String name,
@@ -716,6 +728,7 @@ public abstract class Context {
      * @param mode Operating mode.  Use 0 or {@link #MODE_PRIVATE} for the
      *     default operation, {@link #MODE_WORLD_READABLE}
      *     and {@link #MODE_WORLD_WRITEABLE} to control permissions.
+     *     Use {@link #MODE_ENABLE_WRITE_AHEAD_LOGGING} to enable write-ahead logging by default.
      * @param factory An optional factory class that is called to instantiate a
      *     cursor when query is called.
      * @param errorHandler the {@link DatabaseErrorHandler} to be used when sqlite reports database
@@ -726,6 +739,7 @@ public abstract class Context {
      * @see #MODE_PRIVATE
      * @see #MODE_WORLD_READABLE
      * @see #MODE_WORLD_WRITEABLE
+     * @see #MODE_ENABLE_WRITE_AHEAD_LOGGING
      * @see #deleteDatabase
      */
     public abstract SQLiteDatabase openOrCreateDatabase(String name,
@@ -799,6 +813,8 @@ public abstract class Context {
     /**
      * @deprecated Use {@link android.app.WallpaperManager#setBitmap(Bitmap)
      * WallpaperManager.set()} instead.
+     * <p>This method requires the caller to hold the permission
+     * {@link android.Manifest.permission#SET_WALLPAPER}.
      */
     @Deprecated
     public abstract void setWallpaper(Bitmap bitmap) throws IOException;
@@ -806,6 +822,8 @@ public abstract class Context {
     /**
      * @deprecated Use {@link android.app.WallpaperManager#setStream(InputStream)
      * WallpaperManager.set()} instead.
+     * <p>This method requires the caller to hold the permission
+     * {@link android.Manifest.permission#SET_WALLPAPER}.
      */
     @Deprecated
     public abstract void setWallpaper(InputStream data) throws IOException;
@@ -813,9 +831,24 @@ public abstract class Context {
     /**
      * @deprecated Use {@link android.app.WallpaperManager#clear
      * WallpaperManager.clear()} instead.
+     * <p>This method requires the caller to hold the permission
+     * {@link android.Manifest.permission#SET_WALLPAPER}.
      */
     @Deprecated
     public abstract void clearWallpaper() throws IOException;
+
+    /**
+     * Same as {@link #startActivity(Intent, Bundle)} with no options
+     * specified.
+     *
+     * @param intent The description of the activity to start.
+     *
+     * @throws ActivityNotFoundException
+     *
+     * @see {@link #startActivity(Intent, Bundle)}
+     * @see PackageManager#resolveActivity
+     */
+    public abstract void startActivity(Intent intent);
 
     /**
      * Launch a new activity.  You will not receive any information about when
@@ -832,12 +865,30 @@ public abstract class Context {
      * if there was no Activity found to run the given Intent.
      *
      * @param intent The description of the activity to start.
+     * @param options Additional options for how the Activity should be started.
+     * May be null if there are no options.  See {@link android.app.ActivityOptions}
+     * for how to build the Bundle supplied here; there are no supported definitions
+     * for building it manually.
      *
      * @throws ActivityNotFoundException
      *
+     * @see #startActivity(Intent)
      * @see PackageManager#resolveActivity
      */
-    public abstract void startActivity(Intent intent);
+    public abstract void startActivity(Intent intent, Bundle options);
+
+    /**
+     * Same as {@link #startActivities(Intent[], Bundle)} with no options
+     * specified.
+     *
+     * @param intents An array of Intents to be started.
+     *
+     * @throws ActivityNotFoundException
+     *
+     * @see {@link #startActivities(Intent[], Bundle)}
+     * @see PackageManager#resolveActivity
+     */
+    public abstract void startActivities(Intent[] intents);
 
     /**
      * Launch multiple new activities.  This is generally the same as calling
@@ -854,15 +905,39 @@ public abstract class Context {
      * list may be on it, some not), so you probably want to avoid such situations.
      *
      * @param intents An array of Intents to be started.
+     * @param options Additional options for how the Activity should be started.
+     * See {@link android.content.Context#startActivity(Intent, Bundle)
+     * Context.startActivity(Intent, Bundle)} for more details.
      *
      * @throws ActivityNotFoundException
      *
+     * @see {@link #startActivities(Intent[])}
      * @see PackageManager#resolveActivity
      */
-    public abstract void startActivities(Intent[] intents);
+    public abstract void startActivities(Intent[] intents, Bundle options);
 
     /**
-     * Like {@link #startActivity(Intent)}, but taking a IntentSender
+     * Same as {@link #startIntentSender(IntentSender, Intent, int, int, int, Bundle)}
+     * with no options specified.
+     *
+     * @param intent The IntentSender to launch.
+     * @param fillInIntent If non-null, this will be provided as the
+     * intent parameter to {@link IntentSender#sendIntent}.
+     * @param flagsMask Intent flags in the original IntentSender that you
+     * would like to change.
+     * @param flagsValues Desired values for any bits set in
+     * <var>flagsMask</var>
+     * @param extraFlags Always set to 0.
+     *
+     * @see #startActivity(Intent)
+     * @see #startIntentSender(IntentSender, Intent, int, int, int, Bundle)
+     */
+    public abstract void startIntentSender(IntentSender intent,
+            Intent fillInIntent, int flagsMask, int flagsValues, int extraFlags)
+            throws IntentSender.SendIntentException;
+
+    /**
+     * Like {@link #startActivity(Intent, Bundle)}, but taking a IntentSender
      * to start.  If the IntentSender is for an activity, that activity will be started
      * as if you had called the regular {@link #startActivity(Intent)}
      * here; otherwise, its associated action will be executed (such as
@@ -877,10 +952,18 @@ public abstract class Context {
      * @param flagsValues Desired values for any bits set in
      * <var>flagsMask</var>
      * @param extraFlags Always set to 0.
+     * @param options Additional options for how the Activity should be started.
+     * See {@link android.content.Context#startActivity(Intent, Bundle)
+     * Context.startActivity(Intent, Bundle)} for more details.  If options
+     * have also been supplied by the IntentSender, options given here will
+     * override any that conflict with those given by the IntentSender.
+     *
+     * @see #startActivity(Intent, Bundle)
+     * @see #startIntentSender(IntentSender, Intent, int, int, int)
      */
     public abstract void startIntentSender(IntentSender intent,
-            Intent fillInIntent, int flagsMask, int flagsValues, int extraFlags)
-            throws IntentSender.SendIntentException;
+            Intent fillInIntent, int flagsMask, int flagsValues, int extraFlags,
+            Bundle options) throws IntentSender.SendIntentException;
 
     /**
      * Broadcast the given intent to all interested BroadcastReceivers.  This
@@ -903,6 +986,16 @@ public abstract class Context {
      * @see #sendOrderedBroadcast(Intent, String, BroadcastReceiver, Handler, int, String, Bundle)
      */
     public abstract void sendBroadcast(Intent intent);
+
+    /**
+     * Same as #sendBroadcast(Intent intent), but for a specific user. Used by the system only.
+     * @param intent the intent to broadcast
+     * @param userId user to send the intent to
+     * @hide
+     */
+    public void sendBroadcast(Intent intent, int userId) {
+        throw new RuntimeException("Not implemented. Must override in a subclass.");
+    }
 
     /**
      * Broadcast the given intent to all interested BroadcastReceivers, allowing
@@ -1260,7 +1353,7 @@ public abstract class Context {
     /**
      * Connect to an application service, creating it if needed.  This defines
      * a dependency between your application and the service.  The given
-     * <var>conn</var> will receive the service object when its created and be
+     * <var>conn</var> will receive the service object when it is created and be
      * told if it dies and restarts.  The service will be considered required
      * by the system only for as long as the calling context exists.  For
      * example, if this Context is an Activity that is stopped, the service will
@@ -1269,15 +1362,15 @@ public abstract class Context {
      * <p>This function will throw {@link SecurityException} if you do not
      * have permission to bind to the given service.
      *
-     * <p class="note">Note: this method <em>can not be called from an
+     * <p class="note">Note: this method <em>can not be called from a
      * {@link BroadcastReceiver} component</em>.  A pattern you can use to
-     * communicate from an BroadcastReceiver to a Service is to call
+     * communicate from a BroadcastReceiver to a Service is to call
      * {@link #startService} with the arguments containing the command to be
      * sent, with the service calling its
      * {@link android.app.Service#stopSelf(int)} method when done executing
      * that command.  See the API demo App/Service/Service Start Arguments
      * Controller for an illustration of this.  It is okay, however, to use
-     * this method from an BroadcastReceiver that has been registered with
+     * this method from a BroadcastReceiver that has been registered with
      * {@link #registerReceiver}, since the lifetime of this BroadcastReceiver
      * is tied to another object (the one that registered it).</p>
      *
@@ -1305,6 +1398,15 @@ public abstract class Context {
      */
     public abstract boolean bindService(Intent service, ServiceConnection conn,
             int flags);
+
+    /**
+     * Same as {@link #bindService(Intent, ServiceConnection, int)}, but with an explicit userId
+     * argument for use by system server and other multi-user aware code.
+     * @hide
+     */
+    public boolean bindService(Intent service, ServiceConnection conn, int flags, int userId) {
+        throw new RuntimeException("Not implemented. Must override in a subclass.");
+    }
 
     /**
      * Disconnect from an application service.  You will no longer receive
@@ -1432,6 +1534,8 @@ public abstract class Context {
      * @see android.net.wifi.WifiManager
      * @see #AUDIO_SERVICE
      * @see android.media.AudioManager
+     * @see #MEDIA_ROUTER_SERVICE
+     * @see android.media.MediaRouter
      * @see #TELEPHONY_SERVICE
      * @see android.telephony.TelephonyManager
      * @see #INPUT_METHOD_SERVICE
@@ -1627,6 +1731,17 @@ public abstract class Context {
 
     /**
      * Use with {@link #getSystemService} to retrieve a {@link
+     * android.os.IUpdateLock} for managing runtime sequences that
+     * must not be interrupted by headless OTA application or similar.
+     *
+     * @hide
+     * @see #getSystemService
+     * @see android.os.UpdateLock
+     */
+    public static final String UPDATE_LOCK_SERVICE = "updatelock";
+
+    /**
+     * Use with {@link #getSystemService} to retrieve a {@link
      * android.net.NetworkManagementService} for handling management of
      * system network services
      *
@@ -1662,6 +1777,16 @@ public abstract class Context {
     public static final String WIFI_P2P_SERVICE = "wifip2p";
 
     /**
+     * Use with {@link #getSystemService} to retrieve a {@link
+     * android.net.nsd.NsdManager} for handling management of network service
+     * discovery
+     *
+     * @see #getSystemService
+     * @see android.net.nsd.NsdManager
+     */
+    public static final String NSD_SERVICE = "servicediscovery";
+
+    /**
      * Use with {@link #getSystemService} to retrieve a
      * {@link android.media.AudioManager} for handling management of volume,
      * ringer modes and audio routing.
@@ -1670,6 +1795,16 @@ public abstract class Context {
      * @see android.media.AudioManager
      */
     public static final String AUDIO_SERVICE = "audio";
+
+    /**
+     * Use with {@link #getSystemService} to retrieve a
+     * {@link android.media.MediaRouter} for controlling and managing
+     * routing of media.
+     *
+     * @see #getSystemService
+     * @see android.media.MediaRouter
+     */
+    public static final String MEDIA_ROUTER_SERVICE = "media_router";
 
     /**
      * Use with {@link #getSystemService} to retrieve a
@@ -1787,6 +1922,37 @@ public abstract class Context {
      * @see android.harware.usb.UsbManager
      */
     public static final String USB_SERVICE = "usb";
+
+    /**
+     * Use with {@link #getSystemService} to retrieve a {@link
+     * android.hardware.SerialManager} for access to serial ports.
+     *
+     * @see #getSystemService
+     * @see android.harware.SerialManager
+     *
+     * @hide
+     */
+    public static final String SERIAL_SERVICE = "serial";
+
+    /**
+     * Use with {@link #getSystemService} to retrieve a
+     * {@link android.hardware.input.InputManager} for interacting with input devices.
+     *
+     * @see #getSystemService
+     * @see android.hardware.input.InputManager
+     */
+    public static final String INPUT_SERVICE = "input";
+
+    /**
+     * Use with {@link #getSystemService} to retrieve a
+     * {@link android.os.SchedulingPolicyService} for managing scheduling policy.
+     *
+     * @see #getSystemService
+     * @see android.os.SchedulingPolicyService
+     *
+     * @hide
+     */
+    public static final String SCHEDULING_POLICY_SERVICE = "scheduling_policy";
 
     /**
      * Determine whether the given permission is allowed for a particular

@@ -21,6 +21,8 @@ import android.content.res.TypedArray;
 import android.graphics.drawable.shapes.RectShape;
 import android.graphics.drawable.shapes.Shape;
 import android.util.AttributeSet;
+import android.view.accessibility.AccessibilityEvent;
+import android.view.accessibility.AccessibilityNodeInfo;
 
 import com.android.internal.R;
 
@@ -143,6 +145,8 @@ public class RatingBar extends AbsSeekBar {
      * by the user).
      * 
      * @param isIndicator Whether it should be an indicator.
+     *
+     * @attr ref android.R.styleable#RatingBar_isIndicator
      */
     public void setIsIndicator(boolean isIndicator) {
         mIsUserSeekable = !isIndicator;
@@ -151,6 +155,8 @@ public class RatingBar extends AbsSeekBar {
     
     /**
      * @return Whether this rating bar is only an indicator.
+     *
+     * @attr ref android.R.styleable#RatingBar_isIndicator
      */
     public boolean isIndicator() {
         return !mIsUserSeekable;
@@ -324,4 +330,15 @@ public class RatingBar extends AbsSeekBar {
         super.setMax(max);
     }
     
+    @Override
+    public void onInitializeAccessibilityEvent(AccessibilityEvent event) {
+        super.onInitializeAccessibilityEvent(event);
+        event.setClassName(RatingBar.class.getName());
+    }
+
+    @Override
+    public void onInitializeAccessibilityNodeInfo(AccessibilityNodeInfo info) {
+        super.onInitializeAccessibilityNodeInfo(info);
+        info.setClassName(RatingBar.class.getName());
+    }
 }

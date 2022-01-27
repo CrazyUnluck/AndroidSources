@@ -224,7 +224,7 @@ public class RingtoneManager {
      * If a column (item from this list) exists in the Cursor, its value must
      * be true (value of 1) for the row to be returned.
      */
-    private List<String> mFilterColumns = new ArrayList<String>();
+    private final List<String> mFilterColumns = new ArrayList<String>();
     
     private boolean mStopPreviousRingtone = true;
     private Ringtone mPreviousRingtone;
@@ -393,13 +393,13 @@ public class RingtoneManager {
      * @return A {@link Uri} pointing to the ringtone.
      */
     public Uri getRingtoneUri(int position) {
-        final Cursor cursor = getCursor();
-        
-        if (!cursor.moveToPosition(position)) {
+        // use cursor directly instead of requerying it, which could easily
+        // cause position to shuffle.
+        if (mCursor == null || !mCursor.moveToPosition(position)) {
             return null;
         }
         
-        return getUriFromCursor(cursor);
+        return getUriFromCursor(mCursor);
     }
     
     private static Uri getUriFromCursor(Cursor cursor) {
@@ -606,16 +606,15 @@ public class RingtoneManager {
      * @see #getRingtone(Context, Uri)
      */
     private static Ringtone getRingtone(final Context context, Uri ringtoneUri, int streamType) {
-
         try {
-            Ringtone r = new Ringtone(context);
+            final Ringtone r = new Ringtone(context, true);
             if (streamType >= 0) {
                 r.setStreamType(streamType);
             }
-            r.open(ringtoneUri);
+            r.setUri(ringtoneUri);
             return r;
         } catch (Exception ex) {
-            Log.e(TAG, "Failed to open ringtone " + ringtoneUri);
+            Log.e(TAG, "Failed to open ringtone " + ringtoneUri + ": " + ex);
         }
 
         return null;

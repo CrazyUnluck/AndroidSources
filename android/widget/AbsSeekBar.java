@@ -21,10 +21,13 @@ import android.content.res.TypedArray;
 import android.graphics.Canvas;
 import android.graphics.Rect;
 import android.graphics.drawable.Drawable;
+import android.os.Bundle;
 import android.util.AttributeSet;
 import android.view.KeyEvent;
 import android.view.MotionEvent;
 import android.view.ViewConfiguration;
+import android.view.accessibility.AccessibilityEvent;
+import android.view.accessibility.AccessibilityNodeInfo;
 
 public abstract class AbsSeekBar extends ProgressBar {
     private Drawable mThumb;
@@ -121,13 +124,23 @@ public abstract class AbsSeekBar extends ProgressBar {
         invalidate();
         if (needUpdate) {
             updateThumbPos(getWidth(), getHeight());
-            if (thumb.isStateful()) {
+            if (thumb != null && thumb.isStateful()) {
                 // Note that if the states are different this won't work.
                 // For now, let's consider that an app bug.
                 int[] state = getDrawableState();
                 thumb.setState(state);
             }
         }
+    }
+
+    /**
+     * Return the drawable used to represent the scroll thumb - the component that
+     * the user can drag back and forth indicating the current value by its position.
+     *
+     * @return The current thumb drawable
+     */
+    public Drawable getThumb() {
+        return mThumb;
     }
 
     /**
@@ -464,4 +477,56 @@ public abstract class AbsSeekBar extends ProgressBar {
         return super.onKeyDown(keyCode, event);
     }
 
+    @Override
+    public void onInitializeAccessibilityEvent(AccessibilityEvent event) {
+        super.onInitializeAccessibilityEvent(event);
+        event.setClassName(AbsSeekBar.class.getName());
+    }
+
+    @Override
+    public void onInitializeAccessibilityNodeInfo(AccessibilityNodeInfo info) {
+        super.onInitializeAccessibilityNodeInfo(info);
+        info.setClassName(AbsSeekBar.class.getName());
+
+        if (isEnabled()) {
+            final int progress = getProgress();
+            if (progress > 0) {
+                info.addAction(AccessibilityNodeInfo.ACTION_SCROLL_BACKWARD);
+            }
+            if (progress < getMax()) {
+                info.addAction(AccessibilityNodeInfo.ACTION_SCROLL_FORWARD);
+            }
+        }
+    }
+
+    @Override
+    public boolean performAccessibilityAction(int action, Bundle arguments) {
+        if (super.performAccessibilityAction(action, arguments)) {
+            return true;
+        }
+        if (!isEnabled()) {
+            return false;
+        }
+        final int progress = getProgress();
+        final int increment = Math.max(1, Math.round((float) getMax() / 5));
+        switch (action) {
+            case AccessibilityNodeInfo.ACTION_SCROLL_BACKWARD: {
+                if (progress <= 0) {
+                    return false;
+                }
+                setProgress(progress - increment, true);
+                onKeyChange();
+                return true;
+            }
+            case AccessibilityNodeInfo.ACTION_SCROLL_FORWARD: {
+                if (progress >= getMax()) {
+                    return false;
+                }
+                setProgress(progress + increment, true);
+                onKeyChange();
+                return true;
+            }
+        }
+        return false;
+    }
 }

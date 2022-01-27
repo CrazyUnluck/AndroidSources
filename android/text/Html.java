@@ -16,6 +16,7 @@
 
 package android.text;
 
+import com.android.internal.util.ArrayUtils;
 import org.ccil.cowan.tagsoup.HTMLSchema;
 import org.ccil.cowan.tagsoup.Parser;
 import org.xml.sax.Attributes;
@@ -45,13 +46,11 @@ import android.text.style.TextAppearanceSpan;
 import android.text.style.TypefaceSpan;
 import android.text.style.URLSpan;
 import android.text.style.UnderlineSpan;
-import android.util.Log;
 
 import com.android.internal.util.XmlUtils;
 
 import java.io.IOException;
 import java.io.StringReader;
-import java.nio.CharBuffer;
 import java.util.HashMap;
 
 /**
@@ -148,6 +147,15 @@ public class Html {
         return out.toString();
     }
 
+    /**
+     * Returns an HTML escaped representation of the given plain text.
+     */
+    public static String escapeHtml(CharSequence text) {
+        StringBuilder out = new StringBuilder();
+        withinStyle(out, text, 0, text.length());
+        return out.toString();
+    }
+
     private static void withinHtml(StringBuilder out, Spanned text) {
         int len = text.length();
 
@@ -203,9 +211,26 @@ public class Html {
         }
     }
 
+    private static String getOpenParaTagWithDirection(Spanned text, int start, int end) {
+        final int len = end - start;
+        final byte[] levels = new byte[ArrayUtils.idealByteArraySize(len)];
+        final char[] buffer = TextUtils.obtain(len);
+        TextUtils.getChars(text, start, end, buffer, 0);
+
+        int paraDir = AndroidBidi.bidi(Layout.DIR_REQUEST_DEFAULT_LTR, buffer, levels, len,
+                false /* no info */);
+        switch(paraDir) {
+            case Layout.DIR_RIGHT_TO_LEFT:
+                return "<p dir=rtl>";
+            case Layout.DIR_LEFT_TO_RIGHT:
+            default:
+                return "<p dir=ltr>";
+        }
+    }
+
     private static void withinBlockquote(StringBuilder out, Spanned text,
                                          int start, int end) {
-        out.append("<p>");
+        out.append(getOpenParaTagWithDirection(text, start, end));
 
         int next;
         for (int i = start; i < end; i = next) {
@@ -340,7 +365,7 @@ public class Html {
             }
         }
 
-        String p = last ? "" : "</p>\n<p>";
+        String p = last ? "" : "</p>\n" + getOpenParaTagWithDirection(text, start, end);
 
         if (nl == 1) {
             out.append("<br>\n");
@@ -350,12 +375,11 @@ public class Html {
             for (int i = 2; i < nl; i++) {
                 out.append("<br>");
             }
-
             out.append(p);
         }
     }
 
-    private static void withinStyle(StringBuilder out, Spanned text,
+    private static void withinStyle(StringBuilder out, CharSequence text,
                                     int start, int end) {
         for (int i = start; i < end; i++) {
             char c = text.charAt(i);

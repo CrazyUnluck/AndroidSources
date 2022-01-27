@@ -16,6 +16,9 @@
 
 package com.android.server.wm;
 
+import com.android.server.input.InputApplicationHandle;
+import com.android.server.input.InputWindowHandle;
+import com.android.server.wm.WindowManagerService.DragInputEventReceiver;
 import com.android.server.wm.WindowManagerService.H;
 
 import android.content.ClipData;
@@ -28,7 +31,6 @@ import android.os.RemoteException;
 import android.util.Slog;
 import android.view.DragEvent;
 import android.view.InputChannel;
-import android.view.InputQueue;
 import android.view.Surface;
 import android.view.View;
 import android.view.WindowManager;
@@ -50,6 +52,7 @@ class DragState {
     float mCurrentX, mCurrentY;
     float mThumbOffsetX, mThumbOffsetY;
     InputChannel mServerChannel, mClientChannel;
+    DragInputEventReceiver mInputEventReceiver;
     InputApplicationHandle mDragApplicationHandle;
     InputWindowHandle mDragWindowHandle;
     WindowState mTargetWindow;
@@ -90,8 +93,8 @@ class DragState {
             mServerChannel = channels[0];
             mClientChannel = channels[1];
             mService.mInputManager.registerInputChannel(mServerChannel, null);
-            InputQueue.registerInputChannel(mClientChannel, mService.mDragInputHandler,
-                    mService.mH.getLooper().getQueue());
+            mInputEventReceiver = mService.new DragInputEventReceiver(mClientChannel,
+                    mService.mH.getLooper());
 
             mDragApplicationHandle = new InputApplicationHandle(null);
             mDragApplicationHandle.name = "drag";
@@ -139,7 +142,8 @@ class DragState {
             Slog.e(WindowManagerService.TAG, "Unregister of nonexistent drag input channel");
         } else {
             mService.mInputManager.unregisterInputChannel(mServerChannel);
-            InputQueue.unregisterInputChannel(mClientChannel);
+            mInputEventReceiver.dispose();
+            mInputEventReceiver = null;
             mClientChannel.dispose();
             mServerChannel.dispose();
             mClientChannel = null;

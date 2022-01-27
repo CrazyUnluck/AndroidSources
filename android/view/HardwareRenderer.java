@@ -27,6 +27,7 @@ import android.os.Handler;
 import android.os.Looper;
 import android.os.SystemClock;
 import android.os.SystemProperties;
+import android.os.Trace;
 import android.util.Log;
 import com.google.android.gles_jni.EGLImpl;
 
@@ -39,6 +40,8 @@ import javax.microedition.khronos.egl.EGLSurface;
 import javax.microedition.khronos.opengles.GL;
 
 import java.io.File;
+import java.io.PrintWriter;
+import java.util.concurrent.locks.ReentrantLock;
 
 import static javax.microedition.khronos.egl.EGL10.*;
 
@@ -71,7 +74,7 @@ public abstract class HardwareRenderer {
      * "true", to enable partial invalidates
      * "false", to disable partial invalidates
      */
-    static final String RENDER_DIRTY_REGIONS_PROPERTY = "hwui.render_dirty_regions";
+    static final String RENDER_DIRTY_REGIONS_PROPERTY = "debug.hwui.render_dirty_regions";
     
     /**
      * System property used to enable or disable vsync.
@@ -81,7 +84,37 @@ public abstract class HardwareRenderer {
      * "true", to disable vsync
      * "false", to enable vsync
      */
-    static final String DISABLE_VSYNC_PROPERTY = "hwui.disable_vsync";
+    static final String DISABLE_VSYNC_PROPERTY = "debug.hwui.disable_vsync";
+
+    /**
+     * System property used to enable or disable hardware rendering profiling.
+     * The default value of this property is assumed to be false.
+     *
+     * When profiling is enabled, the adb shell dumpsys gfxinfo command will
+     * output extra information about the time taken to execute by the last
+     * frames.
+     *
+     * Possible values:
+     * "true", to enable profiling
+     * "false", to disable profiling
+     * 
+     * @hide
+     */
+    public static final String PROFILE_PROPERTY = "debug.hwui.profile";
+
+    /**
+     * System property used to specify the number of frames to be used
+     * when doing hardware rendering profiling.
+     * The default value of this property is #PROFILE_MAX_FRAMES.
+     *
+     * When profiling is enabled, the adb shell dumpsys gfxinfo command will
+     * output extra information about the time taken to execute by the last
+     * frames.
+     *
+     * Possible values:
+     * "60", to set the limit of frames to 60
+     */
+    static final String PROFILE_MAXFRAMES_PROPERTY = "debug.hwui.profile.maxframes";
 
     /**
      * System property used to debug EGL configuration choice.
@@ -90,12 +123,18 @@ public abstract class HardwareRenderer {
      * "choice", print the chosen configuration only
      * "all", print all possible configurations
      */
-    static final String PRINT_CONFIG_PROPERTY = "hwui.print_config";    
+    static final String PRINT_CONFIG_PROPERTY = "debug.hwui.print_config";
 
     /**
      * Turn on to draw dirty regions every other frame.
+     *
+     * Possible values:
+     * "true", to enable dirty regions debugging
+     * "false", to disable dirty regions debugging
+     * 
+     * @hide
      */
-    private static final boolean DEBUG_DIRTY_REGION = false;
+    public static final String DEBUG_DIRTY_REGIONS_PROPERTY = "debug.hwui.show_dirty_regions";
     
     /**
      * A process can set this flag to false to prevent the use of hardware
@@ -111,6 +150,16 @@ public abstract class HardwareRenderer {
      * @hide
      */
     public static boolean sSystemRendererDisabled = false;
+
+    /**
+     * Number of frames to profile.
+     */
+    private static final int PROFILE_MAX_FRAMES = 128;
+
+    /**
+     * Number of floats per profiled frame.
+     */
+    private static final int PROFILE_FRAME_DATA_COUNT = 3;
 
     private boolean mEnabled;
     private boolean mRequested = true;
@@ -194,6 +243,17 @@ public abstract class HardwareRenderer {
     abstract boolean validate();
 
     /**
+     * This method ensures the hardware renderer is in a valid state
+     * before executing the specified action.
+     * 
+     * This method will attempt to set a valid state even if the window
+     * the renderer is attached to was destroyed.
+     *
+     * @return true if the action was run
+     */
+    abstract boolean safelyRun(Runnable action);
+
+    /**
      * Setup the hardware renderer for drawing. This is called whenever the
      * size of the target surface changes or when the surface is first created.
      * 
@@ -226,6 +286,19 @@ public abstract class HardwareRenderer {
     abstract HardwareCanvas getCanvas();
 
     /**
+     * Outputs extra debugging information in the specified file descriptor.
+     * @param pw
+     */
+    abstract void dumpGfxInfo(PrintWriter pw);
+
+    /**
+     * Outputs the total number of frames rendered (used for fps calculations)
+     *
+     * @return the number of frames rendered
+     */
+    abstract long getFrameCount();
+
+    /**
      * Sets the directory to use as a persistent storage for hardware rendering
      * resources.
      * 
@@ -236,6 +309,53 @@ public abstract class HardwareRenderer {
     }
 
     private static native void nSetupShadersDiskCache(String cacheFile);
+
+    /**
+     * Notifies EGL that the frame is about to be rendered.
+     * @param size
+     */
+    private static void beginFrame(int[] size) {
+        nBeginFrame(size);
+    }
+
+    private static native void nBeginFrame(int[] size);
+
+    /**
+     * Preserves the back buffer of the current surface after a buffer swap.
+     * Calling this method sets the EGL_SWAP_BEHAVIOR attribute of the current
+     * surface to EGL_BUFFER_PRESERVED. Calling this method requires an EGL
+     * config that supports EGL_SWAP_BEHAVIOR_PRESERVED_BIT.
+     *
+     * @return True if the swap behavior was successfully changed,
+     *         false otherwise.
+     */
+    static boolean preserveBackBuffer() {
+        return nPreserveBackBuffer();
+    }
+
+    private static native boolean nPreserveBackBuffer();
+
+    /**
+     * Indicates whether the current surface preserves its back buffer
+     * after a buffer swap.
+     *
+     * @return True, if the surface's EGL_SWAP_BEHAVIOR is EGL_BUFFER_PRESERVED,
+     *         false otherwise
+     */
+    static boolean isBackBufferPreserved() {
+        return nIsBackBufferPreserved();
+    }
+
+    private static native boolean nIsBackBufferPreserved();
+
+    /**
+     * Disables v-sync. For performance testing only.
+     */
+    static void disableVsync() {
+        nDisableVsync();
+    }
+
+    private static native void nDisableVsync();
 
     /**
      * Interface used to receive callbacks whenever a view is drawn by
@@ -274,9 +394,12 @@ public abstract class HardwareRenderer {
      * Creates a new display list that can be used to record batches of
      * drawing operations.
      * 
+     * @param name The name of the display list, used for debugging purpose.
+     *             May be null
+     * 
      * @return A new display list.
      */
-    abstract DisplayList createDisplayList();
+    public abstract DisplayList createDisplayList(String name);
 
     /**
      * Creates a new hardware layer. A hardware layer built by calling this
@@ -285,9 +408,9 @@ public abstract class HardwareRenderer {
      * @param isOpaque Whether the layer should be opaque or not
      * 
      * @return A hardware layer
-     */    
+     */
     abstract HardwareLayer createHardwareLayer(boolean isOpaque);
-    
+
     /**
      * Creates a new hardware layer.
      * 
@@ -311,19 +434,50 @@ public abstract class HardwareRenderer {
     abstract SurfaceTexture createSurfaceTexture(HardwareLayer layer);
 
     /**
+     * Sets the {@link android.graphics.SurfaceTexture} that will be used to
+     * render into the specified hardware layer.
+     *
+     * @param layer The layer to render into using a {@link android.graphics.SurfaceTexture}
+     * @param surfaceTexture The {@link android.graphics.SurfaceTexture} to use for the layer
+     */
+    abstract void setSurfaceTexture(HardwareLayer layer, SurfaceTexture surfaceTexture);
+
+    /**
+     * Detaches the specified functor from the current functor execution queue.
+     * 
+     * @param functor The native functor to remove from the execution queue.
+     *                
+     * @see HardwareCanvas#callDrawGLFunction(int) 
+     * @see #attachFunctor(android.view.View.AttachInfo, int) 
+     */
+    abstract void detachFunctor(int functor);
+
+    /**
+     * Schedules the specified functor in the functors execution queue.
+     *
+     * @param attachInfo AttachInfo tied to this renderer.
+     * @param functor The native functor to insert in the execution queue.
+     *
+     * @see HardwareCanvas#callDrawGLFunction(int)
+     * @see #detachFunctor(int)
+     *
+     * @return true if the functor was attached successfully
+     */
+    abstract boolean attachFunctor(View.AttachInfo attachInfo, int functor);
+
+    /**
      * Initializes the hardware renderer for the specified surface and setup the
      * renderer for drawing, if needed. This is invoked when the ViewAncestor has
      * potentially lost the hardware renderer. The hardware renderer should be
      * reinitialized and setup when the render {@link #isRequested()} and
      * {@link #isEnabled()}.
-     * 
+     *
      * @param width The width of the drawing surface.
      * @param height The height of the drawing surface.
-     * @param attachInfo The 
-     * @param holder
+     * @param holder The target surface
      */
-    void initializeIfNeeded(int width, int height, View.AttachInfo attachInfo,
-            SurfaceHolder holder) throws Surface.OutOfResourcesException {
+    void initializeIfNeeded(int width, int height, SurfaceHolder holder)
+            throws Surface.OutOfResourcesException {
         if (isRequested()) {
             // We lost the gl context, so recreate it.
             if (!isEnabled()) {
@@ -359,7 +513,28 @@ public abstract class HardwareRenderer {
      *              see {@link android.content.ComponentCallbacks}
      */
     static void trimMemory(int level) {
-        Gl20Renderer.trimMemory(level);
+        startTrimMemory(level);
+        endTrimMemory();
+    }
+
+    /**
+     * Starts the process of trimming memory. Usually this call will setup
+     * hardware rendering context and reclaim memory.Extra cleanup might
+     * be required by calling {@link #endTrimMemory()}.
+     * 
+     * @param level Hint about the amount of memory that should be trimmed,
+     *              see {@link android.content.ComponentCallbacks}
+     */
+    static void startTrimMemory(int level) {
+        Gl20Renderer.startTrimMemory(level);
+    }
+
+    /**
+     * Finishes the process of trimming memory. This method will usually
+     * cleanup special resources used by the memory trimming process.
+     */
+    static void endTrimMemory() {
+        Gl20Renderer.endTrimMemory();
     }
 
     /**
@@ -411,15 +586,17 @@ public abstract class HardwareRenderer {
         static final int SURFACE_STATE_ERROR = 0;
         static final int SURFACE_STATE_SUCCESS = 1;
         static final int SURFACE_STATE_UPDATED = 2;
-        
+
+        static final int FUNCTOR_PROCESS_DELAY = 4;
+
         static EGL10 sEgl;
         static EGLDisplay sEglDisplay;
         static EGLConfig sEglConfig;
         static final Object[] sEglLock = new Object[0];
         int mWidth = -1, mHeight = -1;
 
-        static final ThreadLocal<Gl20Renderer.Gl20RendererEglContext> sEglContextStorage
-                = new ThreadLocal<Gl20Renderer.Gl20RendererEglContext>();
+        static final ThreadLocal<ManagedEGLContext> sEglContextStorage
+                = new ThreadLocal<ManagedEGLContext>();
 
         EGLContext mEglContext;
         Thread mEglThread;
@@ -428,7 +605,8 @@ public abstract class HardwareRenderer {
         
         GL mGl;
         HardwareCanvas mCanvas;
-        int mFrameCount;
+
+        long mFrameCount;
         Paint mDebugPaint;
 
         static boolean sDirtyRegions;
@@ -441,7 +619,16 @@ public abstract class HardwareRenderer {
         }
 
         boolean mDirtyRegionsEnabled;
+        boolean mUpdateDirtyRegions;
+
         final boolean mVsyncDisabled;
+
+        final boolean mProfileEnabled;
+        final float[] mProfileData;
+        final ReentrantLock mProfileLock;
+        int mProfileCurrentFrame = -PROFILE_FRAME_DATA_COUNT;
+        
+        final boolean mDebugDirtyRegions;
 
         final int mGlVersion;
         final boolean mTranslucent;
@@ -450,15 +637,74 @@ public abstract class HardwareRenderer {
 
         private final Rect mRedrawClip = new Rect();
 
+        private final int[] mSurfaceSize = new int[2];
+        private final FunctorsRunnable mFunctorsRunnable = new FunctorsRunnable();
+
         GlRenderer(int glVersion, boolean translucent) {
             mGlVersion = glVersion;
             mTranslucent = translucent;
+            
+            String property;
 
-            final String vsyncProperty = SystemProperties.get(DISABLE_VSYNC_PROPERTY, "false");
-            mVsyncDisabled = "true".equalsIgnoreCase(vsyncProperty);
+            property = SystemProperties.get(DISABLE_VSYNC_PROPERTY, "false");
+            mVsyncDisabled = "true".equalsIgnoreCase(property);
             if (mVsyncDisabled) {
                 Log.d(LOG_TAG, "Disabling v-sync");
             }
+
+            property = SystemProperties.get(PROFILE_PROPERTY, "false");
+            mProfileEnabled = "true".equalsIgnoreCase(property);
+            if (mProfileEnabled) {
+                Log.d(LOG_TAG, "Profiling hardware renderer");
+            }
+
+            if (mProfileEnabled) {
+                property = SystemProperties.get(PROFILE_MAXFRAMES_PROPERTY,
+                        Integer.toString(PROFILE_MAX_FRAMES));
+                int maxProfileFrames = Integer.valueOf(property);
+                mProfileData = new float[maxProfileFrames * PROFILE_FRAME_DATA_COUNT];
+                for (int i = 0; i < mProfileData.length; i += PROFILE_FRAME_DATA_COUNT) {
+                    mProfileData[i] = mProfileData[i + 1] = mProfileData[i + 2] = -1;
+                }
+
+                mProfileLock = new ReentrantLock();
+            } else {
+                mProfileData = null;
+                mProfileLock = null;
+            }
+
+            property = SystemProperties.get(DEBUG_DIRTY_REGIONS_PROPERTY, "false");
+            mDebugDirtyRegions = "true".equalsIgnoreCase(property);
+            if (mDebugDirtyRegions) {
+                Log.d(LOG_TAG, "Debugging dirty regions");
+            }
+        }
+
+        @Override
+        void dumpGfxInfo(PrintWriter pw) {
+            if (mProfileEnabled) {
+                pw.printf("\n\tDraw\tProcess\tExecute\n");
+
+                mProfileLock.lock();
+                try {
+                    for (int i = 0; i < mProfileData.length; i += PROFILE_FRAME_DATA_COUNT) {
+                        if (mProfileData[i] < 0) {
+                            break;
+                        }
+                        pw.printf("\t%3.2f\t%3.2f\t%3.2f\n", mProfileData[i], mProfileData[i + 1],
+                                mProfileData[i + 2]);
+                        mProfileData[i] = mProfileData[i + 1] = mProfileData[i + 2] = -1;
+                    }
+                    mProfileCurrentFrame = mProfileData.length;
+                } finally {
+                    mProfileLock.unlock();
+                }
+            }
+        }
+
+        @Override
+        long getFrameCount() {
+            return mFrameCount;
         }
 
         /**
@@ -531,7 +777,7 @@ public abstract class HardwareRenderer {
             }
         }
 
-        abstract GLES20Canvas createCanvas();
+        abstract HardwareCanvas createCanvas();
 
         abstract int[] getConfig(boolean dirtyRegions);
 
@@ -571,15 +817,17 @@ public abstract class HardwareRenderer {
                 }
             }
 
-            Gl20Renderer.Gl20RendererEglContext managedContext = sEglContextStorage.get();
+            ManagedEGLContext managedContext = sEglContextStorage.get();
             mEglContext = managedContext != null ? managedContext.getContext() : null;
             mEglThread = Thread.currentThread();
 
             if (mEglContext == null) {
                 mEglContext = createContext(sEgl, sEglDisplay, sEglConfig);
-                sEglContextStorage.set(new Gl20Renderer.Gl20RendererEglContext(mEglContext));
+                sEglContextStorage.set(createManagedContext(mEglContext));
             }
         }
+
+        abstract ManagedEGLContext createManagedContext(EGLContext eglContext);
 
         private EGLConfig chooseEglConfig() {
             EGLConfig[] configs = new EGLConfig[1];
@@ -613,7 +861,7 @@ public abstract class HardwareRenderer {
             return null;
         }
 
-        private void printConfig(EGLConfig config) {
+        private static void printConfig(EGLConfig config) {
             int[] value = new int[1];
 
             Log.d(LOG_TAG, "EGL configuration " + config + ":");
@@ -675,10 +923,16 @@ public abstract class HardwareRenderer {
             
             initCaches();
 
+            enableDirtyRegions();
+
+            return mEglContext.getGL();
+        }
+
+        private void enableDirtyRegions() {
             // If mDirtyRegions is set, this means we have an EGL configuration
             // with EGL_SWAP_BEHAVIOR_PRESERVED_BIT set
             if (sDirtyRegions) {
-                if (!(mDirtyRegionsEnabled = GLES20Canvas.preserveBackBuffer())) {
+                if (!(mDirtyRegionsEnabled = preserveBackBuffer())) {
                     Log.w(LOG_TAG, "Backbuffer cannot be preserved");
                 }
             } else if (sDirtyRegionsRequested) {
@@ -688,10 +942,8 @@ public abstract class HardwareRenderer {
                 // want to set mDirtyRegions. We try to do this only if dirty
                 // regions were initially requested as part of the device
                 // configuration (see RENDER_DIRTY_REGIONS)
-                mDirtyRegionsEnabled = GLES20Canvas.isBackBufferPreserved();
+                mDirtyRegionsEnabled = isBackBufferPreserved();
             }
-
-            return mEglContext.getGL();
         }
 
         abstract void initCaches();
@@ -745,6 +997,9 @@ public abstract class HardwareRenderer {
                 if (!createSurface(holder)) {
                     return;
                 }
+
+                mUpdateDirtyRegions = true;
+
                 if (mCanvas != null) {
                     setEnabled(true);
                 }
@@ -799,10 +1054,29 @@ public abstract class HardwareRenderer {
             return mGl != null && mCanvas != null;
         }        
         
-        void onPreDraw(Rect dirty) {
+        int onPreDraw(Rect dirty) {
+            return DisplayList.STATUS_DONE;
         }
 
         void onPostDraw() {
+        }
+
+        class FunctorsRunnable implements Runnable {
+            View.AttachInfo attachInfo;
+
+            @Override
+            public void run() {
+                final HardwareRenderer renderer = attachInfo.mHardwareRenderer;
+                if (renderer == null || !renderer.isEnabled() || renderer != GlRenderer.this) {
+                    return;
+                }
+
+                final int surfaceState = checkCurrent();
+                if (surfaceState != SURFACE_STATE_ERROR) {
+                    int status = mCanvas.invokeFunctors(mRedrawClip);
+                    handleFunctorStatus(attachInfo, status);
+                }
+            }
         }
 
         @Override
@@ -811,8 +1085,6 @@ public abstract class HardwareRenderer {
             if (canDraw()) {
                 if (!hasDirtyRegions()) {
                     dirty = null;
-                } else if (dirty != null) {
-                    dirty.intersect(0, 0, mWidth, mHeight);
                 }
                 attachInfo.mIgnoreDirtyState = true;
                 attachInfo.mDrawingTime = SystemClock.uptimeMillis();
@@ -821,16 +1093,32 @@ public abstract class HardwareRenderer {
 
                 final int surfaceState = checkCurrent();
                 if (surfaceState != SURFACE_STATE_ERROR) {
-                    // We had to change the current surface and/or context, redraw everything
-                    if (surfaceState == SURFACE_STATE_UPDATED) {
-                        dirty = null;
-                    }
-
-                    onPreDraw(dirty);
-
                     HardwareCanvas canvas = mCanvas;
                     attachInfo.mHardwareCanvas = canvas;
 
+                    if (mProfileEnabled) {
+                        mProfileLock.lock();
+                    }
+
+                    // We had to change the current surface and/or context, redraw everything
+                    if (surfaceState == SURFACE_STATE_UPDATED) {
+                        dirty = null;
+                        beginFrame(null);
+                    } else {
+                        int[] size = mSurfaceSize;
+                        beginFrame(size);
+
+                        if (size[1] != mHeight || size[0] != mWidth) {
+                            mWidth = size[0];
+                            mHeight = size[1];
+
+                            canvas.setViewport(mWidth, mHeight);
+
+                            dirty = null;
+                        }
+                    }
+
+                    int status = onPreDraw(dirty);
                     int saveCount = canvas.save();
                     callbacks.onHardwarePreDraw(canvas);
 
@@ -839,48 +1127,148 @@ public abstract class HardwareRenderer {
                                 (view.mPrivateFlags & View.INVALIDATED) == View.INVALIDATED;
                         view.mPrivateFlags &= ~View.INVALIDATED;
 
-                        DisplayList displayList = view.getDisplayList();
-                        if (displayList != null) {
-                            if (canvas.drawDisplayList(displayList, view.getWidth(),
-                                    view.getHeight(), mRedrawClip)) {
-                                if (mRedrawClip.isEmpty() || view.getParent() == null) {
-                                    view.invalidate();
-                                } else {
-                                    view.getParent().invalidateChild(view, mRedrawClip);
-                                }
-                                mRedrawClip.setEmpty();
+                        long getDisplayListStartTime = 0;
+                        if (mProfileEnabled) {
+                            mProfileCurrentFrame += PROFILE_FRAME_DATA_COUNT;
+                            if (mProfileCurrentFrame >= mProfileData.length) {
+                                mProfileCurrentFrame = 0;
                             }
+
+                            getDisplayListStartTime = System.nanoTime();
+                        }
+
+                        DisplayList displayList;
+
+                        Trace.traceBegin(Trace.TRACE_TAG_VIEW, "getDisplayList");
+                        try {
+                            displayList = view.getDisplayList();
+                        } finally {
+                            Trace.traceEnd(Trace.TRACE_TAG_VIEW);
+                        }
+
+                        if (mProfileEnabled) {
+                            long now = System.nanoTime();
+                            float total = (now - getDisplayListStartTime) * 0.000001f;
+                            //noinspection PointlessArithmeticExpression
+                            mProfileData[mProfileCurrentFrame] = total;
+                        }
+
+                        if (displayList != null) {
+                            long drawDisplayListStartTime = 0;
+                            if (mProfileEnabled) {
+                                drawDisplayListStartTime = System.nanoTime();
+                            }
+
+                            Trace.traceBegin(Trace.TRACE_TAG_VIEW, "drawDisplayList");
+                            try {
+                                status |= canvas.drawDisplayList(displayList, mRedrawClip,
+                                        DisplayList.FLAG_CLIP_CHILDREN);
+                            } finally {
+                                Trace.traceEnd(Trace.TRACE_TAG_VIEW);
+                            }
+
+                            if (mProfileEnabled) {
+                                long now = System.nanoTime();
+                                float total = (now - drawDisplayListStartTime) * 0.000001f;
+                                mProfileData[mProfileCurrentFrame + 1] = total;
+                            }
+
+                            handleFunctorStatus(attachInfo, status);
                         } else {
                             // Shouldn't reach here
                             view.draw(canvas);
-                        }
-
-                        if (DEBUG_DIRTY_REGION) {
-                            if (mDebugPaint == null) {
-                                mDebugPaint = new Paint();
-                                mDebugPaint.setColor(0x7fff0000);
-                            }
-                            if (dirty != null && (mFrameCount++ & 1) == 0) {
-                                canvas.drawRect(dirty, mDebugPaint);
-                            }
                         }
                     } finally {
                         callbacks.onHardwarePostDraw(canvas);
                         canvas.restoreToCount(saveCount);
                         view.mRecreateDisplayList = false;
+
+                        mFrameCount++;
+
+                        if (mDebugDirtyRegions) {
+                            if (mDebugPaint == null) {
+                                mDebugPaint = new Paint();
+                                mDebugPaint.setColor(0x7fff0000);
+                            }
+
+                            if (dirty != null && (mFrameCount & 1) == 0) {
+                                canvas.drawRect(dirty, mDebugPaint);
+                            }
+                        }
                     }
 
                     onPostDraw();
 
                     attachInfo.mIgnoreDirtyState = false;
+                    
+                    if ((status & DisplayList.STATUS_DREW) == DisplayList.STATUS_DREW) {
+                        long eglSwapBuffersStartTime = 0;
+                        if (mProfileEnabled) {
+                            eglSwapBuffersStartTime = System.nanoTime();
+                        }
+    
+                        sEgl.eglSwapBuffers(sEglDisplay, mEglSurface);
+    
+                        if (mProfileEnabled) {
+                            long now = System.nanoTime();
+                            float total = (now - eglSwapBuffersStartTime) * 0.000001f;
+                            mProfileData[mProfileCurrentFrame + 2] = total;
+                        }
+    
+                        checkEglErrors();
+                    }
 
-                    sEgl.eglSwapBuffers(sEglDisplay, mEglSurface);
-                    checkEglErrors();
+                    if (mProfileEnabled) {
+                        mProfileLock.unlock();
+                    }
 
                     return dirty == null;
                 }
             }
 
+            return false;
+        }
+
+        private void handleFunctorStatus(View.AttachInfo attachInfo, int status) {
+            // If the draw flag is set, functors will be invoked while executing
+            // the tree of display lists
+            if ((status & DisplayList.STATUS_DRAW) != 0) {
+                if (mRedrawClip.isEmpty()) {
+                    attachInfo.mViewRootImpl.invalidate();
+                } else {
+                    attachInfo.mViewRootImpl.invalidateChildInParent(null, mRedrawClip);
+                    mRedrawClip.setEmpty();
+                }
+            }
+
+            if ((status & DisplayList.STATUS_INVOKE) != 0) {
+                scheduleFunctors(attachInfo, true);
+            }
+        }
+
+        private void scheduleFunctors(View.AttachInfo attachInfo, boolean delayed) {
+            mFunctorsRunnable.attachInfo = attachInfo;
+            if (!attachInfo.mHandler.hasCallbacks(mFunctorsRunnable)) {
+                // delay the functor callback by a few ms so it isn't polled constantly
+                attachInfo.mHandler.postDelayed(mFunctorsRunnable,
+                                                delayed ? FUNCTOR_PROCESS_DELAY : 0);
+            }
+        }
+
+        @Override
+        void detachFunctor(int functor) {
+            if (mCanvas != null) {
+                mCanvas.detachFunctor(functor);
+            }
+        }
+
+        @Override
+        boolean attachFunctor(View.AttachInfo attachInfo, int functor) {
+            if (mCanvas != null) {
+                mCanvas.attachFunctor(functor);
+                scheduleFunctors(attachInfo, false);
+                return true;
+            }
             return false;
         }
 
@@ -906,6 +1294,10 @@ public abstract class HardwareRenderer {
                     fallback(true);
                     return SURFACE_STATE_ERROR;
                 } else {
+                    if (mUpdateDirtyRegions) {
+                        enableDirtyRegions();
+                        mUpdateDirtyRegions = false;
+                    }
                     return SURFACE_STATE_UPDATED;
                 }
             }
@@ -934,7 +1326,8 @@ public abstract class HardwareRenderer {
                 // Make sure we do this on the correct thread.
                 if (mHandler.getLooper() != Looper.myLooper()) {
                     mHandler.post(new Runnable() {
-                        @Override public void run() {
+                        @Override
+                        public void run() {
                             onTerminate(eglContext);
                         }
                     });
@@ -949,6 +1342,7 @@ public abstract class HardwareRenderer {
                         GLES20Canvas.terminateCaches();
 
                         sEgl.eglDestroyContext(sEglDisplay, eglContext);
+                        sEglContextStorage.set(null);
                         sEglContextStorage.remove();
 
                         sEgl.eglDestroySurface(sEglDisplay, sPbuffer);
@@ -962,7 +1356,6 @@ public abstract class HardwareRenderer {
                         sEglDisplay = null;
                         sEglConfig = null;
                         sPbuffer = null;
-                        sEglContextStorage.set(null);
                     }
                 }
             }
@@ -973,8 +1366,13 @@ public abstract class HardwareRenderer {
         }
 
         @Override
-        GLES20Canvas createCanvas() {
+        HardwareCanvas createCanvas() {
             return mGlCanvas = new GLES20Canvas(mTranslucent);
+        }
+
+        @Override
+        ManagedEGLContext createManagedContext(EGLContext eglContext) {
+            return new Gl20Renderer.Gl20RendererEglContext(mEglContext);
         }
 
         @Override
@@ -986,7 +1384,7 @@ public abstract class HardwareRenderer {
                     EGL_BLUE_SIZE, 8,
                     EGL_ALPHA_SIZE, 8,
                     EGL_DEPTH_SIZE, 0,
-                    EGL_STENCIL_SIZE, 0,
+                    EGL_STENCIL_SIZE, GLES20Canvas.getStencilSize(),
                     EGL_SURFACE_TYPE, EGL_WINDOW_BIT |
                             (dirtyRegions ? EGL_SWAP_BEHAVIOR_PRESERVED_BIT : 0),
                     EGL_NONE
@@ -1004,8 +1402,8 @@ public abstract class HardwareRenderer {
         }                
 
         @Override
-        void onPreDraw(Rect dirty) {
-            mGlCanvas.onPreDraw(dirty);
+        int onPreDraw(Rect dirty) {
+            return mGlCanvas.onPreDraw(dirty);
         }
 
         @Override
@@ -1028,13 +1426,13 @@ public abstract class HardwareRenderer {
         void setup(int width, int height) {
             super.setup(width, height);
             if (mVsyncDisabled) {
-                GLES20Canvas.disableVsync();
+                disableVsync();
             }
         }
 
         @Override
-        DisplayList createDisplayList() {
-            return new GLES20DisplayList();
+        public DisplayList createDisplayList(String name) {
+            return new GLES20DisplayList(name);
         }
 
         @Override
@@ -1053,6 +1451,11 @@ public abstract class HardwareRenderer {
         }
 
         @Override
+        void setSurfaceTexture(HardwareLayer layer, SurfaceTexture surfaceTexture) {
+            ((GLES20TextureLayer) layer).setSurfaceTexture(surfaceTexture);
+        }
+
+        @Override
         void destroyLayers(View view) {
             if (view != null && isEnabled() && checkCurrent() != SURFACE_STATE_ERROR) {
                 destroyHardwareLayer(view);
@@ -1061,7 +1464,7 @@ public abstract class HardwareRenderer {
         }
 
         private static void destroyHardwareLayer(View view) {
-            view.destroyLayer();
+            view.destroyLayer(true);
 
             if (view instanceof ViewGroup) {
                 ViewGroup group = (ViewGroup) view;
@@ -1072,24 +1475,44 @@ public abstract class HardwareRenderer {
                 }
             }
         }
-        
+
         @Override
-        void destroyHardwareResources(View view) {
-            if (view != null) {
-                boolean needsContext = true;
-                if (isEnabled() && checkCurrent() != SURFACE_STATE_ERROR) needsContext = false;
+        boolean safelyRun(Runnable action) {
+            boolean needsContext = true;
+            if (isEnabled() && checkCurrent() != SURFACE_STATE_ERROR) needsContext = false;
 
+            if (needsContext) {
+                Gl20RendererEglContext managedContext =
+                        (Gl20RendererEglContext) sEglContextStorage.get();
+                if (managedContext == null) return false;
+                usePbufferSurface(managedContext.getContext());
+            }
+
+            try {
+                action.run();
+            } finally {
                 if (needsContext) {
-                    Gl20RendererEglContext managedContext = sEglContextStorage.get();
-                    if (managedContext == null) return;
-                    usePbufferSurface(managedContext.getContext());
+                    sEgl.eglMakeCurrent(sEglDisplay, EGL_NO_SURFACE,
+                            EGL_NO_SURFACE, EGL_NO_CONTEXT);
                 }
+            }
 
-                destroyResources(view);
-                GLES20Canvas.flushCaches(GLES20Canvas.FLUSH_CACHES_LAYERS);
+            return true;
+        }
+
+        @Override
+        void destroyHardwareResources(final View view) {
+            if (view != null) {
+                safelyRun(new Runnable() {
+                    @Override
+                    public void run() {
+                        destroyResources(view);
+                        GLES20Canvas.flushCaches(GLES20Canvas.FLUSH_CACHES_LAYERS);
+                    }
+                });
             }
         }
-        
+
         private static void destroyResources(View view) {
             view.destroyHardwareResources();
 
@@ -1110,10 +1533,11 @@ public abstract class HardwareRenderer {
             return null;
         }
 
-        static void trimMemory(int level) {
+        static void startTrimMemory(int level) {
             if (sEgl == null || sEglConfig == null) return;
 
-            Gl20RendererEglContext managedContext = sEglContextStorage.get();
+            Gl20RendererEglContext managedContext =
+                    (Gl20RendererEglContext) sEglContextStorage.get();
             // We do not have OpenGL objects
             if (managedContext == null) {
                 return;
@@ -1121,15 +1545,16 @@ public abstract class HardwareRenderer {
                 usePbufferSurface(managedContext.getContext());
             }
 
-            switch (level) {
-                case ComponentCallbacks2.TRIM_MEMORY_UI_HIDDEN:
-                case ComponentCallbacks2.TRIM_MEMORY_BACKGROUND:
-                case ComponentCallbacks2.TRIM_MEMORY_MODERATE:
-                    GLES20Canvas.flushCaches(GLES20Canvas.FLUSH_CACHES_MODERATE);
-                    break;
-                case ComponentCallbacks2.TRIM_MEMORY_COMPLETE:
-                    GLES20Canvas.flushCaches(GLES20Canvas.FLUSH_CACHES_FULL);
-                    break;
+            if (level >= ComponentCallbacks2.TRIM_MEMORY_COMPLETE) {
+                GLES20Canvas.flushCaches(GLES20Canvas.FLUSH_CACHES_FULL);
+            } else if (level >= ComponentCallbacks2.TRIM_MEMORY_UI_HIDDEN) {
+                GLES20Canvas.flushCaches(GLES20Canvas.FLUSH_CACHES_MODERATE);
+            }
+        }
+
+        static void endTrimMemory() {
+            if (sEgl != null && sEglDisplay != null) {
+                sEgl.eglMakeCurrent(sEglDisplay, EGL_NO_SURFACE, EGL_NO_SURFACE, EGL_NO_CONTEXT);
             }
         }
 

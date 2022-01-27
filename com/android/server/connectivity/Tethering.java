@@ -546,14 +546,13 @@ public class Tethering extends INetworkManagementEventObserver.Stub {
                     ifcg = mNMService.getInterfaceConfig(iface);
                     if (ifcg != null) {
                         InetAddress addr = NetworkUtils.numericToInetAddress(USB_NEAR_IFACE_ADDR);
-                        ifcg.addr = new LinkAddress(addr, USB_PREFIX_LENGTH);
+                        ifcg.setLinkAddress(new LinkAddress(addr, USB_PREFIX_LENGTH));
                         if (enabled) {
-                            ifcg.interfaceFlags = ifcg.interfaceFlags.replace("down", "up");
+                            ifcg.setInterfaceUp();
                         } else {
-                            ifcg.interfaceFlags = ifcg.interfaceFlags.replace("up", "down");
+                            ifcg.setInterfaceDown();
                         }
-                        ifcg.interfaceFlags = ifcg.interfaceFlags.replace("running", "");
-                        ifcg.interfaceFlags = ifcg.interfaceFlags.replace("  "," ");
+                        ifcg.clearFlag("running");
                         mNMService.setInterfaceConfig(iface, ifcg);
                     }
                 } catch (Exception e) {
@@ -1216,6 +1215,8 @@ public class Tethering extends INetworkManagementEventObserver.Stub {
                 return retValue;
             }
             protected boolean turnOffUpstreamMobileConnection() {
+                // ignore pending renewal requests
+                ++mCurrentConnectionSequence;
                 if (mMobileApnReserved != ConnectivityManager.TYPE_NONE) {
                     try {
                         mConnService.stopUsingNetworkFeature(ConnectivityManager.TYPE_MOBILE,
@@ -1305,6 +1306,14 @@ public class Tethering extends INetworkManagementEventObserver.Stub {
                 if (upType == ConnectivityManager.TYPE_MOBILE_DUN ||
                         upType == ConnectivityManager.TYPE_MOBILE_HIPRI) {
                     turnOnUpstreamMobileConnection(upType);
+                } else if (upType != ConnectivityManager.TYPE_NONE) {
+                    /* If we've found an active upstream connection that's not DUN/HIPRI
+                     * we should stop any outstanding DUN/HIPRI start requests.
+                     *
+                     * If we found NONE we don't want to do this as we want any previous
+                     * requests to keep trying to bring up something we can use.
+                     */
+                    turnOffUpstreamMobileConnection();
                 }
 
                 if (upType == ConnectivityManager.TYPE_NONE) {

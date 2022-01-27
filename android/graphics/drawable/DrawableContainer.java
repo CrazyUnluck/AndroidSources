@@ -19,6 +19,7 @@ package android.graphics.drawable;
 import android.content.res.Resources;
 import android.graphics.Canvas;
 import android.graphics.ColorFilter;
+import android.graphics.Insets;
 import android.graphics.PixelFormat;
 import android.graphics.Rect;
 import android.os.SystemClock;
@@ -88,6 +89,14 @@ public class DrawableContainer extends Drawable implements Drawable.Callback {
         } else {
             return super.getPadding(padding);
         }
+    }
+
+    /**
+     * @hide
+     */
+    @Override
+    public Insets getLayoutInsets() {
+        return (mCurrDrawable == null) ? Insets.NONE : mCurrDrawable.getLayoutInsets();
     }
 
     @Override

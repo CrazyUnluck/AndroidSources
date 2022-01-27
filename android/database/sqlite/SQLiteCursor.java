@@ -18,6 +18,7 @@ package android.database.sqlite;
 
 import android.database.AbstractWindowedCursor;
 import android.database.CursorWindow;
+import android.database.DatabaseUtils;
 import android.os.StrictMode;
 import android.util.Log;
 
@@ -42,13 +43,16 @@ public class SQLiteCursor extends AbstractWindowedCursor {
     private final String[] mColumns;
 
     /** The query object for the cursor */
-    private SQLiteQuery mQuery;
+    private final SQLiteQuery mQuery;
 
     /** The compiled query this cursor came from */
     private final SQLiteCursorDriver mDriver;
 
     /** The number of rows in the cursor */
-    private volatile int mCount = NO_COUNT;
+    private int mCount = NO_COUNT;
+
+    /** The number of rows that can fit in the cursor window, 0 if unknown */
+    private int mCursorWindowCapacity;
 
     /** A mapping of column names to column indices, to speed up lookups */
     private Map<String, Integer> mColumnNameMap;
@@ -61,8 +65,7 @@ public class SQLiteCursor extends AbstractWindowedCursor {
      * interface. For a query such as: {@code SELECT name, birth, phone FROM
      * myTable WHERE ... LIMIT 1,20 ORDER BY...} the column names (name, birth,
      * phone) would be in the projection argument and everything from
-     * {@code FROM} onward would be in the params argument. This constructor
-     * has package scope.
+     * {@code FROM} onward would be in the params argument.
      *
      * @param db a reference to a Database object that is already constructed
      *     and opened. This param is not used any longer
@@ -82,8 +85,7 @@ public class SQLiteCursor extends AbstractWindowedCursor {
      * interface. For a query such as: {@code SELECT name, birth, phone FROM
      * myTable WHERE ... LIMIT 1,20 ORDER BY...} the column names (name, birth,
      * phone) would be in the projection argument and everything from
-     * {@code FROM} onward would be in the params argument. This constructor
-     * has package scope.
+     * {@code FROM} onward would be in the params argument.
      *
      * @param editTable the name of the table used for this query
      * @param query the {@link SQLiteQuery} object associated with this cursor object.
@@ -91,9 +93,6 @@ public class SQLiteCursor extends AbstractWindowedCursor {
     public SQLiteCursor(SQLiteCursorDriver driver, String editTable, SQLiteQuery query) {
         if (query == null) {
             throw new IllegalArgumentException("query object cannot be null");
-        }
-        if (query.mDatabase == null) {
-            throw new IllegalArgumentException("query.mDatabase cannot be null");
         }
         if (StrictMode.vmSqliteObjectLeaksEnabled()) {
             mStackTrace = new DatabaseObjectNotClosedException().fillInStackTrace();
@@ -105,38 +104,16 @@ public class SQLiteCursor extends AbstractWindowedCursor {
         mColumnNameMap = null;
         mQuery = query;
 
-        query.mDatabase.lock(query.mSql);
-        try {
-            // Setup the list of columns
-            int columnCount = mQuery.columnCountLocked();
-            mColumns = new String[columnCount];
-
-            // Read in all column names
-            for (int i = 0; i < columnCount; i++) {
-                String columnName = mQuery.columnNameLocked(i);
-                mColumns[i] = columnName;
-                if (false) {
-                    Log.v("DatabaseWindow", "mColumns[" + i + "] is "
-                            + mColumns[i]);
-                }
-    
-                // Make note of the row ID column index for quick access to it
-                if ("_id".equals(columnName)) {
-                    mRowIdColumnIndex = i;
-                }
-            }
-        } finally {
-            query.mDatabase.unlock();
-        }
+        mColumns = query.getColumnNames();
+        mRowIdColumnIndex = DatabaseUtils.findRowIdColumnIndex(mColumns);
     }
 
     /**
+     * Get the database that this cursor is associated with.
      * @return the SQLiteDatabase that this cursor is associated with.
      */
     public SQLiteDatabase getDatabase() {
-        synchronized (this) {
-            return mQuery.mDatabase;
-        }
+        return mQuery.getDatabase();
     }
 
     @Override
@@ -158,23 +135,21 @@ public class SQLiteCursor extends AbstractWindowedCursor {
         return mCount;
     }
 
-    private void fillWindow(int startPos) {
+    private void fillWindow(int requiredPos) {
         clearOrCreateWindow(getDatabase().getPath());
-        mWindow.setStartPosition(startPos);
-        int count = getQuery().fillWindow(mWindow);
-        if (startPos == 0) { // fillWindow returns count(*) only for startPos = 0
-            if (Log.isLoggable(TAG, Log.DEBUG)) {
-                Log.d(TAG, "received count(*) from native_fill_window: " + count);
-            }
-            mCount = count;
-        } else if (mCount <= 0) {
-            throw new IllegalStateException("Row count should never be zero or negative "
-                    + "when the start position is non-zero");
-        }
-    }
 
-    private synchronized SQLiteQuery getQuery() {
-        return mQuery;
+        if (mCount == NO_COUNT) {
+            int startPos = DatabaseUtils.cursorPickFillWindowStartPosition(requiredPos, 0);
+            mCount = mQuery.fillWindow(mWindow, startPos, requiredPos, true);
+            mCursorWindowCapacity = mWindow.getNumRows();
+            if (Log.isLoggable(TAG, Log.DEBUG)) {
+                Log.d(TAG, "received count(*) from native_fill_window: " + mCount);
+            }
+        } else {
+            int startPos = DatabaseUtils.cursorPickFillWindowStartPosition(requiredPos,
+                    mCursorWindowCapacity);
+            mQuery.fillWindow(mWindow, startPos, requiredPos, false);
+        }
     }
 
     @Override
@@ -231,75 +206,28 @@ public class SQLiteCursor extends AbstractWindowedCursor {
         if (isClosed()) {
             return false;
         }
-        long timeStart = 0;
-        if (false) {
-            timeStart = System.currentTimeMillis();
-        }
 
         synchronized (this) {
+            if (!mQuery.getDatabase().isOpen()) {
+                return false;
+            }
+
             if (mWindow != null) {
                 mWindow.clear();
             }
             mPos = -1;
-            SQLiteDatabase db = null;
-            try {
-                db = mQuery.mDatabase.getDatabaseHandle(mQuery.mSql);
-            } catch (IllegalStateException e) {
-                // for backwards compatibility, just return false
-                Log.w(TAG, "requery() failed " + e.getMessage(), e);
-                return false;
-            }
-            if (!db.equals(mQuery.mDatabase)) {
-                // since we need to use a different database connection handle,
-                // re-compile the query
-                try {
-                    db.lock(mQuery.mSql);
-                } catch (IllegalStateException e) {
-                    // for backwards compatibility, just return false
-                    Log.w(TAG, "requery() failed " + e.getMessage(), e);
-                    return false;
-                }
-                try {
-                    // close the old mQuery object and open a new one
-                    mQuery.close();
-                    mQuery = new SQLiteQuery(db, mQuery);
-                } catch (IllegalStateException e) {
-                    // for backwards compatibility, just return false
-                    Log.w(TAG, "requery() failed " + e.getMessage(), e);
-                    return false;
-                } finally {
-                    db.unlock();
-                }
-            }
-            // This one will recreate the temp table, and get its count
-            mDriver.cursorRequeried(this);
             mCount = NO_COUNT;
-            try {
-                mQuery.requery();
-            } catch (IllegalStateException e) {
-                // for backwards compatibility, just return false
-                Log.w(TAG, "requery() failed " + e.getMessage(), e);
-                return false;
-            }
+
+            mDriver.cursorRequeried(this);
         }
 
-        if (false) {
-            Log.v("DatabaseWindow", "closing window in requery()");
-            Log.v(TAG, "--- Requery()ed cursor " + this + ": " + mQuery);
-        }
-
-        boolean result = false;
         try {
-            result = super.requery();
+            return super.requery();
         } catch (IllegalStateException e) {
             // for backwards compatibility, just return false
             Log.w(TAG, "requery() failed " + e.getMessage(), e);
+            return false;
         }
-        if (false) {
-            long timeEnd = System.currentTimeMillis();
-            Log.v(TAG, "requery (" + (timeEnd - timeStart) + " ms): " + mDriver.toString());
-        }
-        return result;
     }
 
     @Override
@@ -324,20 +252,16 @@ public class SQLiteCursor extends AbstractWindowedCursor {
             // if the cursor hasn't been closed yet, close it first
             if (mWindow != null) {
                 if (mStackTrace != null) {
-                    int len = mQuery.mSql.length();
+                    String sql = mQuery.getSql();
+                    int len = sql.length();
                     StrictMode.onSqliteObjectLeaked(
                         "Finalizing a Cursor that has not been deactivated or closed. " +
-                        "database = " + mQuery.mDatabase.getPath() + ", table = " + mEditTable +
-                        ", query = " + mQuery.mSql.substring(0, (len > 1000) ? 1000 : len),
+                        "database = " + mQuery.getDatabase().getLabel() +
+                        ", table = " + mEditTable +
+                        ", query = " + sql.substring(0, (len > 1000) ? 1000 : len),
                         mStackTrace);
                 }
                 close();
-                SQLiteDebug.notifyActiveCursorFinalized();
-            } else {
-                if (false) {
-                    Log.v(TAG, "Finalizing cursor on database = " + mQuery.mDatabase.getPath() +
-                            ", table = " + mEditTable + ", query = " + mQuery.mSql);
-                }
             }
         } finally {
             super.finalize();

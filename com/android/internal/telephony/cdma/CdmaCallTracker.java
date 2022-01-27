@@ -34,6 +34,8 @@ import com.android.internal.telephony.DriverCall;
 import com.android.internal.telephony.Phone;
 import com.android.internal.telephony.TelephonyProperties;
 
+import java.io.FileDescriptor;
+import java.io.PrintWriter;
 import java.util.ArrayList;
 import java.util.List;
 
@@ -210,7 +212,8 @@ public final class CdmaCallTracker extends CallTracker {
             return dialThreeWay(dialString);
         }
 
-        pendingMO = new CdmaConnection(phone.getContext(), dialString, this, foregroundCall);
+        pendingMO = new CdmaConnection(phone.getContext(), checkForTestEmergencyNumber(dialString),
+                this, foregroundCall);
         hangupPendingMO = false;
 
         if (pendingMO.address == null || pendingMO.address.length() == 0
@@ -259,7 +262,7 @@ public final class CdmaCallTracker extends CallTracker {
 
             // Attach the new connection to foregroundCall
             pendingMO = new CdmaConnection(phone.getContext(),
-                                dialString, this, foregroundCall);
+                                checkForTestEmergencyNumber(dialString), this, foregroundCall);
             cm.sendCDMAFeatureCode(pendingMO.address,
                 obtainMessage(EVENT_THREE_WAY_DIAL_L2_RESULT_CDMA));
             return pendingMO;
@@ -1128,4 +1131,32 @@ public final class CdmaCallTracker extends CallTracker {
         Log.d(LOG_TAG, "[CdmaCallTracker] " + msg);
     }
 
+    @Override
+    public void dump(FileDescriptor fd, PrintWriter pw, String[] args) {
+        pw.println("GsmCallTracker extends:");
+        super.dump(fd, pw, args);
+        pw.println("droppedDuringPoll: length=" + connections.length);
+        for(int i=0; i < connections.length; i++) {
+            pw.printf(" connections[%d]=%s\n", i, connections[i]);
+        }
+        pw.println(" voiceCallEndedRegistrants=" + voiceCallEndedRegistrants);
+        pw.println(" voiceCallStartedRegistrants=" + voiceCallStartedRegistrants);
+        pw.println(" callWaitingRegistrants=" + callWaitingRegistrants);
+        pw.println("droppedDuringPoll: size=" + droppedDuringPoll.size());
+        for(int i = 0; i < droppedDuringPoll.size(); i++) {
+            pw.printf( " droppedDuringPoll[%d]=%s\n", i, droppedDuringPoll.get(i));
+        }
+        pw.println(" ringingCall=" + ringingCall);
+        pw.println(" foregroundCall=" + foregroundCall);
+        pw.println(" backgroundCall=" + backgroundCall);
+        pw.println(" pendingMO=" + pendingMO);
+        pw.println(" hangupPendingMO=" + hangupPendingMO);
+        pw.println(" pendingCallInEcm=" + pendingCallInEcm);
+        pw.println(" mIsInEmergencyCall=" + mIsInEmergencyCall);
+        pw.println(" phone=" + phone);
+        pw.println(" desiredMute=" + desiredMute);
+        pw.println(" pendingCallClirMode=" + pendingCallClirMode);
+        pw.println(" state=" + state);
+        pw.println(" mIsEcmTimerCanceled=" + mIsEcmTimerCanceled);
+    }
 }

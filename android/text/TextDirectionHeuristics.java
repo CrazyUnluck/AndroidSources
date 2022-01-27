@@ -17,9 +17,8 @@
 package android.text;
 
 
-import java.util.Locale;
-
 import android.util.LocaleUtil;
+import android.view.View;
 
 /**
  * Some objects that implement TextDirectionHeuristic.
@@ -74,9 +73,8 @@ public class TextDirectionHeuristics {
      * Computes the text direction based on an algorithm.  Subclasses implement
      * {@link #defaultIsRtl} to handle cases where the algorithm cannot determine the
      * direction from the text alone.
-     * @hide
      */
-    public static abstract class TextDirectionHeuristicImpl implements TextDirectionHeuristic {
+    private static abstract class TextDirectionHeuristicImpl implements TextDirectionHeuristic {
         private final TextDirectionAlgorithm mAlgorithm;
 
         public TextDirectionHeuristicImpl(TextDirectionAlgorithm algorithm) {
@@ -157,13 +155,11 @@ public class TextDirectionHeuristics {
     /**
      * Interface for an algorithm to guess the direction of a paragraph of text.
      *
-     * @hide
      */
-    public static interface TextDirectionAlgorithm {
+    private static interface TextDirectionAlgorithm {
         /**
          * Returns whether the range of text is RTL according to the algorithm.
          *
-         * @hide
          */
         TriState checkRtl(char[] text, int start, int count);
     }
@@ -173,9 +169,8 @@ public class TextDirectionHeuristics {
      * the paragraph direction.  This is the standard Unicode Bidirectional
      * algorithm.
      *
-     * @hide
      */
-    public static class FirstStrong implements TextDirectionAlgorithm {
+    private static class FirstStrong implements TextDirectionAlgorithm {
         @Override
         public TriState checkRtl(char[] text, int start, int count) {
             TriState result = TriState.UNKNOWN;
@@ -196,9 +191,8 @@ public class TextDirectionHeuristics {
      * character (e.g. excludes LRE, LRO, RLE, RLO) to determine the
      * direction of text.
      *
-     * @hide
      */
-    public static class AnyStrong implements TextDirectionAlgorithm {
+    private static class AnyStrong implements TextDirectionAlgorithm {
         private final boolean mLookForRtl;
 
         @Override
@@ -239,7 +233,7 @@ public class TextDirectionHeuristics {
     /**
      * Algorithm that uses the Locale direction to force the direction of a paragraph.
      */
-    public static class TextDirectionHeuristicLocale extends TextDirectionHeuristicImpl {
+    private static class TextDirectionHeuristicLocale extends TextDirectionHeuristicImpl {
 
         public TextDirectionHeuristicLocale() {
             super(null);
@@ -248,7 +242,7 @@ public class TextDirectionHeuristics {
         @Override
         protected boolean defaultIsRtl() {
             final int dir = LocaleUtil.getLayoutDirectionFromLocale(java.util.Locale.getDefault());
-            return (dir == LocaleUtil.TEXT_LAYOUT_DIRECTION_RTL_DO_NOT_USE);
+            return (dir == View.LAYOUT_DIRECTION_RTL);
         }
 
         public static final TextDirectionHeuristicLocale INSTANCE =

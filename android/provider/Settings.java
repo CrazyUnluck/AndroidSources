@@ -36,13 +36,19 @@ import android.net.Uri;
 import android.net.wifi.WifiManager;
 import android.os.BatteryManager;
 import android.os.Bundle;
+import android.os.IBinder;
+import android.os.Process;
 import android.os.RemoteException;
+import android.os.ServiceManager;
 import android.os.SystemProperties;
+import android.os.UserId;
 import android.speech.tts.TextToSpeech;
 import android.text.TextUtils;
 import android.util.AndroidException;
 import android.util.Log;
 import android.view.WindowOrientationListener;
+
+import com.android.internal.widget.ILockSettings;
 
 import java.net.URISyntaxException;
 import java.util.HashMap;
@@ -569,7 +575,9 @@ public final class Settings {
         "android.settings.DEVICE_INFO_SETTINGS";
 
     /**
-     * Activity Action: Show NFC sharing settings.
+     * Activity Action: Show NFC settings.
+     * <p>
+     * This shows UI that allows NFC to be turned on or off.
      * <p>
      * In some cases, a matching Activity may not exist, so ensure you
      * safeguard against this.
@@ -577,6 +585,24 @@ public final class Settings {
      * Input: Nothing.
      * <p>
      * Output: Nothing
+     * @see android.nfc.NfcAdapter#isEnabled()
+     */
+    @SdkConstant(SdkConstantType.ACTIVITY_INTENT_ACTION)
+    public static final String ACTION_NFC_SETTINGS = "android.settings.NFC_SETTINGS";
+
+    /**
+     * Activity Action: Show NFC Sharing settings.
+     * <p>
+     * This shows UI that allows NDEF Push (Android Beam) to be turned on or
+     * off.
+     * <p>
+     * In some cases, a matching Activity may not exist, so ensure you
+     * safeguard against this.
+     * <p>
+     * Input: Nothing.
+     * <p>
+     * Output: Nothing
+     * @see android.nfc.NfcAdapter#isNdefPushEnabled()
      */
     @SdkConstant(SdkConstantType.ACTIVITY_INTENT_ACTION)
     public static final String ACTION_NFCSHARING_SETTINGS =
@@ -727,7 +753,7 @@ public final class Settings {
             Cursor c = null;
             try {
                 c = cp.query(mUri, SELECT_VALUE, NAME_EQ_PLACEHOLDER,
-                             new String[]{name}, null);
+                             new String[]{name}, null, null);
                 if (c == null) {
                     Log.w(TAG, "Can't get key " + name + " from " + mUri);
                     return null;
@@ -773,6 +799,7 @@ public final class Settings {
             MOVED_TO_SECURE.add(Secure.HTTP_PROXY);
             MOVED_TO_SECURE.add(Secure.INSTALL_NON_MARKET_APPS);
             MOVED_TO_SECURE.add(Secure.LOCATION_PROVIDERS_ALLOWED);
+            MOVED_TO_SECURE.add(Secure.LOCK_BIOMETRIC_WEAK_FLAGS);
             MOVED_TO_SECURE.add(Secure.LOCK_PATTERN_ENABLED);
             MOVED_TO_SECURE.add(Secure.LOCK_PATTERN_VISIBLE);
             MOVED_TO_SECURE.add(Secure.LOCK_PATTERN_TACTILE_FEEDBACK_ENABLED);
@@ -1381,6 +1408,13 @@ public final class Settings {
         public static final String SCREEN_BRIGHTNESS_MODE = "screen_brightness_mode";
 
         /**
+         * Adjustment to auto-brightness to make it generally more (>0.0 <1.0)
+         * or less (<0.0 >-1.0) bright.
+         * @hide
+         */
+        public static final String SCREEN_AUTO_BRIGHTNESS_ADJ = "screen_auto_brightness_adj";
+
+        /**
          * SCREEN_BRIGHTNESS_MODE value for manual mode.
          */
         public static final int SCREEN_BRIGHTNESS_MODE_MANUAL = 0;
@@ -1431,6 +1465,20 @@ public final class Settings {
         public static final String VIBRATE_ON = "vibrate_on";
 
         /**
+         * If 1, redirects the system vibrator to all currently attached input devices
+         * that support vibration.  If there are no such input devices, then the system
+         * vibrator is used instead.
+         * If 0, does not register the system vibrator.
+         *
+         * This setting is mainly intended to provide a compatibility mechanism for
+         * applications that only know about the system vibrator and do not use the
+         * input device vibrator API.
+         *
+         * @hide
+         */
+        public static final String VIBRATE_INPUT_DEVICES = "vibrate_input_devices";
+
+        /**
          * Ringer volume. This is used internally, changing this value will not
          * change the volume. See AudioManager.
          */
@@ -1473,13 +1521,28 @@ public final class Settings {
         public static final String VOLUME_BLUETOOTH_SCO = "volume_bluetooth_sco";
 
         /**
-         * Whether the notifications should use the ring volume (value of 1) or a separate
-         * notification volume (value of 0). In most cases, users will have this enabled so the
-         * notification and ringer volumes will be the same. However, power users can disable this
-         * and use the separate notification volume control.
+         * Master volume (float in the range 0.0f to 1.0f).
+         * @hide
+         */
+        public static final String VOLUME_MASTER = "volume_master";
+
+        /**
+         * Master volume mute (int 1 = mute, 0 = not muted).
+         *
+         * @hide
+         */
+        public static final String VOLUME_MASTER_MUTE = "volume_master_mute";
+
+        /**
+         * Whether the notifications should use the ring volume (value of 1) or
+         * a separate notification volume (value of 0). In most cases, users
+         * will have this enabled so the notification and ringer volumes will be
+         * the same. However, power users can disable this and use the separate
+         * notification volume control.
          * <p>
-         * Note: This is a one-off setting that will be removed in the future when there is profile
-         * support. For this reason, it is kept hidden from the public APIs.
+         * Note: This is a one-off setting that will be removed in the future
+         * when there is profile support. For this reason, it is kept hidden
+         * from the public APIs.
          *
          * @hide
          * @deprecated
@@ -1495,6 +1558,9 @@ public final class Settings {
          * will likely be removed in a future release with support for
          * audio/vibe feedback profiles.
          *
+         * Not used anymore. On devices with vibrator, the user explicitly selects
+         * silent or vibrate mode.
+         * Kept for use by legacy database upgrade code in DatabaseHelper.
          * @hide
          */
         public static final String VIBRATE_IN_SILENT = "vibrate_in_silent";
@@ -1652,6 +1718,13 @@ public final class Settings {
         public static final String TRANSITION_ANIMATION_SCALE = "transition_animation_scale";
 
         /**
+         * Scaling factor for Animator-based animations. This affects both the start delay and
+         * duration of all such animations. Setting to 0 will cause animations to end immediately.
+         * The default value is 1.
+         */
+        public static final String ANIMATOR_DURATION_SCALE = "animator_duration_scale";
+
+        /**
          * Scaling factor for normal window animations. Setting to 0 will disable window
          * animations.
          * @hide
@@ -1675,6 +1748,34 @@ public final class Settings {
          * @see Display#getRotation
          */
         public static final String USER_ROTATION = "user_rotation";
+
+        /**
+         * Control whether the rotation lock toggle in the System UI should be hidden.
+         * Typically this is done for accessibility purposes to make it harder for
+         * the user to accidentally toggle the rotation lock while the display rotation
+         * has been locked for accessibility.
+         *
+         * If 0, then rotation lock toggle is not hidden for accessibility (although it may be
+         * unavailable for other reasons).  If 1, then the rotation lock toggle is hidden.
+         *
+         * @hide
+         */
+        public static final String HIDE_ROTATION_LOCK_TOGGLE_FOR_ACCESSIBILITY =
+                "hide_rotation_lock_toggle_for_accessibility";
+
+        /**
+         * Whether the phone vibrates when it is ringing due to an incoming call. This will
+         * be used by Phone and Setting apps; it shouldn't affect other apps.
+         * The value is boolean (1 or 0).
+         *
+         * Note: this is not same as "vibrate on ring", which had been available until ICS.
+         * It was about AudioManager's setting and thus affected all the applications which
+         * relied on the setting, while this is purely about the vibration setting for incoming
+         * calls.
+         *
+         * @hide
+         */
+        public static final String VIBRATE_WHEN_RINGING = "vibrate_when_ringing";
 
         /**
          * Whether the audible DTMF tones are played by the dialer when dialing. The value is
@@ -1797,6 +1898,12 @@ public final class Settings {
         public static final String LOCKSCREEN_SOUNDS_ENABLED = "lockscreen_sounds_enabled";
 
         /**
+         * Whether the lockscreen should be completely disabled.
+         * @hide
+         */
+        public static final String LOCKSCREEN_DISABLED = "lockscreen.disabled";
+
+        /**
          * URI for the low battery sound file.
          * @hide
          */
@@ -1907,7 +2014,8 @@ public final class Settings {
             SCREEN_OFF_TIMEOUT,
             SCREEN_BRIGHTNESS,
             SCREEN_BRIGHTNESS_MODE,
-            VIBRATE_ON,
+            SCREEN_AUTO_BRIGHTNESS_ADJ,
+            VIBRATE_INPUT_DEVICES,
             MODE_RINGER,
             MODE_RINGER_STREAMS_AFFECTED,
             MUTE_STREAMS_AFFECTED,
@@ -1925,7 +2033,6 @@ public final class Settings {
             VOLUME_ALARM + APPEND_FOR_LAST_AUDIBLE,
             VOLUME_NOTIFICATION + APPEND_FOR_LAST_AUDIBLE,
             VOLUME_BLUETOOTH_SCO + APPEND_FOR_LAST_AUDIBLE,
-            VIBRATE_IN_SILENT,
             TEXT_AUTO_REPLACE,
             TEXT_AUTO_CAPS,
             TEXT_AUTO_PUNCTUATE,
@@ -1934,8 +2041,6 @@ public final class Settings {
             AUTO_TIME_ZONE,
             TIME_12_24,
             DATE_FORMAT,
-            ACCELEROMETER_ROTATION,
-            USER_ROTATION,
             DTMF_TONE_WHEN_DIALING,
             DTMF_TONE_TYPE_WHEN_DIALING,
             EMERGENCY_TONE,
@@ -1952,6 +2057,7 @@ public final class Settings {
             SIP_CALL_OPTIONS,
             SIP_RECEIVE_CALLS,
             POINTER_SPEED,
+            VIBRATE_WHEN_RINGING
         };
 
         // Settings moved to Settings.Secure
@@ -2197,6 +2303,17 @@ public final class Settings {
         // Populated lazily, guarded by class object:
         private static NameValueCache sNameValueCache = null;
 
+        private static ILockSettings sLockSettings = null;
+
+        private static boolean sIsSystemProcess;
+        private static final HashSet<String> MOVED_TO_LOCK_SETTINGS;
+        static {
+            MOVED_TO_LOCK_SETTINGS = new HashSet<String>(3);
+            MOVED_TO_LOCK_SETTINGS.add(Secure.LOCK_PATTERN_ENABLED);
+            MOVED_TO_LOCK_SETTINGS.add(Secure.LOCK_PATTERN_VISIBLE);
+            MOVED_TO_LOCK_SETTINGS.add(Secure.LOCK_PATTERN_TACTILE_FEEDBACK_ENABLED);
+        }
+
         /**
          * Look up a name in the database.
          * @param resolver to access the database with
@@ -2208,6 +2325,21 @@ public final class Settings {
                 sNameValueCache = new NameValueCache(SYS_PROP_SETTING_VERSION, CONTENT_URI,
                                                      CALL_METHOD_GET_SECURE);
             }
+
+            if (sLockSettings == null) {
+                sLockSettings = ILockSettings.Stub.asInterface(
+                        (IBinder) ServiceManager.getService("lock_settings"));
+                sIsSystemProcess = Process.myUid() == Process.SYSTEM_UID;
+            }
+            if (sLockSettings != null && !sIsSystemProcess
+                    && MOVED_TO_LOCK_SETTINGS.contains(name)) {
+                try {
+                    return sLockSettings.getString(name, "0", UserId.getCallingUserId());
+                } catch (RemoteException re) {
+                    // Fall through
+                }
+            }
+
             return sNameValueCache.getString(resolver, name);
         }
 
@@ -2448,6 +2580,11 @@ public final class Settings {
             Uri.parse("content://" + AUTHORITY + "/secure");
 
         /**
+         * Whether user has enabled development settings.
+         */
+        public static final String DEVELOPMENT_SETTINGS_ENABLED = "development_settings_enabled";
+
+        /**
          * Whether ADB is enabled.
          */
         public static final String ADB_ENABLED = "adb_enabled";
@@ -2606,6 +2743,13 @@ public final class Settings {
         public static final String LOCATION_PROVIDERS_ALLOWED = "location_providers_allowed";
 
         /**
+         * A flag containing settings used for biometric weak
+         * @hide
+         */
+        public static final String LOCK_BIOMETRIC_WEAK_FLAGS =
+                "lock_biometric_weak_flags";
+
+        /**
          * Whether autolock is enabled (0 = false, 1 = true)
          */
         public static final String LOCK_PATTERN_ENABLED = "lock_pattern_autolock";
@@ -2754,15 +2898,24 @@ public final class Settings {
             "enabled_accessibility_services";
 
         /**
+         * List of the accessibility services to which the user has graned
+         * permission to put the device into touch exploration mode.
+         *
+         * @hide
+         */
+        public static final String TOUCH_EXPLORATION_GRANTED_ACCESSIBILITY_SERVICES =
+            "touch_exploration_granted_accessibility_services";
+
+        /**
          * Whether to speak passwords while in accessibility mode.
          */
         public static final String ACCESSIBILITY_SPEAK_PASSWORD = "speak_password";
 
         /**
-         * If injection of accessibility enhancing JavaScript scripts
+         * If injection of accessibility enhancing JavaScript screen-reader
          * is enabled.
          * <p>
-         *   Note: Accessibility injecting scripts are served by the
+         *   Note: The JavaScript based screen-reader is served by the
          *   Google infrastructure and enable users with disabilities to
          *   efficiantly navigate in and explore web content.
          * </p>
@@ -2773,6 +2926,22 @@ public final class Settings {
          */
         public static final String ACCESSIBILITY_SCRIPT_INJECTION =
             "accessibility_script_injection";
+
+        /**
+         * The URL for the injected JavaScript based screen-reader used
+         * for providing accessiblity of content in WebView.
+         * <p>
+         *   Note: The JavaScript based screen-reader is served by the
+         *   Google infrastructure and enable users with disabilities to
+         *   efficiently navigate in and explore web content.
+         * </p>
+         * <p>
+         *   This property represents a string value.
+         * </p>
+         * @hide
+         */
+        public static final String ACCESSIBILITY_SCREEN_READER_URL =
+            "accessibility_script_injection_url";
 
         /**
          * Key bindings for navigation in built-in accessibility support for web content.
@@ -3058,15 +3227,16 @@ public final class Settings {
          * ms delay before rechecking an 'online' wifi connection when it is thought to be unstable.
          * @hide
          */
-        public static final String WIFI_WATCHDOG_DNS_CHECK_SHORT_INTERVAL_MS =
-                "wifi_watchdog_dns_check_short_interval_ms";
+        public static final String WIFI_WATCHDOG_ARP_CHECK_INTERVAL_MS =
+                "wifi_watchdog_arp_interval_ms";
 
         /**
-         * ms delay before rechecking an 'online' wifi connection when it is thought to be stable.
+         * ms delay interval between rssi polling when the signal is known to be weak
          * @hide
          */
-        public static final String WIFI_WATCHDOG_DNS_CHECK_LONG_INTERVAL_MS =
-                "wifi_watchdog_dns_check_long_interval_ms";
+        public static final String WIFI_WATCHDOG_RSSI_FETCH_INTERVAL_MS =
+                "wifi_watchdog_rssi_fetch_interval_ms";
+
 
         /**
          * ms delay before rechecking a connect SSID for walled garden with a http download.
@@ -3076,44 +3246,28 @@ public final class Settings {
                 "wifi_watchdog_walled_garden_interval_ms";
 
         /**
-         * max blacklist calls on an SSID before full dns check failures disable the network.
+         * Number of ARP pings per check.
          * @hide
          */
-        public static final String WIFI_WATCHDOG_MAX_SSID_BLACKLISTS =
-                "wifi_watchdog_max_ssid_blacklists";
+        public static final String WIFI_WATCHDOG_NUM_ARP_PINGS = "wifi_watchdog_num_arp_pings";
 
         /**
-         * Number of dns pings per check.
+         * Minimum number of responses to the arp pings to consider the test 'successful'.
          * @hide
          */
-        public static final String WIFI_WATCHDOG_NUM_DNS_PINGS = "wifi_watchdog_num_dns_pings";
+        public static final String WIFI_WATCHDOG_MIN_ARP_RESPONSES =
+                "wifi_watchdog_min_arp_responses";
 
         /**
-         * Minimum number of responses to the dns pings to consider the test 'successful'.
+         * Timeout on ARP pings
          * @hide
          */
-        public static final String WIFI_WATCHDOG_MIN_DNS_RESPONSES =
-                "wifi_watchdog_min_dns_responses";
+        public static final String WIFI_WATCHDOG_ARP_PING_TIMEOUT_MS =
+                "wifi_watchdog_arp_ping_timeout_ms";
 
         /**
-         * Timeout on dns pings
-         * @hide
-         */
-        public static final String WIFI_WATCHDOG_DNS_PING_TIMEOUT_MS =
-                "wifi_watchdog_dns_ping_timeout_ms";
-
-        /**
-         * We consider action from a 'blacklist' call to have finished by the end of
-         * this interval.  If we are connected to the same AP with no network connection,
-         * we are likely stuck on an SSID with no external connectivity.
-         * @hide
-         */
-        public static final String WIFI_WATCHDOG_BLACKLIST_FOLLOWUP_INTERVAL_MS =
-                "wifi_watchdog_blacklist_followup_interval_ms";
-
-        /**
-         * Setting to turn off poor network avoidance on Wi-Fi. Feature is disabled by default and
-         * the setting needs to be set to 1 to enable it.
+         * Setting to turn off poor network avoidance on Wi-Fi. Feature is enabled by default and
+         * the setting needs to be set to 0 to disable it.
          * @hide
          */
         public static final String WIFI_WATCHDOG_POOR_NETWORK_TEST_ENABLED =
@@ -3137,14 +3291,6 @@ public final class Settings {
                 "wifi_watchdog_walled_garden_url";
 
         /**
-         * Boolean to determine whether to notify on disabling a network.  Secure setting used
-         * to notify user only once.
-         * @hide
-         */
-        public static final String WIFI_WATCHDOG_SHOW_DISABLED_NETWORK_POPUP =
-                "wifi_watchdog_show_disabled_network_popup";
-
-        /**
          * The maximum number of times we will retry a connection to an access
          * point for which we have failed in acquiring an IP address from DHCP.
          * A value of N means that we will make N+1 connection attempts in all.
@@ -3162,11 +3308,23 @@ public final class Settings {
         public static final String WIFI_FREQUENCY_BAND = "wifi_frequency_band";
 
         /**
+         * The Wi-Fi peer-to-peer device name
+         * @hide
+         */
+        public static final String WIFI_P2P_DEVICE_NAME = "wifi_p2p_device_name";
+
+        /**
          * Maximum amount of time in milliseconds to hold a wakelock while waiting for mobile
          * data connectivity to be established after a disconnect from Wi-Fi.
          */
         public static final String WIFI_MOBILE_DATA_TRANSITION_WAKELOCK_TIMEOUT_MS =
             "wifi_mobile_data_transition_wakelock_timeout_ms";
+
+        /**
+         * Whether network service discovery is enabled.
+         * @hide
+         */
+        public static final String NSD_ON = "nsd_on";
 
         /**
          * Whether background data usage is allowed by the user. See
@@ -4041,22 +4199,67 @@ public final class Settings {
         public static final String SETUP_PREPAID_DETECTION_REDIR_HOST =
                 "setup_prepaid_detection_redir_host";
 
+        /**
+         * Whether the screensaver is enabled.
+         * @hide
+         */
+        public static final String SCREENSAVER_ENABLED = "screensaver_enabled";
+
+        /**
+         * The user's chosen screensaver component.
+         *
+         * This component will be launched by the PhoneWindowManager after a timeout when not on
+         * battery, or upon dock insertion (if SCREENSAVER_ACTIVATE_ON_DOCK is set to 1).
+         * @hide
+         */
+        public static final String SCREENSAVER_COMPONENT = "screensaver_component";
+
+        /**
+         * Whether the screensaver should be automatically launched when the device is inserted
+         * into a (desk) dock.
+         * @hide
+         */
+        public static final String SCREENSAVER_ACTIVATE_ON_DOCK = "screensaver_activate_on_dock";
+
         /** {@hide} */
         public static final String NETSTATS_ENABLED = "netstats_enabled";
         /** {@hide} */
         public static final String NETSTATS_POLL_INTERVAL = "netstats_poll_interval";
         /** {@hide} */
-        public static final String NETSTATS_PERSIST_THRESHOLD = "netstats_persist_threshold";
+        public static final String NETSTATS_TIME_CACHE_MAX_AGE = "netstats_time_cache_max_age";
         /** {@hide} */
-        public static final String NETSTATS_NETWORK_BUCKET_DURATION = "netstats_network_bucket_duration";
+        public static final String NETSTATS_GLOBAL_ALERT_BYTES = "netstats_global_alert_bytes";
         /** {@hide} */
-        public static final String NETSTATS_NETWORK_MAX_HISTORY = "netstats_network_max_history";
+        public static final String NETSTATS_SAMPLE_ENABLED = "netstats_sample_enabled";
+        /** {@hide} */
+        public static final String NETSTATS_REPORT_XT_OVER_DEV = "netstats_report_xt_over_dev";
+
+        /** {@hide} */
+        public static final String NETSTATS_DEV_BUCKET_DURATION = "netstats_dev_bucket_duration";
+        /** {@hide} */
+        public static final String NETSTATS_DEV_PERSIST_BYTES = "netstats_dev_persist_bytes";
+        /** {@hide} */
+        public static final String NETSTATS_DEV_ROTATE_AGE = "netstats_dev_rotate_age";
+        /** {@hide} */
+        public static final String NETSTATS_DEV_DELETE_AGE = "netstats_dev_delete_age";
+
         /** {@hide} */
         public static final String NETSTATS_UID_BUCKET_DURATION = "netstats_uid_bucket_duration";
         /** {@hide} */
-        public static final String NETSTATS_UID_MAX_HISTORY = "netstats_uid_max_history";
+        public static final String NETSTATS_UID_PERSIST_BYTES = "netstats_uid_persist_bytes";
         /** {@hide} */
-        public static final String NETSTATS_TAG_MAX_HISTORY = "netstats_tag_max_history";
+        public static final String NETSTATS_UID_ROTATE_AGE = "netstats_uid_rotate_age";
+        /** {@hide} */
+        public static final String NETSTATS_UID_DELETE_AGE = "netstats_uid_delete_age";
+
+        /** {@hide} */
+        public static final String NETSTATS_UID_TAG_BUCKET_DURATION = "netstats_uid_tag_bucket_duration";
+        /** {@hide} */
+        public static final String NETSTATS_UID_TAG_PERSIST_BYTES = "netstats_uid_tag_persist_bytes";
+        /** {@hide} */
+        public static final String NETSTATS_UID_TAG_ROTATE_AGE = "netstats_uid_tag_rotate_age";
+        /** {@hide} */
+        public static final String NETSTATS_UID_TAG_DELETE_AGE = "netstats_uid_tag_delete_age";
 
         /** Preferred NTP server. {@hide} */
         public static final String NTP_SERVER = "ntp_server";
@@ -4073,6 +4276,10 @@ public final class Settings {
         /** Timeout for package verification. {@hide} */
         public static final String PACKAGE_VERIFIER_TIMEOUT = "verifier_timeout";
 
+        /** {@hide} */
+        public static final String
+                READ_EXTERNAL_STORAGE_ENFORCED_DEFAULT = "read_external_storage_enforced_default";
+
         /**
          * Duration in milliseconds before pre-authorized URIs for the contacts
          * provider should expire.
@@ -4080,6 +4287,13 @@ public final class Settings {
          */
         public static final String CONTACTS_PREAUTH_URI_EXPIRATION =
                 "contacts_preauth_uri_expiration";
+
+        /**
+         * Prefix for SMS short code regex patterns (country code is appended).
+         * @see com.android.internal.telephony.SmsUsageMonitor
+         * @hide
+         */
+        public static final String SMS_SHORT_CODES_PREFIX = "sms_short_codes_";
 
         /**
          * This are the settings to be backed up.
@@ -4099,6 +4313,7 @@ public final class Settings {
             ACCESSIBILITY_SCRIPT_INJECTION,
             BACKUP_AUTO_RESTORE,
             ENABLED_ACCESSIBILITY_SERVICES,
+            TOUCH_EXPLORATION_GRANTED_ACCESSIBILITY_SERVICES,
             TOUCH_EXPLORATION_ENABLED,
             ACCESSIBILITY_ENABLED,
             ACCESSIBILITY_SPEAK_PASSWORD,

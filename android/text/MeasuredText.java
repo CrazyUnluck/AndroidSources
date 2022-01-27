@@ -82,6 +82,10 @@ class MeasuredText {
         return null;
     }
 
+    void setPos(int pos) {
+        mPos = pos;
+    }
+
     /**
      * Analyzes text for bidirectional runs.  Allocates working buffers.
      */
@@ -109,8 +113,11 @@ class MeasuredText {
             for (int i = 0; i < spans.length; i++) {
                 int startInPara = spanned.getSpanStart(spans[i]) - start;
                 int endInPara = spanned.getSpanEnd(spans[i]) - start;
+                // The span interval may be larger and must be restricted to [start, end[
+                if (startInPara < 0) startInPara = 0;
+                if (endInPara > len) endInPara = len;
                 for (int j = startInPara; j < endInPara; j++) {
-                    mChars[j] = '\uFFFC';
+                    mChars[j] = '\uFFFC'; // object replacement character
                 }
             }
         }
@@ -219,23 +226,27 @@ class MeasuredText {
         return wid;
     }
 
-    int breakText(int start, int limit, boolean forwards, float width) {
+    int breakText(int limit, boolean forwards, float width) {
         float[] w = mWidths;
         if (forwards) {
-            for (int i = start; i < limit; ++i) {
-                if ((width -= w[i]) < 0) {
-                    return i - start;
-                }
+            int i = 0;
+            while (i < limit) {
+                width -= w[i];
+                if (width < 0.0f) break;
+                i++;
             }
+            while (i > 0 && mChars[i - 1] == ' ') i--;
+            return i;
         } else {
-            for (int i = limit; --i >= start;) {
-                if ((width -= w[i]) < 0) {
-                    return limit - i -1;
-                }
+            int i = limit - 1;
+            while (i >= 0) {
+                width -= w[i];
+                if (width < 0.0f) break;
+                i--;
             }
+            while (i < limit - 1 && mChars[i + 1] == ' ') i++;
+            return limit - i - 1;
         }
-
-        return limit - start;
     }
 
     float measure(int start, int limit) {

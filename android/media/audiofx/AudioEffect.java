@@ -386,7 +386,7 @@ public class AudioEffect {
             default:
                 throw (new RuntimeException(
                         "Cannot initialize effect engine for type: " + type
-                                + "Error: " + initResult));
+                                + " Error: " + initResult));
             }
         }
         mId = id[0];
@@ -450,6 +450,22 @@ public class AudioEffect {
 
     static public Descriptor[] queryPreProcessings(int audioSession) {
         return (Descriptor[]) native_query_pre_processing(audioSession);
+    }
+
+    /**
+     * Checks if the device implements the specified effect type.
+     * @param type the requested effect type.
+     * @return true if the device implements the specified effect type, false otherwise.
+     * @hide
+     */
+    public static boolean isEffectTypeAvailable(UUID type) {
+        AudioEffect.Descriptor[] desc = AudioEffect.queryEffects();
+        for (int i = 0; i < desc.length; i++) {
+            if (desc[i].type.equals(type)) {
+                return true;
+            }
+        }
+        return false;
     }
 
     // --------------------------------------------------------------------------

@@ -30,6 +30,7 @@ import android.database.Cursor;
 import android.net.Uri;
 import android.os.Bundle;
 import android.os.IBinder;
+import android.os.ICancellationSignal;
 import android.os.ParcelFileDescriptor;
 import android.os.RemoteException;
 
@@ -92,7 +93,7 @@ public class MockContentProvider extends ContentProvider {
 
         @Override
         public Cursor query(Uri url, String[] projection, String selection, String[] selectionArgs,
-                String sortOrder) throws RemoteException {
+                String sortOrder, ICancellationSignal cancellationSignal) throws RemoteException {
             return MockContentProvider.this.query(url, projection, selection,
                     selectionArgs, sortOrder);
         }
@@ -123,6 +124,11 @@ public class MockContentProvider extends ContentProvider {
         public AssetFileDescriptor openTypedAssetFile(Uri url, String mimeType, Bundle opts)
                 throws RemoteException, FileNotFoundException {
             return MockContentProvider.this.openTypedAssetFile(url, mimeType, opts);
+        }
+
+        @Override
+        public ICancellationSignal createCancellationSignal() throws RemoteException {
+            return null;
         }
     }
     private final InversionIContentProvider mIContentProvider = new InversionIContentProvider();

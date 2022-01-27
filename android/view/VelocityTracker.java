@@ -29,16 +29,17 @@ import android.util.PoolableManager;
  * to begin tracking.  Put the motion events you receive into it with
  * {@link #addMovement(MotionEvent)}.  When you want to determine the velocity call
  * {@link #computeCurrentVelocity(int)} and then call {@link #getXVelocity(int)}
- * and {@link #getXVelocity(int)} to retrieve the velocity for each pointer id.
+ * and {@link #getYVelocity(int)} to retrieve the velocity for each pointer id.
  */
 public final class VelocityTracker implements Poolable<VelocityTracker> {
     private static final Pool<VelocityTracker> sPool = Pools.synchronizedPool(
             Pools.finitePool(new PoolableManager<VelocityTracker>() {
                 public VelocityTracker newInstance() {
-                    return new VelocityTracker();
+                    return new VelocityTracker(null);
                 }
 
                 public void onAcquired(VelocityTracker element) {
+                    // Intentionally empty
                 }
 
                 public void onReleased(VelocityTracker element) {
@@ -49,18 +50,19 @@ public final class VelocityTracker implements Poolable<VelocityTracker> {
     private static final int ACTIVE_POINTER_ID = -1;
 
     private int mPtr;
+    private final String mStrategy;
+
     private VelocityTracker mNext;
     private boolean mIsPooled;
 
-    private static native int nativeInitialize();
+    private static native int nativeInitialize(String strategy);
     private static native void nativeDispose(int ptr);
     private static native void nativeClear(int ptr);
     private static native void nativeAddMovement(int ptr, MotionEvent event);
     private static native void nativeComputeCurrentVelocity(int ptr, int units, float maxVelocity);
     private static native float nativeGetXVelocity(int ptr, int id);
     private static native float nativeGetYVelocity(int ptr, int id);
-    private static native boolean nativeGetEstimator(int ptr, int id,
-            int degree, int horizonMillis, Estimator outEstimator);
+    private static native boolean nativeGetEstimator(int ptr, int id, Estimator outEstimator);
 
     /**
      * Retrieve a new VelocityTracker object to watch the velocity of a
@@ -75,11 +77,29 @@ public final class VelocityTracker implements Poolable<VelocityTracker> {
     }
 
     /**
+     * Obtains a velocity tracker with the specified strategy.
+     * For testing and comparison purposes only.
+     *
+     * @param strategy The strategy, or null to use the default.
+     * @return The velocity tracker.
+     *
+     * @hide
+     */
+    public static VelocityTracker obtain(String strategy) {
+        if (strategy == null) {
+            return obtain();
+        }
+        return new VelocityTracker(strategy);
+    }
+
+    /**
      * Return a VelocityTracker object back to be re-used by others.  You must
      * not touch the object after calling this function.
      */
     public void recycle() {
-        sPool.release(this);
+        if (mStrategy == null) {
+            sPool.release(this);
+        }
     }
 
     /**
@@ -110,8 +130,9 @@ public final class VelocityTracker implements Poolable<VelocityTracker> {
         mIsPooled = isPooled;
     }
 
-    private VelocityTracker() {
-        mPtr = nativeInitialize();
+    private VelocityTracker(String strategy) {
+        mPtr = nativeInitialize(strategy);
+        mStrategy = strategy;
     }
 
     @Override
@@ -226,21 +247,17 @@ public final class VelocityTracker implements Poolable<VelocityTracker> {
      * this method.
      *
      * @param id Which pointer's velocity to return.
-     * @param degree The desired polynomial degree.  The actual estimator may have
-     * a lower degree than what is requested here.  If -1, uses the default degree.
-     * @param horizonMillis The maximum age of the oldest sample to consider, in milliseconds.
-     * If -1, uses the default horizon.
      * @param outEstimator The estimator to populate.
      * @return True if an estimator was obtained, false if there is no information
      * available about the pointer.
      *
      * @hide For internal use only.  Not a final API.
      */
-    public boolean getEstimator(int id, int degree, int horizonMillis, Estimator outEstimator) {
+    public boolean getEstimator(int id, Estimator outEstimator) {
         if (outEstimator == null) {
             throw new IllegalArgumentException("outEstimator must not be null");
         }
-        return nativeGetEstimator(mPtr, id, degree, horizonMillis, outEstimator);
+        return nativeGetEstimator(mPtr, id, outEstimator);
     }
 
     /**
@@ -257,7 +274,7 @@ public final class VelocityTracker implements Poolable<VelocityTracker> {
      */
     public static final class Estimator {
         // Must match VelocityTracker::Estimator::MAX_DEGREE
-        private static final int MAX_DEGREE = 2;
+        private static final int MAX_DEGREE = 4;
 
         /**
          * Polynomial coefficients describing motion in X.
@@ -295,6 +312,24 @@ public final class VelocityTracker implements Poolable<VelocityTracker> {
          */
         public float estimateY(float time) {
             return estimate(time, yCoeff);
+        }
+
+        /**
+         * Gets the X coefficient with the specified index.
+         * @param index The index of the coefficient to return.
+         * @return The X coefficient, or 0 if the index is greater than the degree.
+         */
+        public float getXCoeff(int index) {
+            return index <= degree ? xCoeff[index] : 0;
+        }
+
+        /**
+         * Gets the Y coefficient with the specified index.
+         * @param index The index of the coefficient to return.
+         * @return The Y coefficient, or 0 if the index is greater than the degree.
+         */
+        public float getYCoeff(int index) {
+            return index <= degree ? yCoeff[index] : 0;
         }
 
         private float estimate(float time, float[] c) {

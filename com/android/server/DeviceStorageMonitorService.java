@@ -25,6 +25,8 @@ import android.content.Intent;
 import android.content.pm.IPackageDataObserver;
 import android.content.pm.IPackageManager;
 import android.os.Binder;
+import android.os.Environment;
+import android.os.FileObserver;
 import android.os.Handler;
 import android.os.Message;
 import android.os.Process;
@@ -90,6 +92,7 @@ public class DeviceStorageMonitorService extends Binder {
     private Intent mStorageFullIntent;
     private Intent mStorageNotFullIntent;
     private CachePackageDataObserver mClearCacheObserver;
+    private final CacheFileDeletedObserver mCacheFileDeletedObserver;
     private static final int _TRUE = 1;
     private static final int _FALSE = 0;
     private long mMemLowThreshold;
@@ -323,6 +326,9 @@ public class DeviceStorageMonitorService extends Binder {
         mMemLowThreshold = getMemThreshold();
         mMemFullThreshold = getMemFullThreshold();
         checkMemory(true);
+
+        mCacheFileDeletedObserver = new CacheFileDeletedObserver();
+        mCacheFileDeletedObserver.startWatching();
     }
 
 
@@ -336,7 +342,9 @@ public class DeviceStorageMonitorService extends Binder {
         //log the event to event log with the amount of free storage(in bytes) left on the device
         EventLog.writeEvent(EventLogTags.LOW_STORAGE, mFreeMem);
         //  Pack up the values and broadcast them to everyone
-        Intent lowMemIntent = new Intent(Intent.ACTION_MANAGE_PACKAGE_STORAGE);
+        Intent lowMemIntent = new Intent(Environment.isExternalStorageEmulated()
+                ? Settings.ACTION_INTERNAL_STORAGE_SETTINGS
+                : Intent.ACTION_MANAGE_PACKAGE_STORAGE);
         lowMemIntent.putExtra("memory", mFreeMem);
         lowMemIntent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
         NotificationManager mNotificationMgr =
@@ -415,5 +423,16 @@ public class DeviceStorageMonitorService extends Binder {
      */
     public boolean isMemoryLow() {
         return mLowMemFlag;
+    }
+
+    public static class CacheFileDeletedObserver extends FileObserver {
+        public CacheFileDeletedObserver() {
+            super(Environment.getDownloadCacheDirectory().getAbsolutePath(), FileObserver.DELETE);
+        }
+
+        @Override
+        public void onEvent(int event, String path) {
+            EventLogTags.writeCacheFileDeleted(path);
+        }
     }
 }

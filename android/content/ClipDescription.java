@@ -41,6 +41,11 @@ public class ClipDescription implements Parcelable {
     public static final String MIMETYPE_TEXT_PLAIN = "text/plain";
 
     /**
+     * The MIME type for a clip holding HTML text.
+     */
+    public static final String MIMETYPE_TEXT_HTML = "text/html";
+
+    /**
      * The MIME type for a clip holding one or more URIs.  This should be
      * used for URIs that are meaningful to a user (such as an http: URI).
      * It should <em>not</em> be used for a content: URI that references some
@@ -181,6 +186,39 @@ public class ClipDescription implements Parcelable {
                 throw new NullPointerException("mime type at " + i + " is null");
             }
         }
+    }
+
+    @Override
+    public String toString() {
+        StringBuilder b = new StringBuilder(128);
+
+        b.append("ClipDescription { ");
+        toShortString(b);
+        b.append(" }");
+
+        return b.toString();
+    }
+
+    /** @hide */
+    public boolean toShortString(StringBuilder b) {
+        boolean first = true;
+        for (int i=0; i<mMimeTypes.length; i++) {
+            if (!first) {
+                b.append(' ');
+            }
+            first = false;
+            b.append(mMimeTypes[i]);
+        }
+        if (mLabel != null) {
+            if (!first) {
+                b.append(' ');
+            }
+            first = false;
+            b.append('"');
+            b.append(mLabel);
+            b.append('"');
+        }
+        return !first;
     }
 
     @Override

@@ -54,6 +54,10 @@ import java.util.Map;
  * <p>This class does not allow null to be used as a key or value. A return
  * value of null from {@link #get}, {@link #put} or {@link #remove} is
  * unambiguous: the key was not in the cache.
+ *
+ * <p>This class appeared in Android 3.1 (Honeycomb MR1); it's available as part
+ * of <a href="http://developer.android.com/sdk/compatibility-library.html">Android's
+ * Support Package</a> for earlier releases.
  */
 public class LruCache<K, V> {
     private final LinkedHashMap<K, V> map;
@@ -79,6 +83,23 @@ public class LruCache<K, V> {
         }
         this.maxSize = maxSize;
         this.map = new LinkedHashMap<K, V>(0, 0.75f, true);
+    }
+
+    /**
+     * Sets the size of the cache.
+     * @param maxSize The new maximum size.
+     *
+     * @hide
+     */
+    public void resize(int maxSize) {
+        if (maxSize <= 0) {
+            throw new IllegalArgumentException("maxSize <= 0");
+        }
+
+        synchronized (this) {
+            this.maxSize = maxSize;
+        }
+        trimToSize(maxSize);
     }
 
     /**

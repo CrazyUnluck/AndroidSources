@@ -19,11 +19,10 @@ package android.media;
 import android.annotation.SdkConstant;
 import android.annotation.SdkConstant.SdkConstantType;
 import android.app.PendingIntent;
+import android.bluetooth.BluetoothDevice;
 import android.content.ComponentName;
 import android.content.Context;
 import android.content.Intent;
-import android.database.ContentObserver;
-import android.graphics.Bitmap;
 import android.os.Binder;
 import android.os.Handler;
 import android.os.IBinder;
@@ -37,7 +36,6 @@ import android.util.Log;
 import android.view.KeyEvent;
 import android.view.VolumePanel;
 
-import java.util.Iterator;
 import java.util.HashMap;
 
 /**
@@ -49,11 +47,9 @@ import java.util.HashMap;
 public class AudioManager {
 
     private final Context mContext;
-    private final Handler mHandler;
     private long mVolumeKeyUpTime;
-    private int  mVolumeControlStream = -1;
+    private final boolean mUseMasterVolume;
     private static String TAG = "AudioManager";
-    private static boolean localLOGV = false;
 
     /**
      * Broadcast intent, a hint for applications that audio is about to become
@@ -93,13 +89,19 @@ public class AudioManager {
      *
      * @see #EXTRA_VIBRATE_TYPE
      * @see #EXTRA_VIBRATE_SETTING
+     * @deprecated Applications should maintain their own vibrate policy based on
+     * current ringer mode and listen to {@link #RINGER_MODE_CHANGED_ACTION} instead.
      */
     @SdkConstant(SdkConstantType.BROADCAST_INTENT_ACTION)
-    public static final String VIBRATE_SETTING_CHANGED_ACTION = "android.media.VIBRATE_SETTING_CHANGED";
+    public static final String VIBRATE_SETTING_CHANGED_ACTION =
+        "android.media.VIBRATE_SETTING_CHANGED";
 
     /**
      * @hide Broadcast intent when the volume for a particular stream type changes.
-     * Includes the stream, the new volume and previous volumes
+     * Includes the stream, the new volume and previous volumes.
+     * Notes:
+     *  - for internal platform use only, do not make public,
+     *  - never used for "remote" volume changes
      *
      * @see #EXTRA_VOLUME_STREAM_TYPE
      * @see #EXTRA_VOLUME_STREAM_VALUE
@@ -109,6 +111,27 @@ public class AudioManager {
     public static final String VOLUME_CHANGED_ACTION = "android.media.VOLUME_CHANGED_ACTION";
 
     /**
+     * @hide Broadcast intent when the master volume changes.
+     * Includes the new volume
+     *
+     * @see #EXTRA_MASTER_VOLUME_VALUE
+     * @see #EXTRA_PREV_MASTER_VOLUME_VALUE
+     */
+    @SdkConstant(SdkConstantType.BROADCAST_INTENT_ACTION)
+    public static final String MASTER_VOLUME_CHANGED_ACTION =
+        "android.media.MASTER_VOLUME_CHANGED_ACTION";
+
+    /**
+     * @hide Broadcast intent when the master mute state changes.
+     * Includes the the new volume
+     *
+     * @see #EXTRA_MASTER_VOLUME_MUTED
+     */
+    @SdkConstant(SdkConstantType.BROADCAST_INTENT_ACTION)
+    public static final String MASTER_MUTE_CHANGED_ACTION =
+        "android.media.MASTER_MUTE_CHANGED_ACTION";
+
+    /**
      * The new vibrate setting for a particular type.
      *
      * @see #VIBRATE_SETTING_CHANGED_ACTION
@@ -116,6 +139,8 @@ public class AudioManager {
      * @see #VIBRATE_SETTING_ON
      * @see #VIBRATE_SETTING_OFF
      * @see #VIBRATE_SETTING_ONLY_SILENT
+     * @deprecated Applications should maintain their own vibrate policy based on
+     * current ringer mode and listen to {@link #RINGER_MODE_CHANGED_ACTION} instead.
      */
     public static final String EXTRA_VIBRATE_SETTING = "android.media.EXTRA_VIBRATE_SETTING";
 
@@ -125,6 +150,8 @@ public class AudioManager {
      * @see #VIBRATE_SETTING_CHANGED_ACTION
      * @see #VIBRATE_TYPE_NOTIFICATION
      * @see #VIBRATE_TYPE_RINGER
+     * @deprecated Applications should maintain their own vibrate policy based on
+     * current ringer mode and listen to {@link #RINGER_MODE_CHANGED_ACTION} instead.
      */
     public static final String EXTRA_VIBRATE_TYPE = "android.media.EXTRA_VIBRATE_TYPE";
 
@@ -144,6 +171,27 @@ public class AudioManager {
      */
     public static final String EXTRA_PREV_VOLUME_STREAM_VALUE =
         "android.media.EXTRA_PREV_VOLUME_STREAM_VALUE";
+
+    /**
+     * @hide The new master volume value for the master volume changed intent.
+     * Value is integer between 0 and 100 inclusive.
+     */
+    public static final String EXTRA_MASTER_VOLUME_VALUE =
+        "android.media.EXTRA_MASTER_VOLUME_VALUE";
+
+    /**
+     * @hide The previous master volume value for the master volume changed intent.
+     * Value is integer between 0 and 100 inclusive.
+     */
+    public static final String EXTRA_PREV_MASTER_VOLUME_VALUE =
+        "android.media.EXTRA_PREV_MASTER_VOLUME_VALUE";
+
+    /**
+     * @hide The new master volume mute state for the master mute changed intent.
+     * Value is boolean
+     */
+    public static final String EXTRA_MASTER_VOLUME_MUTED =
+        "android.media.EXTRA_MASTER_VOLUME_MUTED";
 
     /** The audio stream for phone calls */
     public static final int STREAM_VOICE_CALL = AudioSystem.STREAM_VOICE_CALL;
@@ -265,13 +313,6 @@ public class AudioManager {
     public static final int FLAG_VIBRATE = 1 << 4;
 
     /**
-     * forces use of specified stream
-     * @hide
-     */
-    public static final int FLAG_FORCE_STREAM = 1 << 5;
-
-
-    /**
      * Ringer mode that will be silent and will not vibrate. (This overrides the
      * vibrate setting.)
      *
@@ -309,6 +350,8 @@ public class AudioManager {
      * @see #setVibrateSetting(int, int)
      * @see #getVibrateSetting(int)
      * @see #shouldVibrate(int)
+     * @deprecated Applications should maintain their own vibrate policy based on
+     * current ringer mode that can be queried via {@link #getRingerMode()}.
      */
     public static final int VIBRATE_TYPE_RINGER = 0;
 
@@ -318,6 +361,8 @@ public class AudioManager {
      * @see #setVibrateSetting(int, int)
      * @see #getVibrateSetting(int)
      * @see #shouldVibrate(int)
+     * @deprecated Applications should maintain their own vibrate policy based on
+     * current ringer mode that can be queried via {@link #getRingerMode()}.
      */
     public static final int VIBRATE_TYPE_NOTIFICATION = 1;
 
@@ -326,6 +371,8 @@ public class AudioManager {
      *
      * @see #setVibrateSetting(int, int)
      * @see #getVibrateSetting(int)
+     * @deprecated Applications should maintain their own vibrate policy based on
+     * current ringer mode that can be queried via {@link #getRingerMode()}.
      */
     public static final int VIBRATE_SETTING_OFF = 0;
 
@@ -334,6 +381,8 @@ public class AudioManager {
      *
      * @see #setVibrateSetting(int, int)
      * @see #getVibrateSetting(int)
+     * @deprecated Applications should maintain their own vibrate policy based on
+     * current ringer mode that can be queried via {@link #getRingerMode()}.
      */
     public static final int VIBRATE_SETTING_ON = 1;
 
@@ -343,6 +392,8 @@ public class AudioManager {
      *
      * @see #setVibrateSetting(int, int)
      * @see #getVibrateSetting(int)
+     * @deprecated Applications should maintain their own vibrate policy based on
+     * current ringer mode that can be queried via {@link #getRingerMode()}.
      */
     public static final int VIBRATE_SETTING_ONLY_SILENT = 2;
 
@@ -359,7 +410,8 @@ public class AudioManager {
      */
     public AudioManager(Context context) {
         mContext = context;
-        mHandler = new Handler(context.getMainLooper());
+        mUseMasterVolume = mContext.getResources().getBoolean(
+                com.android.internal.R.bool.config_useMasterVolume);
     }
 
     private static IAudioService getService()
@@ -375,11 +427,12 @@ public class AudioManager {
     /**
      * @hide
      */
-    public void preDispatchKeyEvent(int keyCode, int stream) {
+    public void preDispatchKeyEvent(KeyEvent event, int stream) {
         /*
          * If the user hits another key within the play sound delay, then
          * cancel the sound
          */
+        int keyCode = event.getKeyCode();
         if (keyCode != KeyEvent.KEYCODE_VOLUME_DOWN && keyCode != KeyEvent.KEYCODE_VOLUME_UP
                 && keyCode != KeyEvent.KEYCODE_VOLUME_MUTE
                 && mVolumeKeyUpTime + VolumePanel.PLAY_SOUND_DELAY
@@ -388,15 +441,20 @@ public class AudioManager {
              * The user has hit another key during the delay (e.g., 300ms)
              * since the last volume key up, so cancel any sounds.
              */
-            adjustSuggestedStreamVolume(AudioManager.ADJUST_SAME,
+            if (mUseMasterVolume) {
+                adjustMasterVolume(ADJUST_SAME, AudioManager.FLAG_REMOVE_SOUND_AND_VIBRATE);
+            } else {
+                adjustSuggestedStreamVolume(ADJUST_SAME,
                         stream, AudioManager.FLAG_REMOVE_SOUND_AND_VIBRATE);
+            }
         }
     }
 
     /**
      * @hide
      */
-    public void handleKeyDown(int keyCode, int stream) {
+    public void handleKeyDown(KeyEvent event, int stream) {
+        int keyCode = event.getKeyCode();
         switch (keyCode) {
             case KeyEvent.KEYCODE_VOLUME_UP:
             case KeyEvent.KEYCODE_VOLUME_DOWN:
@@ -405,19 +463,29 @@ public class AudioManager {
                  * responsive to the user.
                  */
                 int flags = FLAG_SHOW_UI | FLAG_VIBRATE;
-                if (mVolumeControlStream != -1) {
-                    stream = mVolumeControlStream;
-                    flags |= FLAG_FORCE_STREAM;
+                if (mUseMasterVolume) {
+                    adjustMasterVolume(
+                            keyCode == KeyEvent.KEYCODE_VOLUME_UP
+                                    ? ADJUST_RAISE
+                                    : ADJUST_LOWER,
+                            flags);
+                } else {
+                    adjustSuggestedStreamVolume(
+                            keyCode == KeyEvent.KEYCODE_VOLUME_UP
+                                    ? ADJUST_RAISE
+                                    : ADJUST_LOWER,
+                            stream,
+                            flags);
                 }
-                adjustSuggestedStreamVolume(
-                        keyCode == KeyEvent.KEYCODE_VOLUME_UP
-                                ? ADJUST_RAISE
-                                : ADJUST_LOWER,
-                        stream,
-                        flags);
                 break;
             case KeyEvent.KEYCODE_VOLUME_MUTE:
-                // TODO: Actually handle MUTE.
+                if (event.getRepeatCount() == 0) {
+                    if (mUseMasterVolume) {
+                        setMasterMute(!isMasterMute());
+                    } else {
+                        // TODO: Actually handle MUTE.
+                    }
+                }
                 break;
         }
     }
@@ -425,7 +493,8 @@ public class AudioManager {
     /**
      * @hide
      */
-    public void handleKeyUp(int keyCode, int stream) {
+    public void handleKeyUp(KeyEvent event, int stream) {
+        int keyCode = event.getKeyCode();
         switch (keyCode) {
             case KeyEvent.KEYCODE_VOLUME_UP:
             case KeyEvent.KEYCODE_VOLUME_DOWN:
@@ -433,20 +502,19 @@ public class AudioManager {
                  * Play a sound. This is done on key up since we don't want the
                  * sound to play when a user holds down volume down to mute.
                  */
-                int flags = FLAG_PLAY_SOUND;
-                if (mVolumeControlStream != -1) {
-                    stream = mVolumeControlStream;
-                    flags |= FLAG_FORCE_STREAM;
+                if (mUseMasterVolume) {
+                    if (keyCode == KeyEvent.KEYCODE_VOLUME_DOWN) {
+                        adjustMasterVolume(ADJUST_SAME, FLAG_PLAY_SOUND);
+                    }
+                } else {
+                    int flags = FLAG_PLAY_SOUND;
+                    adjustSuggestedStreamVolume(
+                            ADJUST_SAME,
+                            stream,
+                            flags);
                 }
-                adjustSuggestedStreamVolume(
-                        ADJUST_SAME,
-                        stream,
-                        flags);
 
                 mVolumeKeyUpTime = SystemClock.uptimeMillis();
-                break;
-            case KeyEvent.KEYCODE_VOLUME_MUTE:
-                // TODO: Actually handle MUTE.
                 break;
         }
     }
@@ -470,7 +538,11 @@ public class AudioManager {
     public void adjustStreamVolume(int streamType, int direction, int flags) {
         IAudioService service = getService();
         try {
-            service.adjustStreamVolume(streamType, direction, flags);
+            if (mUseMasterVolume) {
+                service.adjustMasterVolume(direction, flags);
+            } else {
+                service.adjustStreamVolume(streamType, direction, flags);
+            }
         } catch (RemoteException e) {
             Log.e(TAG, "Dead object in adjustStreamVolume", e);
         }
@@ -496,7 +568,11 @@ public class AudioManager {
     public void adjustVolume(int direction, int flags) {
         IAudioService service = getService();
         try {
-            service.adjustVolume(direction, flags);
+            if (mUseMasterVolume) {
+                service.adjustMasterVolume(direction, flags);
+            } else {
+                service.adjustVolume(direction, flags);
+            }
         } catch (RemoteException e) {
             Log.e(TAG, "Dead object in adjustVolume", e);
         }
@@ -522,9 +598,31 @@ public class AudioManager {
     public void adjustSuggestedStreamVolume(int direction, int suggestedStreamType, int flags) {
         IAudioService service = getService();
         try {
-            service.adjustSuggestedStreamVolume(direction, suggestedStreamType, flags);
+            if (mUseMasterVolume) {
+                service.adjustMasterVolume(direction, flags);
+            } else {
+                service.adjustSuggestedStreamVolume(direction, suggestedStreamType, flags);
+            }
         } catch (RemoteException e) {
-            Log.e(TAG, "Dead object in adjustVolume", e);
+            Log.e(TAG, "Dead object in adjustSuggestedStreamVolume", e);
+        }
+    }
+
+    /**
+     * Adjusts the master volume for the device's audio amplifier.
+     * <p>
+     *
+     * @param steps The number of volume steps to adjust. A positive
+     *            value will raise the volume.
+     * @param flags One or more flags.
+     * @hide
+     */
+    public void adjustMasterVolume(int steps, int flags) {
+        IAudioService service = getService();
+        try {
+            service.adjustMasterVolume(steps, flags);
+        } catch (RemoteException e) {
+            Log.e(TAG, "Dead object in adjustMasterVolume", e);
         }
     }
 
@@ -570,7 +668,11 @@ public class AudioManager {
     public int getStreamMaxVolume(int streamType) {
         IAudioService service = getService();
         try {
-            return service.getStreamMaxVolume(streamType);
+            if (mUseMasterVolume) {
+                return service.getMasterMaxVolume();
+            } else {
+                return service.getStreamMaxVolume(streamType);
+            }
         } catch (RemoteException e) {
             Log.e(TAG, "Dead object in getStreamMaxVolume", e);
             return 0;
@@ -588,7 +690,11 @@ public class AudioManager {
     public int getStreamVolume(int streamType) {
         IAudioService service = getService();
         try {
-            return service.getStreamVolume(streamType);
+            if (mUseMasterVolume) {
+                return service.getMasterVolume();
+            } else {
+                return service.getStreamVolume(streamType);
+            }
         } catch (RemoteException e) {
             Log.e(TAG, "Dead object in getStreamVolume", e);
             return 0;
@@ -603,10 +709,29 @@ public class AudioManager {
     public int getLastAudibleStreamVolume(int streamType) {
         IAudioService service = getService();
         try {
-            return service.getLastAudibleStreamVolume(streamType);
+            if (mUseMasterVolume) {
+                return service.getLastAudibleMasterVolume();
+            } else {
+                return service.getLastAudibleStreamVolume(streamType);
+            }
         } catch (RemoteException e) {
             Log.e(TAG, "Dead object in getLastAudibleStreamVolume", e);
             return 0;
+        }
+    }
+
+    /**
+     * Get the stream type whose volume is driving the UI sounds volume.
+     * UI sounds are screen lock/unlock, camera shutter, key clicks...
+     * @hide
+     */
+    public int getMasterStreamType() {
+        IAudioService service = getService();
+        try {
+            return service.getMasterStreamType();
+        } catch (RemoteException e) {
+            Log.e(TAG, "Dead object in getMasterStreamType", e);
+            return STREAM_RING;
         }
     }
 
@@ -646,9 +771,78 @@ public class AudioManager {
     public void setStreamVolume(int streamType, int index, int flags) {
         IAudioService service = getService();
         try {
-            service.setStreamVolume(streamType, index, flags);
+            if (mUseMasterVolume) {
+                service.setMasterVolume(index, flags);
+            } else {
+                service.setStreamVolume(streamType, index, flags);
+            }
         } catch (RemoteException e) {
             Log.e(TAG, "Dead object in setStreamVolume", e);
+        }
+    }
+
+    /**
+     * Returns the maximum volume index for master volume.
+     *
+     * @hide
+     */
+    public int getMasterMaxVolume() {
+        IAudioService service = getService();
+        try {
+            return service.getMasterMaxVolume();
+        } catch (RemoteException e) {
+            Log.e(TAG, "Dead object in getMasterMaxVolume", e);
+            return 0;
+        }
+    }
+
+    /**
+     * Returns the current volume index for master volume.
+     *
+     * @return The current volume index for master volume.
+     * @hide
+     */
+    public int getMasterVolume() {
+        IAudioService service = getService();
+        try {
+            return service.getMasterVolume();
+        } catch (RemoteException e) {
+            Log.e(TAG, "Dead object in getMasterVolume", e);
+            return 0;
+        }
+    }
+
+    /**
+     * Get last audible volume before master volume was muted.
+     *
+     * @hide
+     */
+    public int getLastAudibleMasterVolume() {
+        IAudioService service = getService();
+        try {
+            return service.getLastAudibleMasterVolume();
+        } catch (RemoteException e) {
+            Log.e(TAG, "Dead object in getLastAudibleMasterVolume", e);
+            return 0;
+        }
+    }
+
+    /**
+     * Sets the volume index for master volume.
+     *
+     * @param index The volume index to set. See
+     *            {@link #getMasterMaxVolume(int)} for the largest valid value.
+     * @param flags One or more flags.
+     * @see #getMasterMaxVolume(int)
+     * @see #getMasterVolume(int)
+     * @hide
+     */
+    public void setMasterVolume(int index, int flags) {
+        IAudioService service = getService();
+        try {
+            service.setMasterVolume(index, flags);
+        } catch (RemoteException e) {
+            Log.e(TAG, "Dead object in setMasterVolume", e);
         }
     }
 
@@ -723,6 +917,44 @@ public class AudioManager {
     }
 
     /**
+     * set master mute state.
+     *
+     * @hide
+     */
+    public void setMasterMute(boolean state) {
+        setMasterMute(state, FLAG_SHOW_UI);
+    }
+
+    /**
+     * set master mute state with optional flags.
+     *
+     * @hide
+     */
+    public void setMasterMute(boolean state, int flags) {
+        IAudioService service = getService();
+        try {
+            service.setMasterMute(state, flags, mICallBack);
+        } catch (RemoteException e) {
+            Log.e(TAG, "Dead object in setMasterMute", e);
+        }
+    }
+
+    /**
+     * get master mute state.
+     *
+     * @hide
+     */
+    public boolean isMasterMute() {
+        IAudioService service = getService();
+        try {
+            return service.isMasterMute();
+        } catch (RemoteException e) {
+            Log.e(TAG, "Dead object in isMasterMute", e);
+            return false;
+        }
+    }
+
+    /**
      * forces the stream controlled by hard volume keys
      * specifying streamType == -1 releases control to the
      * logic.
@@ -730,7 +962,12 @@ public class AudioManager {
      * @hide
      */
     public void forceVolumeControlStream(int streamType) {
-        mVolumeControlStream = streamType;
+        IAudioService service = getService();
+        try {
+            service.forceVolumeControlStream(streamType, mICallBack);
+        } catch (RemoteException e) {
+            Log.e(TAG, "Dead object in forceVolumeControlStream", e);
+        }
     }
 
     /**
@@ -749,6 +986,8 @@ public class AudioManager {
      *         called.
      * @see #setVibrateSetting(int, int)
      * @see #getVibrateSetting(int)
+     * @deprecated Applications should maintain their own vibrate policy based on
+     * current ringer mode that can be queried via {@link #getRingerMode()}.
      */
     public boolean shouldVibrate(int vibrateType) {
         IAudioService service = getService();
@@ -774,6 +1013,8 @@ public class AudioManager {
      *         {@link #VIBRATE_SETTING_ONLY_SILENT}.
      * @see #setVibrateSetting(int, int)
      * @see #shouldVibrate(int)
+     * @deprecated Applications should maintain their own vibrate policy based on
+     * current ringer mode that can be queried via {@link #getRingerMode()}.
      */
     public int getVibrateSetting(int vibrateType) {
         IAudioService service = getService();
@@ -800,6 +1041,8 @@ public class AudioManager {
      *            {@link #VIBRATE_SETTING_ONLY_SILENT}.
      * @see #getVibrateSetting(int)
      * @see #shouldVibrate(int)
+     * @deprecated Applications should maintain their own vibrate policy based on
+     * current ringer mode that can be queried via {@link #getRingerMode()}.
      */
     public void setVibrateSetting(int vibrateType, int vibrateSetting) {
         IAudioService service = getService();
@@ -1258,6 +1501,24 @@ public class AudioManager {
         return AudioSystem.isStreamActive(STREAM_MUSIC, 0);
     }
 
+    /**
+     * @hide
+     * If the stream is active locally or remotely, adjust its volume according to the enforced
+     * priority rules.
+     * Note: only AudioManager.STREAM_MUSIC is supported at the moment
+     */
+    public void adjustLocalOrRemoteStreamVolume(int streamType, int direction) {
+        if (streamType != STREAM_MUSIC) {
+            Log.w(TAG, "adjustLocalOrRemoteStreamVolume() doesn't support stream " + streamType);
+        }
+        IAudioService service = getService();
+        try {
+            service.adjustLocalOrRemoteStreamVolume(streamType, direction);
+        } catch (RemoteException e) {
+            Log.e(TAG, "Dead object in adjustLocalOrRemoteStreamVolume", e);
+        }
+    }
+
     /*
      * Sets a generic audio configuration parameter. The use of these parameters
      * are platform dependant, see libaudio
@@ -1515,7 +1776,7 @@ public class AudioManager {
      * Map to convert focus event listener IDs, as used in the AudioService audio focus stack,
      * to actual listener objects.
      */
-    private HashMap<String, OnAudioFocusChangeListener> mAudioFocusIdListenerMap =
+    private final HashMap<String, OnAudioFocusChangeListener> mAudioFocusIdListenerMap =
             new HashMap<String, OnAudioFocusChangeListener>();
     /**
      * Lock to prevent concurrent changes to the list of focus listeners for this AudioManager
@@ -1530,7 +1791,7 @@ public class AudioManager {
     /**
      * Handler for audio focus events coming from the audio service.
      */
-    private FocusEventHandlerDelegate mAudioFocusEventHandlerDelegate =
+    private final FocusEventHandlerDelegate mAudioFocusEventHandlerDelegate =
             new FocusEventHandlerDelegate();
 
     /**
@@ -1569,7 +1830,7 @@ public class AudioManager {
         }
     }
 
-    private IAudioFocusDispatcher mAudioFocusDispatcher = new IAudioFocusDispatcher.Stub() {
+    private final IAudioFocusDispatcher mAudioFocusDispatcher = new IAudioFocusDispatcher.Stub() {
 
         public void dispatchAudioFocusChange(int focusChange, String id) {
             Message m = mAudioFocusEventHandlerDelegate.getHandler().obtainMessage(focusChange, id);
@@ -1655,11 +1916,46 @@ public class AudioManager {
                     mAudioFocusDispatcher, getIdForAudioFocusListener(l),
                     mContext.getPackageName() /* package name */);
         } catch (RemoteException e) {
-            Log.e(TAG, "Can't call requestAudioFocus() from AudioService due to "+e);
+            Log.e(TAG, "Can't call requestAudioFocus() on AudioService due to "+e);
         }
         return status;
     }
 
+    /**
+     * @hide
+     * Used internally by telephony package to request audio focus. Will cause the focus request
+     * to be associated with the "voice communication" identifier only used in AudioService
+     * to identify this use case.
+     * @param streamType use STREAM_RING for focus requests when ringing, VOICE_CALL for
+     *    the establishment of the call
+     * @param durationHint the type of focus request. AUDIOFOCUS_GAIN_TRANSIENT is recommended so
+     *    media applications resume after a call
+     */
+    public void requestAudioFocusForCall(int streamType, int durationHint) {
+        IAudioService service = getService();
+        try {
+            service.requestAudioFocus(streamType, durationHint, mICallBack, null,
+                    AudioService.IN_VOICE_COMM_FOCUS_ID,
+                    "system" /* dump-friendly package name */);
+        } catch (RemoteException e) {
+            Log.e(TAG, "Can't call requestAudioFocusForCall() on AudioService due to "+e);
+        }
+    }
+
+    /**
+     * @hide
+     * Used internally by telephony package to abandon audio focus, typically after a call or
+     * when ringing ends and the call is rejected or not answered.
+     * Should match one or more calls to {@link #requestAudioFocusForCall(int, int)}.
+     */
+    public void abandonAudioFocusForCall() {
+        IAudioService service = getService();
+        try {
+            service.abandonAudioFocus(null, AudioService.IN_VOICE_COMM_FOCUS_ID);
+        } catch (RemoteException e) {
+            Log.e(TAG, "Can't call abandonAudioFocusForCall() on AudioService due to "+e);
+        }
+    }
 
     /**
      *  Abandon audio focus. Causes the previous focus owner, if any, to receive focus.
@@ -1674,7 +1970,7 @@ public class AudioManager {
             status = service.abandonAudioFocus(mAudioFocusDispatcher,
                     getIdForAudioFocusListener(l));
         } catch (RemoteException e) {
-            Log.e(TAG, "Can't call abandonAudioFocus() from AudioService due to "+e);
+            Log.e(TAG, "Can't call abandonAudioFocus() on AudioService due to "+e);
         }
         return status;
     }
@@ -1726,6 +2022,37 @@ public class AudioManager {
     }
 
     /**
+     * @hide
+     * Used internally by telephony package to register an intent receiver for ACTION_MEDIA_BUTTON.
+     * @param eventReceiver the component that will receive the media button key events,
+     *          no-op if eventReceiver is null
+     */
+    public void registerMediaButtonEventReceiverForCalls(ComponentName eventReceiver) {
+        if (eventReceiver == null) {
+            return;
+        }
+        IAudioService service = getService();
+        try {
+            // eventReceiver != null
+            service.registerMediaButtonEventReceiverForCalls(eventReceiver);
+        } catch (RemoteException e) {
+            Log.e(TAG, "Dead object in registerMediaButtonEventReceiverForCalls", e);
+        }
+    }
+
+    /**
+     * @hide
+     */
+    public void unregisterMediaButtonEventReceiverForCalls() {
+        IAudioService service = getService();
+        try {
+            service.unregisterMediaButtonEventReceiverForCalls();
+        } catch (RemoteException e) {
+            Log.e(TAG, "Dead object in unregisterMediaButtonEventReceiverForCalls", e);
+        }
+    }
+
+    /**
      * Unregister the receiver of MEDIA_BUTTON intents.
      * @param eventReceiver identifier of a {@link android.content.BroadcastReceiver}
      *      that was registered with {@link #registerMediaButtonEventReceiver(ComponentName)}.
@@ -1768,10 +2095,12 @@ public class AudioManager {
         }
         IAudioService service = getService();
         try {
-            service.registerRemoteControlClient(rcClient.getRcMediaIntent(),   /* mediaIntent   */
-                    rcClient.getIRemoteControlClient(),                        /* rcClient      */
+            int rcseId = service.registerRemoteControlClient(
+                    rcClient.getRcMediaIntent(),       /* mediaIntent   */
+                    rcClient.getIRemoteControlClient(),/* rcClient      */
                     // used to match media button event receiver and audio focus
-                    mContext.getPackageName());                                /* packageName   */
+                    mContext.getPackageName());        /* packageName   */
+            rcClient.setRcseId(rcseId);
         } catch (RemoteException e) {
             Log.e(TAG, "Dead object in registerRemoteControlClient"+e);
         }
@@ -1926,7 +2255,7 @@ public class AudioManager {
      /**
       * {@hide}
       */
-     private IBinder mICallBack = new Binder();
+     private final IBinder mICallBack = new Binder();
 
     /**
      * Checks whether the phone is in silent mode, with or without vibrate.
@@ -1989,6 +2318,14 @@ public class AudioManager {
      *  docking station
      */
     public static final int DEVICE_OUT_DGTL_DOCK_HEADSET = AudioSystem.DEVICE_OUT_DGTL_DOCK_HEADSET;
+    /** {@hide} The audio output device code for a USB audio accessory. The accessory is in USB host
+     * mode and the Android device in USB device mode
+     */
+    public static final int DEVICE_OUT_USB_ACCESSORY = AudioSystem.DEVICE_OUT_USB_ACCESSORY;
+    /** {@hide} The audio output device code for a USB audio device. The device is in USB device
+     * mode and the Android device in USB host mode
+     */
+    public static final int DEVICE_OUT_USB_DEVICE = AudioSystem.DEVICE_OUT_USB_DEVICE;
     /** {@hide} This is not used as a returned value from {@link #getDevicesForStream}, but could be
      *  used in the future in a set method to select whatever default device is chosen by the
      *  platform-specific implementation.
@@ -2046,4 +2383,48 @@ public class AudioManager {
         }
     }
 
+     /**
+     * Indicate wired accessory connection state change.
+     * @param device type of device connected/disconnected (AudioManager.DEVICE_OUT_xxx)
+     * @param state  new connection state: 1 connected, 0 disconnected
+     * @param name   device name
+     * {@hide}
+     */
+    public void setWiredDeviceConnectionState(int device, int state, String name) {
+        IAudioService service = getService();
+        try {
+            service.setWiredDeviceConnectionState(device, state, name);
+        } catch (RemoteException e) {
+            Log.e(TAG, "Dead object in setWiredDeviceConnectionState "+e);
+        }
+    }
+
+     /**
+     * Indicate A2DP sink connection state change.
+     * @param device Bluetooth device connected/disconnected
+     * @param state  new connection state (BluetoothProfile.STATE_xxx)
+     * @return a delay in ms that the caller should wait before broadcasting
+     * BluetoothA2dp.ACTION_CONNECTION_STATE_CHANGED intent.
+     * {@hide}
+     */
+    public int setBluetoothA2dpDeviceConnectionState(BluetoothDevice device, int state) {
+        IAudioService service = getService();
+        int delay = 0;
+        try {
+            delay = service.setBluetoothA2dpDeviceConnectionState(device, state);
+        } catch (RemoteException e) {
+            Log.e(TAG, "Dead object in setBluetoothA2dpDeviceConnectionState "+e);
+        } finally {
+            return delay;
+        }
+    }
+
+    /** {@hide} */
+    public IRingtonePlayer getRingtonePlayer() {
+        try {
+            return getService().getRingtonePlayer();
+        } catch (RemoteException e) {
+            return null;
+        }
+    }
 }

@@ -157,7 +157,8 @@ final class Session extends IWindowSession.Stub
                 + Binder.getCallingPid());
         int res = mService.relayoutWindow(this, window, seq, attrs,
                 requestedWidth, requestedHeight, viewFlags, flags,
-                outFrame, outContentInsets, outVisibleInsets, outConfig, outSurface);
+                outFrame, outContentInsets, outVisibleInsets,
+                outConfig, outSurface);
         if (false) Slog.d(WindowManagerService.TAG, "<<<<<< EXITING relayout to "
                 + Binder.getCallingPid());
         return res;

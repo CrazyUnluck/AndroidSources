@@ -17,11 +17,11 @@
 package android.content;
 
 import android.content.res.AssetFileDescriptor;
+import android.database.BulkCursorDescriptor;
 import android.database.BulkCursorNative;
 import android.database.BulkCursorToCursorAdaptor;
 import android.database.Cursor;
 import android.database.CursorToBulkCursorAdaptor;
-import android.database.CursorWindow;
 import android.database.DatabaseUtils;
 import android.database.IBulkCursor;
 import android.database.IContentObserver;
@@ -30,6 +30,7 @@ import android.os.Binder;
 import android.os.Bundle;
 import android.os.RemoteException;
 import android.os.IBinder;
+import android.os.ICancellationSignal;
 import android.os.Parcel;
 import android.os.ParcelFileDescriptor;
 import android.os.Parcelable;
@@ -41,8 +42,6 @@ import java.util.ArrayList;
  * {@hide}
  */
 abstract public class ContentProviderNative extends Binder implements IContentProvider {
-    private static final String TAG = "ContentProvider";
-
     public ContentProviderNative()
     {
         attachInterface(this, descriptor);
@@ -108,25 +107,22 @@ abstract public class ContentProviderNative extends Binder implements IContentPr
                     String sortOrder = data.readString();
                     IContentObserver observer = IContentObserver.Stub.asInterface(
                             data.readStrongBinder());
+                    ICancellationSignal cancellationSignal = ICancellationSignal.Stub.asInterface(
+                            data.readStrongBinder());
 
-                    Cursor cursor = query(url, projection, selection, selectionArgs, sortOrder);
+                    Cursor cursor = query(url, projection, selection, selectionArgs, sortOrder,
+                            cancellationSignal);
                     if (cursor != null) {
                         CursorToBulkCursorAdaptor adaptor = new CursorToBulkCursorAdaptor(
                                 cursor, observer, getProviderName());
-                        final IBinder binder = adaptor.asBinder();
-                        final int count = adaptor.count();
-                        final int index = BulkCursorToCursorAdaptor.findRowIdColumnIndex(
-                                adaptor.getColumnNames());
-                        final boolean wantsAllOnMoveCalls = adaptor.getWantsAllOnMoveCalls();
+                        BulkCursorDescriptor d = adaptor.getBulkCursorDescriptor();
 
                         reply.writeNoException();
-                        reply.writeStrongBinder(binder);
-                        reply.writeInt(count);
-                        reply.writeInt(index);
-                        reply.writeInt(wantsAllOnMoveCalls ? 1 : 0);
+                        reply.writeInt(1);
+                        d.writeToParcel(reply, Parcelable.PARCELABLE_WRITE_RETURN_VALUE);
                     } else {
                         reply.writeNoException();
-                        reply.writeStrongBinder(null);
+                        reply.writeInt(0);
                     }
 
                     return true;
@@ -295,6 +291,16 @@ abstract public class ContentProviderNative extends Binder implements IContentPr
                     }
                     return true;
                 }
+
+                case CREATE_CANCELATION_SIGNAL_TRANSACTION:
+                {
+                    data.enforceInterface(IContentProvider.descriptor);
+
+                    ICancellationSignal cancellationSignal = createCancellationSignal();
+                    reply.writeNoException();
+                    reply.writeStrongBinder(cancellationSignal.asBinder());
+                    return true;
+                }
             }
         } catch (Exception e) {
             DatabaseUtils.writeExceptionToParcel(reply, e);
@@ -324,7 +330,8 @@ final class ContentProviderProxy implements IContentProvider
     }
 
     public Cursor query(Uri url, String[] projection, String selection,
-            String[] selectionArgs, String sortOrder) throws RemoteException {
+            String[] selectionArgs, String sortOrder, ICancellationSignal cancellationSignal)
+                    throws RemoteException {
         BulkCursorToCursorAdaptor adaptor = new BulkCursorToCursorAdaptor();
         Parcel data = Parcel.obtain();
         Parcel reply = Parcel.obtain();
@@ -352,17 +359,15 @@ final class ContentProviderProxy implements IContentProvider
             }
             data.writeString(sortOrder);
             data.writeStrongBinder(adaptor.getObserver().asBinder());
+            data.writeStrongBinder(cancellationSignal != null ? cancellationSignal.asBinder() : null);
 
             mRemote.transact(IContentProvider.QUERY_TRANSACTION, data, reply, 0);
 
             DatabaseUtils.readExceptionFromParcel(reply);
 
-            IBulkCursor bulkCursor = BulkCursorNative.asInterface(reply.readStrongBinder());
-            if (bulkCursor != null) {
-                int rowCount = reply.readInt();
-                int idColumnPosition = reply.readInt();
-                boolean wantsAllOnMoveCalls = reply.readInt() != 0;
-                adaptor.initialize(bulkCursor, rowCount, idColumnPosition, wantsAllOnMoveCalls);
+            if (reply.readInt() != 0) {
+                BulkCursorDescriptor d = BulkCursorDescriptor.CREATOR.createFromParcel(reply);
+                adaptor.initialize(d);
             } else {
                 adaptor.close();
                 adaptor = null;
@@ -614,6 +619,25 @@ final class ContentProviderProxy implements IContentProvider
             AssetFileDescriptor fd = has != 0
                     ? AssetFileDescriptor.CREATOR.createFromParcel(reply) : null;
             return fd;
+        } finally {
+            data.recycle();
+            reply.recycle();
+        }
+    }
+
+    public ICancellationSignal createCancellationSignal() throws RemoteException {
+        Parcel data = Parcel.obtain();
+        Parcel reply = Parcel.obtain();
+        try {
+            data.writeInterfaceToken(IContentProvider.descriptor);
+
+            mRemote.transact(IContentProvider.CREATE_CANCELATION_SIGNAL_TRANSACTION,
+                    data, reply, 0);
+
+            DatabaseUtils.readExceptionFromParcel(reply);
+            ICancellationSignal cancellationSignal = ICancellationSignal.Stub.asInterface(
+                    reply.readStrongBinder());
+            return cancellationSignal;
         } finally {
             data.recycle();
             reply.recycle();

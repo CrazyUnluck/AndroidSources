@@ -382,7 +382,10 @@ public final class MenuItemImpl implements MenuItem {
         }
 
         if (mIconResId != NO_ICON) {
-            return mMenu.getResources().getDrawable(mIconResId);
+            Drawable icon =  mMenu.getResources().getDrawable(mIconResId);
+            mIconResId = NO_ICON;
+            mIconDrawable = icon;
+            return icon;
         }
         
         return null;
@@ -453,6 +456,9 @@ public final class MenuItemImpl implements MenuItem {
     }
     
     public boolean isVisible() {
+        if (mActionProvider != null && mActionProvider.overridesItemVisibility()) {
+            return (mFlags & HIDDEN) == 0 && mActionProvider.isVisible();
+        }
         return (mFlags & HIDDEN) == 0;
     }
 
@@ -571,7 +577,7 @@ public final class MenuItemImpl implements MenuItem {
         if (mActionView != null) {
             return mActionView;
         } else if (mActionProvider != null) {
-            mActionView = mActionProvider.onCreateActionView();
+            mActionView = mActionProvider.onCreateActionView(this);
             return mActionView;
         } else {
             return null;
@@ -583,9 +589,17 @@ public final class MenuItemImpl implements MenuItem {
     }
 
     public MenuItem setActionProvider(ActionProvider actionProvider) {
+        if (mActionProvider != null) {
+            mActionProvider.setVisibilityListener(null);
+        }
         mActionView = null;
         mActionProvider = actionProvider;
         mMenu.onItemsChanged(true); // Measurement can be changed
+        mActionProvider.setVisibilityListener(new ActionProvider.VisibilityListener() {
+            @Override public void onActionProviderVisibilityChanged(boolean isVisible) {
+                mMenu.onItemVisibleChanged(MenuItemImpl.this);
+            }
+        });
         return this;
     }
 

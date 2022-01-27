@@ -61,6 +61,7 @@ import android.text.TextUtils;
 import android.util.Slog;
 
 import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.List;
 import java.util.Set;
 import java.util.concurrent.atomic.AtomicInteger;
@@ -100,9 +101,6 @@ public class WifiService extends IWifiManager.Stub {
     private boolean mEmergencyCallbackMode = false;
     private int mPluggedType;
 
-    /* Chipset supports background scan */
-    private final boolean mBackgroundScanSupported;
-
     private final LockList mLocks = new LockList();
     // some wifi lock statistics
     private int mFullHighPerfLocksAcquired;
@@ -111,6 +109,10 @@ public class WifiService extends IWifiManager.Stub {
     private int mFullLocksReleased;
     private int mScanLocksAcquired;
     private int mScanLocksReleased;
+
+    /* A mapping from UID to scan count */
+    private HashMap<Integer, Integer> mScanCount =
+            new HashMap<Integer, Integer>();
 
     private final List<Multicaster> mMulticasters =
             new ArrayList<Multicaster>();
@@ -258,47 +260,46 @@ public class WifiService extends IWifiManager.Stub {
                     ac.connect(mContext, this, msg.replyTo);
                     break;
                 }
-                case WifiManager.CMD_ENABLE_TRAFFIC_STATS_POLL: {
+                case WifiManager.ENABLE_TRAFFIC_STATS_POLL: {
                     mEnableTrafficStatsPoll = (msg.arg1 == 1);
                     mTrafficStatsPollToken++;
                     if (mEnableTrafficStatsPoll) {
                         notifyOnDataActivity();
-                        sendMessageDelayed(Message.obtain(this, WifiManager.CMD_TRAFFIC_STATS_POLL,
+                        sendMessageDelayed(Message.obtain(this, WifiManager.TRAFFIC_STATS_POLL,
                                 mTrafficStatsPollToken, 0), POLL_TRAFFIC_STATS_INTERVAL_MSECS);
                     }
                     break;
                 }
-                case WifiManager.CMD_TRAFFIC_STATS_POLL: {
+                case WifiManager.TRAFFIC_STATS_POLL: {
                     if (msg.arg1 == mTrafficStatsPollToken) {
                         notifyOnDataActivity();
-                        sendMessageDelayed(Message.obtain(this, WifiManager.CMD_TRAFFIC_STATS_POLL,
+                        sendMessageDelayed(Message.obtain(this, WifiManager.TRAFFIC_STATS_POLL,
                                 mTrafficStatsPollToken, 0), POLL_TRAFFIC_STATS_INTERVAL_MSECS);
                     }
                     break;
                 }
-                case WifiManager.CMD_CONNECT_NETWORK: {
-                    if (msg.obj != null) {
-                        mWifiStateMachine.connectNetwork((WifiConfiguration)msg.obj);
-                    } else {
-                        mWifiStateMachine.connectNetwork(msg.arg1);
-                    }
+                case WifiManager.CONNECT_NETWORK: {
+                    mWifiStateMachine.sendMessage(Message.obtain(msg));
                     break;
                 }
-                case WifiManager.CMD_SAVE_NETWORK: {
-                    mWifiStateMachine.saveNetwork((WifiConfiguration)msg.obj);
+                case WifiManager.SAVE_NETWORK: {
+                    mWifiStateMachine.sendMessage(Message.obtain(msg));
                     break;
                 }
-                case WifiManager.CMD_FORGET_NETWORK: {
-                    mWifiStateMachine.forgetNetwork(msg.arg1);
+                case WifiManager.FORGET_NETWORK: {
+                    mWifiStateMachine.sendMessage(Message.obtain(msg));
                     break;
                 }
-                case WifiManager.CMD_START_WPS: {
-                    //replyTo has the original source
-                    mWifiStateMachine.startWps(msg.replyTo, (WpsInfo)msg.obj);
+                case WifiManager.START_WPS: {
+                    mWifiStateMachine.sendMessage(Message.obtain(msg));
                     break;
                 }
-                case WifiManager.CMD_DISABLE_NETWORK: {
-                    mWifiStateMachine.disableNetwork(msg.replyTo, msg.arg1, msg.arg2);
+                case WifiManager.CANCEL_WPS: {
+                    mWifiStateMachine.sendMessage(Message.obtain(msg));
+                    break;
+                }
+                case WifiManager.DISABLE_NETWORK: {
+                    mWifiStateMachine.sendMessage(Message.obtain(msg));
                     break;
                 }
                 default: {
@@ -375,11 +376,7 @@ public class WifiService extends IWifiManager.Stub {
                     @Override
                     public void onReceive(Context context, Intent intent) {
                         mAirplaneModeOn.set(isAirplaneModeOn());
-                        /* On airplane mode disable, restore wifi state if necessary */
-                        if (!mAirplaneModeOn.get() && (testAndClearWifiSavedState() ||
-                            mPersistWifiState.get() == WIFI_ENABLED_AIRPLANE_OVERRIDE)) {
-                                persistWifiState(true);
-                        }
+                        handleAirplaneModeToggled(mAirplaneModeOn.get());
                         updateWifiState();
                     }
                 },
@@ -431,9 +428,6 @@ public class WifiService extends IWifiManager.Stub {
                 Settings.Secure.WIFI_NETWORKS_AVAILABLE_REPEAT_DELAY, 900) * 1000l;
         mNotificationEnabledSettingObserver = new NotificationEnabledSettingObserver(new Handler());
         mNotificationEnabledSettingObserver.register();
-
-        mBackgroundScanSupported = mContext.getResources().getBoolean(
-                com.android.internal.R.bool.config_wifi_background_scan_support);
     }
 
     /**
@@ -449,7 +443,10 @@ public class WifiService extends IWifiManager.Stub {
         boolean wifiEnabled = shouldWifiBeEnabled() || testAndClearWifiSavedState();
         Slog.i(TAG, "WifiService starting up with Wi-Fi " +
                 (wifiEnabled ? "enabled" : "disabled"));
-        setWifiEnabled(wifiEnabled);
+
+        // If we are already disabled (could be due to airplane mode), avoid changing persist
+        // state here
+        if (wifiEnabled) setWifiEnabled(wifiEnabled);
 
         mWifiWatchdogStateMachine = WifiWatchdogStateMachine.
                makeWifiWatchdogStateMachine(mContext);
@@ -487,26 +484,43 @@ public class WifiService extends IWifiManager.Stub {
         }
     }
 
-    private void persistWifiState(boolean enabled) {
-        final ContentResolver cr = mContext.getContentResolver();
-        boolean airplane = mAirplaneModeOn.get() && isAirplaneToggleable();
-        if (enabled) {
-            if (airplane) {
-                mPersistWifiState.set(WIFI_ENABLED_AIRPLANE_OVERRIDE);
+    private void handleWifiToggled(boolean wifiEnabled) {
+        boolean airplaneEnabled = mAirplaneModeOn.get() && isAirplaneToggleable();
+        if (wifiEnabled) {
+            if (airplaneEnabled) {
+                persistWifiState(WIFI_ENABLED_AIRPLANE_OVERRIDE);
             } else {
-                mPersistWifiState.set(WIFI_ENABLED);
+                persistWifiState(WIFI_ENABLED);
             }
         } else {
-            if (airplane) {
-                mPersistWifiState.set(WIFI_DISABLED_AIRPLANE_ON);
-            } else {
-                mPersistWifiState.set(WIFI_DISABLED);
-            }
+            // When wifi state is disabled, we do not care
+            // if airplane mode is on or not. The scenario of
+            // wifi being disabled due to airplane mode being turned on
+            // is handled handleAirplaneModeToggled()
+            persistWifiState(WIFI_DISABLED);
         }
-
-        Settings.Secure.putInt(cr, Settings.Secure.WIFI_ON, mPersistWifiState.get());
     }
 
+    private void handleAirplaneModeToggled(boolean airplaneEnabled) {
+        if (airplaneEnabled) {
+            // Wifi disabled due to airplane on
+            if (mWifiEnabled) {
+                persistWifiState(WIFI_DISABLED_AIRPLANE_ON);
+            }
+        } else {
+            /* On airplane mode disable, restore wifi state if necessary */
+            if (testAndClearWifiSavedState() ||
+                    mPersistWifiState.get() == WIFI_ENABLED_AIRPLANE_OVERRIDE) {
+                persistWifiState(WIFI_ENABLED);
+            }
+        }
+    }
+
+    private void persistWifiState(int state) {
+        final ContentResolver cr = mContext.getContentResolver();
+        mPersistWifiState.set(state);
+        Settings.Secure.putInt(cr, Settings.Secure.WIFI_ON, state);
+    }
 
     /**
      * see {@link android.net.wifi.WifiManager#pingSupplicant()}
@@ -527,6 +541,15 @@ public class WifiService extends IWifiManager.Stub {
      */
     public void startScan(boolean forceActive) {
         enforceChangePermission();
+
+        int uid = Binder.getCallingUid();
+        int count = 0;
+        synchronized (mScanCount) {
+            if (mScanCount.containsKey(uid)) {
+                count = mScanCount.get(uid);
+            }
+            mScanCount.put(uid, ++count);
+        }
         mWifiStateMachine.startScan(forceActive);
     }
 
@@ -555,6 +578,8 @@ public class WifiService extends IWifiManager.Stub {
      */
     public synchronized boolean setWifiEnabled(boolean enable) {
         enforceChangePermission();
+        Slog.d(TAG, "setWifiEnabled: " + enable + " pid=" + Binder.getCallingPid()
+                    + ", uid=" + Binder.getCallingUid());
         if (DBG) {
             Slog.e(TAG, "Invoking mWifiStateMachine.setWifiEnabled\n");
         }
@@ -569,12 +594,9 @@ public class WifiService extends IWifiManager.Stub {
          * only CHANGE_WIFI_STATE is enforced
          */
 
-        /* Avoids overriding of airplane state when wifi is already in the expected state */
-        if (enable != mWifiEnabled) {
-            long ident = Binder.clearCallingIdentity();
-            persistWifiState(enable);
-            Binder.restoreCallingIdentity(ident);
-        }
+        long ident = Binder.clearCallingIdentity();
+        handleWifiToggled(enable);
+        Binder.restoreCallingIdentity(ident);
 
         if (enable) {
             if (!mIsReceiverRegistered) {
@@ -676,7 +698,12 @@ public class WifiService extends IWifiManager.Stub {
      */
     public List<WifiConfiguration> getConfiguredNetworks() {
         enforceAccessPermission();
-        return mWifiStateMachine.syncGetConfiguredNetworks();
+        if (mWifiStateMachineChannel != null) {
+            return mWifiStateMachine.syncGetConfiguredNetworks(mWifiStateMachineChannel);
+        } else {
+            Slog.e(TAG, "mWifiStateMachineChannel is not initialized");
+            return null;
+        }
     }
 
     /**
@@ -895,7 +922,7 @@ public class WifiService extends IWifiManager.Stub {
      * Get a reference to handler. This is used by a client to establish
      * an AsyncChannel communication with WifiService
      */
-    public Messenger getMessenger() {
+    public Messenger getWifiServiceMessenger() {
         /* Enforce the highest permissions
            TODO: when we consider exposing the asynchronous API, think about
                  how to provide both access and change permissions seperately
@@ -903,6 +930,13 @@ public class WifiService extends IWifiManager.Stub {
         enforceAccessPermission();
         enforceChangePermission();
         return new Messenger(mAsyncServiceHandler);
+    }
+
+    /** Get a reference to WifiStateMachine handler for AsyncChannel communication */
+    public Messenger getWifiStateMachineMessenger() {
+        enforceAccessPermission();
+        enforceChangePermission();
+        return mWifiStateMachine.getMessenger();
     }
 
     /**
@@ -931,11 +965,6 @@ public class WifiService extends IWifiManager.Stub {
                 mAlarmManager.cancel(mIdleIntent);
                 mScreenOff = false;
                 evaluateTrafficStatsPolling();
-                mWifiStateMachine.enableRssiPolling(true);
-                if (mBackgroundScanSupported) {
-                    mWifiStateMachine.enableBackgroundScanCommand(false);
-                }
-                mWifiStateMachine.enableAllNetworks();
                 setDeviceIdleAndUpdateWifi(false);
             } else if (action.equals(Intent.ACTION_SCREEN_OFF)) {
                 if (DBG) {
@@ -943,10 +972,6 @@ public class WifiService extends IWifiManager.Stub {
                 }
                 mScreenOff = true;
                 evaluateTrafficStatsPolling();
-                mWifiStateMachine.enableRssiPolling(false);
-                if (mBackgroundScanSupported) {
-                    mWifiStateMachine.enableBackgroundScanCommand(true);
-                }
                 /*
                  * Set a timer to put Wi-Fi to sleep, but only if the screen is off
                  * AND the "stay on while plugged in" setting doesn't match the
@@ -984,6 +1009,13 @@ public class WifiService extends IWifiManager.Stub {
                         Slog.d(TAG, "setting ACTION_DEVICE_IDLE timer for " + idleMillis + "ms");
                     }
                     mAlarmManager.set(AlarmManager.RTC_WAKEUP, triggerTime, mIdleIntent);
+                }
+
+                //Start scan stats tracking when device unplugged
+                if (pluggedType == 0) {
+                    synchronized (mScanCount) {
+                        mScanCount.clear();
+                    }
                 }
                 mPluggedType = pluggedType;
             } else if (action.equals(BluetoothAdapter.ACTION_CONNECTION_STATE_CHANGED)) {
@@ -1175,9 +1207,18 @@ public class WifiService extends IWifiManager.Stub {
         pw.println("Locks held:");
         mLocks.dump(pw);
 
+        pw.println("Scan count since last plugged in");
+        synchronized (mScanCount) {
+            for(int sc : mScanCount.keySet()) {
+                pw.println("UID: " + sc + " Scan count: " + mScanCount.get(sc));
+            }
+        }
+
         pw.println();
         pw.println("WifiWatchdogStateMachine dump");
         mWifiWatchdogStateMachine.dump(pw);
+        pw.println("WifiStateMachine dump");
+        mWifiStateMachine.dump(fd, pw, args);
     }
 
     private class WifiLock extends DeathRecipient {
@@ -1554,10 +1595,10 @@ public class WifiService extends IWifiManager.Stub {
         Message msg;
         if (mNetworkInfo.getDetailedState() == DetailedState.CONNECTED && !mScreenOff) {
             msg = Message.obtain(mAsyncServiceHandler,
-                    WifiManager.CMD_ENABLE_TRAFFIC_STATS_POLL, 1, 0);
+                    WifiManager.ENABLE_TRAFFIC_STATS_POLL, 1, 0);
         } else {
             msg = Message.obtain(mAsyncServiceHandler,
-                    WifiManager.CMD_ENABLE_TRAFFIC_STATS_POLL, 0, 0);
+                    WifiManager.ENABLE_TRAFFIC_STATS_POLL, 0, 0);
         }
         msg.sendToTarget();
     }

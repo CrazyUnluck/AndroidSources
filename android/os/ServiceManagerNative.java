@@ -16,6 +16,8 @@
 
 package android.os;
 
+import java.util.ArrayList;
+
 
 /**
  * Native implementation of the service manager.  Most clients will only
@@ -71,7 +73,8 @@ public abstract class ServiceManagerNative extends Binder implements IServiceMan
                 data.enforceInterface(IServiceManager.descriptor);
                 String name = data.readString();
                 IBinder service = data.readStrongBinder();
-                addService(name, service);
+                boolean allowIsolated = data.readInt() != 0;
+                addService(name, service, allowIsolated);
                 return true;
             }
     
@@ -136,27 +139,46 @@ class ServiceManagerProxy implements IServiceManager {
         return binder;
     }
 
-    public void addService(String name, IBinder service)
+    public void addService(String name, IBinder service, boolean allowIsolated)
             throws RemoteException {
         Parcel data = Parcel.obtain();
         Parcel reply = Parcel.obtain();
         data.writeInterfaceToken(IServiceManager.descriptor);
         data.writeString(name);
         data.writeStrongBinder(service);
+        data.writeInt(allowIsolated ? 1 : 0);
         mRemote.transact(ADD_SERVICE_TRANSACTION, data, reply, 0);
         reply.recycle();
         data.recycle();
     }
     
     public String[] listServices() throws RemoteException {
-        Parcel data = Parcel.obtain();
-        Parcel reply = Parcel.obtain();
-        data.writeInterfaceToken(IServiceManager.descriptor);
-        mRemote.transact(LIST_SERVICES_TRANSACTION, data, reply, 0);
-        String[] list = reply.readStringArray();
-        reply.recycle();
-        data.recycle();
-        return list;
+        ArrayList<String> services = new ArrayList<String>();
+        int n = 0;
+        while (true) {
+            Parcel data = Parcel.obtain();
+            Parcel reply = Parcel.obtain();
+            data.writeInterfaceToken(IServiceManager.descriptor);
+            data.writeInt(n);
+            n++;
+            try {
+                boolean res = mRemote.transact(LIST_SERVICES_TRANSACTION, data, reply, 0);
+                if (!res) {
+                    break;
+                }
+            } catch (RuntimeException e) {
+                // The result code that is returned by the C++ code can
+                // cause the call to throw an exception back instead of
+                // returning a nice result...  so eat it here and go on.
+                break;
+            }
+            services.add(reply.readString());
+            reply.recycle();
+            data.recycle();
+        }
+        String[] array = new String[services.size()];
+        services.toArray(array);
+        return array;
     }
 
     public void setPermissionController(IPermissionController controller)

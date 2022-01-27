@@ -66,6 +66,7 @@ import android.os.ParcelFileDescriptor;
 import android.os.PowerManager;
 import android.os.RemoteException;
 import android.os.ServiceManager;
+import android.os.SystemClock;
 import android.os.SystemProperties;
 import android.provider.Settings;
 import android.text.TextUtils;
@@ -865,14 +866,42 @@ private NetworkStateTracker makeWimaxStateTracker() {
     @Override
     public NetworkQuotaInfo getActiveNetworkQuotaInfo() {
         enforceAccessPermission();
-        final NetworkState state = getNetworkStateUnchecked(mActiveDefaultNetwork);
+
+        final long token = Binder.clearCallingIdentity();
+        try {
+            final NetworkState state = getNetworkStateUnchecked(mActiveDefaultNetwork);
+            if (state != null) {
+                try {
+                    return mPolicyManager.getNetworkQuotaInfo(state);
+                } catch (RemoteException e) {
+                }
+            }
+            return null;
+        } finally {
+            Binder.restoreCallingIdentity(token);
+        }
+    }
+
+    @Override
+    public boolean isActiveNetworkMetered() {
+        enforceAccessPermission();
+        final long token = Binder.clearCallingIdentity();
+        try {
+            return isNetworkMeteredUnchecked(mActiveDefaultNetwork);
+        } finally {
+            Binder.restoreCallingIdentity(token);
+        }
+    }
+
+    private boolean isNetworkMeteredUnchecked(int networkType) {
+        final NetworkState state = getNetworkStateUnchecked(networkType);
         if (state != null) {
             try {
-                return mPolicyManager.getNetworkQuotaInfo(state);
+                return mPolicyManager.isNetworkMetered(state);
             } catch (RemoteException e) {
             }
         }
-        return null;
+        return false;
     }
 
     public boolean setRadios(boolean turnOn) {
@@ -967,105 +996,136 @@ private NetworkStateTracker makeWimaxStateTracker() {
     // javadoc from interface
     public int startUsingNetworkFeature(int networkType, String feature,
             IBinder binder) {
+        long startTime = 0;
+        if (DBG) {
+            startTime = SystemClock.elapsedRealtime();
+        }
         if (VDBG) {
-            log("startUsingNetworkFeature for net " + networkType + ": " + feature);
+            log("startUsingNetworkFeature for net " + networkType + ": " + feature + ", uid="
+                    + Binder.getCallingUid());
         }
         enforceChangePermission();
-        if (!ConnectivityManager.isNetworkTypeValid(networkType) ||
-                mNetConfigs[networkType] == null) {
-            return Phone.APN_REQUEST_FAILED;
-        }
+        try {
+            if (!ConnectivityManager.isNetworkTypeValid(networkType) ||
+                    mNetConfigs[networkType] == null) {
+                return Phone.APN_REQUEST_FAILED;
+            }
 
-        FeatureUser f = new FeatureUser(networkType, feature, binder);
+            FeatureUser f = new FeatureUser(networkType, feature, binder);
 
-        // TODO - move this into individual networktrackers
-        int usedNetworkType = convertFeatureToNetworkType(networkType, feature);
+            // TODO - move this into individual networktrackers
+            int usedNetworkType = convertFeatureToNetworkType(networkType, feature);
 
-        if (mProtectedNetworks.contains(usedNetworkType)) {
-            enforceConnectivityInternalPermission();
-        }
+            if (mProtectedNetworks.contains(usedNetworkType)) {
+                enforceConnectivityInternalPermission();
+            }
 
-        NetworkStateTracker network = mNetTrackers[usedNetworkType];
-        if (network != null) {
-            Integer currentPid = new Integer(getCallingPid());
-            if (usedNetworkType != networkType) {
-                NetworkInfo ni = network.getNetworkInfo();
+            // if UID is restricted, don't allow them to bring up metered APNs
+            final boolean networkMetered = isNetworkMeteredUnchecked(usedNetworkType);
+            final int uidRules;
+            synchronized (mRulesLock) {
+                uidRules = mUidRules.get(Binder.getCallingUid(), RULE_ALLOW_ALL);
+            }
+            if (networkMetered && (uidRules & RULE_REJECT_METERED) != 0) {
+                return Phone.APN_REQUEST_FAILED;
+            }
 
-                if (ni.isAvailable() == false) {
-                    if (DBG) log("special network not available");
-                    if (!TextUtils.equals(feature,Phone.FEATURE_ENABLE_DUN_ALWAYS)) {
-                        return Phone.APN_TYPE_NOT_AVAILABLE;
-                    } else {
-                        // else make the attempt anyway - probably giving REQUEST_STARTED below
-                    }
-                }
+            NetworkStateTracker network = mNetTrackers[usedNetworkType];
+            if (network != null) {
+                Integer currentPid = new Integer(getCallingPid());
+                if (usedNetworkType != networkType) {
+                    NetworkInfo ni = network.getNetworkInfo();
 
-                int restoreTimer = getRestoreDefaultNetworkDelay(usedNetworkType);
-
-                synchronized(this) {
-                    boolean addToList = true;
-                    if (restoreTimer < 0) {
-                        // In case there is no timer is specified for the feature,
-                        // make sure we don't add duplicate entry with the same request.
-                        for (FeatureUser u : mFeatureUsers) {
-                            if (u.isSameUser(f)) {
-                                // Duplicate user is found. Do not add.
-                                addToList = false;
-                                break;
+                    if (ni.isAvailable() == false) {
+                        if (!TextUtils.equals(feature,Phone.FEATURE_ENABLE_DUN_ALWAYS)) {
+                            if (DBG) log("special network not available ni=" + ni.getTypeName());
+                            return Phone.APN_TYPE_NOT_AVAILABLE;
+                        } else {
+                            // else make the attempt anyway - probably giving REQUEST_STARTED below
+                            if (DBG) {
+                                log("special network not available, but try anyway ni=" +
+                                        ni.getTypeName());
                             }
                         }
                     }
 
-                    if (addToList) mFeatureUsers.add(f);
-                    if (!mNetRequestersPids[usedNetworkType].contains(currentPid)) {
-                        // this gets used for per-pid dns when connected
-                        mNetRequestersPids[usedNetworkType].add(currentPid);
-                    }
-                }
+                    int restoreTimer = getRestoreDefaultNetworkDelay(usedNetworkType);
 
-                if (restoreTimer >= 0) {
-                    mHandler.sendMessageDelayed(
-                            mHandler.obtainMessage(EVENT_RESTORE_DEFAULT_NETWORK, f), restoreTimer);
-                }
-
-                if ((ni.isConnectedOrConnecting() == true) &&
-                        !network.isTeardownRequested()) {
-                    if (ni.isConnected() == true) {
-                        final long token = Binder.clearCallingIdentity();
-                        try {
-                            // add the pid-specific dns
-                            handleDnsConfigurationChange(usedNetworkType);
-                            if (VDBG) log("special network already active");
-                        } finally {
-                            Binder.restoreCallingIdentity(token);
+                    synchronized(this) {
+                        boolean addToList = true;
+                        if (restoreTimer < 0) {
+                            // In case there is no timer is specified for the feature,
+                            // make sure we don't add duplicate entry with the same request.
+                            for (FeatureUser u : mFeatureUsers) {
+                                if (u.isSameUser(f)) {
+                                    // Duplicate user is found. Do not add.
+                                    addToList = false;
+                                    break;
+                                }
+                            }
                         }
-                        return Phone.APN_ALREADY_ACTIVE;
+
+                        if (addToList) mFeatureUsers.add(f);
+                        if (!mNetRequestersPids[usedNetworkType].contains(currentPid)) {
+                            // this gets used for per-pid dns when connected
+                            mNetRequestersPids[usedNetworkType].add(currentPid);
+                        }
                     }
-                    if (VDBG) log("special network already connecting");
+
+                    if (restoreTimer >= 0) {
+                        mHandler.sendMessageDelayed(mHandler.obtainMessage(
+                                EVENT_RESTORE_DEFAULT_NETWORK, f), restoreTimer);
+                    }
+
+                    if ((ni.isConnectedOrConnecting() == true) &&
+                            !network.isTeardownRequested()) {
+                        if (ni.isConnected() == true) {
+                            final long token = Binder.clearCallingIdentity();
+                            try {
+                                // add the pid-specific dns
+                                handleDnsConfigurationChange(usedNetworkType);
+                                if (VDBG) log("special network already active");
+                            } finally {
+                                Binder.restoreCallingIdentity(token);
+                            }
+                            return Phone.APN_ALREADY_ACTIVE;
+                        }
+                        if (VDBG) log("special network already connecting");
+                        return Phone.APN_REQUEST_STARTED;
+                    }
+
+                    // check if the radio in play can make another contact
+                    // assume if cannot for now
+
+                    if (DBG) {
+                        log("startUsingNetworkFeature reconnecting to " + networkType + ": " +
+                                feature);
+                    }
+                    network.reconnect();
                     return Phone.APN_REQUEST_STARTED;
-                }
-
-                // check if the radio in play can make another contact
-                // assume if cannot for now
-
-                if (DBG) {
-                    log("startUsingNetworkFeature reconnecting to " + networkType + ": " + feature);
-                }
-                network.reconnect();
-                return Phone.APN_REQUEST_STARTED;
-            } else {
-                // need to remember this unsupported request so we respond appropriately on stop
-                synchronized(this) {
-                    mFeatureUsers.add(f);
-                    if (!mNetRequestersPids[usedNetworkType].contains(currentPid)) {
-                        // this gets used for per-pid dns when connected
-                        mNetRequestersPids[usedNetworkType].add(currentPid);
+                } else {
+                    // need to remember this unsupported request so we respond appropriately on stop
+                    synchronized(this) {
+                        mFeatureUsers.add(f);
+                        if (!mNetRequestersPids[usedNetworkType].contains(currentPid)) {
+                            // this gets used for per-pid dns when connected
+                            mNetRequestersPids[usedNetworkType].add(currentPid);
+                        }
                     }
+                    return -1;
                 }
-                return -1;
             }
-        }
-        return Phone.APN_TYPE_NOT_AVAILABLE;
+            return Phone.APN_TYPE_NOT_AVAILABLE;
+         } finally {
+            if (DBG) {
+                final long execTime = SystemClock.elapsedRealtime() - startTime;
+                if (execTime > 250) {
+                    loge("startUsingNetworkFeature took too long: " + execTime + "ms");
+                } else {
+                    if (VDBG) log("startUsingNetworkFeature took " + execTime + "ms");
+                }
+            }
+         }
     }
 
     // javadoc from interface
@@ -1337,7 +1397,7 @@ private NetworkStateTracker makeWimaxStateTracker() {
                         mNetd.removeRoute(ifaceName, r);
                     } catch (Exception e) {
                         // never crash - catch them all
-                        if (DBG) loge("Exception trying to remove a route: " + e);
+                        if (VDBG) loge("Exception trying to remove a route: " + e);
                         return false;
                     }
                 } else {
@@ -1349,7 +1409,7 @@ private NetworkStateTracker makeWimaxStateTracker() {
                     mNetd.removeSecondaryRoute(ifaceName, r);
                 } catch (Exception e) {
                     // never crash - catch them all
-                    if (DBG) loge("Exception trying to remove a route: " + e);
+                    if (VDBG) loge("Exception trying to remove a route: " + e);
                     return false;
                 }
             }
@@ -1390,9 +1450,7 @@ private NetworkStateTracker makeWimaxStateTracker() {
     private INetworkPolicyListener mPolicyListener = new INetworkPolicyListener.Stub() {
         @Override
         public void onUidRulesChanged(int uid, int uidRules) {
-            // only someone like NPMS should only be calling us
-            mContext.enforceCallingOrSelfPermission(MANAGE_NETWORK_POLICY, TAG);
-
+            // caller is NPMS, since we only register with them
             if (LOGD_RULES) {
                 log("onUidRulesChanged(uid=" + uid + ", uidRules=" + uidRules + ")");
             }
@@ -1405,15 +1463,12 @@ private NetworkStateTracker makeWimaxStateTracker() {
                 mUidRules.put(uid, uidRules);
             }
 
-            // TODO: dispatch into NMS to push rules towards kernel module
             // TODO: notify UID when it has requested targeted updates
         }
 
         @Override
         public void onMeteredIfacesChanged(String[] meteredIfaces) {
-            // only someone like NPMS should only be calling us
-            mContext.enforceCallingOrSelfPermission(MANAGE_NETWORK_POLICY, TAG);
-
+            // caller is NPMS, since we only register with them
             if (LOGD_RULES) {
                 log("onMeteredIfacesChanged(ifaces=" + Arrays.toString(meteredIfaces) + ")");
             }
@@ -1422,6 +1477,27 @@ private NetworkStateTracker makeWimaxStateTracker() {
                 mMeteredIfaces.clear();
                 for (String iface : meteredIfaces) {
                     mMeteredIfaces.add(iface);
+                }
+            }
+        }
+
+        @Override
+        public void onRestrictBackgroundChanged(boolean restrictBackground) {
+            // caller is NPMS, since we only register with them
+            if (LOGD_RULES) {
+                log("onRestrictBackgroundChanged(restrictBackground=" + restrictBackground + ")");
+            }
+
+            // kick off connectivity change broadcast for active network, since
+            // global background policy change is radical.
+            final int networkType = mActiveDefaultNetwork;
+            if (isNetworkTypeValid(networkType)) {
+                final NetworkStateTracker tracker = mNetTrackers[networkType];
+                if (tracker != null) {
+                    final NetworkInfo info = tracker.getNetworkInfo();
+                    if (info != null && info.isConnected()) {
+                        sendConnectedBroadcast(info);
+                    }
                 }
             }
         }
@@ -2158,8 +2234,9 @@ private NetworkStateTracker makeWimaxStateTracker() {
             String dnsString = dns.getHostAddress();
             if (changed || !dnsString.equals(SystemProperties.get("net.dns" + j + "." + pid))) {
                 changed = true;
-                SystemProperties.set("net.dns" + j++ + "." + pid, dns.getHostAddress());
+                SystemProperties.set("net.dns" + j + "." + pid, dns.getHostAddress());
             }
+            j++;
         }
         return changed;
     }
@@ -2375,15 +2452,15 @@ private NetworkStateTracker makeWimaxStateTracker() {
                     }
 
                     // Connectivity state changed:
-                    // [31-13] Reserved for future use
-                    // [12-9] Network subtype (for mobile network, as defined
+                    // [31-14] Reserved for future use
+                    // [13-10] Network subtype (for mobile network, as defined
                     //         by TelephonyManager)
-                    // [8-3] Detailed state ordinal (as defined by
+                    // [9-4] Detailed state ordinal (as defined by
                     //         NetworkInfo.DetailedState)
-                    // [2-0] Network type (as defined by ConnectivityManager)
-                    int eventLogParam = (info.getType() & 0x7) |
-                            ((info.getDetailedState().ordinal() & 0x3f) << 3) |
-                            (info.getSubtype() << 9);
+                    // [3-0] Network type (as defined by ConnectivityManager)
+                    int eventLogParam = (info.getType() & 0xf) |
+                            ((info.getDetailedState().ordinal() & 0x3f) << 4) |
+                            (info.getSubtype() << 10);
                     EventLog.writeEvent(EventLogTags.CONNECTIVITY_STATE_CHANGED,
                             eventLogParam);
 

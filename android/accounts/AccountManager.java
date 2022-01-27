@@ -405,6 +405,55 @@ public class AccountManager {
     }
 
     /**
+     * Change whether or not an app (identified by its uid) is allowed to retrieve an authToken
+     * for an account.
+     * <p>
+     * This is only meant to be used by system activities and is not in the SDK.
+     * @param account The account whose permissions are being modified
+     * @param authTokenType The type of token whose permissions are being modified
+     * @param uid The uid that identifies the app which is being granted or revoked permission.
+     * @param value true is permission is being granted, false for revoked
+     * @hide
+     */
+    public void updateAppPermission(Account account, String authTokenType, int uid, boolean value) {
+        try {
+            mService.updateAppPermission(account, authTokenType, uid, value);
+        } catch (RemoteException e) {
+            // won't ever happen
+            throw new RuntimeException(e);
+        }
+    }
+
+    /**
+     * Get the user-friendly label associated with an authenticator's auth token.
+     * @param accountType the type of the authenticator. must not be null.
+     * @param authTokenType the token type. must not be null.
+     * @param callback callback to invoke when the result is available. may be null.
+     * @param handler the handler on which to invoke the callback, or null for the main thread
+     * @return a future containing the label string
+     * @hide
+     */
+    public AccountManagerFuture<String> getAuthTokenLabel(
+            final String accountType, final String authTokenType,
+            AccountManagerCallback<String> callback, Handler handler) {
+        if (accountType == null) throw new IllegalArgumentException("accountType is null");
+        if (authTokenType == null) throw new IllegalArgumentException("authTokenType is null");
+        return new Future2Task<String>(handler, callback) {
+            public void doWork() throws RemoteException {
+                mService.getAuthTokenLabel(mResponse, accountType, authTokenType);
+            }
+
+            @Override
+            public String bundleToResult(Bundle bundle) throws AuthenticatorException {
+                if (!bundle.containsKey(KEY_AUTH_TOKEN_LABEL)) {
+                    throw new AuthenticatorException("no result in response");
+                }
+                return bundle.getString(KEY_AUTH_TOKEN_LABEL);
+            }
+        }.start();
+    }
+
+    /**
      * Finds out whether a particular account has all the specified features.
      * Account features are authenticator-specific string tokens identifying
      * boolean account properties.  For example, features are used to tell
@@ -1867,7 +1916,8 @@ public class AccountManager {
      *
      * <p>It is safe to call this method from the main thread.
      *
-     * <p>No permission is required to call this method.
+     * <p>This method requires the caller to hold the permission
+     * {@link android.Manifest.permission#GET_ACCOUNTS}.
      *
      * @param listener The listener to send notifications to
      * @param handler {@link Handler} identifying the thread to use

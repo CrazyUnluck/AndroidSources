@@ -114,6 +114,7 @@ public abstract class CompoundButton extends Button implements Checkable {
         if (mChecked != checked) {
             mChecked = checked;
             refreshDrawableState();
+            notifyAccessibilityStateChanged();
 
             // Avoid infinite recursions if setChecked() is called from a listener
             if (mBroadcasting) {
@@ -211,12 +212,14 @@ public abstract class CompoundButton extends Button implements Checkable {
     @Override
     public void onInitializeAccessibilityEvent(AccessibilityEvent event) {
         super.onInitializeAccessibilityEvent(event);
+        event.setClassName(CompoundButton.class.getName());
         event.setChecked(mChecked);
     }
 
     @Override
     public void onInitializeAccessibilityNodeInfo(AccessibilityNodeInfo info) {
         super.onInitializeAccessibilityNodeInfo(info);
+        info.setClassName(CompoundButton.class.getName());
         info.setCheckable(true);
         info.setChecked(mChecked);
     }

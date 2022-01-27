@@ -24,6 +24,8 @@ import android.util.AttributeSet;
 import android.util.SparseBooleanArray;
 import android.view.View;
 import android.view.ViewGroup;
+import android.view.accessibility.AccessibilityEvent;
+import android.view.accessibility.AccessibilityNodeInfo;
 
 import java.util.regex.Pattern;
 
@@ -68,8 +70,6 @@ import java.util.regex.Pattern;
  * actually use any View subclass as a direct child of TableLayout. The View
  * will be displayed as a single row that spans all the table columns.</p>
  *
- * <p>See the <a href="{@docRoot}resources/tutorials/views/hello-tablelayout.html">Table
- * Layout tutorial</a>.</p>
  */
 public class TableLayout extends LinearLayout {
     private int[] mMaxWidths;
@@ -230,6 +230,8 @@ public class TableLayout extends LinearLayout {
      * <p>Indicates whether all columns are shrinkable or not.</p>
      *
      * @return true if all columns are shrinkable, false otherwise
+     *
+     * @attr ref android.R.styleable#TableLayout_shrinkColumns
      */
     public boolean isShrinkAllColumns() {
         return mShrinkAllColumns;
@@ -250,6 +252,8 @@ public class TableLayout extends LinearLayout {
      * <p>Indicates whether all columns are stretchable or not.</p>
      *
      * @return true if all columns are stretchable, false otherwise
+     *
+     * @attr ref android.R.styleable#TableLayout_stretchColumns
      */
     public boolean isStretchAllColumns() {
         return mStretchAllColumns;
@@ -658,6 +662,18 @@ public class TableLayout extends LinearLayout {
         return new LayoutParams(p);
     }
 
+    @Override
+    public void onInitializeAccessibilityEvent(AccessibilityEvent event) {
+        super.onInitializeAccessibilityEvent(event);
+        event.setClassName(TableLayout.class.getName());
+    }
+
+    @Override
+    public void onInitializeAccessibilityNodeInfo(AccessibilityNodeInfo info) {
+        super.onInitializeAccessibilityNodeInfo(info);
+        info.setClassName(TableLayout.class.getName());
+    }
+
     /**
      * <p>This set of layout parameters enforces the width of each child to be
      * {@link #MATCH_PARENT} and the height of each child to be
@@ -721,8 +737,7 @@ public class TableLayout extends LinearLayout {
          * @param heightAttr the height attribute to fetch
          */
         @Override
-        protected void setBaseAttributes(TypedArray a,
-                int widthAttr, int heightAttr) {
+        protected void setBaseAttributes(TypedArray a, int widthAttr, int heightAttr) {
             this.width = MATCH_PARENT;
             if (a.hasValue(heightAttr)) {
                 this.height = a.getLayoutDimension(heightAttr, "layout_height");

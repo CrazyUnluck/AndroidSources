@@ -29,8 +29,9 @@ import android.util.AttributeSet;
 import android.util.Log;
 import android.util.SparseArray;
 import android.view.LayoutInflater;
+import android.view.View;
 import android.view.accessibility.AccessibilityEvent;
-import android.view.accessibility.AccessibilityManager;
+import android.view.accessibility.AccessibilityNodeInfo;
 import android.view.inputmethod.EditorInfo;
 import android.view.inputmethod.InputMethodManager;
 import android.widget.NumberPicker.OnValueChangeListener;
@@ -161,7 +162,7 @@ public class DatePicker extends FrameLayout {
         int endYear = attributesArray.getInt(R.styleable.DatePicker_endYear, DEFAULT_END_YEAR);
         String minDate = attributesArray.getString(R.styleable.DatePicker_minDate);
         String maxDate = attributesArray.getString(R.styleable.DatePicker_maxDate);
-        int layoutResourceId = attributesArray.getResourceId(R.styleable.DatePicker_layout,
+        int layoutResourceId = attributesArray.getResourceId(R.styleable.DatePicker_internalLayout,
                 R.layout.date_picker);
         attributesArray.recycle();
 
@@ -278,9 +279,12 @@ public class DatePicker extends FrameLayout {
         // re-order the number spinners to match the current date format
         reorderSpinners();
 
-        // set content descriptions
-        if (AccessibilityManager.getInstance(mContext).isEnabled()) {
-            setContentDescriptions();
+        // accessibility
+        setContentDescriptions();
+
+        // If not explicitly specified this view is important for accessibility.
+        if (getImportantForAccessibility() == IMPORTANT_FOR_ACCESSIBILITY_AUTO) {
+            setImportantForAccessibility(IMPORTANT_FOR_ACCESSIBILITY_YES);
         }
     }
 
@@ -388,6 +392,18 @@ public class DatePicker extends FrameLayout {
         String selectedDateUtterance = DateUtils.formatDateTime(mContext,
                 mCurrentDate.getTimeInMillis(), flags);
         event.getText().add(selectedDateUtterance);
+    }
+
+    @Override
+    public void onInitializeAccessibilityEvent(AccessibilityEvent event) {
+        super.onInitializeAccessibilityEvent(event);
+        event.setClassName(DatePicker.class.getName());
+    }
+
+    @Override
+    public void onInitializeAccessibilityNodeInfo(AccessibilityNodeInfo info) {
+        super.onInitializeAccessibilityNodeInfo(info);
+        info.setClassName(DatePicker.class.getName());
     }
 
     @Override
@@ -704,20 +720,27 @@ public class DatePicker extends FrameLayout {
 
     private void setContentDescriptions() {
         // Day
-        String text = mContext.getString(R.string.date_picker_increment_day_button);
-        mDaySpinner.findViewById(R.id.increment).setContentDescription(text);
-        text = mContext.getString(R.string.date_picker_decrement_day_button);
-        mDaySpinner.findViewById(R.id.decrement).setContentDescription(text);
+        trySetContentDescription(mDaySpinner, R.id.increment,
+                R.string.date_picker_increment_day_button);
+        trySetContentDescription(mDaySpinner, R.id.decrement,
+                R.string.date_picker_decrement_day_button);
         // Month
-        text = mContext.getString(R.string.date_picker_increment_month_button);
-        mMonthSpinner.findViewById(R.id.increment).setContentDescription(text);
-        text = mContext.getString(R.string.date_picker_decrement_month_button);
-        mMonthSpinner.findViewById(R.id.decrement).setContentDescription(text);
+        trySetContentDescription(mMonthSpinner, R.id.increment,
+                R.string.date_picker_increment_month_button);
+        trySetContentDescription(mMonthSpinner, R.id.decrement,
+                R.string.date_picker_decrement_month_button);
         // Year
-        text = mContext.getString(R.string.date_picker_increment_year_button);
-        mYearSpinner.findViewById(R.id.increment).setContentDescription(text);
-        text = mContext.getString(R.string.date_picker_decrement_year_button);
-        mYearSpinner.findViewById(R.id.decrement).setContentDescription(text);
+        trySetContentDescription(mYearSpinner, R.id.increment,
+                R.string.date_picker_increment_year_button);
+        trySetContentDescription(mYearSpinner, R.id.decrement,
+                R.string.date_picker_decrement_year_button);
+    }
+
+    private void trySetContentDescription(View root, int viewId, int contDescResId) {
+        View target = root.findViewById(viewId);
+        if (target != null) {
+            target.setContentDescription(mContext.getString(contDescResId));
+        }
     }
 
     private void updateInputState() {

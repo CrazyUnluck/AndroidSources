@@ -22,6 +22,7 @@ import android.graphics.Canvas;
 import android.graphics.Rect;
 import android.os.SystemClock;
 import android.util.AttributeSet;
+import android.view.KeyEvent;
 import android.view.MotionEvent;
 import android.view.View;
 import android.view.ViewGroup;
@@ -30,6 +31,7 @@ import android.view.accessibility.AccessibilityEvent;
 import android.widget.FrameLayout;
 
 import com.android.systemui.R;
+import com.android.systemui.statusbar.BaseStatusBar;
 import com.android.systemui.statusbar.policy.FixedSizeDrawable;
 
 public class PhoneStatusBarView extends FrameLayout {
@@ -64,7 +66,7 @@ public class PhoneStatusBarView extends FrameLayout {
     @Override
     protected void onAttachedToWindow() {
         super.onAttachedToWindow();
-        mService.onBarViewAttached();
+        //mService.onBarViewAttached();
     }
     
     @Override
@@ -94,7 +96,7 @@ public class PhoneStatusBarView extends FrameLayout {
     @Override
     protected void onSizeChanged(int w, int h, int oldw, int oldh) {
         super.onSizeChanged(w, h, oldw, oldh);
-        mService.updateExpandedViewPos(PhoneStatusBar.EXPANDED_LEAVE_ALONE);
+        mService.updateExpandedViewPos(BaseStatusBar.EXPANDED_LEAVE_ALONE);
     }
 
     @Override

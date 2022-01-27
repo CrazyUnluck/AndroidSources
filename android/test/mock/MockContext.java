@@ -251,8 +251,18 @@ public class MockContext extends Context {
     }
 
     @Override
+    public void startActivity(Intent intent, Bundle options) {
+        startActivity(intent);
+    }
+
+    @Override
     public void startActivities(Intent[] intents) {
         throw new UnsupportedOperationException();
+    }
+
+    @Override
+    public void startActivities(Intent[] intents, Bundle options) {
+        startActivities(intents);
     }
 
     @Override
@@ -261,9 +271,22 @@ public class MockContext extends Context {
             throws IntentSender.SendIntentException {
         throw new UnsupportedOperationException();
     }
+
+    @Override
+    public void startIntentSender(IntentSender intent,
+            Intent fillInIntent, int flagsMask, int flagsValues, int extraFlags,
+            Bundle options) throws IntentSender.SendIntentException {
+        startIntentSender(intent, fillInIntent, flagsMask, flagsValues, extraFlags);
+    }
     
     @Override
     public void sendBroadcast(Intent intent) {
+        throw new UnsupportedOperationException();
+    }
+
+    /** @hide */
+    @Override
+    public void sendBroadcast(Intent intent, int userId) {
         throw new UnsupportedOperationException();
     }
 
@@ -330,6 +353,12 @@ public class MockContext extends Context {
 
     @Override
     public boolean bindService(Intent service, ServiceConnection conn, int flags) {
+        throw new UnsupportedOperationException();
+    }
+
+    /** @hide */
+    @Override
+    public boolean bindService(Intent service, ServiceConnection conn, int flags, int userId) {
         throw new UnsupportedOperationException();
     }
 

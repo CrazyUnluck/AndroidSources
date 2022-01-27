@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2008 The Android Open Source Project
+ * Copyright (C) 2008-2012 The Android Open Source Project
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -21,6 +21,7 @@ import java.util.Vector;
 import android.util.Log;
 
 /**
+ * @deprecated in API 16
  * <p>This class is a container for geometric data displayed with
  * Renderscript. Internally, a mesh is a collection of allocations that
  * represent vertex data (positions, normals, texture
@@ -40,33 +41,40 @@ import android.util.Log;
 public class Mesh extends BaseObj {
 
     /**
+    * @deprecated in API 16
     * Describes the way mesh vertex data is interpreted when rendering
     *
     **/
     public enum Primitive {
         /**
+        * @deprecated in API 16
         * Vertex data will be rendered as a series of points
         */
         POINT (0),
         /**
+        * @deprecated in API 16
         * Vertex pairs will be rendered as lines
         */
         LINE (1),
         /**
+        * @deprecated in API 16
         * Vertex data will be rendered as a connected line strip
         */
         LINE_STRIP (2),
         /**
+        * @deprecated in API 16
         * Vertices will be rendered as individual triangles
         */
         TRIANGLE (3),
         /**
+        * @deprecated in API 16
         * Vertices will be rendered as a connected triangle strip
         * defined by the first three vertices with each additional
         * triangle defined by a new vertex
         */
         TRIANGLE_STRIP (4),
         /**
+        * @deprecated in API 16
         * Vertices will be rendered as a sequence of triangles that all
         * share first vertex as the origin
         */
@@ -87,6 +95,7 @@ public class Mesh extends BaseObj {
     }
 
     /**
+    * @deprecated in API 16
     * @return number of allocations containing vertex data
     *
     **/
@@ -97,6 +106,7 @@ public class Mesh extends BaseObj {
         return mVertexBuffers.length;
     }
     /**
+    * @deprecated in API 16
     * @param slot index in the list of allocations to return
     * @return vertex data allocation at the given index
     *
@@ -106,6 +116,7 @@ public class Mesh extends BaseObj {
     }
 
     /**
+    * @deprecated in API 16
     * @return number of primitives or index sets in the mesh
     *
     **/
@@ -117,6 +128,7 @@ public class Mesh extends BaseObj {
     }
 
     /**
+    * @deprecated in API 16
     * @param slot locaton within the list of index set allocation
     * @return allocation containing primtive index data or null if
     *         the index data is not specified explicitly
@@ -126,6 +138,7 @@ public class Mesh extends BaseObj {
         return mIndexBuffers[slot];
     }
     /**
+    * @deprecated in API 16
     * @param slot locaiton within the list of index set primitives
     * @return index set primitive type
     *
@@ -137,15 +150,15 @@ public class Mesh extends BaseObj {
     @Override
     void updateFromNative() {
         super.updateFromNative();
-        int vtxCount = mRS.nMeshGetVertexBufferCount(getID());
-        int idxCount = mRS.nMeshGetIndexCount(getID());
+        int vtxCount = mRS.nMeshGetVertexBufferCount(getID(mRS));
+        int idxCount = mRS.nMeshGetIndexCount(getID(mRS));
 
         int[] vtxIDs = new int[vtxCount];
         int[] idxIDs = new int[idxCount];
         int[] primitives = new int[idxCount];
 
-        mRS.nMeshGetVertices(getID(), vtxIDs, vtxCount);
-        mRS.nMeshGetIndices(getID(), idxIDs, primitives, idxCount);
+        mRS.nMeshGetVertices(getID(mRS), vtxIDs, vtxCount);
+        mRS.nMeshGetIndices(getID(mRS), idxIDs, primitives, idxCount);
 
         mVertexBuffers = new Allocation[vtxCount];
         mIndexBuffers = new Allocation[idxCount];
@@ -168,6 +181,7 @@ public class Mesh extends BaseObj {
     }
 
     /**
+    * @deprecated in API 16
     * Mesh builder object. It starts empty and requires you to
     * add the types necessary to create vertex and index
     * allocations.
@@ -190,6 +204,7 @@ public class Mesh extends BaseObj {
         Vector mIndexTypes;
 
         /**
+        * @deprecated in API 16
         * Creates builder object
         * @param rs Context to which the mesh will belong.
         * @param usage specifies how the mesh allocations are to be
@@ -205,6 +220,7 @@ public class Mesh extends BaseObj {
         }
 
         /**
+        * @deprecated in API 16
         * @return internal index of the last vertex buffer type added to
         *         builder
         **/
@@ -213,6 +229,7 @@ public class Mesh extends BaseObj {
         }
 
         /**
+        * @deprecated in API 16
         * @return internal index of the last index set added to the
         *         builder
         **/
@@ -221,6 +238,7 @@ public class Mesh extends BaseObj {
         }
 
         /**
+        * @deprecated in API 16
         * Adds a vertex data type to the builder object
         *
         * @param t type of the vertex data allocation to be created
@@ -240,6 +258,7 @@ public class Mesh extends BaseObj {
         }
 
         /**
+        * @deprecated in API 16
         * Adds a vertex data type to the builder object
         *
         * @param e element describing the vertex data layout
@@ -261,6 +280,7 @@ public class Mesh extends BaseObj {
         }
 
         /**
+        * @deprecated in API 16
         * Adds an index set data type to the builder object
         *
         * @param t type of the index set data, could be null
@@ -279,6 +299,7 @@ public class Mesh extends BaseObj {
         }
 
         /**
+        * @deprecated in API 16
         * Adds an index set primitive type to the builder object
         *
         * @param p primitive type
@@ -296,6 +317,7 @@ public class Mesh extends BaseObj {
         }
 
         /**
+        * @deprecated in API 16
         * Adds an index set data type to the builder object
         *
         * @param e element describing the index set data layout
@@ -321,6 +343,7 @@ public class Mesh extends BaseObj {
         }
 
         /**
+        * @deprecated in API 16
         * Create a Mesh object from the current state of the builder
         *
         **/
@@ -343,7 +366,7 @@ public class Mesh extends BaseObj {
                     alloc = Allocation.createSized(mRS, entry.e, entry.size, mUsage);
                 }
                 vertexBuffers[ct] = alloc;
-                vtx[ct] = alloc.getID();
+                vtx[ct] = alloc.getID(mRS);
             }
 
             for(int ct = 0; ct < mIndexTypes.size(); ct ++) {
@@ -354,7 +377,7 @@ public class Mesh extends BaseObj {
                 } else if(entry.e != null) {
                     alloc = Allocation.createSized(mRS, entry.e, entry.size, mUsage);
                 }
-                int allocID = (alloc == null) ? 0 : alloc.getID();
+                int allocID = (alloc == null) ? 0 : alloc.getID(mRS);
                 indexBuffers[ct] = alloc;
                 primitives[ct] = entry.prim;
 
@@ -373,6 +396,7 @@ public class Mesh extends BaseObj {
     }
 
     /**
+    * @deprecated in API 16
     * Mesh builder object. It starts empty and requires the user to
     * add all the vertex and index allocations that comprise the
     * mesh
@@ -391,6 +415,9 @@ public class Mesh extends BaseObj {
 
         Vector mIndexTypes;
 
+        /**
+        * @deprecated in API 16
+        **/
         public AllocationBuilder(RenderScript rs) {
             mRS = rs;
             mVertexTypeCount = 0;
@@ -399,6 +426,7 @@ public class Mesh extends BaseObj {
         }
 
         /**
+        * @deprecated in API 16
         * @return internal index of the last vertex buffer type added to
         *         builder
         **/
@@ -407,6 +435,7 @@ public class Mesh extends BaseObj {
         }
 
         /**
+        * @deprecated in API 16
         * @return internal index of the last index set added to the
         *         builder
         **/
@@ -415,6 +444,7 @@ public class Mesh extends BaseObj {
         }
 
         /**
+        * @deprecated in API 16
         * Adds an allocation containing vertex buffer data to the
         * builder
         *
@@ -434,6 +464,7 @@ public class Mesh extends BaseObj {
         }
 
         /**
+        * @deprecated in API 16
         * Adds an allocation containing index buffer data and index type
         * to the builder
         *
@@ -451,6 +482,7 @@ public class Mesh extends BaseObj {
         }
 
         /**
+        * @deprecated in API 16
         * Adds an index set type to the builder
         *
         * @param p index set primitive type
@@ -466,6 +498,7 @@ public class Mesh extends BaseObj {
         }
 
         /**
+        * @deprecated in API 16
         * Create a Mesh object from the current state of the builder
         *
         **/
@@ -483,12 +516,12 @@ public class Mesh extends BaseObj {
             for(int ct = 0; ct < mVertexTypeCount; ct ++) {
                 Entry entry = mVertexTypes[ct];
                 vertexBuffers[ct] = entry.a;
-                vtx[ct] = entry.a.getID();
+                vtx[ct] = entry.a.getID(mRS);
             }
 
             for(int ct = 0; ct < mIndexTypes.size(); ct ++) {
                 Entry entry = (Entry)mIndexTypes.elementAt(ct);
-                int allocID = (entry.a == null) ? 0 : entry.a.getID();
+                int allocID = (entry.a == null) ? 0 : entry.a.getID(mRS);
                 indexBuffers[ct] = entry.a;
                 primitives[ct] = entry.prim;
 
@@ -507,6 +540,7 @@ public class Mesh extends BaseObj {
     }
 
     /**
+    * @deprecated in API 16
     * Builder that allows creation of a mesh object point by point
     * and triangle by triangle
     *
@@ -514,6 +548,7 @@ public class Mesh extends BaseObj {
     public static class TriangleMeshBuilder {
         float mVtxData[];
         int mVtxCount;
+        int mMaxIndex;
         short mIndexData[];
         int mIndexCount;
         RenderScript mRS;
@@ -532,11 +567,21 @@ public class Mesh extends BaseObj {
         int mVtxSize;
         int mFlags;
 
+        /**
+        * @deprecated in API 16
+        **/
         public static final int COLOR = 0x0001;
+        /**
+        * @deprecated in API 16
+        **/
         public static final int NORMAL = 0x0002;
+        /**
+        * @deprecated in API 16
+        **/
         public static final int TEXTURE_0 = 0x0100;
 
         /**
+        * @deprecated in API 16
         * @param rs Context to which the mesh will belong.
         * @param vtxSize specifies whether the vertex is a float2 or
         *                float3
@@ -548,6 +593,7 @@ public class Mesh extends BaseObj {
         public TriangleMeshBuilder(RenderScript rs, int vtxSize, int flags) {
             mRS = rs;
             mVtxCount = 0;
+            mMaxIndex = 0;
             mIndexCount = 0;
             mVtxData = new float[128];
             mIndexData = new short[128];
@@ -581,14 +627,17 @@ public class Mesh extends BaseObj {
                 mVtxData[mVtxCount++] = mT0;
             }
             if ((mFlags & NORMAL) != 0) {
-                makeSpace(3);
+                makeSpace(4);
                 mVtxData[mVtxCount++] = mNX;
                 mVtxData[mVtxCount++] = mNY;
                 mVtxData[mVtxCount++] = mNZ;
+                mVtxData[mVtxCount++] = 0.0f;
             }
+            mMaxIndex ++;
         }
 
         /**
+        * @deprecated in API 16
         * Adds a float2 vertex to the mesh
         *
         * @param x position x
@@ -609,6 +658,7 @@ public class Mesh extends BaseObj {
         }
 
         /**
+        * @deprecated in API 16
         * Adds a float3 vertex to the mesh
         *
         * @param x position x
@@ -622,15 +672,17 @@ public class Mesh extends BaseObj {
             if (mVtxSize != 3) {
                 throw new IllegalStateException("add mistmatch with declared components.");
             }
-            makeSpace(3);
+            makeSpace(4);
             mVtxData[mVtxCount++] = x;
             mVtxData[mVtxCount++] = y;
             mVtxData[mVtxCount++] = z;
+            mVtxData[mVtxCount++] = 1.0f;
             latch();
             return this;
         }
 
         /**
+        * @deprecated in API 16
         * Sets the texture coordinate for the vertices that are added after this method call.
         *
         * @param s texture coordinate s
@@ -648,6 +700,7 @@ public class Mesh extends BaseObj {
         }
 
         /**
+        * @deprecated in API 16
         * Sets the normal vector for the vertices that are added after this method call.
         *
         * @param x normal vector x
@@ -667,6 +720,7 @@ public class Mesh extends BaseObj {
         }
 
         /**
+        * @deprecated in API 16
         * Sets the color for the vertices that are added after this method call.
         *
         * @param r red component
@@ -688,6 +742,7 @@ public class Mesh extends BaseObj {
         }
 
         /**
+        * @deprecated in API 16
         * Adds a new triangle to the mesh builder
         *
         * @param idx1 index of the first vertex in the triangle
@@ -697,9 +752,9 @@ public class Mesh extends BaseObj {
         * @return this
         **/
         public TriangleMeshBuilder addTriangle(int idx1, int idx2, int idx3) {
-            if((idx1 >= mVtxCount) || (idx1 < 0) ||
-               (idx2 >= mVtxCount) || (idx2 < 0) ||
-               (idx3 >= mVtxCount) || (idx3 < 0)) {
+            if((idx1 >= mMaxIndex) || (idx1 < 0) ||
+               (idx2 >= mMaxIndex) || (idx2 < 0) ||
+               (idx3 >= mMaxIndex) || (idx3 < 0)) {
                throw new IllegalStateException("Index provided greater than vertex count.");
             }
             if ((mIndexCount + 3) >= mIndexData.length) {
@@ -714,6 +769,7 @@ public class Mesh extends BaseObj {
         }
 
         /**
+        * @deprecated in API 16
         * Creates the mesh object from the current state of the builder
         *
         * @param uploadToBufferObject specifies whether the vertex data
@@ -729,20 +785,16 @@ public class Mesh extends BaseObj {
         **/
         public Mesh create(boolean uploadToBufferObject) {
             Element.Builder b = new Element.Builder(mRS);
-            int floatCount = mVtxSize;
             b.add(Element.createVector(mRS,
                                        Element.DataType.FLOAT_32,
                                        mVtxSize), "position");
             if ((mFlags & COLOR) != 0) {
-                floatCount += 4;
                 b.add(Element.F32_4(mRS), "color");
             }
             if ((mFlags & TEXTURE_0) != 0) {
-                floatCount += 2;
                 b.add(Element.F32_2(mRS), "texture0");
             }
             if ((mFlags & NORMAL) != 0) {
-                floatCount += 3;
                 b.add(Element.F32_3(mRS), "normal");
             }
             mElement = b.create();
@@ -753,12 +805,12 @@ public class Mesh extends BaseObj {
             }
 
             Builder smb = new Builder(mRS, usage);
-            smb.addVertexType(mElement, mVtxCount / floatCount);
+            smb.addVertexType(mElement, mMaxIndex);
             smb.addIndexSetType(Element.U16(mRS), mIndexCount, Primitive.TRIANGLE);
 
             Mesh sm = smb.create();
 
-            sm.getVertexAllocation(0).copy1DRangeFromUnchecked(0, mVtxCount / floatCount, mVtxData);
+            sm.getVertexAllocation(0).copy1DRangeFromUnchecked(0, mMaxIndex, mVtxData);
             if(uploadToBufferObject) {
                 if (uploadToBufferObject) {
                     sm.getVertexAllocation(0).syncAll(Allocation.USAGE_SCRIPT);

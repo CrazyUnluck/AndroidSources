@@ -31,6 +31,7 @@ import android.content.Intent;
 import android.content.pm.IPackageManager;
 import android.content.pm.ResolveInfo;
 import android.net.Uri;
+import android.os.Binder;
 import android.os.Bundle;
 import android.os.ParcelFileDescriptor;
 import android.os.RemoteException;
@@ -56,14 +57,14 @@ public class Am {
     private int mNextArg;
     private String mCurArgData;
 
-    private boolean mDebugOption = false;
+    private int mStartFlags = 0;
     private boolean mWaitOption = false;
     private boolean mStopOption = false;
 
     private int mRepeat = 0;
+    private int mUserId = 0;
 
     private String mProfileFile;
-    private boolean mProfileAutoStop;
 
     // These are magic strings understood by the Eclipse plugin.
     private static final String FATAL_ERROR_CODE = "Error type 1";
@@ -135,6 +136,8 @@ public class Am {
             runToUri(false);
         } else if (op.equals("to-intent-uri")) {
             runToUri(true);
+        } else if (op.equals("switch-user")) {
+            runSwitchUser();
         } else {
             throw new IllegalArgumentException("Unknown command: " + op);
         }
@@ -145,11 +148,12 @@ public class Am {
         Intent baseIntent = intent;
         boolean hasIntentInfo = false;
 
-        mDebugOption = false;
+        mStartFlags = 0;
         mWaitOption = false;
         mStopOption = false;
         mRepeat = 0;
         mProfileFile = null;
+        mUserId = 0;
         Uri data = null;
         String type = null;
 
@@ -190,6 +194,12 @@ public class Am {
                 String key = nextArgRequired();
                 String value = nextArgRequired();
                 intent.putExtra(key, Uri.parse(value));
+            } else if (opt.equals("--ecn")) {
+                String key = nextArgRequired();
+                String value = nextArgRequired();
+                ComponentName cn = ComponentName.unflattenFromString(value);
+                if (cn == null) throw new IllegalArgumentException("Bad component name: " + value);
+                intent.putExtra(key, cn);
             } else if (opt.equals("--eia")) {
                 String key = nextArgRequired();
                 String value = nextArgRequired();
@@ -212,6 +222,22 @@ public class Am {
                     list[i] = Long.valueOf(strings[i]);
                 }
                 intent.putExtra(key, list);
+                hasIntentInfo = true;
+            } else if (opt.equals("--ef")) {
+                String key = nextArgRequired();
+                String value = nextArgRequired();
+                intent.putExtra(key, Float.valueOf(value));
+                hasIntentInfo = true;
+            } else if (opt.equals("--efa")) {
+                String key = nextArgRequired();
+                String value = nextArgRequired();
+                String[] strings = value.split(",");
+                float[] list = new float[strings.length];
+                for (int i = 0; i < strings.length; i++) {
+                    list[i] = Float.valueOf(strings[i]);
+                }
+                intent.putExtra(key, list);
+                hasIntentInfo = true;
             } else if (opt.equals("--ez")) {
                 String key = nextArgRequired();
                 String value = nextArgRequired();
@@ -275,19 +301,23 @@ public class Am {
                 intent.setDataAndType(data, type);
                 intent = new Intent();
             } else if (opt.equals("-D")) {
-                mDebugOption = true;
+                mStartFlags |= ActivityManager.START_FLAG_DEBUG;
             } else if (opt.equals("-W")) {
                 mWaitOption = true;
             } else if (opt.equals("-P")) {
                 mProfileFile = nextArgRequired();
-                mProfileAutoStop = true;
+                mStartFlags |= ActivityManager.START_FLAG_AUTO_STOP_PROFILER;
             } else if (opt.equals("--start-profiler")) {
                 mProfileFile = nextArgRequired();
-                mProfileAutoStop = false;
+                mStartFlags &= ~ActivityManager.START_FLAG_AUTO_STOP_PROFILER;
             } else if (opt.equals("-R")) {
                 mRepeat = Integer.parseInt(nextArgRequired());
             } else if (opt.equals("-S")) {
                 mStopOption = true;
+            } else if (opt.equals("--opengl-trace")) {
+                mStartFlags |= ActivityManager.START_FLAG_OPENGL_TRACES;
+            } else if (opt.equals("--user")) {
+                mUserId = Integer.parseInt(nextArgRequired());
             } else {
                 System.err.println("Error: Unknown option: " + opt);
                 showUsage();
@@ -387,7 +417,8 @@ public class Am {
                         System.err.println("Error: Package manager not running; aborting");
                         return;
                     }
-                    List<ResolveInfo> activities = pm.queryIntentActivities(intent, mimeType, 0);
+                    List<ResolveInfo> activities = pm.queryIntentActivities(intent, mimeType, 0,
+                            mUserId);
                     if (activities == null || activities.size() <= 0) {
                         System.err.println("Error: Intent does not match any activities: "
                                 + intent);
@@ -421,67 +452,65 @@ public class Am {
                     return;
                 }
             }
-    
+
             IActivityManager.WaitResult result = null;
             int res;
             if (mWaitOption) {
                 result = mAm.startActivityAndWait(null, intent, mimeType,
-                            null, 0, null, null, 0, false, mDebugOption,
-                            mProfileFile, fd, mProfileAutoStop);
+                            null, null, 0, mStartFlags, mProfileFile, fd, null);
                 res = result.result;
             } else {
                 res = mAm.startActivity(null, intent, mimeType,
-                        null, 0, null, null, 0, false, mDebugOption,
-                        mProfileFile, fd, mProfileAutoStop);
+                        null, null, 0, mStartFlags, mProfileFile, fd, null);
             }
             PrintStream out = mWaitOption ? System.out : System.err;
             boolean launched = false;
             switch (res) {
-                case IActivityManager.START_SUCCESS:
+                case ActivityManager.START_SUCCESS:
                     launched = true;
                     break;
-                case IActivityManager.START_SWITCHES_CANCELED:
+                case ActivityManager.START_SWITCHES_CANCELED:
                     launched = true;
                     out.println(
                             "Warning: Activity not started because the "
                             + " current activity is being kept for the user.");
                     break;
-                case IActivityManager.START_DELIVERED_TO_TOP:
+                case ActivityManager.START_DELIVERED_TO_TOP:
                     launched = true;
                     out.println(
                             "Warning: Activity not started, intent has "
                             + "been delivered to currently running "
                             + "top-most instance.");
                     break;
-                case IActivityManager.START_RETURN_INTENT_TO_CALLER:
+                case ActivityManager.START_RETURN_INTENT_TO_CALLER:
                     launched = true;
                     out.println(
                             "Warning: Activity not started because intent "
                             + "should be handled by the caller");
                     break;
-                case IActivityManager.START_TASK_TO_FRONT:
+                case ActivityManager.START_TASK_TO_FRONT:
                     launched = true;
                     out.println(
                             "Warning: Activity not started, its current "
                             + "task has been brought to the front");
                     break;
-                case IActivityManager.START_INTENT_NOT_RESOLVED:
+                case ActivityManager.START_INTENT_NOT_RESOLVED:
                     out.println(
                             "Error: Activity not started, unable to "
                             + "resolve " + intent.toString());
                     break;
-                case IActivityManager.START_CLASS_NOT_FOUND:
+                case ActivityManager.START_CLASS_NOT_FOUND:
                     out.println(NO_CLASS_ERROR_CODE);
                     out.println("Error: Activity class " +
                             intent.getComponent().toShortString()
                             + " does not exist.");
                     break;
-                case IActivityManager.START_FORWARD_AND_REQUEST_CONFLICT:
+                case ActivityManager.START_FORWARD_AND_REQUEST_CONFLICT:
                     out.println(
                             "Error: Activity not started, you requested to "
                             + "both forward and receive its result");
                     break;
-                case IActivityManager.START_PERMISSION_DENIED:
+                case ActivityManager.START_PERMISSION_DENIED:
                     out.println(
                             "Error: Activity not started, you do not "
                             + "have permission to access it.");
@@ -531,7 +560,8 @@ public class Am {
         Intent intent = makeIntent();
         IntentReceiver receiver = new IntentReceiver();
         System.out.println("Broadcasting: " + intent);
-        mAm.broadcastIntent(null, intent, null, receiver, 0, null, null, null, true, false);
+        mAm.broadcastIntent(null, intent, null, receiver, 0, null, null, null, true, false,
+                mUserId);
         receiver.waitForFinish();
     }
 
@@ -615,10 +645,6 @@ public class Am {
         String process = null;
         
         String cmd = nextArgRequired();
-        if ("looper".equals(cmd)) {
-            cmd = nextArgRequired();
-            profileType = 1;
-        }
 
         if ("start".equals(cmd)) {
             start = true;
@@ -720,6 +746,14 @@ public class Am {
 
     private void runClearDebugApp() throws Exception {
         mAm.setDebugApp(null, false, true);
+    }
+
+    private void runSwitchUser() throws Exception {
+        if (android.os.Process.myUid() != 0) {
+            throw new RuntimeException("switchuser can only be run as root");
+        }
+        String user = nextArgRequired();
+        mAm.switchUser(Integer.parseInt(user));
     }
 
     class MyActivityController extends IActivityController.Stub {
@@ -1249,7 +1283,7 @@ public class Am {
         System.err.println(
                 "usage: am [subcommand] [options]\n" +
                 "usage: am start [-D] [-W] [-P <FILE>] [--start-profiler <FILE>]\n" +
-                "               [--R COUNT] [-S] <INTENT>\n" +
+                "               [--R COUNT] [-S] [--opengl-trace] <INTENT>\n" +
                 "       am startservice <INTENT>\n" +
                 "       am force-stop <PACKAGE>\n" +
                 "       am kill <PACKAGE>\n" +
@@ -1257,8 +1291,8 @@ public class Am {
                 "       am broadcast <INTENT>\n" +
                 "       am instrument [-r] [-e <NAME> <VALUE>] [-p <FILE>] [-w]\n" +
                 "               [--no-window-animation] <COMPONENT>\n" +
-                "       am profile [looper] start <PROCESS> <FILE>\n" +
-                "       am profile [looper] stop [<PROCESS>]\n" +
+                "       am profile start <PROCESS> <FILE>\n" +
+                "       am profile stop [<PROCESS>]\n" +
                 "       am dumpheap [flags] <PROCESS> <FILE>\n" +
                 "       am set-debug-app [-w] [--persistent] <PACKAGE>\n" +
                 "       am clear-debug-app\n" +
@@ -1276,6 +1310,7 @@ public class Am {
                 "    -R: repeat the activity launch <COUNT> times.  Prior to each repeat,\n" +
                 "        the top activity will be finished.\n" +
                 "    -S: force stop the target app before starting the activity\n" +
+                "    --opengl-trace: enable tracing of OpenGL functions\n" +
                 "\n" +
                 "am startservice: start a Service.\n" +
                 "\n" +
@@ -1330,9 +1365,12 @@ public class Am {
                 "    [--ez <EXTRA_KEY> <EXTRA_BOOLEAN_VALUE> ...]\n" +
                 "    [--ei <EXTRA_KEY> <EXTRA_INT_VALUE> ...]\n" +
                 "    [--el <EXTRA_KEY> <EXTRA_LONG_VALUE> ...]\n" +
+                "    [--ef <EXTRA_KEY> <EXTRA_FLOAT_VALUE> ...]\n" +
                 "    [--eu <EXTRA_KEY> <EXTRA_URI_VALUE> ...]\n" +
+                "    [--ecn <EXTRA_KEY> <EXTRA_COMPONENT_NAME_VALUE>]\n" +
                 "    [--eia <EXTRA_KEY> <EXTRA_INT_VALUE>[,<EXTRA_INT_VALUE...]]\n" +
                 "    [--ela <EXTRA_KEY> <EXTRA_LONG_VALUE>[,<EXTRA_LONG_VALUE...]]\n" +
+                "    [--efa <EXTRA_KEY> <EXTRA_FLOAT_VALUE>[,<EXTRA_FLOAT_VALUE...]]\n" +
                 "    [-n <COMPONENT>] [-f <FLAGS>]\n" +
                 "    [--grant-read-uri-permission] [--grant-write-uri-permission]\n" +
                 "    [--debug-log-resolution] [--exclude-stopped-packages]\n" +

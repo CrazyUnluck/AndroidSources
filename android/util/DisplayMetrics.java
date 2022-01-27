@@ -38,11 +38,21 @@ public class DisplayMetrics {
     public static final int DENSITY_MEDIUM = 160;
 
     /**
-     * Standard quantized DPI for 720p TV screens.  Applications should
-     * generally not worry about this density, instead targeting
-     * {@link #DENSITY_XHIGH} for 1080p TV screens.  For situations where
-     * output is needed for a 720p screen, the UI elements can be scaled
-     * automatically by the platform.
+     * This is a secondary density, added for some common screen configurations.
+     * It is recommended that applications not generally target this as a first
+     * class density -- that is, don't supply specific graphics for this
+     * density, instead allow the platform to scale from other densities
+     * (typically {@link #DENSITY_HIGH}) as
+     * appropriate.  In most cases (such as using bitmaps in
+     * {@link android.graphics.drawable.Drawable}) the platform
+     * can perform this scaling at load time, so the only cost is some slight
+     * startup runtime overhead.
+     *
+     * <p>This density was original introduced to correspond with a
+     * 720p TV screen: the density for 1080p televisions is
+     * {@link #DENSITY_XHIGH}, and the value here provides the same UI
+     * size for a TV running at 720p.  It has also found use in 7" tablets,
+     * when these devices have 1280x720 displays.
      */
     public static final int DENSITY_TV = 213;
 
@@ -55,6 +65,13 @@ public class DisplayMetrics {
      * Standard quantized DPI for extra-high-density screens.
      */
     public static final int DENSITY_XHIGH = 320;
+
+    /**
+     * Standard quantized DPI for extra-extra-high-density screens.  Applications
+     * should not generally worry about this density; relying on XHIGH graphics
+     * being scaled up to it should be sufficient for almost all cases.
+     */
+    public static final int DENSITY_XXHIGH = 480;
 
     /**
      * The reference density used throughout the system.

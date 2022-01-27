@@ -19,28 +19,37 @@ package com.android.internal.app;
 import com.android.internal.R;
 import com.android.internal.content.PackageMonitor;
 
+import android.app.ActivityManager;
+import android.app.ActivityManagerNative;
 import android.content.ComponentName;
 import android.content.Context;
-import android.content.DialogInterface;
 import android.content.Intent;
 import android.content.IntentFilter;
 import android.content.pm.ActivityInfo;
 import android.content.pm.LabeledIntent;
 import android.content.pm.PackageManager;
+import android.content.pm.PackageManager.NameNotFoundException;
 import android.content.pm.ResolveInfo;
+import android.content.res.Resources;
 import android.graphics.drawable.Drawable;
 import android.net.Uri;
 import android.os.Bundle;
 import android.os.PatternMatcher;
+import android.os.Process;
+import android.os.RemoteException;
+import android.os.UserId;
 import android.util.Log;
+import android.view.LayoutInflater;
 import android.view.View;
 import android.view.ViewGroup;
-import android.view.LayoutInflater;
+import android.widget.AdapterView;
 import android.widget.BaseAdapter;
-import android.widget.CheckBox;
-import android.widget.CompoundButton;
+import android.widget.Button;
+import android.widget.GridView;
 import android.widget.ImageView;
+import android.widget.ListView;
 import android.widget.TextView;
+
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.HashSet;
@@ -53,13 +62,22 @@ import java.util.Set;
  * which there is more than one matching activity, allowing the user to decide
  * which to go to.  It is not normally used directly by application developers.
  */
-public class ResolverActivity extends AlertActivity implements
-        DialogInterface.OnClickListener, CheckBox.OnCheckedChangeListener {
-    private ResolveListAdapter mAdapter;
-    private CheckBox mAlwaysCheck;
-    private TextView mClearDefaultHint;
-    private PackageManager mPm;
+public class ResolverActivity extends AlertActivity implements AdapterView.OnItemClickListener {
+    private static final String TAG = "ResolverActivity";
 
+    private int mLaunchedFromUid;
+    private ResolveListAdapter mAdapter;
+    private PackageManager mPm;
+    private boolean mAlwaysUseOption;
+    private boolean mShowExtended;
+    private GridView mGrid;
+    private Button mAlwaysButton;
+    private Button mOnceButton;
+    private int mIconDpi;
+    private int mIconSize;
+    private int mMaxColumns;
+
+    private boolean mRegistered;
     private final PackageMonitor mPackageMonitor = new PackageMonitor() {
         @Override public void onSomePackagesChanged() {
             mAdapter.handlePackagesChanged();
@@ -87,61 +105,181 @@ public class ResolverActivity extends AlertActivity implements
     protected void onCreate(Bundle savedInstanceState, Intent intent,
             CharSequence title, Intent[] initialIntents, List<ResolveInfo> rList,
             boolean alwaysUseOption) {
+        setTheme(R.style.Theme_DeviceDefault_Light_Dialog_Alert);
         super.onCreate(savedInstanceState);
+        try {
+            mLaunchedFromUid = ActivityManagerNative.getDefault().getLaunchedFromUid(
+                    getActivityToken());
+        } catch (RemoteException e) {
+            mLaunchedFromUid = -1;
+        }
         mPm = getPackageManager();
+        mAlwaysUseOption = alwaysUseOption;
+        mMaxColumns = getResources().getInteger(R.integer.config_maxResolverActivityColumns);
         intent.setComponent(null);
 
         AlertController.AlertParams ap = mAlertParams;
 
         ap.mTitle = title;
-        ap.mOnClickListener = this;
 
-        mPackageMonitor.register(this, false);
+        mPackageMonitor.register(this, getMainLooper(), false);
+        mRegistered = true;
 
-        if (alwaysUseOption) {
-            LayoutInflater inflater = (LayoutInflater) getSystemService(
-                    Context.LAYOUT_INFLATER_SERVICE);
-            ap.mView = inflater.inflate(R.layout.always_use_checkbox, null);
-            mAlwaysCheck = (CheckBox)ap.mView.findViewById(com.android.internal.R.id.alwaysUse);
-            mAlwaysCheck.setText(R.string.alwaysUse);
-            mAlwaysCheck.setOnCheckedChangeListener(this);
-            mClearDefaultHint = (TextView)ap.mView.findViewById(
-                                                        com.android.internal.R.id.clearDefaultHint);
-            mClearDefaultHint.setVisibility(View.GONE);
-        }
-        mAdapter = new ResolveListAdapter(this, intent, initialIntents, rList);
+        final ActivityManager am = (ActivityManager) getSystemService(ACTIVITY_SERVICE);
+        mIconDpi = am.getLauncherLargeIconDensity();
+        mIconSize = am.getLauncherLargeIconSize();
+
+        mAdapter = new ResolveListAdapter(this, intent, initialIntents, rList,
+                mLaunchedFromUid);
         int count = mAdapter.getCount();
-        if (count > 1) {
-            ap.mAdapter = mAdapter;
+        if (mLaunchedFromUid < 0 || UserId.isIsolated(mLaunchedFromUid)) {
+            // Gulp!
+            finish();
+            return;
+        } else if (count > 1) {
+            ap.mView = getLayoutInflater().inflate(R.layout.resolver_grid, null);
+            mGrid = (GridView) ap.mView.findViewById(R.id.resolver_grid);
+            mGrid.setAdapter(mAdapter);
+            mGrid.setOnItemClickListener(this);
+            mGrid.setOnItemLongClickListener(new ItemLongClickListener());
+
+            if (alwaysUseOption) {
+                mGrid.setChoiceMode(ListView.CHOICE_MODE_SINGLE);
+            }
+
+            resizeGrid();
         } else if (count == 1) {
             startActivity(mAdapter.intentForPosition(0));
+            mPackageMonitor.unregister();
+            mRegistered = false;
             finish();
             return;
         } else {
-            ap.mMessage = getResources().getText(com.android.internal.R.string.noApplications);
+            ap.mMessage = getResources().getText(R.string.noApplications);
         }
 
         setupAlert();
+
+        if (alwaysUseOption) {
+            final ViewGroup buttonLayout = (ViewGroup) findViewById(R.id.button_bar);
+            if (buttonLayout != null) {
+                buttonLayout.setVisibility(View.VISIBLE);
+                mAlwaysButton = (Button) buttonLayout.findViewById(R.id.button_always);
+                mOnceButton = (Button) buttonLayout.findViewById(R.id.button_once);
+            } else {
+                mAlwaysUseOption = false;
+            }
+        }
+    }
+
+    void resizeGrid() {
+        final int itemCount = mAdapter.getCount();
+        mGrid.setNumColumns(Math.min(itemCount, mMaxColumns));
+    }
+
+    Drawable getIcon(Resources res, int resId) {
+        Drawable result;
+        try {
+            result = res.getDrawableForDensity(resId, mIconDpi);
+        } catch (Resources.NotFoundException e) {
+            result = null;
+        }
+
+        return result;
+    }
+
+    Drawable loadIconForResolveInfo(ResolveInfo ri) {
+        Drawable dr;
+        try {
+            if (ri.resolvePackageName != null && ri.icon != 0) {
+                dr = getIcon(mPm.getResourcesForApplication(ri.resolvePackageName), ri.icon);
+                if (dr != null) {
+                    return dr;
+                }
+            }
+            final int iconRes = ri.getIconResource();
+            if (iconRes != 0) {
+                dr = getIcon(mPm.getResourcesForApplication(ri.activityInfo.packageName), iconRes);
+                if (dr != null) {
+                    return dr;
+                }
+            }
+        } catch (NameNotFoundException e) {
+            Log.e(TAG, "Couldn't find resources for package", e);
+        }
+        return ri.loadIcon(mPm);
     }
 
     @Override
     protected void onRestart() {
         super.onRestart();
-        mPackageMonitor.register(this, false);
+        if (!mRegistered) {
+            mPackageMonitor.register(this, getMainLooper(), false);
+            mRegistered = true;
+        }
         mAdapter.handlePackagesChanged();
     }
 
     @Override
     protected void onStop() {
         super.onStop();
-        mPackageMonitor.unregister();
+        if (mRegistered) {
+            mPackageMonitor.unregister();
+            mRegistered = false;
+        }
+        if ((getIntent().getFlags()&Intent.FLAG_ACTIVITY_NEW_TASK) != 0) {
+            // This resolver is in the unusual situation where it has been
+            // launched at the top of a new task.  We don't let it be added
+            // to the recent tasks shown to the user, and we need to make sure
+            // that each time we are launched we get the correct launching
+            // uid (not re-using the same resolver from an old launching uid),
+            // so we will now finish ourself since being no longer visible,
+            // the user probably can't get back to us.
+            if (!isChangingConfigurations()) {
+                finish();
+            }
+        }
     }
 
-    public void onClick(DialogInterface dialog, int which) {
+    @Override
+    protected void onRestoreInstanceState(Bundle savedInstanceState) {
+        super.onRestoreInstanceState(savedInstanceState);
+        if (mAlwaysUseOption) {
+            final int checkedPos = mGrid.getCheckedItemPosition();
+            final boolean enabled = checkedPos != GridView.INVALID_POSITION;
+            mAlwaysButton.setEnabled(enabled);
+            mOnceButton.setEnabled(enabled);
+            if (enabled) {
+                mGrid.setSelection(checkedPos);
+            }
+        }
+    }
+
+    @Override
+    public void onItemClick(AdapterView<?> parent, View view, int position, long id) {
+        if (mAlwaysUseOption) {
+            final int checkedPos = mGrid.getCheckedItemPosition();
+            final boolean enabled = checkedPos != GridView.INVALID_POSITION;
+            mAlwaysButton.setEnabled(enabled);
+            mOnceButton.setEnabled(enabled);
+            if (enabled) {
+                mGrid.smoothScrollToPosition(checkedPos);
+            }
+        } else {
+            startSelected(position, false);
+        }
+    }
+
+    public void onButtonClick(View v) {
+        final int id = v.getId();
+        startSelected(mGrid.getCheckedItemPosition(), id == R.id.button_always);
+        dismiss();
+    }
+
+    void startSelected(int which, boolean always) {
         ResolveInfo ri = mAdapter.resolveInfoForPosition(which);
         Intent intent = mAdapter.intentForPosition(which);
-        boolean alwaysCheck = (mAlwaysCheck != null && mAlwaysCheck.isChecked());
-        onIntentSelected(ri, intent, alwaysCheck);
+        onIntentSelected(ri, intent, always);
         finish();
     }
 
@@ -231,6 +369,12 @@ public class ResolverActivity extends AlertActivity implements
         }
     }
 
+    void showAppDetails(ResolveInfo ri) {
+        Intent in = new Intent().setAction("android.settings.APPLICATION_DETAILS_SETTINGS")
+                .setData(Uri.fromParts("package", ri.activityInfo.packageName, null));
+        startActivity(in);
+    }
+
     private final class DisplayResolveInfo {
         ResolveInfo ri;
         CharSequence displayLabel;
@@ -251,27 +395,35 @@ public class ResolverActivity extends AlertActivity implements
         private final Intent[] mInitialIntents;
         private final List<ResolveInfo> mBaseResolveList;
         private final Intent mIntent;
+        private final int mLaunchedFromUid;
         private final LayoutInflater mInflater;
 
         private List<ResolveInfo> mCurrentResolveList;
         private List<DisplayResolveInfo> mList;
 
         public ResolveListAdapter(Context context, Intent intent,
-                Intent[] initialIntents, List<ResolveInfo> rList) {
+                Intent[] initialIntents, List<ResolveInfo> rList, int launchedFromUid) {
             mIntent = new Intent(intent);
             mIntent.setComponent(null);
             mInitialIntents = initialIntents;
             mBaseResolveList = rList;
+            mLaunchedFromUid = launchedFromUid;
             mInflater = (LayoutInflater)context.getSystemService(Context.LAYOUT_INFLATER_SERVICE);
             rebuildList();
         }
 
         public void handlePackagesChanged() {
+            final int oldItemCount = getCount();
             rebuildList();
             notifyDataSetChanged();
             if (mList.size() <= 0) {
                 // We no longer have any items...  just finish the activity.
                 finish();
+            }
+
+            final int newItemCount = getCount();
+            if (newItemCount != oldItemCount) {
+                resizeGrid();
             }
         }
 
@@ -281,7 +433,24 @@ public class ResolverActivity extends AlertActivity implements
             } else {
                 mCurrentResolveList = mPm.queryIntentActivities(
                         mIntent, PackageManager.MATCH_DEFAULT_ONLY
-                        | (mAlwaysCheck != null ? PackageManager.GET_RESOLVED_FILTER : 0));
+                        | (mAlwaysUseOption ? PackageManager.GET_RESOLVED_FILTER : 0));
+                // Filter out any activities that the launched uid does not
+                // have permission for.  We don't do this when we have an explicit
+                // list of resolved activities, because that only happens when
+                // we are being subclassed, so we can safely launch whatever
+                // they gave us.
+                if (mCurrentResolveList != null) {
+                    for (int i=mCurrentResolveList.size()-1; i >= 0; i--) {
+                        ActivityInfo ai = mCurrentResolveList.get(i).activityInfo;
+                        int granted = ActivityManager.checkComponentPermission(
+                                ai.permission, mLaunchedFromUid,
+                                ai.applicationInfo.uid, ai.exported);
+                        if (granted != PackageManager.PERMISSION_GRANTED) {
+                            // Access not allowed!
+                            mCurrentResolveList.remove(i);
+                        }
+                    }
+                }
             }
             int N;
             if ((mCurrentResolveList != null) && ((N = mCurrentResolveList.size()) > 0)) {
@@ -345,6 +514,7 @@ public class ResolverActivity extends AlertActivity implements
                 r0 = mCurrentResolveList.get(0);
                 int start = 0;
                 CharSequence r0Label =  r0.loadLabel(mPm);
+                mShowExtended = false;
                 for (int i = 1; i < N; i++) {
                     if (r0Label == null) {
                         r0Label = r0.activityInfo.packageName;
@@ -375,6 +545,7 @@ public class ResolverActivity extends AlertActivity implements
                 // No duplicate labels. Use label for entry at start
                 mList.add(new DisplayResolveInfo(ro, roLabel, null, null));
             } else {
+                mShowExtended = true;
                 boolean usePkg = false;
                 CharSequence startApp = ro.activityInfo.applicationInfo.loadLabel(mPm);
                 if (startApp == null) {
@@ -455,6 +626,11 @@ public class ResolverActivity extends AlertActivity implements
             if (convertView == null) {
                 view = mInflater.inflate(
                         com.android.internal.R.layout.resolve_list_item, parent, false);
+
+                // Fix the icon size even if we have different sized resources
+                ImageView icon = (ImageView)view.findViewById(R.id.icon);
+                ViewGroup.LayoutParams lp = (ViewGroup.LayoutParams) icon.getLayoutParams();
+                lp.width = lp.height = mIconSize;
             } else {
                 view = convertView;
             }
@@ -467,27 +643,28 @@ public class ResolverActivity extends AlertActivity implements
             TextView text2 = (TextView)view.findViewById(com.android.internal.R.id.text2);
             ImageView icon = (ImageView)view.findViewById(R.id.icon);
             text.setText(info.displayLabel);
-            if (info.extendedInfo != null) {
+            if (mShowExtended) {
                 text2.setVisibility(View.VISIBLE);
                 text2.setText(info.extendedInfo);
             } else {
                 text2.setVisibility(View.GONE);
             }
             if (info.displayIcon == null) {
-                info.displayIcon = info.ri.loadIcon(mPm);
+                info.displayIcon = loadIconForResolveInfo(info.ri);
             }
             icon.setImageDrawable(info.displayIcon);
         }
     }
 
-    public void onCheckedChanged(CompoundButton buttonView, boolean isChecked) {
-        if (mClearDefaultHint == null) return;
+    class ItemLongClickListener implements AdapterView.OnItemLongClickListener {
 
-        if(isChecked) {
-            mClearDefaultHint.setVisibility(View.VISIBLE);
-        } else {
-            mClearDefaultHint.setVisibility(View.GONE);
+        @Override
+        public boolean onItemLongClick(AdapterView<?> parent, View view, int position, long id) {
+            ResolveInfo ri = mAdapter.resolveInfoForPosition(position);
+            showAppDetails(ri);
+            return true;
         }
+
     }
 }
 

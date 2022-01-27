@@ -28,6 +28,9 @@ import com.android.internal.telephony.PhoneBase;
 import com.android.internal.telephony.RILConstants;
 import com.android.internal.telephony.RetryManager;
 
+import java.io.FileDescriptor;
+import java.io.PrintWriter;
+
 /**
  * {@hide}
  */
@@ -37,7 +40,6 @@ public class GsmDataConnection extends DataConnection {
 
     //***** Instance Variables
     protected int mProfileId = RILConstants.DATA_PROFILE_DEFAULT;
-    protected String mActiveApnType = Phone.APN_TYPE_DEFAULT;
     //***** Constructor
     private GsmDataConnection(PhoneBase phone, String name, int id, RetryManager rm,
             DataConnectionTracker dct) {
@@ -89,8 +91,8 @@ public class GsmDataConnection extends DataConnection {
 
         int authType = mApn.authType;
         if (authType == -1) {
-            authType = (mApn.user != null) ? RILConstants.SETUP_DATA_AUTH_PAP_CHAP :
-                RILConstants.SETUP_DATA_AUTH_NONE;
+            authType = TextUtils.isEmpty(mApn.user) ? RILConstants.SETUP_DATA_AUTH_NONE
+                    : RILConstants.SETUP_DATA_AUTH_PAP_CHAP;
         }
 
         String protocol;
@@ -101,7 +103,7 @@ public class GsmDataConnection extends DataConnection {
         }
 
         phone.mCM.setupDataCall(
-                Integer.toString(getRadioTechnology(RILConstants.SETUP_DATA_TECH_GSM)),
+                Integer.toString(getRilRadioTechnology(RILConstants.SETUP_DATA_TECH_GSM)),
                 Integer.toString(mProfileId),
                 mApn.apn, mApn.user, mApn.password,
                 Integer.toString(authType),
@@ -116,15 +118,12 @@ public class GsmDataConnection extends DataConnection {
         return mProfileId;
     }
 
-    public void setActiveApnType(String apnType) {
-        mActiveApnType = apnType;
-    }
-
     @Override
     public String toString() {
-        return "State=" + getCurrentState().getName() + " Apn=" + mApn +
-               " create=" + createTime + " lastFail=" + lastFailTime +
-               " lastFailCause=" + lastFailCause;
+        return "{" + getName() + ": State=" + getCurrentState().getName() +
+                " apnSetting=" + mApn + " apnList= " + mApnList + " RefCount=" + mRefCount +
+                " cid=" + cid + " create=" + createTime + " lastFail=" + lastFailTime +
+                " lastFailCause=" + lastFailCause + "}";
     }
 
     @Override
@@ -157,5 +156,12 @@ public class GsmDataConnection extends DataConnection {
         if (address == null) return false;
 
         return Patterns.IP_ADDRESS.matcher(address).matches();
+    }
+
+    @Override
+    public void dump(FileDescriptor fd, PrintWriter pw, String[] args) {
+        pw.println("GsmDataConnection extends:");
+        super.dump(fd, pw, args);
+        pw.println(" mProfileId=" + mProfileId);
     }
 }

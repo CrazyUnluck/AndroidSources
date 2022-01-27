@@ -596,8 +596,8 @@ public final class Telephony {
              * values:</p>
              *
              * <ul>
-             *   <li><em>pdus</em> - An Object[] of byte[]s containing the PDUs
-             *   that make up the message.</li>
+             *   <li><em>message</em> - An SmsCbMessage object containing the broadcast message
+             *   data. This is not an emergency alert, so ETWS and CMAS data will be null.</li>
              * </ul>
              *
              * <p>The extra values can be extracted using
@@ -616,8 +616,8 @@ public final class Telephony {
              * values:</p>
              *
              * <ul>
-             *   <li><em>pdus</em> - An Object[] of byte[]s containing the PDUs
-             *   that make up the message.</li>
+             *   <li><em>message</em> - An SmsCbMessage object containing the broadcast message
+             *   data, including ETWS or CMAS warning notification info if present.</li>
              * </ul>
              *
              * <p>The extra values can be extracted using
@@ -629,6 +629,26 @@ public final class Telephony {
             @SdkConstant(SdkConstantType.BROADCAST_INTENT_ACTION)
             public static final String SMS_EMERGENCY_CB_RECEIVED_ACTION =
                     "android.provider.Telephony.SMS_EMERGENCY_CB_RECEIVED";
+
+            /**
+             * Broadcast Action: A new CDMA SMS has been received containing Service Category
+             * Program Data (updates the list of enabled broadcast channels). The intent will
+             * have the following extra values:</p>
+             *
+             * <ul>
+             *   <li><em>operations</em> - An array of CdmaSmsCbProgramData objects containing
+             *   the service category operations (add/delete/clear) to perform.</li>
+             * </ul>
+             *
+             * <p>The extra values can be extracted using
+             * {@link #getMessagesFromIntent(Intent)}.</p>
+             *
+             * <p>If a BroadcastReceiver encounters an error while processing
+             * this intent it should set the result code appropriately.</p>
+             */
+            @SdkConstant(SdkConstantType.BROADCAST_INTENT_ACTION)
+            public static final String SMS_SERVICE_CATEGORY_PROGRAM_DATA_RECEIVED_ACTION =
+                    "android.provider.Telephony.SMS_SERVICE_CATEGORY_PROGRAM_DATA_RECEIVED";
 
             /**
              * Broadcast Action: The SIM storage for SMS messages is full.  If
@@ -1794,6 +1814,181 @@ public final class Telephony {
           * but currently only used for LTE(14) and EHRPD(13).
           */
         public static final String BEARER = "bearer";
+    }
+
+    /**
+     * Contains received SMS cell broadcast messages.
+     */
+    public static final class CellBroadcasts implements BaseColumns {
+
+        /** Not instantiable. */
+        private CellBroadcasts() {}
+
+        /**
+         * The content:// style URL for this table
+         */
+        public static final Uri CONTENT_URI =
+            Uri.parse("content://cellbroadcasts");
+
+        /**
+         * Message geographical scope.
+         * <P>Type: INTEGER</P>
+         */
+        public static final String GEOGRAPHICAL_SCOPE = "geo_scope";
+
+        /**
+         * Message serial number.
+         * <P>Type: INTEGER</P>
+         */
+        public static final String SERIAL_NUMBER = "serial_number";
+
+        /**
+         * PLMN of broadcast sender. (SERIAL_NUMBER + PLMN + LAC + CID) uniquely identifies a
+         * broadcast for duplicate detection purposes.
+         * <P>Type: TEXT</P>
+         */
+        public static final String PLMN = "plmn";
+
+        /**
+         * Location Area (GSM) or Service Area (UMTS) of broadcast sender. Unused for CDMA.
+         * Only included if Geographical Scope of message is not PLMN wide (01).
+         * <P>Type: INTEGER</P>
+         */
+        public static final String LAC = "lac";
+
+        /**
+         * Cell ID of message sender (GSM/UMTS). Unused for CDMA. Only included when the
+         * Geographical Scope of message is cell wide (00 or 11).
+         * <P>Type: INTEGER</P>
+         */
+        public static final String CID = "cid";
+
+        /**
+         * Message code (OBSOLETE: merged into SERIAL_NUMBER).
+         * <P>Type: INTEGER</P>
+         */
+        public static final String V1_MESSAGE_CODE = "message_code";
+
+        /**
+         * Message identifier (OBSOLETE: renamed to SERVICE_CATEGORY).
+         * <P>Type: INTEGER</P>
+         */
+        public static final String V1_MESSAGE_IDENTIFIER = "message_id";
+
+        /**
+         * Service category (GSM/UMTS message identifier, CDMA service category).
+         * <P>Type: INTEGER</P>
+         */
+        public static final String SERVICE_CATEGORY = "service_category";
+
+        /**
+         * Message language code.
+         * <P>Type: TEXT</P>
+         */
+        public static final String LANGUAGE_CODE = "language";
+
+        /**
+         * Message body.
+         * <P>Type: TEXT</P>
+         */
+        public static final String MESSAGE_BODY = "body";
+
+        /**
+         * Message delivery time.
+         * <P>Type: INTEGER (long)</P>
+         */
+        public static final String DELIVERY_TIME = "date";
+
+        /**
+         * Has the message been viewed?
+         * <P>Type: INTEGER (boolean)</P>
+         */
+        public static final String MESSAGE_READ = "read";
+
+        /**
+         * Message format (3GPP or 3GPP2).
+         * <P>Type: INTEGER</P>
+         */
+        public static final String MESSAGE_FORMAT = "format";
+
+        /**
+         * Message priority (including emergency).
+         * <P>Type: INTEGER</P>
+         */
+        public static final String MESSAGE_PRIORITY = "priority";
+
+        /**
+         * ETWS warning type (ETWS alerts only).
+         * <P>Type: INTEGER</P>
+         */
+        public static final String ETWS_WARNING_TYPE = "etws_warning_type";
+
+        /**
+         * CMAS message class (CMAS alerts only).
+         * <P>Type: INTEGER</P>
+         */
+        public static final String CMAS_MESSAGE_CLASS = "cmas_message_class";
+
+        /**
+         * CMAS category (CMAS alerts only).
+         * <P>Type: INTEGER</P>
+         */
+        public static final String CMAS_CATEGORY = "cmas_category";
+
+        /**
+         * CMAS response type (CMAS alerts only).
+         * <P>Type: INTEGER</P>
+         */
+        public static final String CMAS_RESPONSE_TYPE = "cmas_response_type";
+
+        /**
+         * CMAS severity (CMAS alerts only).
+         * <P>Type: INTEGER</P>
+         */
+        public static final String CMAS_SEVERITY = "cmas_severity";
+
+        /**
+         * CMAS urgency (CMAS alerts only).
+         * <P>Type: INTEGER</P>
+         */
+        public static final String CMAS_URGENCY = "cmas_urgency";
+
+        /**
+         * CMAS certainty (CMAS alerts only).
+         * <P>Type: INTEGER</P>
+         */
+        public static final String CMAS_CERTAINTY = "cmas_certainty";
+
+        /**
+         * The default sort order for this table
+         */
+        public static final String DEFAULT_SORT_ORDER = DELIVERY_TIME + " DESC";
+
+        /**
+         * Query columns for instantiating {@link android.telephony.CellBroadcastMessage} objects.
+         */
+        public static final String[] QUERY_COLUMNS = {
+                _ID,
+                GEOGRAPHICAL_SCOPE,
+                PLMN,
+                LAC,
+                CID,
+                SERIAL_NUMBER,
+                SERVICE_CATEGORY,
+                LANGUAGE_CODE,
+                MESSAGE_BODY,
+                DELIVERY_TIME,
+                MESSAGE_READ,
+                MESSAGE_FORMAT,
+                MESSAGE_PRIORITY,
+                ETWS_WARNING_TYPE,
+                CMAS_MESSAGE_CLASS,
+                CMAS_CATEGORY,
+                CMAS_RESPONSE_TYPE,
+                CMAS_SEVERITY,
+                CMAS_URGENCY,
+                CMAS_CERTAINTY
+        };
     }
 
     public static final class Intents {

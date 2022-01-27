@@ -261,4 +261,50 @@ public interface ViewParent {
      * @return True if the event was sent.
      */
     public boolean requestSendAccessibilityEvent(View child, AccessibilityEvent event);
+
+    /**
+     * Called when a child view now has or no longer is tracking transient state.
+     *
+     * @param child Child view whose state has changed
+     * @param hasTransientState true if this child has transient state
+     *
+     * @hide
+     */
+    public void childHasTransientStateChanged(View child, boolean hasTransientState);
+
+    /**
+     * Ask that a new dispatch of {@link View#fitSystemWindows(Rect)
+     * View.fitSystemWindows(Rect)} be performed.
+     */
+    public void requestFitSystemWindows();
+
+    /**
+     * Gets the parent of a given View for accessibility. Since some Views are not
+     * exposed to the accessibility layer the parent for accessibility is not
+     * necessarily the direct parent of the View, rather it is a predecessor.
+     *
+     * @return The parent or <code>null</code> if no such is found.
+     */
+    public ViewParent getParentForAccessibility();
+
+    /**
+     * A child notifies its parent that its state for accessibility has changed.
+     * That is some of the child properties reported to accessibility services has
+     * changed, hence the interested services have to be notified for the new state.
+     *
+     * @hide
+     */
+    public void childAccessibilityStateChanged(View child);
+
+    /**
+     * A descendant requests this view to find a candidate to take accessibility
+     * focus from hover.
+     *
+     * @param child The child making the call.
+     * @param descendant The descendant that made the initial request.
+     * @return A view to take accessibility focus.
+     *
+     * @hide
+     */
+    public View findViewToTakeAccessibilityFocusFromHover(View child, View descendant);
 }

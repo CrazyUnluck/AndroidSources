@@ -23,7 +23,6 @@ import android.os.Bundle;
 import android.os.RemoteException;
 import android.os.ServiceManager;
 import android.os.SystemProperties;
-import android.util.Log;
 
 import com.android.internal.telephony.IPhoneSubInfo;
 import com.android.internal.telephony.ITelephony;
@@ -85,6 +84,10 @@ public class TelephonyManager {
         return sInstance;
     }
 
+    /** {@hide} */
+    public static TelephonyManager from(Context context) {
+        return (TelephonyManager) context.getSystemService(Context.TELEPHONY_SERVICE);
+    }
 
     //
     // Broadcast Intent actions
@@ -1137,5 +1140,25 @@ public class TelephonyManager {
         if (sContext == null) return true;
         return sContext.getResources().getBoolean(
                 com.android.internal.R.bool.config_sms_capable);
+    }
+
+    /**
+     * Returns all observed cell information of the device.
+     *
+     * @return List of CellInfo or null if info unavailable.
+     *
+     * <p>Requires Permission:
+     * (@link android.Manifest.permission#ACCESS_COARSE_UPDATES}
+     *
+     * @hide pending API review
+     */
+    public List<CellInfo> getAllCellInfo() {
+        try {
+            return getITelephony().getAllCellInfo();
+        } catch (RemoteException ex) {
+            return null;
+        } catch (NullPointerException ex) {
+            return null;
+        }
     }
 }

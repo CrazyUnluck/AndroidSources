@@ -19,6 +19,7 @@ package android.provider;
 
 import android.annotation.SdkConstant;
 import android.annotation.SdkConstant.SdkConstantType;
+import android.app.Activity;
 import android.app.AlarmManager;
 import android.app.PendingIntent;
 import android.content.ContentProviderClient;
@@ -96,6 +97,43 @@ public final class CalendarContract {
      */
     @SdkConstant(SdkConstantType.ACTIVITY_INTENT_ACTION)
     public static final String ACTION_EVENT_REMINDER = "android.intent.action.EVENT_REMINDER";
+
+    /**
+     * Activity Action: Display the event to the user in the custom app as
+     * specified in {@link EventsColumns#CUSTOM_APP_PACKAGE}. The custom app
+     * will be started via {@link Activity#startActivityForResult(Intent, int)}
+     * and it should call {@link Activity#setResult(int)} with
+     * {@link Activity#RESULT_OK} or {@link Activity#RESULT_CANCELED} to
+     * acknowledge whether the action was handled or not.
+     *
+     * The custom app should have an intent-filter like the following
+     * <pre>
+     * {@code
+     * <intent-filter>
+     *    <action android:name="android.provider.calendar.action.HANDLE_CUSTOM_EVENT" />
+     *    <category android:name="android.intent.category.DEFAULT" />
+     *    <data android:mimeType="vnd.android.cursor.item/event" />
+     * </intent-filter>
+     * }
+     * </pre>
+     * <p>
+     * Input: {@link Intent#getData} has the event URI. The extra
+     * {@link #EXTRA_EVENT_BEGIN_TIME} has the start time of the instance. The
+     * extra {@link #EXTRA_CUSTOM_APP_URI} will have the
+     * {@link EventsColumns#CUSTOM_APP_URI}.
+     * <p>
+     * Output: {@link Activity#RESULT_OK} if this was handled; otherwise
+     * {@link Activity#RESULT_CANCELED}
+     */
+    @SdkConstant(SdkConstantType.ACTIVITY_INTENT_ACTION)
+    public static final String ACTION_HANDLE_CUSTOM_EVENT =
+        "android.provider.calendar.action.HANDLE_CUSTOM_EVENT";
+
+    /**
+     * Intent Extras key: {@link EventsColumns#CUSTOM_APP_URI} for the event in
+     * the {@link #ACTION_HANDLE_CUSTOM_EVENT} intent
+     */
+    public static final String EXTRA_CUSTOM_APP_URI = "customAppUri";
 
     /**
      * Intent Extras key: The start time of an event or an instance of a
@@ -402,8 +440,8 @@ public final class CalendarContract {
          * A comma separated list of reminder methods supported for this
          * calendar in the format "#,#,#". Valid types are
          * {@link Reminders#METHOD_DEFAULT}, {@link Reminders#METHOD_ALERT},
-         * {@link Reminders#METHOD_EMAIL}, {@link Reminders#METHOD_SMS}. Column
-         * name.
+         * {@link Reminders#METHOD_EMAIL}, {@link Reminders#METHOD_SMS},
+         * {@link Reminders#METHOD_ALARM}. Column name.
          * <P>Type: TEXT</P>
          */
         public static final String ALLOWED_REMINDERS = "allowedReminders";
@@ -756,6 +794,22 @@ public final class CalendarContract {
         public static final int ATTENDEE_STATUS_DECLINED = 2;
         public static final int ATTENDEE_STATUS_INVITED = 3;
         public static final int ATTENDEE_STATUS_TENTATIVE = 4;
+
+        /**
+         * The identity of the attendee as referenced in
+         * {@link ContactsContract.CommonDataKinds.Identity#IDENTITY}.
+         * This is required only if {@link #ATTENDEE_ID_NAMESPACE} is present. Column name.
+         * <P>Type: STRING</P>
+         */
+        public static final String ATTENDEE_IDENTITY = "attendeeIdentity";
+
+        /**
+         * The identity name space of the attendee as referenced in
+         * {@link ContactsContract.CommonDataKinds.Identity#NAMESPACE}.
+         * This is required only if {@link #ATTENDEE_IDENTITY} is present. Column name.
+         * <P>Type: STRING</P>
+         */
+        public static final String ATTENDEE_ID_NAMESPACE = "attendeeIdNamespace";
     }
 
     /**
@@ -773,6 +827,8 @@ public final class CalendarContract {
      * <li>{@link #ATTENDEE_RELATIONSHIP}</li>
      * <li>{@link #ATTENDEE_TYPE}</li>
      * <li>{@link #ATTENDEE_STATUS}</li>
+     * <li>{@link #ATTENDEE_IDENTITY}</li>
+     * <li>{@link #ATTENDEE_ID_NAMESPACE}</li>
      * </ul>
      */
     public static final class Attendees implements BaseColumns, AttendeesColumns, EventsColumns {
@@ -854,6 +910,17 @@ public final class CalendarContract {
          * </P>
          */
         public static final String EVENT_COLOR_KEY = "eventColor_index";
+
+        /**
+         * This will be {@link #EVENT_COLOR} if it is not null; otherwise, this will be
+         * {@link Calendars#CALENDAR_COLOR}.
+         * Read-only value. To modify, write to {@link #EVENT_COLOR} or
+         * {@link Calendars#CALENDAR_COLOR} directly.
+         *<P>
+         *     Type: INTEGER
+         *</P>
+         */
+        public static final String DISPLAY_COLOR = "displayColor";
 
         /**
          * The event status. Column name.
@@ -1147,6 +1214,22 @@ public final class CalendarContract {
          * <P>Type: INTEGER (boolean, readonly)</P>
          */
         public static final String CAN_INVITE_OTHERS = "canInviteOthers";
+
+        /**
+         * The package name of the custom app that can provide a richer
+         * experience for the event. See the ACTION TYPE
+         * {@link CalendarContract#ACTION_HANDLE_CUSTOM_EVENT} for details.
+         * Column name.
+         * <P> Type: TEXT </P>
+         */
+        public static final String CUSTOM_APP_PACKAGE = "customAppPackage";
+
+        /**
+         * The URI used by the custom app for the event. Column name.
+         * <P>Type: TEXT</P>
+         */
+        public static final String CUSTOM_APP_URI = "customAppUri";
+
     }
 
     /**
@@ -1210,12 +1293,17 @@ public final class CalendarContract {
                     Attendees.ATTENDEE_RELATIONSHIP,
                     Attendees.ATTENDEE_TYPE,
                     Attendees.ATTENDEE_STATUS,
+                    Attendees.ATTENDEE_IDENTITY,
+                    Attendees.ATTENDEE_ID_NAMESPACE
             };
             private static final int COLUMN_ATTENDEE_NAME = 0;
             private static final int COLUMN_ATTENDEE_EMAIL = 1;
             private static final int COLUMN_ATTENDEE_RELATIONSHIP = 2;
             private static final int COLUMN_ATTENDEE_TYPE = 3;
             private static final int COLUMN_ATTENDEE_STATUS = 4;
+            private static final int COLUMN_ATTENDEE_IDENTITY = 5;
+            private static final int COLUMN_ATTENDEE_ID_NAMESPACE = 6;
+
             private static final String[] EXTENDED_PROJECTION = new String[] {
                     ExtendedProperties._ID,
                     ExtendedProperties.NAME,
@@ -1277,6 +1365,8 @@ public final class CalendarContract {
                         GUESTS_CAN_INVITE_OTHERS);
                 DatabaseUtils.cursorIntToContentValuesIfPresent(cursor, cv, GUESTS_CAN_MODIFY);
                 DatabaseUtils.cursorIntToContentValuesIfPresent(cursor, cv, GUESTS_CAN_SEE_GUESTS);
+                DatabaseUtils.cursorStringToContentValuesIfPresent(cursor, cv, CUSTOM_APP_PACKAGE);
+                DatabaseUtils.cursorStringToContentValuesIfPresent(cursor, cv, CUSTOM_APP_URI);
                 DatabaseUtils.cursorStringToContentValuesIfPresent(cursor, cv, ORGANIZER);
                 DatabaseUtils.cursorStringToContentValuesIfPresent(cursor, cv, _SYNC_ID);
                 DatabaseUtils.cursorLongToContentValuesIfPresent(cursor, cv, DIRTY);
@@ -1351,6 +1441,10 @@ public final class CalendarContract {
                                 subCursor.getInt(COLUMN_ATTENDEE_TYPE));
                         attendeeValues.put(Attendees.ATTENDEE_STATUS,
                                 subCursor.getInt(COLUMN_ATTENDEE_STATUS));
+                        attendeeValues.put(Attendees.ATTENDEE_IDENTITY,
+                                subCursor.getInt(COLUMN_ATTENDEE_IDENTITY));
+                        attendeeValues.put(Attendees.ATTENDEE_ID_NAMESPACE,
+                                subCursor.getInt(COLUMN_ATTENDEE_ID_NAMESPACE));
                         entity.addSubValue(Attendees.CONTENT_URI, attendeeValues);
                     }
                 } finally {
@@ -1475,6 +1569,8 @@ public final class CalendarContract {
      * <li>{@link #GUESTS_CAN_MODIFY}</li>
      * <li>{@link #GUESTS_CAN_INVITE_OTHERS}</li>
      * <li>{@link #GUESTS_CAN_SEE_GUESTS}</li>
+     * <li>{@link #CUSTOM_APP_PACKAGE}</li>
+     * <li>{@link #CUSTOM_APP_URI}</li>
      * </ul>
      * The following Events columns are writable only by a sync adapter
      * <ul>
@@ -1930,11 +2026,11 @@ public final class CalendarContract {
 
         /**
          * The alarm method, as set on the server. {@link #METHOD_DEFAULT},
-         * {@link #METHOD_ALERT}, {@link #METHOD_EMAIL}, and {@link #METHOD_SMS}
-         * are possible values; the device will only process
-         * {@link #METHOD_DEFAULT} and {@link #METHOD_ALERT} reminders (the
-         * other types are simply stored so we can send the same reminder info
-         * back to the server when we make changes).
+         * {@link #METHOD_ALERT}, {@link #METHOD_EMAIL}, {@link #METHOD_SMS} and
+         * {@link #METHOD_ALARM} are possible values; the device will only
+         * process {@link #METHOD_DEFAULT} and {@link #METHOD_ALERT} reminders
+         * (the other types are simply stored so we can send the same reminder
+         * info back to the server when we make changes).
          */
         public static final String METHOD = "method";
 
@@ -1942,6 +2038,7 @@ public final class CalendarContract {
         public static final int METHOD_ALERT = 1;
         public static final int METHOD_EMAIL = 2;
         public static final int METHOD_SMS = 3;
+        public static final int METHOD_ALARM = 4;
     }
 
     /**

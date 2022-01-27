@@ -32,13 +32,13 @@ import android.util.AttributeSet;
 import android.util.SparseBooleanArray;
 import android.view.FocusFinder;
 import android.view.KeyEvent;
-import android.view.MotionEvent;
 import android.view.SoundEffectConstants;
 import android.view.View;
 import android.view.ViewDebug;
 import android.view.ViewGroup;
 import android.view.ViewParent;
 import android.view.accessibility.AccessibilityEvent;
+import android.view.accessibility.AccessibilityNodeInfo;
 import android.widget.RemoteViews.RemoteView;
 
 import java.util.ArrayList;
@@ -678,6 +678,7 @@ public class ListView extends AbsListView {
             pos++;
         }
 
+        setVisibleRangeHint(mFirstPosition, mFirstPosition + getChildCount() - 1);
         return selectedView;
     }
 
@@ -711,7 +712,7 @@ public class ListView extends AbsListView {
         }
 
         mFirstPosition = pos + 1;
-
+        setVisibleRangeHint(mFirstPosition, mFirstPosition + getChildCount() - 1);
         return selectedView;
     }
 
@@ -1162,8 +1163,7 @@ public class ListView extends AbsListView {
     private void measureScrapChild(View child, int position, int widthMeasureSpec) {
         LayoutParams p = (LayoutParams) child.getLayoutParams();
         if (p == null) {
-            p = new LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT,
-                    ViewGroup.LayoutParams.WRAP_CONTENT, 0);
+            p = (AbsListView.LayoutParams) generateDefaultLayoutParams();
             child.setLayoutParams(p);
         }
         p.viewType = mAdapter.getItemViewType(position);
@@ -1557,10 +1557,6 @@ public class ListView extends AbsListView {
             if (dataChanged) {
                 for (int i = 0; i < childCount; i++) {
                     recycleBin.addScrapView(getChildAt(i), firstPosition+i);
-                    if (ViewDebug.TRACE_RECYCLER) {
-                        ViewDebug.trace(getChildAt(i),
-                                ViewDebug.RecyclerTraceType.MOVE_TO_SCRAP_HEAP, index, i);
-                    }
                 }
             } else {
                 recycleBin.fillActiveViews(childCount, firstPosition);
@@ -1590,6 +1586,7 @@ public class ListView extends AbsListView {
 
             // Clear out old views
             detachAllViewsFromParent();
+            recycleBin.removeSkippedScrap();
 
             switch (mLayoutMode) {
             case LAYOUT_SET_SELECTION:
@@ -1650,6 +1647,7 @@ public class ListView extends AbsListView {
                 // are focusable
                 if (mItemsCanFocus && hasFocus() && !sel.hasFocus()) {
                     final boolean focusWasTaken = (sel == focusLayoutRestoreDirectChild &&
+                            focusLayoutRestoreView != null &&
                             focusLayoutRestoreView.requestFocus()) || sel.requestFocus();
                     if (!focusWasTaken) {
                         // selected item didn't take focus, fine, but still want
@@ -1693,6 +1691,10 @@ public class ListView extends AbsListView {
             
             mLayoutMode = LAYOUT_NORMAL;
             mDataChanged = false;
+            if (mPositionScrollAfterLayout != null) {
+                post(mPositionScrollAfterLayout);
+                mPositionScrollAfterLayout = null;
+            }
             mNeedSync = false;
             setNextSelectedPositionInt(mSelectedPosition);
 
@@ -1755,11 +1757,6 @@ public class ListView extends AbsListView {
             // Try to use an existing view for this position
             child = mRecycler.getActiveView(position);
             if (child != null) {
-                if (ViewDebug.TRACE_RECYCLER) {
-                    ViewDebug.trace(child, ViewDebug.RecyclerTraceType.RECYCLE_FROM_ACTIVE_HEAP,
-                            position, getChildCount());
-                }
-
                 // Found it -- we're using an existing child
                 // This just needs to be positioned
                 setupChild(child, position, y, flow, childrenLeft, selected, true);
@@ -1805,8 +1802,7 @@ public class ListView extends AbsListView {
         // noinspection unchecked
         AbsListView.LayoutParams p = (AbsListView.LayoutParams) child.getLayoutParams();
         if (p == null) {
-            p = new AbsListView.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT,
-                    ViewGroup.LayoutParams.WRAP_CONTENT, 0);
+            p = (AbsListView.LayoutParams) generateDefaultLayoutParams();
         }
         p.viewType = mAdapter.getItemViewType(position);
 
@@ -1925,6 +1921,9 @@ public class ListView extends AbsListView {
                 mSyncRowId = mAdapter.getItemId(position);
             }
 
+            if (mPositionScroller != null) {
+                mPositionScroller.stop();
+            }
             requestLayout();
         }
     }
@@ -1947,6 +1946,10 @@ public class ListView extends AbsListView {
             } else if (position == selectedPosition + 1) {
                 awakeScrollbars = true;
             }
+        }
+
+        if (mPositionScroller != null) {
+            mPositionScroller.stop();
         }
 
         layoutChildren();
@@ -3608,5 +3611,17 @@ public class ListView extends AbsListView {
             }
         }
         return new long[0];
+    }
+
+    @Override
+    public void onInitializeAccessibilityEvent(AccessibilityEvent event) {
+        super.onInitializeAccessibilityEvent(event);
+        event.setClassName(ListView.class.getName());
+    }
+
+    @Override
+    public void onInitializeAccessibilityNodeInfo(AccessibilityNodeInfo info) {
+        super.onInitializeAccessibilityNodeInfo(info);
+        info.setClassName(ListView.class.getName());
     }
 }

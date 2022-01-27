@@ -16,11 +16,9 @@
 
 package com.android.ex.chips;
 
-import com.android.ex.chips.BaseRecipientAdapter.EmailQuery;
-
 import android.content.Context;
 import android.database.Cursor;
-import android.provider.ContactsContract.CommonDataKinds.Email;
+import android.database.MatrixCursor;
 import android.text.util.Rfc822Token;
 import android.text.util.Rfc822Tokenizer;
 import android.util.Log;
@@ -31,13 +29,19 @@ import android.widget.CursorAdapter;
 import android.widget.ImageView;
 import android.widget.TextView;
 
-import java.util.HashMap;
+import com.android.ex.chips.Queries.Query;
 
+import java.util.ArrayList;
+import java.util.HashMap;
+import java.util.HashSet;
+
+/**
+ * RecipientAlternatesAdapter backs the RecipientEditTextView for managing contacts
+ * queried by email or by phone number.
+ */
 public class RecipientAlternatesAdapter extends CursorAdapter {
     static final int MAX_LOOKUPS = 50;
     private final LayoutInflater mLayoutInflater;
-
-    private final int mLayoutId;
 
     private final long mCurrentId;
 
@@ -46,6 +50,15 @@ public class RecipientAlternatesAdapter extends CursorAdapter {
     private OnCheckedItemChangedListener mCheckedItemChangedListener;
 
     private static final String TAG = "RecipAlternates";
+
+    public static final int QUERY_TYPE_EMAIL = 0;
+    public static final int QUERY_TYPE_PHONE = 1;
+    private Query mQuery;
+
+    public static HashMap<String, RecipientEntry> getMatchingRecipients(Context context,
+            ArrayList<String> inAddresses) {
+        return getMatchingRecipients(context, inAddresses, QUERY_TYPE_EMAIL);
+    }
 
     /**
      * Get a HashMap of address to RecipientEntry that contains all contact
@@ -57,14 +70,20 @@ public class RecipientAlternatesAdapter extends CursorAdapter {
      * @return HashMap<String,RecipientEntry>
      */
     public static HashMap<String, RecipientEntry> getMatchingRecipients(Context context,
-            String[] inAddresses) {
-        int addressesSize = Math.min(MAX_LOOKUPS, inAddresses.length);
+            ArrayList<String> inAddresses, int addressType) {
+        Queries.Query query;
+        if (addressType == QUERY_TYPE_EMAIL) {
+            query = Queries.EMAIL;
+        } else {
+            query = Queries.PHONE;
+        }
+        int addressesSize = Math.min(MAX_LOOKUPS, inAddresses.size());
         String[] addresses = new String[addressesSize];
         StringBuilder bindString = new StringBuilder();
         // Create the "?" string and set up arguments.
         for (int i = 0; i < addressesSize; i++) {
-            Rfc822Token[] tokens = Rfc822Tokenizer.tokenize(inAddresses[i].toLowerCase());
-            addresses[i] = (tokens.length > 0 ? tokens[0].getAddress() : inAddresses[i]);
+            Rfc822Token[] tokens = Rfc822Tokenizer.tokenize(inAddresses.get(i).toLowerCase());
+            addresses[i] = (tokens.length > 0 ? tokens[0].getAddress() : inAddresses.get(i));
             bindString.append("?");
             if (i < addressesSize - 1) {
                 bindString.append(",");
@@ -76,27 +95,32 @@ public class RecipientAlternatesAdapter extends CursorAdapter {
         }
 
         HashMap<String, RecipientEntry> recipientEntries = new HashMap<String, RecipientEntry>();
-        Cursor c = context.getContentResolver().query(Email.CONTENT_URI, EmailQuery.PROJECTION,
-                Email.ADDRESS + " IN (" + bindString.toString() + ")", addresses, null);
+        Cursor c = context.getContentResolver().query(
+                query.getContentUri(),
+                query.getProjection(),
+                query.getProjection()[Queries.Query.DESTINATION] + " IN (" + bindString.toString()
+                        + ")", addresses, null);
+
         if (c != null) {
             try {
                 if (c.moveToFirst()) {
                     do {
-                        String address = c.getString(EmailQuery.ADDRESS);
+                        String address = c.getString(Queries.Query.DESTINATION);
                         recipientEntries.put(address, RecipientEntry.constructTopLevelEntry(
-                                c.getString(EmailQuery.NAME),
-                                c.getString(EmailQuery.ADDRESS),
-                                c.getInt(EmailQuery.ADDRESS_TYPE),
-                                c.getString(EmailQuery.ADDRESS_LABEL),
-                                c.getLong(EmailQuery.CONTACT_ID),
-                                c.getLong(EmailQuery.DATA_ID),
-                                c.getString(EmailQuery.PHOTO_THUMBNAIL_URI)));
+                                c.getString(Queries.Query.NAME),
+                                c.getInt(Queries.Query.DISPLAY_NAME_SOURCE),
+                                c.getString(Queries.Query.DESTINATION),
+                                c.getInt(Queries.Query.DESTINATION_TYPE),
+                                c.getString(Queries.Query.DESTINATION_LABEL),
+                                c.getLong(Queries.Query.CONTACT_ID),
+                                c.getLong(Queries.Query.DATA_ID),
+                                c.getString(Queries.Query.PHOTO_THUMBNAIL_URI)));
                         if (Log.isLoggable(TAG, Log.DEBUG)) {
                             Log.d(TAG, "Received reverse look up information for " + address
                                     + " RESULTS: "
-                                    + " NAME : " + c.getString(EmailQuery.NAME)
-                                    + " CONTACT ID : " + c.getLong(EmailQuery.CONTACT_ID)
-                                    + " ADDRESS :" + c.getString(EmailQuery.ADDRESS));
+                                    + " NAME : " + c.getString(Queries.Query.NAME)
+                                    + " CONTACT ID : " + c.getLong(Queries.Query.CONTACT_ID)
+                                    + " ADDRESS :" + c.getString(Queries.Query.DESTINATION));
                         }
                     } while (c.moveToNext());
                 }
@@ -109,21 +133,91 @@ public class RecipientAlternatesAdapter extends CursorAdapter {
 
     public RecipientAlternatesAdapter(Context context, long contactId, long currentId, int viewId,
             OnCheckedItemChangedListener listener) {
-        super(context, context.getContentResolver().query(Email.CONTENT_URI, EmailQuery.PROJECTION,
-                Email.CONTACT_ID + " =?", new String[] {
-                    String.valueOf(contactId)
-                }, null), 0);
+        this(context, contactId, currentId, viewId, QUERY_TYPE_EMAIL, listener);
+    }
+
+    public RecipientAlternatesAdapter(Context context, long contactId, long currentId, int viewId,
+            int queryMode, OnCheckedItemChangedListener listener) {
+        super(context, getCursorForConstruction(context, contactId, queryMode), 0);
         mLayoutInflater = LayoutInflater.from(context);
-        mLayoutId = viewId;
         mCurrentId = currentId;
         mCheckedItemChangedListener = listener;
+
+        if (queryMode == QUERY_TYPE_EMAIL) {
+            mQuery = Queries.EMAIL;
+        } else if (queryMode == QUERY_TYPE_PHONE) {
+            mQuery = Queries.PHONE;
+        } else {
+            mQuery = Queries.EMAIL;
+            Log.e(TAG, "Unsupported query type: " + queryMode);
+        }
+    }
+
+    private static Cursor getCursorForConstruction(Context context, long contactId, int queryType) {
+        final Cursor cursor;
+        if (queryType == QUERY_TYPE_EMAIL) {
+            cursor = context.getContentResolver().query(
+                    Queries.EMAIL.getContentUri(),
+                    Queries.EMAIL.getProjection(),
+                    Queries.EMAIL.getProjection()[Queries.Query.CONTACT_ID] + " =?", new String[] {
+                        String.valueOf(contactId)
+                    }, null);
+        } else {
+            cursor = context.getContentResolver().query(
+                    Queries.PHONE.getContentUri(),
+                    Queries.PHONE.getProjection(),
+                    Queries.PHONE.getProjection()[Queries.Query.CONTACT_ID] + " =?", new String[] {
+                        String.valueOf(contactId)
+                    }, null);
+        }
+        return removeDuplicateDestinations(cursor);
+    }
+
+    /**
+     * @return a new cursor based on the given cursor with all duplicate destinations removed.
+     *
+     * It's only intended to use for the alternate list, so...
+     * - This method ignores all other fields and dedupe solely on the destination.  Normally,
+     * if a cursor contains multiple contacts and they have the same destination, we'd still want
+     * to show both.
+     * - This method creates a MatrixCursor, so all data will be kept in memory.  We wouldn't want
+     * to do this if the original cursor is large, but it's okay here because the alternate list
+     * won't be that big.
+     */
+    // Visible for testing
+    /* package */ static Cursor removeDuplicateDestinations(Cursor original) {
+        final MatrixCursor result = new MatrixCursor(
+                original.getColumnNames(), original.getCount());
+        final HashSet<String> destinationsSeen = new HashSet<String>();
+
+        original.moveToPosition(-1);
+        while (original.moveToNext()) {
+            final String destination = original.getString(Query.DESTINATION);
+            if (destinationsSeen.contains(destination)) {
+                continue;
+            }
+            destinationsSeen.add(destination);
+
+            result.addRow(new Object[] {
+                    original.getString(Query.NAME),
+                    original.getString(Query.DESTINATION),
+                    original.getInt(Query.DESTINATION_TYPE),
+                    original.getString(Query.DESTINATION_LABEL),
+                    original.getLong(Query.CONTACT_ID),
+                    original.getLong(Query.DATA_ID),
+                    original.getString(Query.PHOTO_THUMBNAIL_URI),
+                    original.getInt(Query.DISPLAY_NAME_SOURCE)
+                    });
+        }
+
+        return result;
     }
 
     @Override
     public long getItemId(int position) {
         Cursor c = getCursor();
         if (c.moveToPosition(position)) {
-            c.getLong(EmailQuery.DATA_ID);
+            c.getLong(Queries.Query.DATA_ID);
         }
         return -1;
     }
@@ -131,11 +225,15 @@ public class RecipientAlternatesAdapter extends CursorAdapter {
     public RecipientEntry getRecipientEntry(int position) {
         Cursor c = getCursor();
         c.moveToPosition(position);
-        return RecipientEntry.constructTopLevelEntry(c.getString(EmailQuery.NAME),
-                c.getString(EmailQuery.ADDRESS), c.getInt(EmailQuery.ADDRESS_TYPE),
-                c.getString(EmailQuery.ADDRESS_LABEL),
-                c.getLong(EmailQuery.CONTACT_ID), c.getLong(EmailQuery.DATA_ID),
-                c.getString(EmailQuery.PHOTO_THUMBNAIL_URI));
+        return RecipientEntry.constructTopLevelEntry(
+                c.getString(Queries.Query.NAME),
+                c.getInt(Queries.Query.DISPLAY_NAME_SOURCE),
+                c.getString(Queries.Query.DESTINATION),
+                c.getInt(Queries.Query.DESTINATION_TYPE),
+                c.getString(Queries.Query.DESTINATION_LABEL),
+                c.getLong(Queries.Query.CONTACT_ID),
+                c.getLong(Queries.Query.DATA_ID),
+                c.getString(Queries.Query.PHOTO_THUMBNAIL_URI));
     }
 
     @Override
@@ -145,7 +243,7 @@ public class RecipientAlternatesAdapter extends CursorAdapter {
         if (convertView == null) {
             convertView = newView();
         }
-        if (cursor.getLong(EmailQuery.DATA_ID) == mCurrentId) {
+        if (cursor.getLong(Queries.Query.DATA_ID) == mCurrentId) {
             mCheckedItemPosition = position;
             if (mCheckedItemChangedListener != null) {
                 mCheckedItemChangedListener.onCheckedItemChanged(mCheckedItemPosition);
@@ -165,7 +263,7 @@ public class RecipientAlternatesAdapter extends CursorAdapter {
         ImageView imageView = (ImageView) view.findViewById(android.R.id.icon);
         RecipientEntry entry = getRecipientEntry(position);
         if (position == 0) {
-            display.setText(cursor.getString(EmailQuery.NAME));
+            display.setText(cursor.getString(Queries.Query.NAME));
             display.setVisibility(View.VISIBLE);
             // TODO: see if this needs to be done outside the main thread
             // as it may be too slow to get immediately.
@@ -176,13 +274,13 @@ public class RecipientAlternatesAdapter extends CursorAdapter {
             imageView.setVisibility(View.GONE);
         }
         TextView destination = (TextView) view.findViewById(android.R.id.text1);
-        destination.setText(cursor.getString(EmailQuery.ADDRESS));
+        destination.setText(cursor.getString(Queries.Query.DESTINATION));
 
         TextView destinationType = (TextView) view.findViewById(android.R.id.text2);
         if (destinationType != null) {
-            destinationType.setText(Email.getTypeLabel(context.getResources(),
-                    cursor.getInt(EmailQuery.ADDRESS_TYPE),
-                    cursor.getString(EmailQuery.ADDRESS_LABEL)).toString().toUpperCase());
+            destinationType.setText(mQuery.getTypeLabel(context.getResources(),
+                    cursor.getInt(Queries.Query.DESTINATION_TYPE),
+                    cursor.getString(Queries.Query.DESTINATION_LABEL)).toString().toUpperCase());
         }
     }
 
@@ -192,7 +290,7 @@ public class RecipientAlternatesAdapter extends CursorAdapter {
     }
 
     private View newView() {
-        return mLayoutInflater.inflate(mLayoutId, null);
+        return mLayoutInflater.inflate(R.layout.chips_recipient_dropdown_item, null);
     }
 
     /*package*/ static interface OnCheckedItemChangedListener {

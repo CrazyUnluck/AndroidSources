@@ -104,9 +104,25 @@ public class BiDiTestActivity extends Activity {
         addItem(result, "Canvas", BiDiTestCanvas.class, R.id.canvas);
         addItem(result, "Canvas2", BiDiTestCanvas2.class, R.id.canvas2);
 
+        addItem(result, "TextView LTR", BiDiTestTextViewLtr.class, R.id.textview_ltr);
+        addItem(result, "TextView RTL", BiDiTestTextViewRtl.class, R.id.textview_rtl);
+        addItem(result, "TextView LOC", BiDiTestTextViewLocale.class, R.id.textview_locale);
+
+        addItem(result, "TextDirection LTR", BiDiTestTextViewDirectionLtr.class, R.id.textview_direction_ltr);
+        addItem(result, "TextDirection RTL", BiDiTestTextViewDirectionRtl.class, R.id.textview_direction_rtl);
+
+        addItem(result, "TextAlignment LTR", BiDiTestTextViewAlignmentLtr.class, R.id.textview_alignment_ltr);
+        addItem(result, "TextAlignment RTL", BiDiTestTextViewAlignmentRtl.class, R.id.textview_alignment_rtl);
+
         addItem(result, "Linear LTR", BiDiTestLinearLayoutLtr.class, R.id.linear_layout_ltr);
         addItem(result, "Linear RTL", BiDiTestLinearLayoutRtl.class, R.id.linear_layout_rtl);
         addItem(result, "Linear LOC", BiDiTestLinearLayoutLocale.class, R.id.linear_layout_locale);
+
+        addItem(result, "Grid LTR", BiDiTestGridLayoutLtr.class, R.id.grid_layout_ltr);
+        addItem(result, "Grid RTL", BiDiTestGridLayoutRtl.class, R.id.grid_layout_rtl);
+        addItem(result, "Grid LOC", BiDiTestGridLayoutLocale.class, R.id.grid_layout_locale);
+        addItem(result, "Grid C-LTR", BiDiTestGridLayoutCodeLtr.class, R.id.grid_layout_code);
+        addItem(result, "Grid C-RTL", BiDiTestGridLayoutCodeRtl.class, R.id.grid_layout_code);
 
         addItem(result, "Frame LTR", BiDiTestFrameLayoutLtr.class, R.id.frame_layout_ltr);
         addItem(result, "Frame RTL", BiDiTestFrameLayoutRtl.class, R.id.frame_layout_rtl);
@@ -128,15 +144,9 @@ public class BiDiTestActivity extends Activity {
 
         addItem(result, "Margin MIXED", BiDiTestViewGroupMarginMixed.class, R.id.view_group_margin_mixed);
 
-        addItem(result, "TextView LTR", BiDiTestTextViewLtr.class, R.id.textview_ltr);
-        addItem(result, "TextView RTL", BiDiTestTextViewRtl.class, R.id.textview_rtl);
-        addItem(result, "TextView LOC", BiDiTestTextViewLocale.class, R.id.textview_locale);
-
-        addItem(result, "TextDirection LTR", BiDiTestTextViewDirectionLtr.class, R.id.textview_direction_ltr);
-        addItem(result, "TextDirection RTL", BiDiTestTextViewDirectionRtl.class, R.id.textview_direction_rtl);
-
         addItem(result, "TextView Drawables LTR", BiDiTestTextViewDrawablesLtr.class, R.id.textview_drawables_ltr);
         addItem(result, "TextView Drawables RTL", BiDiTestTextViewDrawablesRtl.class, R.id.textview_drawables_rtl);
+
         addItem(result, "Gallery LTR", BiDiTestGalleryLtr.class, R.id.gallery_ltr);
         addItem(result, "Gallery RTL", BiDiTestGalleryRtl.class, R.id.gallery_rtl);
 

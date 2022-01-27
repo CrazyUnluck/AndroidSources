@@ -1091,13 +1091,13 @@ public class TextUtils {
             if (avail < 0) {
                 // it all goes
             } else if (where == TruncateAt.START) {
-                right = len - mt.breakText(0, len, false, avail);
+                right = len - mt.breakText(len, false, avail);
             } else if (where == TruncateAt.END || where == TruncateAt.END_SMALL) {
-                left = mt.breakText(0, len, true, avail);
+                left = mt.breakText(len, true, avail);
             } else {
-                right = len - mt.breakText(0, len, false, avail / 2);
+                right = len - mt.breakText(len, false, avail / 2);
                 avail -= mt.measure(right, len);
-                left = mt.breakText(0, right, true, avail);
+                left = mt.breakText(right, true, avail);
             }
 
             if (callback != null) {
@@ -1662,6 +1662,36 @@ public class TextUtils {
         } else {
             return spans;
         }
+    }
+
+    /**
+     * Pack 2 int values into a long, useful as a return value for a range
+     * @see #unpackRangeStartFromLong(long)
+     * @see #unpackRangeEndFromLong(long)
+     * @hide
+     */
+    public static long packRangeInLong(int start, int end) {
+        return (((long) start) << 32) | end;
+    }
+
+    /**
+     * Get the start value from a range packed in a long by {@link #packRangeInLong(int, int)}
+     * @see #unpackRangeEndFromLong(long)
+     * @see #packRangeInLong(int, int)
+     * @hide
+     */
+    public static int unpackRangeStartFromLong(long range) {
+        return (int) (range >>> 32);
+    }
+
+    /**
+     * Get the end value from a range packed in a long by {@link #packRangeInLong(int, int)}
+     * @see #unpackRangeStartFromLong(long)
+     * @see #packRangeInLong(int, int)
+     * @hide
+     */
+    public static int unpackRangeEndFromLong(long range) {
+        return (int) (range & 0x00000000FFFFFFFFL);
     }
 
     private static Object sLock = new Object();

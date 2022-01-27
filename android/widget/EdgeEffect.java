@@ -16,6 +16,7 @@
 
 package android.widget;
 
+import android.graphics.Rect;
 import com.android.internal.R;
 
 import android.content.Context;
@@ -45,6 +46,7 @@ import android.view.animation.Interpolator;
  * {@link #draw(Canvas)} method.</p>
  */
 public class EdgeEffect {
+    @SuppressWarnings("UnusedDeclaration")
     private static final String TAG = "EdgeEffect";
 
     // Time it will take the effect to fully recede in ms
@@ -56,11 +58,8 @@ public class EdgeEffect {
     // Time it will take in ms for a pulled glow to decay to partial strength before release
     private static final int PULL_DECAY_TIME = 1000;
 
-    private static final float MAX_ALPHA = 0.8f;
-    private static final float HELD_EDGE_ALPHA = 0.7f;
+    private static final float MAX_ALPHA = 1.f;
     private static final float HELD_EDGE_SCALE_Y = 0.5f;
-    private static final float HELD_GLOW_ALPHA = 0.5f;
-    private static final float HELD_GLOW_SCALE_Y = 0.5f;
 
     private static final float MAX_GLOW_HEIGHT = 4.f;
 
@@ -76,7 +75,9 @@ public class EdgeEffect {
     private final Drawable mGlow;
     private int mWidth;
     private int mHeight;
-    private final int MIN_WIDTH = 300;
+    private int mX;
+    private int mY;
+    private static final int MIN_WIDTH = 300;
     private final int mMinWidth;
 
     private float mEdgeAlpha;
@@ -119,6 +120,13 @@ public class EdgeEffect {
     private int mState = STATE_IDLE;
 
     private float mPullDistance;
+    
+    private final Rect mBounds = new Rect();
+
+    private final int mEdgeHeight;
+    private final int mGlowHeight;
+    private final int mGlowWidth;
+    private final int mMaxEffectHeight;
 
     /**
      * Construct a new EdgeEffect with a theme appropriate for the provided context.
@@ -128,6 +136,14 @@ public class EdgeEffect {
         final Resources res = context.getResources();
         mEdge = res.getDrawable(R.drawable.overscroll_edge);
         mGlow = res.getDrawable(R.drawable.overscroll_glow);
+
+        mEdgeHeight = mEdge.getIntrinsicHeight();
+        mGlowHeight = mGlow.getIntrinsicHeight();
+        mGlowWidth = mGlow.getIntrinsicWidth();
+
+        mMaxEffectHeight = (int) (Math.min(
+                mGlowHeight * MAX_GLOW_HEIGHT * mGlowHeight / mGlowWidth * 0.6f,
+                mGlowHeight * MAX_GLOW_HEIGHT) + 0.5f);
 
         mMinWidth = (int) (res.getDisplayMetrics().density * MIN_WIDTH + 0.5f);
         mInterpolator = new DecelerateInterpolator();
@@ -142,6 +158,18 @@ public class EdgeEffect {
     public void setSize(int width, int height) {
         mWidth = width;
         mHeight = height;
+    }
+
+    /**
+     * Set the position of this edge effect in pixels. This position is
+     * only used by {@link #getBounds(boolean)}.
+     * 
+     * @param x The position of the edge effect on the X axis
+     * @param y The position of the edge effect on the Y axis
+     */
+    void setPosition(int x, int y) {
+        mX = x;
+        mY = y;
     }
 
     /**
@@ -300,16 +328,11 @@ public class EdgeEffect {
     public boolean draw(Canvas canvas) {
         update();
 
-        final int edgeHeight = mEdge.getIntrinsicHeight();
-        final int edgeWidth = mEdge.getIntrinsicWidth();
-        final int glowHeight = mGlow.getIntrinsicHeight();
-        final int glowWidth = mGlow.getIntrinsicWidth();
-
         mGlow.setAlpha((int) (Math.max(0, Math.min(mGlowAlpha, 1)) * 255));
 
         int glowBottom = (int) Math.min(
-                glowHeight * mGlowScaleY * glowHeight/ glowWidth * 0.6f,
-                glowHeight * MAX_GLOW_HEIGHT);
+                mGlowHeight * mGlowScaleY * mGlowHeight / mGlowWidth * 0.6f,
+                mGlowHeight * MAX_GLOW_HEIGHT);
         if (mWidth < mMinWidth) {
             // Center the glow and clip it.
             int glowLeft = (mWidth - mMinWidth)/2;
@@ -323,7 +346,7 @@ public class EdgeEffect {
 
         mEdge.setAlpha((int) (Math.max(0, Math.min(mEdgeAlpha, 1)) * 255));
 
-        int edgeBottom = (int) (edgeHeight * mEdgeScaleY);
+        int edgeBottom = (int) (mEdgeHeight * mEdgeScaleY);
         if (mWidth < mMinWidth) {
             // Center the edge and clip it.
             int edgeLeft = (mWidth - mMinWidth)/2;
@@ -334,7 +357,23 @@ public class EdgeEffect {
         }
         mEdge.draw(canvas);
 
+        if (mState == STATE_RECEDE && glowBottom == 0 && edgeBottom == 0) {
+            mState = STATE_IDLE;
+        }
+
         return mState != STATE_IDLE;
+    }
+
+    /**
+     * Returns the bounds of the edge effect.
+     * 
+     * @hide
+     */
+    public Rect getBounds(boolean reverse) {
+        mBounds.set(0, 0, mWidth, mMaxEffectHeight);
+        mBounds.offset(mX, mY - (reverse ? mMaxEffectHeight : 0));
+
+        return mBounds;
     }
 
     private void update() {

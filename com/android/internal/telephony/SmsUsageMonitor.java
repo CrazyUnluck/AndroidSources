@@ -17,13 +17,29 @@
 package com.android.internal.telephony;
 
 import android.content.ContentResolver;
+import android.content.Context;
+import android.content.res.XmlResourceParser;
+import android.database.ContentObserver;
+import android.os.Handler;
+import android.os.Message;
 import android.provider.Settings;
+import android.telephony.PhoneNumberUtils;
 import android.util.Log;
 
+import com.android.internal.util.XmlUtils;
+
+import org.xmlpull.v1.XmlPullParser;
+import org.xmlpull.v1.XmlPullParserException;
+import org.xmlpull.v1.XmlPullParserFactory;
+
+import java.io.IOException;
+import java.io.StringReader;
 import java.util.ArrayList;
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.Iterator;
 import java.util.Map;
+import java.util.regex.Pattern;
 
 /**
  * Implement the per-application based SMS control, which limits the number of
@@ -34,24 +50,29 @@ import java.util.Map;
  * dual-mode devices that require support for both 3GPP and 3GPP2 format messages.
  */
 public class SmsUsageMonitor {
-    private static final String TAG = "SmsStorageMonitor";
+    private static final String TAG = "SmsUsageMonitor";
+    private static final boolean DBG = true;
+    private static final boolean VDBG = false;
 
     /** Default checking period for SMS sent without user permission. */
-    private static final int DEFAULT_SMS_CHECK_PERIOD = 3600000;
+    private static final int DEFAULT_SMS_CHECK_PERIOD = 1800000;    // 30 minutes
 
     /** Default number of SMS sent in checking period without user permission. */
-    private static final int DEFAULT_SMS_MAX_COUNT = 100;
+    private static final int DEFAULT_SMS_MAX_COUNT = 30;
 
     private final int mCheckPeriod;
     private final int mMaxAllowed;
+
     private final HashMap<String, ArrayList<Long>> mSmsStamp =
             new HashMap<String, ArrayList<Long>>();
 
     /**
      * Create SMS usage monitor.
-     * @param resolver the ContentResolver to use to load from secure settings
+     * @param context the context to use to load resources and get TelephonyManager service
      */
-    public SmsUsageMonitor(ContentResolver resolver) {
+    public SmsUsageMonitor(Context context) {
+        ContentResolver resolver = context.getContentResolver();
+
         mMaxAllowed = Settings.Secure.getInt(resolver,
                 Settings.Secure.SMS_OUTGOING_CHECK_MAX_COUNT,
                 DEFAULT_SMS_MAX_COUNT);
@@ -67,9 +88,11 @@ public class SmsUsageMonitor {
     }
 
     /**
-     * Check to see if an application is allowed to send new SMS messages.
+     * Check to see if an application is allowed to send new SMS messages, and confirm with
+     * user if the send limit was reached or if a non-system app is potentially sending to a
+     * premium SMS short code or number.
      *
-     * @param appName the application sending sms
+     * @param appName the package name of the app requesting to send an SMS
      * @param smsWaiting the number of new messages desired to send
      * @return true if application is allowed to send the requested number
      *  of new sms messages
@@ -111,7 +134,7 @@ public class SmsUsageMonitor {
         Long ct = System.currentTimeMillis();
         long beginCheckPeriod = ct - mCheckPeriod;
 
-        Log.d(TAG, "SMS send size=" + sent.size() + " time=" + ct);
+        if (VDBG) log("SMS send size=" + sent.size() + " time=" + ct);
 
         while (!sent.isEmpty() && sent.get(0) < beginCheckPeriod) {
             sent.remove(0);
@@ -124,5 +147,9 @@ public class SmsUsageMonitor {
             return true;
         }
         return false;
+    }
+
+    private static void log(String msg) {
+        Log.d(TAG, msg);
     }
 }

@@ -33,8 +33,6 @@ import android.view.View;
 import android.view.ViewGroup;
 import android.view.ViewTreeObserver;
 import android.view.ViewTreeObserver.OnGlobalLayoutListener;
-import android.view.accessibility.AccessibilityEvent;
-import android.view.accessibility.AccessibilityManager;
 import android.widget.ActivityChooserModel.ActivityChooserModelClient;
 
 /**
@@ -366,7 +364,7 @@ public class ActivityChooserView extends ViewGroup implements ActivityChooserMod
             getListPopupWindow().dismiss();
             ViewTreeObserver viewTreeObserver = getViewTreeObserver();
             if (viewTreeObserver.isAlive()) {
-                viewTreeObserver.removeGlobalOnLayoutListener(mOnGlobalLayoutListener);
+                viewTreeObserver.removeOnGlobalLayoutListener(mOnGlobalLayoutListener);
             }
         }
         return true;
@@ -400,7 +398,10 @@ public class ActivityChooserView extends ViewGroup implements ActivityChooserMod
         }
         ViewTreeObserver viewTreeObserver = getViewTreeObserver();
         if (viewTreeObserver.isAlive()) {
-            viewTreeObserver.removeGlobalOnLayoutListener(mOnGlobalLayoutListener);
+            viewTreeObserver.removeOnGlobalLayoutListener(mOnGlobalLayoutListener);
+        }
+        if (isShowingPopup()) {
+            dismissPopup();
         }
         mIsAttachedToWindow = false;
     }
@@ -422,9 +423,7 @@ public class ActivityChooserView extends ViewGroup implements ActivityChooserMod
     @Override
     protected void onLayout(boolean changed, int left, int top, int right, int bottom) {
         mActivityChooserContent.layout(0, 0, right - left, bottom - top);
-        if (getListPopupWindow().isShowing()) {
-            showPopupUnchecked(mAdapter.getMaxActivityCount());
-        } else {
+        if (!isShowingPopup()) {
             dismissPopup();
         }
     }
@@ -547,6 +546,7 @@ public class ActivityChooserView extends ViewGroup implements ActivityChooserMod
                         position = mAdapter.getShowDefaultActivity() ? position : position + 1;
                         Intent launchIntent = mAdapter.getDataModel().chooseActivity(position);
                         if (launchIntent != null) {
+                            launchIntent.addFlags(Intent.FLAG_ACTIVITY_CLEAR_WHEN_TASK_RESET);
                             mContext.startActivity(launchIntent);
                         }
                     }
@@ -564,6 +564,7 @@ public class ActivityChooserView extends ViewGroup implements ActivityChooserMod
                 final int index = mAdapter.getDataModel().getActivityIndex(defaultActivity);
                 Intent launchIntent = mAdapter.getDataModel().chooseActivity(index);
                 if (launchIntent != null) {
+                    launchIntent.addFlags(Intent.FLAG_ACTIVITY_CLEAR_WHEN_TASK_RESET);
                     mContext.startActivity(launchIntent);
                 }
             } else if (view == mExpandActivityOverflowButton) {

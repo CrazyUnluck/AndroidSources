@@ -16,9 +16,6 @@
 
 package android.os;
 
-import android.os.Bundle;
-import android.os.Parcel;
-import android.os.Parcelable;
 import android.util.TimeUtils;
 
 /**
@@ -75,13 +72,13 @@ public final class Message implements Parcelable {
     public Messenger replyTo;
 
     /** If set message is in use */
-    /*package*/ static final int FLAG_IN_USE = 1;
+    /*package*/ static final int FLAG_IN_USE = 1 << 0;
 
-    /** Flags reserved for future use (All are reserved for now) */
-    /*package*/ static final int FLAGS_RESERVED = ~FLAG_IN_USE;
+    /** If set message is asynchronous */
+    /*package*/ static final int FLAG_ASYNCHRONOUS = 1 << 1;
 
     /** Flags to clear in the copyFrom method */
-    /*package*/ static final int FLAGS_TO_CLEAR_ON_COPY_FROM = FLAGS_RESERVED | FLAG_IN_USE;
+    /*package*/ static final int FLAGS_TO_CLEAR_ON_COPY_FROM = FLAG_IN_USE;
 
     /*package*/ int flags;
 
@@ -100,8 +97,8 @@ public final class Message implements Parcelable {
     private static Message sPool;
     private static int sPoolSize = 0;
 
-    private static final int MAX_POOL_SIZE = 10;
-    
+    private static final int MAX_POOL_SIZE = 50;
+
     /**
      * Return a new Message instance from the global pool. Allows us to
      * avoid allocating new objects in many cases.
@@ -363,6 +360,48 @@ public final class Message implements Parcelable {
         target.sendMessage(this);
     }
 
+    /**
+     * Returns true if the message is asynchronous.
+     *
+     * Asynchronous messages represent interrupts or events that do not require global ordering
+     * with represent to synchronous messages.  Asynchronous messages are not subject to
+     * the synchronization barriers introduced by {@link MessageQueue#enqueueSyncBarrier(long)}.
+     *
+     * @return True if the message is asynchronous.
+     *
+     * @see #setAsynchronous(boolean)
+     * @see MessageQueue#enqueueSyncBarrier(long)
+     * @see MessageQueue#removeSyncBarrier(int)
+     *
+     * @hide
+     */
+    public boolean isAsynchronous() {
+        return (flags & FLAG_ASYNCHRONOUS) != 0;
+    }
+
+    /**
+     * Sets whether the message is asynchronous.
+     *
+     * Asynchronous messages represent interrupts or events that do not require global ordering
+     * with represent to synchronous messages.  Asynchronous messages are not subject to
+     * the synchronization barriers introduced by {@link MessageQueue#enqueueSyncBarrier(long)}.
+     *
+     * @param async True if the message is asynchronous.
+     *
+     * @see #isAsynchronous()
+     * @see MessageQueue#enqueueSyncBarrier(long)
+     * @see MessageQueue#removeSyncBarrier(int)
+     *
+     * @hide
+     */
+    public void setAsynchronous(boolean async) {
+        if (async) {
+            flags |= FLAG_ASYNCHRONOUS;
+        } else {
+            flags &= ~FLAG_ASYNCHRONOUS;
+        }
+    }
+
     /*package*/ void clearForRecycle() {
         flags = 0;
         what = 0;
@@ -464,7 +503,7 @@ public final class Message implements Parcelable {
         Messenger.writeMessengerOrNullToParcel(replyTo, dest);
     }
 
-    private final void readFromParcel(Parcel source) {
+    private void readFromParcel(Parcel source) {
         what = source.readInt();
         arg1 = source.readInt();
         arg2 = source.readInt();

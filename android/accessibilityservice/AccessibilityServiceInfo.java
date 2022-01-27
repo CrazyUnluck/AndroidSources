@@ -25,10 +25,13 @@ import android.content.pm.ServiceInfo;
 import android.content.res.Resources;
 import android.content.res.TypedArray;
 import android.content.res.XmlResourceParser;
+import android.os.Build;
 import android.os.Parcel;
 import android.os.Parcelable;
 import android.util.AttributeSet;
+import android.util.TypedValue;
 import android.util.Xml;
+import android.view.View;
 import android.view.accessibility.AccessibilityEvent;
 
 import org.xmlpull.v1.XmlPullParser;
@@ -40,6 +43,13 @@ import java.io.IOException;
  * This class describes an {@link AccessibilityService}. The system notifies an
  * {@link AccessibilityService} for {@link android.view.accessibility.AccessibilityEvent}s
  * according to the information encapsulated in this class.
+ *
+ * <div class="special reference">
+ * <h3>Developer Guides</h3>
+ * <p>For more information about creating AccessibilityServices, read the
+ * <a href="{@docRoot}guide/topics/ui/accessibility/index.html">Accessibility</a>
+ * developer guide.</p>
+ * </div>
  *
  * @see AccessibilityService
  * @see android.view.accessibility.AccessibilityEvent
@@ -91,6 +101,49 @@ public class AccessibilityServiceInfo implements Parcelable {
      * more than one package specific service only the earlier registered is notified.
      */
     public static final int DEFAULT = 0x0000001;
+
+    /**
+     * If this flag is set the system will regard views that are not important
+     * for accessibility in addition to the ones that are important for accessibility.
+     * That is, views that are marked as not important for accessibility via
+     * {@link View#IMPORTANT_FOR_ACCESSIBILITY_NO} and views that are marked as
+     * potentially important for accessibility via
+     * {@link View#IMPORTANT_FOR_ACCESSIBILITY_AUTO} for which the system has determined
+     * that are not important for accessibility, are both reported while querying the
+     * window content and also the accessibility service will receive accessibility events
+     * from them.
+     * <p>
+     * <strong>Note:</strong> For accessibility services targeting API version
+     * {@link Build.VERSION_CODES#JELLY_BEAN} or higher this flag has to be explicitly
+     * set for the system to regard views that are not important for accessibility. For
+     * accessibility services targeting API version lower than
+     * {@link Build.VERSION_CODES#JELLY_BEAN} this flag is ignored and all views are
+     * regarded for accessibility purposes.
+     * </p>
+     * <p>
+     * Usually views not important for accessibility are layout managers that do not
+     * react to user actions, do not draw any content, and do not have any special
+     * semantics in the context of the screen content. For example, a three by three
+     * grid can be implemented as three horizontal linear layouts and one vertical,
+     * or three vertical linear layouts and one horizontal, or one grid layout, etc.
+     * In this context the actual layout mangers used to achieve the grid configuration
+     * are not important, rather it is important that there are nine evenly distributed
+     * elements.
+     * </p>
+     */
+    public static final int FLAG_INCLUDE_NOT_IMPORTANT_VIEWS = 0x0000002;
+
+    /**
+     * This flag requests that the system gets into touch exploration mode.
+     * In this mode a single finger moving on the screen behaves as a mouse
+     * pointer hovering over the user interface. The system will also detect
+     * certain gestures performed on the touch screen and notify this service.
+     * The system will enable touch exploration mode if there is at least one
+     * accessibility service that has this flag set. Hence, clearing this
+     * flag does not guarantee that the device will not be in touch exploration
+     * mode since there may be another enabled service that requested it.
+     */
+    public static final int FLAG_REQUEST_TOUCH_EXPLORATION_MODE= 0x0000004;
 
     /**
      * The event types an {@link AccessibilityService} is interested in.
@@ -157,6 +210,8 @@ public class AccessibilityServiceInfo implements Parcelable {
      *   <strong>Can be dynamically set at runtime.</strong>
      * </p>
      * @see #DEFAULT
+     * @see #FLAG_INCLUDE_NOT_IMPORTANT_VIEWS
+     * @see #FLAG_REQUEST_TOUCH_EXPLORATION_MODE
      */
     public int flags;
 
@@ -182,9 +237,14 @@ public class AccessibilityServiceInfo implements Parcelable {
     private boolean mCanRetrieveWindowContent;
 
     /**
-     * Description of the accessibility service.
+     * Resource id of the description of the accessibility service.
      */
-    private String mDescription;
+    private int mDescriptionResId;
+
+    /**
+     * Non localized description of the accessibility service.
+     */
+    private String mNonLocalizedDescription;
 
     /**
      * Creates a new instance.
@@ -256,8 +316,15 @@ public class AccessibilityServiceInfo implements Parcelable {
             mCanRetrieveWindowContent = asAttributes.getBoolean(
                     com.android.internal.R.styleable.AccessibilityService_canRetrieveWindowContent,
                     false);
-            mDescription = asAttributes.getString(
+            TypedValue peekedValue = asAttributes.peekValue(
                     com.android.internal.R.styleable.AccessibilityService_description);
+            if (peekedValue != null) {
+                mDescriptionResId = peekedValue.resourceId;
+                CharSequence nonLocalizedDescription = peekedValue.coerceToString();
+                if (nonLocalizedDescription != null) {
+                    mNonLocalizedDescription = nonLocalizedDescription.toString().trim();
+                }
+            }
             asAttributes.recycle();
         } catch (NameNotFoundException e) {
             throw new XmlPullParserException( "Unable to create context for: "
@@ -324,22 +391,45 @@ public class AccessibilityServiceInfo implements Parcelable {
      *    <strong>Statically set from
      *    {@link AccessibilityService#SERVICE_META_DATA meta-data}.</strong>
      * </p>
-     * @return True window content can be retrieved.
+     * @return True if window content can be retrieved.
      */
     public boolean getCanRetrieveWindowContent() {
         return mCanRetrieveWindowContent;
     }
 
     /**
-     * Description of the accessibility service.
+     * Gets the non-localized description of the accessibility service.
      * <p>
      *    <strong>Statically set from
      *    {@link AccessibilityService#SERVICE_META_DATA meta-data}.</strong>
      * </p>
      * @return The description.
+     *
+     * @deprecated Use {@link #loadDescription(PackageManager)}.
      */
     public String getDescription() {
-        return mDescription;
+        return mNonLocalizedDescription;
+    }
+
+    /**
+     * The localized description of the accessibility service.
+     * <p>
+     *    <strong>Statically set from
+     *    {@link AccessibilityService#SERVICE_META_DATA meta-data}.</strong>
+     * </p>
+     * @return The localized description.
+     */
+    public String loadDescription(PackageManager packageManager) {
+        if (mDescriptionResId == 0) {
+            return mNonLocalizedDescription;
+        }
+        ServiceInfo serviceInfo = mResolveInfo.serviceInfo;
+        CharSequence description = packageManager.getText(serviceInfo.packageName,
+                mDescriptionResId, serviceInfo.applicationInfo);
+        if (description != null) {
+            return description.toString().trim();
+        }
+        return null;
     }
 
     /**
@@ -359,7 +449,8 @@ public class AccessibilityServiceInfo implements Parcelable {
         parcel.writeParcelable(mResolveInfo, 0);
         parcel.writeString(mSettingsActivityName);
         parcel.writeInt(mCanRetrieveWindowContent ? 1 : 0);
-        parcel.writeString(mDescription);
+        parcel.writeInt(mDescriptionResId);
+        parcel.writeString(mNonLocalizedDescription);
     }
 
     private void initFromParcel(Parcel parcel) {
@@ -372,7 +463,8 @@ public class AccessibilityServiceInfo implements Parcelable {
         mResolveInfo = parcel.readParcelable(null);
         mSettingsActivityName = parcel.readString();
         mCanRetrieveWindowContent = (parcel.readInt() == 1);
-        mDescription = parcel.readString();
+        mDescriptionResId = parcel.readInt();
+        mNonLocalizedDescription = parcel.readString();
     }
 
     @Override
@@ -465,26 +557,38 @@ public class AccessibilityServiceInfo implements Parcelable {
     public static String feedbackTypeToString(int feedbackType) {
         StringBuilder builder = new StringBuilder();
         builder.append("[");
-        while (feedbackType > 0) {
+        while (feedbackType != 0) {
             final int feedbackTypeFlag = 1 << Integer.numberOfTrailingZeros(feedbackType);
             feedbackType &= ~feedbackTypeFlag;
-            if (builder.length() > 1) {
-                builder.append(", ");
-            }
             switch (feedbackTypeFlag) {
                 case FEEDBACK_AUDIBLE:
+                    if (builder.length() > 1) {
+                        builder.append(", ");
+                    }
                     builder.append("FEEDBACK_AUDIBLE");
                     break;
                 case FEEDBACK_HAPTIC:
+                    if (builder.length() > 1) {
+                        builder.append(", ");
+                    }
                     builder.append("FEEDBACK_HAPTIC");
                     break;
                 case FEEDBACK_GENERIC:
+                    if (builder.length() > 1) {
+                        builder.append(", ");
+                    }
                     builder.append("FEEDBACK_GENERIC");
                     break;
                 case FEEDBACK_SPOKEN:
+                    if (builder.length() > 1) {
+                        builder.append(", ");
+                    }
                     builder.append("FEEDBACK_SPOKEN");
                     break;
                 case FEEDBACK_VISUAL:
+                    if (builder.length() > 1) {
+                        builder.append(", ");
+                    }
                     builder.append("FEEDBACK_VISUAL");
                     break;
             }
@@ -504,6 +608,10 @@ public class AccessibilityServiceInfo implements Parcelable {
         switch (flag) {
             case DEFAULT:
                 return "DEFAULT";
+            case FLAG_INCLUDE_NOT_IMPORTANT_VIEWS:
+                return "FLAG_INCLUDE_NOT_IMPORTANT_VIEWS";
+            case FLAG_REQUEST_TOUCH_EXPLORATION_MODE:
+                return "FLAG_REQUEST_TOUCH_EXPLORATION_MODE";
             default:
                 return null;
         }

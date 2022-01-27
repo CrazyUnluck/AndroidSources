@@ -17,30 +17,28 @@
 package android.view;
 
 import android.content.Context;
+import android.util.Log;
 
 /**
- * This class is a mediator for accomplishing a given task, for example sharing a file.
- * It is responsible for creating a view that performs an action that accomplishes the task.
- * This class also implements other functions such a performing a default action.
- * <p>
- * An ActionProvider can be optionally specified for a {@link MenuItem} and in such a
- * case it will be responsible for creating the action view that appears in the
- * {@link android.app.ActionBar} as a substitute for the menu item when the item is
- * displayed as an action item. Also the provider is responsible for performing a
- * default action if a menu item placed on the overflow menu of the ActionBar is
- * selected and none of the menu item callbacks has handled the selection. For this
- * case the provider can also optionally provide a sub-menu for accomplishing the
- * task at hand.
- * </p>
- * <p>
- * There are two ways for using an action provider for creating and handling of action views:
+ * An ActionProvider defines rich menu interaction in a single component.
+ * ActionProvider can generate action views for use in the action bar,
+ * dynamically populate submenus of a MenuItem, and handle default menu
+ * item invocations.
+ *
+ * <p>An ActionProvider can be optionally specified for a {@link MenuItem} and will be
+ * responsible for creating the action view that appears in the {@link android.app.ActionBar}
+ * in place of a simple button in the bar. When the menu item is presented in a way that
+ * does not allow custom action views, (e.g. in an overflow menu,) the ActionProvider
+ * can perform a default action.</p>
+ *
+ * <p>There are two ways to use an action provider:
  * <ul>
  * <li>
- * Setting the action provider on a {@link MenuItem} directly by calling
+ * Set the action provider on a {@link MenuItem} directly by calling
  * {@link MenuItem#setActionProvider(ActionProvider)}.
  * </li>
  * <li>
- * Declaring the action provider in the menu XML resource. For example:
+ * Declare the action provider in an XML menu resource. For example:
  * <pre>
  * <code>
  *   &lt;item android:id="@+id/my_menu_item"
@@ -58,10 +56,13 @@ import android.content.Context;
  * @see MenuItem#getActionProvider()
  */
 public abstract class ActionProvider {
+    private static final String TAG = "ActionProvider";
     private SubUiVisibilityListener mSubUiVisibilityListener;
+    private VisibilityListener mVisibilityListener;
 
     /**
-     * Creates a new instance.
+     * Creates a new instance. ActionProvider classes should always implement a
+     * constructor that takes a single Context parameter for inflating from menu XML.
      *
      * @param context Context for accessing resources.
      */
@@ -69,11 +70,71 @@ public abstract class ActionProvider {
     }
 
     /**
-     * Factory method for creating new action views.
+     * Factory method called by the Android framework to create new action views.
+     *
+     * <p>This method has been deprecated in favor of {@link #onCreateActionView(MenuItem)}.
+     * Newer apps that wish to support platform versions prior to API 16 should also
+     * implement this method to return a valid action view.</p>
      *
      * @return A new action view.
+     *
+     * @deprecated use {@link #onCreateActionView(MenuItem)}
      */
     public abstract View onCreateActionView();
+
+    /**
+     * Factory method called by the Android framework to create new action views.
+     * This method returns a new action view for the given MenuItem.
+     *
+     * <p>If your ActionProvider implementation overrides the deprecated no-argument overload
+     * {@link #onCreateActionView()}, overriding this method for devices running API 16 or later
+     * is recommended but optional. The default implementation calls {@link #onCreateActionView()}
+     * for compatibility with applications written for older platform versions.</p>
+     *
+     * @param forItem MenuItem to create the action view for
+     * @return the new action view
+     */
+    public View onCreateActionView(MenuItem forItem) {
+        return onCreateActionView();
+    }
+
+    /**
+     * The result of this method determines whether or not {@link #isVisible()} will be used
+     * by the {@link MenuItem} this ActionProvider is bound to help determine its visibility.
+     *
+     * @return true if this ActionProvider overrides the visibility of the MenuItem
+     *         it is bound to, false otherwise. The default implementation returns false.
+     * @see #isVisible()
+     */
+    public boolean overridesItemVisibility() {
+        return false;
+    }
+
+    /**
+     * If {@link #overridesItemVisibility()} returns true, the return value of this method
+     * will help determine the visibility of the {@link MenuItem} this ActionProvider is bound to.
+     *
+     * <p>If the MenuItem's visibility is explicitly set to false by the application,
+     * the MenuItem will not be shown, even if this method returns true.</p>
+     *
+     * @return true if the MenuItem this ActionProvider is bound to is visible, false if
+     *         it is invisible. The default implementation returns true.
+     */
+    public boolean isVisible() {
+        return true;
+    }
+
+    /**
+     * If this ActionProvider is associated with an item in a menu,
+     * refresh the visibility of the item based on {@link #overridesItemVisibility()} and
+     * {@link #isVisible()}. If {@link #overridesItemVisibility()} returns false, this call
+     * will have no effect.
+     */
+    public void refreshVisibility() {
+        if (mVisibilityListener != null && overridesItemVisibility()) {
+            mVisibilityListener.onActionProviderVisibilityChanged(isVisible());
+        }
+    }
 
     /**
      * Performs an optional default action.
@@ -161,9 +222,34 @@ public abstract class ActionProvider {
     }
 
     /**
+     * Set a listener to be notified when this ActionProvider's overridden visibility changes.
+     * This should only be used by MenuItem implementations.
+     *
+     * @param listener listener to set
+     */
+    public void setVisibilityListener(VisibilityListener listener) {
+        if (mVisibilityListener != null) {
+            Log.w(TAG, "setVisibilityListener: Setting a new ActionProvider.VisibilityListener " +
+                    "when one is already set. Are you reusing this " + getClass().getSimpleName() +
+                    " instance while it is still in use somewhere else?");
+        }
+        mVisibilityListener = listener;
+    }
+
+    /**
      * @hide Internal use only
      */
     public interface SubUiVisibilityListener {
         public void onSubUiVisibilityChanged(boolean isVisible);
+    }
+
+    /**
+     * Listens to changes in visibility as reported by {@link ActionProvider#refreshVisibility()}.
+     *
+     * @see ActionProvider#overridesItemVisibility()
+     * @see ActionProvider#isVisible()
+     */
+    public interface VisibilityListener {
+        public void onActionProviderVisibilityChanged(boolean isVisible);
     }
 }

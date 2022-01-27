@@ -55,7 +55,7 @@ public class NetworkTimeUpdateService {
 
     private static final int EVENT_AUTO_TIME_CHANGED = 1;
     private static final int EVENT_POLL_NETWORK_TIME = 2;
-    private static final int EVENT_WIFI_CONNECTED = 3;
+    private static final int EVENT_NETWORK_CONNECTED = 3;
 
     /** Normal polling frequency */
     private static final long POLLING_INTERVAL_MS = 24L * 60 * 60 * 1000; // 24 hrs
@@ -165,9 +165,15 @@ public class NetworkTimeUpdateService {
             if (mTime.getCacheAge() < POLLING_INTERVAL_MS) {
                 final long ntp = mTime.currentTimeMillis();
                 mTryAgainCounter = 0;
-                mLastNtpFetchTime = SystemClock.elapsedRealtime();
-                if (Math.abs(ntp - currentTime) > TIME_ERROR_THRESHOLD_MS) {
+                // If the clock is more than N seconds off or this is the first time it's been
+                // fetched since boot, set the current time.
+                if (Math.abs(ntp - currentTime) > TIME_ERROR_THRESHOLD_MS
+                        || mLastNtpFetchTime == NOT_SET) {
                     // Set the system time
+                    if (DBG && mLastNtpFetchTime == NOT_SET
+                            && Math.abs(ntp - currentTime) <= TIME_ERROR_THRESHOLD_MS) {
+                        Log.d(TAG, "For initial setup, rtc = " + currentTime);
+                    }
                     if (DBG) Log.d(TAG, "Ntp time to be set = " + ntp);
                     // Make sure we don't overflow, since it's going to be converted to an int
                     if (ntp / 1000 < Integer.MAX_VALUE) {
@@ -176,6 +182,7 @@ public class NetworkTimeUpdateService {
                 } else {
                     if (DBG) Log.d(TAG, "Ntp time is close enough = " + ntp);
                 }
+                mLastNtpFetchTime = SystemClock.elapsedRealtime();
             } else {
                 // Try again shortly
                 mTryAgainCounter++;
@@ -234,13 +241,15 @@ public class NetworkTimeUpdateService {
             String action = intent.getAction();
             if (ConnectivityManager.CONNECTIVITY_ACTION.equals(action)) {
                 // There is connectivity
-                NetworkInfo netInfo = (NetworkInfo)intent.getParcelableExtra(
-                        ConnectivityManager.EXTRA_NETWORK_INFO);
+                final ConnectivityManager connManager = (ConnectivityManager) context
+                        .getSystemService(Context.CONNECTIVITY_SERVICE);
+                final NetworkInfo netInfo = connManager.getActiveNetworkInfo();
                 if (netInfo != null) {
                     // Verify that it's a WIFI connection
                     if (netInfo.getState() == NetworkInfo.State.CONNECTED &&
-                            netInfo.getType() == ConnectivityManager.TYPE_WIFI ) {
-                        mHandler.obtainMessage(EVENT_WIFI_CONNECTED).sendToTarget();
+                            (netInfo.getType() == ConnectivityManager.TYPE_WIFI ||
+                                netInfo.getType() == ConnectivityManager.TYPE_ETHERNET) ) {
+                        mHandler.obtainMessage(EVENT_NETWORK_CONNECTED).sendToTarget();
                     }
                 }
             }
@@ -259,7 +268,7 @@ public class NetworkTimeUpdateService {
             switch (msg.what) {
                 case EVENT_AUTO_TIME_CHANGED:
                 case EVENT_POLL_NETWORK_TIME:
-                case EVENT_WIFI_CONNECTED:
+                case EVENT_NETWORK_CONNECTED:
                     onPollNetworkTime(msg.what);
                     break;
             }

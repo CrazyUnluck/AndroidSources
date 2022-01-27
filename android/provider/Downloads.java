@@ -17,6 +17,7 @@
 package android.provider;
 
 import android.app.DownloadManager;
+import android.content.Context;
 import android.net.NetworkPolicyManager;
 import android.net.Uri;
 
@@ -328,6 +329,14 @@ public final class Downloads {
         public static final String COLUMN_IS_PUBLIC_API = "is_public_api";
 
         /**
+         * The name of the column holding a bitmask of allowed network types.  This is only used for
+         * public API downloads.
+         * <P>Type: INTEGER</P>
+         * <P>Owner can Init/Read</P>
+         */
+        public static final String COLUMN_ALLOWED_NETWORK_TYPES = "allowed_network_types";
+
+        /**
          * The name of the column indicating whether roaming connections can be used.  This is only
          * used for public API downloads.
          * <P>Type: BOOLEAN</P>
@@ -336,12 +345,12 @@ public final class Downloads {
         public static final String COLUMN_ALLOW_ROAMING = "allow_roaming";
 
         /**
-         * The name of the column holding a bitmask of allowed network types.  This is only used for
-         * public API downloads.
-         * <P>Type: INTEGER</P>
+         * The name of the column indicating whether metered connections can be used.  This is only
+         * used for public API downloads.
+         * <P>Type: BOOLEAN</P>
          * <P>Owner can Init/Read</P>
          */
-        public static final String COLUMN_ALLOWED_NETWORK_TYPES = "allowed_network_types";
+        public static final String COLUMN_ALLOW_METERED = "allow_metered";
 
         /**
          * Whether or not this download should be displayed in the system's Downloads UI.  Defaults
@@ -700,8 +709,42 @@ public final class Downloads {
          * blocked by {@link NetworkPolicyManager}.
          *
          * @hide
+         * @deprecated since behavior now uses
+         *             {@link #STATUS_WAITING_FOR_NETWORK}
          */
+        @Deprecated
         public static final int STATUS_BLOCKED = 498;
+
+        /** {@hide} */
+        public static String statusToString(int status) {
+            switch (status) {
+                case STATUS_PENDING: return "PENDING";
+                case STATUS_RUNNING: return "RUNNING";
+                case STATUS_PAUSED_BY_APP: return "PAUSED_BY_APP";
+                case STATUS_WAITING_TO_RETRY: return "WAITING_TO_RETRY";
+                case STATUS_WAITING_FOR_NETWORK: return "WAITING_FOR_NETWORK";
+                case STATUS_QUEUED_FOR_WIFI: return "QUEUED_FOR_WIFI";
+                case STATUS_INSUFFICIENT_SPACE_ERROR: return "INSUFFICIENT_SPACE_ERROR";
+                case STATUS_DEVICE_NOT_FOUND_ERROR: return "DEVICE_NOT_FOUND_ERROR";
+                case STATUS_SUCCESS: return "SUCCESS";
+                case STATUS_BAD_REQUEST: return "BAD_REQUEST";
+                case STATUS_NOT_ACCEPTABLE: return "NOT_ACCEPTABLE";
+                case STATUS_LENGTH_REQUIRED: return "LENGTH_REQUIRED";
+                case STATUS_PRECONDITION_FAILED: return "PRECONDITION_FAILED";
+                case STATUS_FILE_ALREADY_EXISTS_ERROR: return "FILE_ALREADY_EXISTS_ERROR";
+                case STATUS_CANNOT_RESUME: return "CANNOT_RESUME";
+                case STATUS_CANCELED: return "CANCELED";
+                case STATUS_UNKNOWN_ERROR: return "UNKNOWN_ERROR";
+                case STATUS_FILE_ERROR: return "FILE_ERROR";
+                case STATUS_UNHANDLED_REDIRECT: return "UNHANDLED_REDIRECT";
+                case STATUS_UNHANDLED_HTTP_CODE: return "UNHANDLED_HTTP_CODE";
+                case STATUS_HTTP_DATA_ERROR: return "HTTP_DATA_ERROR";
+                case STATUS_HTTP_EXCEPTION: return "HTTP_EXCEPTION";
+                case STATUS_TOO_MANY_REDIRECTS: return "TOO_MANY_REDIRECTS";
+                case STATUS_BLOCKED: return "BLOCKED";
+                default: return Integer.toString(status);
+            }
+        }
 
         /**
          * This download is visible but only shows in the notifications
@@ -741,5 +784,20 @@ public final class Downloads {
              */
             public static final String INSERT_KEY_PREFIX = "http_header_";
         }
+    }
+
+    /**
+     * Query where clause for general querying.
+     */
+    private static final String QUERY_WHERE_CLAUSE = Impl.COLUMN_NOTIFICATION_PACKAGE + "=? AND "
+            + Impl.COLUMN_NOTIFICATION_CLASS + "=?";
+
+    /**
+     * Delete all the downloads for a package/class pair.
+     */
+    public static final void removeAllDownloadsByPackage(
+            Context context, String notification_package, String notification_class) {
+        context.getContentResolver().delete(Impl.CONTENT_URI, QUERY_WHERE_CLAUSE,
+                new String[] { notification_package, notification_class });
     }
 }

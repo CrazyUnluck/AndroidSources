@@ -167,7 +167,6 @@ import android.util.SparseArray;
  */
 public final class MotionEvent extends InputEvent implements Parcelable {
     private static final long NS_PER_MS = 1000000;
-    private static final boolean TRACK_RECYCLED_LOCATION = false;
 
     /**
      * An invalid pointer id.
@@ -1315,8 +1314,6 @@ public final class MotionEvent extends InputEvent implements Parcelable {
     private int mNativePtr;
 
     private MotionEvent mNext;
-    private RuntimeException mRecycledLocation;
-    private boolean mRecycled;
 
     private static native int nativeInitialize(int nativePtr,
             int deviceId, int source, int action, int flags, int edgeFlags,
@@ -1397,9 +1394,8 @@ public final class MotionEvent extends InputEvent implements Parcelable {
             gRecyclerTop = ev.mNext;
             gRecyclerUsed -= 1;
         }
-        ev.mRecycledLocation = null;
-        ev.mRecycled = false;
         ev.mNext = null;
+        ev.prepareForReuse();
         return ev;
     }
 
@@ -1646,20 +1642,9 @@ public final class MotionEvent extends InputEvent implements Parcelable {
      * Recycle the MotionEvent, to be re-used by a later caller.  After calling
      * this function you must not ever touch the event again.
      */
+    @Override
     public final void recycle() {
-        // Ensure recycle is only called once!
-        if (TRACK_RECYCLED_LOCATION) {
-            if (mRecycledLocation != null) {
-                throw new RuntimeException(toString() + " recycled twice!", mRecycledLocation);
-            }
-            mRecycledLocation = new RuntimeException("Last recycled here");
-            //Log.w("MotionEvent", "Recycling event " + this, mRecycledLocation);
-        } else {
-            if (mRecycled) {
-                throw new RuntimeException(toString() + " recycled twice!");
-            }
-            mRecycled = true;
-        }
+        super.recycle();
 
         synchronized (gRecyclerLock) {
             if (gRecyclerUsed < MAX_RECYCLED) {
@@ -1669,14 +1654,22 @@ public final class MotionEvent extends InputEvent implements Parcelable {
             }
         }
     }
-    
+
     /**
-     * Scales down the coordination of this event by the given scale.
+     * Applies a scale factor to all points within this event.
      *
+     * This method is used to adjust touch events to simulate different density
+     * displays for compatibility mode.  The values returned by {@link #getRawX()},
+     * {@link #getRawY()}, {@link #getXPrecision()} and {@link #getYPrecision()}
+     * are also affected by the scale factor.
+     *
+     * @param scale The scale factor to apply.
      * @hide
      */
     public final void scale(float scale) {
-        nativeScale(mNativePtr, scale);
+        if (scale != 1.0f) {
+            nativeScale(mNativePtr, scale);
+        }
     }
 
     /** {@inheritDoc} */
@@ -1788,18 +1781,32 @@ public final class MotionEvent extends InputEvent implements Parcelable {
     }
 
     /**
-     * Returns the time (in ms) when this specific event was generated.
+     * Retrieve the time this event occurred,
+     * in the {@link android.os.SystemClock#uptimeMillis} time base.
+     *
+     * @return Returns the time this event occurred,
+     * in the {@link android.os.SystemClock#uptimeMillis} time base.
      */
+    @Override
     public final long getEventTime() {
         return nativeGetEventTimeNanos(mNativePtr, HISTORY_CURRENT) / NS_PER_MS;
     }
 
     /**
-     * Returns the time (in ns) when this specific event was generated.
+     * Retrieve the time this event occurred,
+     * in the {@link android.os.SystemClock#uptimeMillis} time base but with
+     * nanosecond precision.
+     * <p>
      * The value is in nanosecond precision but it may not have nanosecond accuracy.
+     * </p>
+     *
+     * @return Returns the time this event occurred,
+     * in the {@link android.os.SystemClock#uptimeMillis} time base but with
+     * nanosecond precision.
      *
      * @hide
      */
+    @Override
     public final long getEventTimeNano() {
         return nativeGetEventTimeNanos(mNativePtr, HISTORY_CURRENT);
     }
@@ -2241,16 +2248,48 @@ public final class MotionEvent extends InputEvent implements Parcelable {
 
     /**
      * Returns the time that a historical movement occurred between this event
-     * and the previous event.  Only applies to ACTION_MOVE events.
+     * and the previous event, in the {@link android.os.SystemClock#uptimeMillis} time base.
+     * <p>
+     * This only applies to ACTION_MOVE events.
+     * </p>
      *
      * @param pos Which historical value to return; must be less than
      * {@link #getHistorySize}
+     * @return Returns the time that a historical movement occurred between this
+     * event and the previous event,
+     * in the {@link android.os.SystemClock#uptimeMillis} time base.
      *
      * @see #getHistorySize
      * @see #getEventTime
      */
     public final long getHistoricalEventTime(int pos) {
         return nativeGetEventTimeNanos(mNativePtr, pos) / NS_PER_MS;
+    }
+
+    /**
+     * Returns the time that a historical movement occurred between this event
+     * and the previous event, in the {@link android.os.SystemClock#uptimeMillis} time base
+     * but with nanosecond (instead of millisecond) precision.
+     * <p>
+     * This only applies to ACTION_MOVE events.
+     * </p><p>
+     * The value is in nanosecond precision but it may not have nanosecond accuracy.
+     * </p>
+     *
+     * @param pos Which historical value to return; must be less than
+     * {@link #getHistorySize}
+     * @return Returns the time that a historical movement occurred between this
+     * event and the previous event,
+     * in the {@link android.os.SystemClock#uptimeMillis} time base but with
+     * nanosecond (instead of millisecond) precision.
+     *
+     * @see #getHistorySize
+     * @see #getEventTime
+     *
+     * @hide
+     */
+    public final long getHistoricalEventTimeNano(int pos) {
+        return nativeGetEventTimeNanos(mNativePtr, pos);
     }
 
     /**
@@ -2646,7 +2685,9 @@ public final class MotionEvent extends InputEvent implements Parcelable {
      * @param deltaY Amount to add to the current Y coordinate of the event.
      */
     public final void offsetLocation(float deltaX, float deltaY) {
-        nativeOffsetLocation(mNativePtr, deltaX, deltaY);
+        if (deltaX != 0.0f || deltaY != 0.0f) {
+            nativeOffsetLocation(mNativePtr, deltaX, deltaY);
+        }
     }
 
     /**
@@ -2659,7 +2700,7 @@ public final class MotionEvent extends InputEvent implements Parcelable {
     public final void setLocation(float x, float y) {
         float oldX = getX();
         float oldY = getY();
-        nativeOffsetLocation(mNativePtr, x - oldX, y - oldY);
+        offsetLocation(x - oldX, y - oldY);
     }
     
     /**
@@ -2717,6 +2758,67 @@ public final class MotionEvent extends InputEvent implements Parcelable {
      */
     public final void addBatch(long eventTime, PointerCoords[] pointerCoords, int metaState) {
         nativeAddBatch(mNativePtr, eventTime * NS_PER_MS, pointerCoords, metaState);
+    }
+
+    /**
+     * Adds all of the movement samples of the specified event to this one if
+     * it is compatible.  To be compatible, the event must have the same device id,
+     * source, action, flags, pointer count, pointer properties.
+     *
+     * Only applies to {@link #ACTION_MOVE} or {@link #ACTION_HOVER_MOVE} events.
+     *
+     * @param event The event whose movements samples should be added to this one
+     * if possible.
+     * @return True if batching was performed or false if batching was not possible.
+     * @hide
+     */
+    public final boolean addBatch(MotionEvent event) {
+        final int action = nativeGetAction(mNativePtr);
+        if (action != ACTION_MOVE && action != ACTION_HOVER_MOVE) {
+            return false;
+        }
+        if (action != nativeGetAction(event.mNativePtr)) {
+            return false;
+        }
+
+        if (nativeGetDeviceId(mNativePtr) != nativeGetDeviceId(event.mNativePtr)
+                || nativeGetSource(mNativePtr) != nativeGetSource(event.mNativePtr)
+                || nativeGetFlags(mNativePtr) != nativeGetFlags(event.mNativePtr)) {
+            return false;
+        }
+
+        final int pointerCount = nativeGetPointerCount(mNativePtr);
+        if (pointerCount != nativeGetPointerCount(event.mNativePtr)) {
+            return false;
+        }
+
+        synchronized (gSharedTempLock) {
+            ensureSharedTempPointerCapacity(Math.max(pointerCount, 2));
+            final PointerProperties[] pp = gSharedTempPointerProperties;
+            final PointerCoords[] pc = gSharedTempPointerCoords;
+
+            for (int i = 0; i < pointerCount; i++) {
+                nativeGetPointerProperties(mNativePtr, i, pp[0]);
+                nativeGetPointerProperties(event.mNativePtr, i, pp[1]);
+                if (!pp[0].equals(pp[1])) {
+                    return false;
+                }
+            }
+
+            final int metaState = nativeGetMetaState(event.mNativePtr);
+            final int historySize = nativeGetHistorySize(event.mNativePtr);
+            for (int h = 0; h <= historySize; h++) {
+                final int historyPos = (h == historySize ? HISTORY_CURRENT : h);
+
+                for (int i = 0; i < pointerCount; i++) {
+                    nativeGetPointerCoords(event.mNativePtr, i, historyPos, pc[i]);
+                }
+
+                final long eventTimeNanos = nativeGetEventTimeNanos(event.mNativePtr, historyPos);
+                nativeAddBatch(mNativePtr, eventTimeNanos, pc, metaState);
+            }
+        }
+        return true;
     }
 
     /**
@@ -3420,6 +3522,23 @@ public final class MotionEvent extends InputEvent implements Parcelable {
         public void copyFrom(PointerProperties other) {
             id = other.id;
             toolType = other.toolType;
+        }
+
+        @Override
+        public boolean equals(Object other) {
+            if (other instanceof PointerProperties) {
+                return equals((PointerProperties)other);
+            }
+            return false;
+        }
+
+        private boolean equals(PointerProperties other) {
+            return other != null && id == other.id && toolType == other.toolType;
+        }
+
+        @Override
+        public int hashCode() {
+            return id | (toolType << 8);
         }
     }
 }

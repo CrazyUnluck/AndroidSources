@@ -243,6 +243,17 @@ class Installer {
         return execute(builder.toString());
     }
 
+    public int fixUid(String name, int uid, int gid) {
+        StringBuilder builder = new StringBuilder("fixuid");
+        builder.append(' ');
+        builder.append(name);
+        builder.append(' ');
+        builder.append(uid);
+        builder.append(' ');
+        builder.append(gid);
+        return execute(builder.toString());
+    }
+
     public int deleteCacheFiles(String name) {
         StringBuilder builder = new StringBuilder("rmcache");
         builder.append(' ');
@@ -274,6 +285,27 @@ class Installer {
         builder.append(name);
         builder.append(' ');
         builder.append(userId);
+        return execute(builder.toString());
+    }
+
+    /**
+     * Clone all the package data directories from srcUserId to targetUserId. If copyData is true,
+     * some of the data is also copied, otherwise just empty directories are created with the
+     * correct access rights.
+     * @param srcUserId user to copy the data directories from
+     * @param targetUserId user to copy the data directories to
+     * @param copyData whether the data itself is to be copied. If false, empty directories are
+     * created.
+     * @return success/error code
+     */
+    public int cloneUserData(int srcUserId, int targetUserId, boolean copyData) {
+        StringBuilder builder = new StringBuilder("cloneuserdata");
+        builder.append(' ');
+        builder.append(srcUserId);
+        builder.append(' ');
+        builder.append(targetUserId);
+        builder.append(' ');
+        builder.append(copyData ? '1' : '0');
         return execute(builder.toString());
     }
 

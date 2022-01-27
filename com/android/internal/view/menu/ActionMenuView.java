@@ -17,6 +17,7 @@ package com.android.internal.view.menu;
 
 import android.content.Context;
 import android.content.res.Configuration;
+import android.content.res.TypedArray;
 import android.util.AttributeSet;
 import android.view.Gravity;
 import android.view.View;
@@ -24,6 +25,8 @@ import android.view.ViewDebug;
 import android.view.ViewGroup;
 import android.view.accessibility.AccessibilityEvent;
 import android.widget.LinearLayout;
+
+import com.android.internal.R;
 
 /**
  * @hide
@@ -43,6 +46,7 @@ public class ActionMenuView extends LinearLayout implements MenuBuilder.ItemInvo
     private int mMinCellSize;
     private int mGeneratedItemPadding;
     private int mMeasuredExtraWidth;
+    private int mMaxItemHeight;
 
     public ActionMenuView(Context context) {
         this(context, null);
@@ -54,6 +58,11 @@ public class ActionMenuView extends LinearLayout implements MenuBuilder.ItemInvo
         final float density = context.getResources().getDisplayMetrics().density;
         mMinCellSize = (int) (MIN_CELL_SIZE * density);
         mGeneratedItemPadding = (int) (GENERATED_ITEM_PADDING * density);
+
+        TypedArray a = context.obtainStyledAttributes(attrs, R.styleable.ActionBar,
+                R.attr.actionBarStyle, 0);
+        mMaxItemHeight = a.getDimensionPixelSize(R.styleable.ActionBar_height, 0);
+        a.recycle();
     }
 
     public void setPresenter(ActionMenuPresenter presenter) {
@@ -96,6 +105,13 @@ public class ActionMenuView extends LinearLayout implements MenuBuilder.ItemInvo
         if (mFormatItems) {
             onMeasureExactFormat(widthMeasureSpec, heightMeasureSpec);
         } else {
+            // Previous measurement at exact format may have set margins - reset them.
+            final int childCount = getChildCount();
+            for (int i = 0; i < childCount; i++) {
+                final View child = getChildAt(i);
+                final LayoutParams lp = (LayoutParams) child.getLayoutParams();
+                lp.leftMargin = lp.rightMargin = 0;
+            }
             super.onMeasure(widthMeasureSpec, heightMeasureSpec);
         }
     }
@@ -108,6 +124,11 @@ public class ActionMenuView extends LinearLayout implements MenuBuilder.ItemInvo
 
         final int widthPadding = getPaddingLeft() + getPaddingRight();
         final int heightPadding = getPaddingTop() + getPaddingBottom();
+
+        final int itemHeightSpec = heightMode == MeasureSpec.EXACTLY
+                ? MeasureSpec.makeMeasureSpec(heightSize - heightPadding, MeasureSpec.EXACTLY)
+                : MeasureSpec.makeMeasureSpec(
+                    Math.min(mMaxItemHeight, heightSize - heightPadding), MeasureSpec.AT_MOST);
 
         widthSize -= widthPadding;
 
@@ -160,7 +181,7 @@ public class ActionMenuView extends LinearLayout implements MenuBuilder.ItemInvo
             final int cellsAvailable = lp.isOverflowButton ? 1 : cellsRemaining;
 
             final int cellsUsed = measureChildForCells(child, cellSize, cellsAvailable,
-                    heightMeasureSpec, heightPadding);
+                    itemHeightSpec, heightPadding);
 
             maxCellsUsed = Math.max(maxCellsUsed, cellsUsed);
             if (lp.expandable) expandableItemCount++;
@@ -291,7 +312,6 @@ public class ActionMenuView extends LinearLayout implements MenuBuilder.ItemInvo
 
         // Remeasure any items that have had extra space allocated to them.
         if (needsExpansion) {
-            int heightSpec = MeasureSpec.makeMeasureSpec(heightSize - heightPadding, heightMode);
             for (int i = 0; i < childCount; i++) {
                 final View child = getChildAt(i);
                 final LayoutParams lp = (LayoutParams) child.getLayoutParams();
@@ -299,7 +319,8 @@ public class ActionMenuView extends LinearLayout implements MenuBuilder.ItemInvo
                 if (!lp.expanded) continue;
 
                 final int width = lp.cellsUsed * cellSize + lp.extraPixels;
-                child.measure(MeasureSpec.makeMeasureSpec(width, MeasureSpec.EXACTLY), heightSpec);
+                child.measure(MeasureSpec.makeMeasureSpec(width, MeasureSpec.EXACTLY),
+                        itemHeightSpec);
             }
         }
 
@@ -333,8 +354,12 @@ public class ActionMenuView extends LinearLayout implements MenuBuilder.ItemInvo
         final int childHeightMode = MeasureSpec.getMode(parentHeightMeasureSpec);
         final int childHeightSpec = MeasureSpec.makeMeasureSpec(childHeightSize, childHeightMode);
 
+        final ActionMenuItemView itemView = child instanceof ActionMenuItemView ?
+                (ActionMenuItemView) child : null;
+        final boolean hasText = itemView != null && itemView.hasText();
+
         int cellsUsed = 0;
-        if (cellsRemaining > 0) {
+        if (cellsRemaining > 0 && (!hasText || cellsRemaining >= 2)) {
             final int childWidthSpec = MeasureSpec.makeMeasureSpec(
                     cellSize * cellsRemaining, MeasureSpec.AT_MOST);
             child.measure(childWidthSpec, childHeightSpec);
@@ -342,11 +367,10 @@ public class ActionMenuView extends LinearLayout implements MenuBuilder.ItemInvo
             final int measuredWidth = child.getMeasuredWidth();
             cellsUsed = measuredWidth / cellSize;
             if (measuredWidth % cellSize != 0) cellsUsed++;
+            if (hasText && cellsUsed < 2) cellsUsed = 2;
         }
 
-        final ActionMenuItemView itemView = child instanceof ActionMenuItemView ?
-                (ActionMenuItemView) child : null;
-        final boolean expandable = !lp.isOverflowButton && itemView != null && itemView.hasText();
+        final boolean expandable = !lp.isOverflowButton && hasText;
         lp.expandable = expandable;
 
         lp.cellsUsed = cellsUsed;

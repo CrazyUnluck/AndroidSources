@@ -20,6 +20,7 @@ import android.annotation.Widget;
 import android.content.Context;
 import android.content.res.TypedArray;
 import android.graphics.Rect;
+import android.os.Bundle;
 import android.util.AttributeSet;
 import android.util.Log;
 import android.view.ContextMenu.ContextMenuInfo;
@@ -32,6 +33,8 @@ import android.view.SoundEffectConstants;
 import android.view.View;
 import android.view.ViewConfiguration;
 import android.view.ViewGroup;
+import android.view.accessibility.AccessibilityEvent;
+import android.view.accessibility.AccessibilityNodeInfo;
 import android.view.animation.Transformation;
 
 import com.android.internal.R;
@@ -46,14 +49,16 @@ import com.android.internal.R;
  * <p>
  * Views given to the Gallery should use {@link Gallery.LayoutParams} as their
  * layout parameters type.
- *
- * <p>See the <a href="{@docRoot}resources/tutorials/views/hello-gallery.html">Gallery
- * tutorial</a>.</p>
  * 
  * @attr ref android.R.styleable#Gallery_animationDuration
  * @attr ref android.R.styleable#Gallery_spacing
  * @attr ref android.R.styleable#Gallery_gravity
+ * 
+ * @deprecated This widget is no longer supported. Other horizontally scrolling
+ * widgets include {@link HorizontalScrollView} and {@link android.support.v4.view.ViewPager}
+ * from the support library.
  */
+@Deprecated
 @Widget
 public class Gallery extends AbsSpinner implements GestureDetector.OnGestureListener {
 
@@ -1353,6 +1358,49 @@ public class Gallery extends AbsSpinner implements GestureDetector.OnGestureList
             mSelectedChild.setSelected(true);
         }
 
+    }
+
+    @Override
+    public void onInitializeAccessibilityEvent(AccessibilityEvent event) {
+        super.onInitializeAccessibilityEvent(event);
+        event.setClassName(Gallery.class.getName());
+    }
+
+    @Override
+    public void onInitializeAccessibilityNodeInfo(AccessibilityNodeInfo info) {
+        super.onInitializeAccessibilityNodeInfo(info);
+        info.setClassName(Gallery.class.getName());
+        info.setScrollable(mItemCount > 1);
+        if (isEnabled()) {
+            if (mItemCount > 0 && mSelectedPosition < mItemCount - 1) {
+                info.addAction(AccessibilityNodeInfo.ACTION_SCROLL_FORWARD);
+            }
+            if (isEnabled() && mItemCount > 0 && mSelectedPosition > 0) {
+                info.addAction(AccessibilityNodeInfo.ACTION_SCROLL_BACKWARD);
+            }
+        }
+    }
+
+    @Override
+    public boolean performAccessibilityAction(int action, Bundle arguments) {
+        if (super.performAccessibilityAction(action, arguments)) {
+            return true;
+        }
+        switch (action) {
+            case AccessibilityNodeInfo.ACTION_SCROLL_FORWARD: {
+                if (isEnabled() && mItemCount > 0 && mSelectedPosition < mItemCount - 1) {
+                    final int currentChildIndex = mSelectedPosition - mFirstPosition;
+                    return scrollToChild(currentChildIndex + 1);
+                }
+            } return false;
+            case AccessibilityNodeInfo.ACTION_SCROLL_BACKWARD: {
+                if (isEnabled() && mItemCount > 0 && mSelectedPosition > 0) {
+                    final int currentChildIndex = mSelectedPosition - mFirstPosition;
+                    return scrollToChild(currentChildIndex - 1);
+                }
+            } return false;
+        }
+        return false;
     }
 
     /**

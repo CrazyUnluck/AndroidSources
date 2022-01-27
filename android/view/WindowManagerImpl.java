@@ -23,6 +23,7 @@ import android.content.res.Configuration;
 import android.graphics.PixelFormat;
 import android.opengl.ManagedEGLContext;
 import android.os.IBinder;
+import android.os.SystemProperties;
 import android.util.AndroidRuntimeException;
 import android.util.Log;
 import android.view.inputmethod.InputMethodManager;
@@ -73,6 +74,11 @@ public class WindowManagerImpl implements WindowManager {
      * The window manager has changed the surface from the last call.
      */
     public static final int RELAYOUT_RES_SURFACE_CHANGED = 0x4;
+    /**
+     * The window manager is currently animating.  It will call
+     * IWindow.doneAnimating() when done.
+     */
+    public static final int RELAYOUT_RES_ANIMATING = 0x8;
 
     /**
      * Flag for relayout: the client will be later giving
@@ -105,6 +111,9 @@ public class WindowManagerImpl implements WindowManager {
     private View[] mViews;
     private ViewRootImpl[] mRoots;
     private WindowManager.LayoutParams[] mParams;
+    private boolean mNeedsEglTerminate;
+
+    private Runnable mSystemPropertyUpdater = null;
 
     private final static Object sLock = new Object();
     private final static WindowManagerImpl sWindowManager = new WindowManagerImpl();
@@ -231,6 +240,22 @@ public class WindowManagerImpl implements WindowManager {
         View panelParentView = null;
         
         synchronized (this) {
+            // Start watching for system property changes.
+            if (mSystemPropertyUpdater == null) {
+                mSystemPropertyUpdater = new Runnable() {
+                    @Override public void run() {
+                        synchronized (this) {
+                            synchronized (this) {
+                                for (ViewRootImpl root : mRoots) {
+                                    root.loadSystemProperties();
+                                }
+                            }
+                        }
+                    }
+                };
+                SystemProperties.addChangeCallback(mSystemPropertyUpdater);
+            }
+
             // Here's an odd/questionable case: if someone tries to add a
             // view multiple times, then we simply bump up a nesting count
             // and they need to remove the view the corresponding number of
@@ -339,6 +364,14 @@ public class WindowManagerImpl implements WindowManager {
             View curView = root.getView();
             
             root.mAddNesting = 0;
+
+            if (view != null) {
+                InputMethodManager imm = InputMethodManager.getInstance(view.getContext());
+                if (imm != null) {
+                    imm.windowDismissed(mViews[index].getWindowToken());
+                }
+            }
+
             root.die(true);
             finishRemoveViewLocked(curView, index);
             if (curView == view) {
@@ -353,7 +386,7 @@ public class WindowManagerImpl implements WindowManager {
     View removeViewLocked(int index) {
         ViewRootImpl root = mRoots[index];
         View view = root.getView();
-        
+
         // Don't really remove until we have matched all calls to add().
         root.mAddNesting--;
         if (root.mAddNesting > 0) {
@@ -428,33 +461,44 @@ public class WindowManagerImpl implements WindowManager {
 
     /**
      * @param level See {@link android.content.ComponentCallbacks}
+     *
+     * @hide
      */
-    public void trimMemory(int level) {
+    public void startTrimMemory(int level) {
         if (HardwareRenderer.isAvailable()) {
-            switch (level) {
-                case ComponentCallbacks2.TRIM_MEMORY_COMPLETE:
-                case ComponentCallbacks2.TRIM_MEMORY_MODERATE:
-                    // On low and medium end gfx devices
-                    if (!ActivityManager.isHighEndGfx(getDefaultDisplay())) {
-                        // Force a full memory flush
-                        HardwareRenderer.trimMemory(ComponentCallbacks2.TRIM_MEMORY_COMPLETE);
-                        // Destroy all hardware surfaces and resources associated to
-                        // known windows
-                        synchronized (this) {
-                            if (mViews == null) return;
-                            int count = mViews.length;
-                            for (int i = 0; i < count; i++) {
-                                mRoots[i].terminateHardwareResources();
-                            }
-                        }
-                        // Terminate the hardware renderer to free all resources
-                        ManagedEGLContext.doTerminate();
-                        break;
+            // On low-end gfx devices we trim when memory is moderate;
+            // on high-end devices we do this when low.
+            if (level >= ComponentCallbacks2.TRIM_MEMORY_COMPLETE
+                    || (level >= ComponentCallbacks2.TRIM_MEMORY_MODERATE
+                            && !ActivityManager.isHighEndGfx(getDefaultDisplay()))) {
+                // Destroy all hardware surfaces and resources associated to
+                // known windows
+                synchronized (this) {
+                    if (mViews == null) return;
+                    int count = mViews.length;
+                    for (int i = 0; i < count; i++) {
+                        mRoots[i].terminateHardwareResources();
                     }
-                    // high end gfx devices fall through to next case
-                default:
-                    HardwareRenderer.trimMemory(level);
+                }
+                // Force a full memory flush
+                mNeedsEglTerminate = true;
+                HardwareRenderer.startTrimMemory(ComponentCallbacks2.TRIM_MEMORY_COMPLETE);
+                return;
             }
+
+            HardwareRenderer.startTrimMemory(level);
+        }
+    }
+
+    /**
+     * @hide
+     */
+    public void endTrimMemory() {
+        HardwareRenderer.endTrimMemory();
+
+        if (mNeedsEglTerminate) {
+            ManagedEGLContext.doTerminate();
+            mNeedsEglTerminate = false;
         }
     }
 
@@ -480,9 +524,22 @@ public class WindowManagerImpl implements WindowManager {
         try {
             synchronized (this) {
                 if (mViews != null) {
-                    pw.println("View hierarchy:");
-
                     final int count = mViews.length;
+                    
+                    pw.println("Profile data in ms:");
+
+                    for (int i = 0; i < count; i++) {
+                        ViewRootImpl root = mRoots[i];
+                        String name = getWindowName(root);
+                        pw.printf("\n\t%s", name);
+
+                        HardwareRenderer renderer = root.getView().mAttachInfo.mHardwareRenderer;
+                        if (renderer != null) {
+                            renderer.dumpGfxInfo(pw);
+                        }
+                    }
+
+                    pw.println("\nView hierarchy:\n");
 
                     int viewsCount = 0;
                     int displayListsSize = 0;
@@ -490,12 +547,16 @@ public class WindowManagerImpl implements WindowManager {
 
                     for (int i = 0; i < count; i++) {
                         ViewRootImpl root = mRoots[i];
-                        root.dumpGfxInfo(pw, info);
+                        root.dumpGfxInfo(info);
 
-                        String name = root.getClass().getName() + '@' +
-                                Integer.toHexString(hashCode());                        
-                        pw.printf("  %s: %d views, %.2f kB (display lists)\n",
+                        String name = getWindowName(root);
+                        pw.printf("  %s\n  %d views, %.2f kB of display lists",
                                 name, info[0], info[1] / 1024.0f);
+                        HardwareRenderer renderer = root.getView().mAttachInfo.mHardwareRenderer;
+                        if (renderer != null) {
+                            pw.printf(", %d frames rendered", renderer.getFrameCount());
+                        }
+                        pw.printf("\n\n");
 
                         viewsCount += info[0];
                         displayListsSize += info[1];
@@ -509,6 +570,11 @@ public class WindowManagerImpl implements WindowManager {
         } finally {
             pw.flush();
         }        
+    }
+
+    private static String getWindowName(ViewRootImpl root) {
+        return root.mWindowAttributes.getTitle() + "/" +
+                root.getClass().getName() + '@' + Integer.toHexString(root.hashCode());
     }
 
     public void setStoppedState(IBinder token, boolean stopped) {

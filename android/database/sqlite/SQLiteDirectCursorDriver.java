@@ -18,53 +18,50 @@ package android.database.sqlite;
 
 import android.database.Cursor;
 import android.database.sqlite.SQLiteDatabase.CursorFactory;
+import android.os.CancellationSignal;
 
 /**
  * A cursor driver that uses the given query directly.
  * 
  * @hide
  */
-public class SQLiteDirectCursorDriver implements SQLiteCursorDriver {
-    private String mEditTable; 
-    private SQLiteDatabase mDatabase;
-    private Cursor mCursor;
-    private String mSql;
+public final class SQLiteDirectCursorDriver implements SQLiteCursorDriver {
+    private final SQLiteDatabase mDatabase;
+    private final String mEditTable; 
+    private final String mSql;
+    private final CancellationSignal mCancellationSignal;
     private SQLiteQuery mQuery;
 
-    public SQLiteDirectCursorDriver(SQLiteDatabase db, String sql, String editTable) {
+    public SQLiteDirectCursorDriver(SQLiteDatabase db, String sql, String editTable,
+            CancellationSignal cancellationSignal) {
         mDatabase = db;
         mEditTable = editTable;
         mSql = sql;
+        mCancellationSignal = cancellationSignal;
     }
 
     public Cursor query(CursorFactory factory, String[] selectionArgs) {
-        // Compile the query
-        SQLiteQuery query = null;
-
+        final SQLiteQuery query = new SQLiteQuery(mDatabase, mSql, mCancellationSignal);
+        final Cursor cursor;
         try {
-            mDatabase.lock(mSql);
-            mDatabase.closePendingStatements();
-            query = new SQLiteQuery(mDatabase, mSql, 0, selectionArgs);
+            query.bindAllArgsAsStrings(selectionArgs);
 
-            // Create the cursor
             if (factory == null) {
-                mCursor = new SQLiteCursor(this, mEditTable, query);
+                cursor = new SQLiteCursor(this, mEditTable, query);
             } else {
-                mCursor = factory.newCursor(mDatabase, this, mEditTable, query);
+                cursor = factory.newCursor(mDatabase, this, mEditTable, query);
             }
-
-            mQuery = query;
-            query = null;
-            return mCursor;
-        } finally {
-            // Make sure this object is cleaned up if something happens
-            if (query != null) query.close();
-            mDatabase.unlock();
+        } catch (RuntimeException ex) {
+            query.close();
+            throw ex;
         }
+
+        mQuery = query;
+        return cursor;
     }
 
     public void cursorClosed() {
-        mCursor = null;
+        // Do nothing
     }
 
     public void setBindArguments(String[] bindArgs) {

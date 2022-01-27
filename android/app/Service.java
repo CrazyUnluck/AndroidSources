@@ -163,7 +163,19 @@ import java.io.PrintWriter;
  * {@link android.R.styleable#AndroidManifestUsesPermission &lt;uses-permission&gt;}
  * element in their own manifest to be able to start, stop, or bind to
  * the service.
- * 
+ *
+ * <p>As of {@link android.os.Build.VERSION_CODES#GINGERBREAD}, when using
+ * {@link Context#startService(Intent) Context.startService(Intent)}, you can
+ * also set {@link Intent#FLAG_GRANT_READ_URI_PERMISSION
+ * Intent.FLAG_GRANT_READ_URI_PERMISSION} and/or {@link Intent#FLAG_GRANT_WRITE_URI_PERMISSION
+ * Intent.FLAG_GRANT_WRITE_URI_PERMISSION} on the Intent.  This will grant the
+ * Service temporary access to the specific URIs in the Intent.  Access will
+ * remain until the Service has called {@link #stopSelf(int)} for that start
+ * command or a later one, or until the Service has been completely stopped.
+ * This works for granting access to the other apps that have not requested
+ * the permission protecting the Service, or even when the Service is not
+ * exported at all.
+ *
  * <p>In addition, a service can protect individual IPC calls into it with
  * permissions, by calling the
  * {@link #checkCallingPermission}
@@ -441,7 +453,7 @@ public abstract class Service extends ContextWrapper implements ComponentCallbac
     
     /**
      * Called by the system to notify a Service that it is no longer used and is being removed.  The
-     * service should clean up an resources it holds (threads, registered
+     * service should clean up any resources it holds (threads, registered
      * receivers, etc) at this point.  Upon return, there will be no more calls
      * in to this Service object and it is effectively dead.  Do not call this method directly.
      */
@@ -654,8 +666,8 @@ public abstract class Service extends ContextWrapper implements ComponentCallbac
     
     /**
      * Print the Service's state into the given stream.  This gets invoked if
-     * you run "adb shell dumpsys activity service <yourservicename>".
-     * This is distinct from "dumpsys <servicename>", which only works for
+     * you run "adb shell dumpsys activity service &lt;yourservicename&gt;".
+     * This is distinct from "dumpsys &lt;servicename&gt;", which only works for
      * named system services and which invokes the {@link IBinder#dump} method
      * on the {@link IBinder} interface registered with ServiceManager.
      *

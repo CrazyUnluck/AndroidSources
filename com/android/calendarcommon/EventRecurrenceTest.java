@@ -843,6 +843,11 @@ public class EventRecurrenceTest extends TestCase {
         "INTERVAL=4;FREQ=YEARLY",
         "FREQ=DAILY;X-WHATEVER=blah",
         //"freq=daily;wkst=su",                               // mixed case currently not allowed
+        "FREQ=WEEKLY;INTERVAL=2;BYDAY=Mo;;UNTIL=20120327T000000Z", // double simicolon should be allowed
+        "FREQ=MONTHLY;BYDAY=1Mo",
+        "FREQ=MONTHLY;BYDAY=2Mo,2We,4Mo,4We",
+        "FREQ=MONTHLY;WKST=SU;BYMONTHDAY=25;UNTIL=20110524",
+        "FREQ=WEEKLY;BYDAY=MO;WKST=SU;UNTIL=20111218T010000Z"
     };
 
     /** The parser must reject these. */

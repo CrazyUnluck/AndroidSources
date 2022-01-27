@@ -56,6 +56,7 @@ import com.android.internal.telephony.CallForwardInfo;
 import com.android.internal.telephony.CallStateException;
 import com.android.internal.telephony.CommandsInterface;
 import com.android.internal.telephony.Connection;
+import com.android.internal.telephony.IccCard;
 import com.android.internal.telephony.IccFileHandler;
 import com.android.internal.telephony.IccPhoneBookInterfaceManager;
 import com.android.internal.telephony.IccSmsInterfaceManager;
@@ -69,10 +70,13 @@ import com.android.internal.telephony.PhoneSubInfo;
 import com.android.internal.telephony.TelephonyProperties;
 import com.android.internal.telephony.UUSInfo;
 import com.android.internal.telephony.test.SimulatedRadioControl;
+import com.android.internal.telephony.uicc.UiccController;
 import com.android.internal.telephony.IccVmNotSupportedException;
 import com.android.internal.telephony.ServiceStateTracker;
 
+import java.io.FileDescriptor;
 import java.io.IOException;
+import java.io.PrintWriter;
 import java.net.InetSocketAddress;
 import java.net.ServerSocket;
 import java.net.Socket;
@@ -88,6 +92,7 @@ public class GSMPhone extends PhoneBase {
     // log.  (Use "adb logcat -b radio" to see them.)
     static final String LOG_TAG = "GSM";
     private static final boolean LOCAL_DEBUG = true;
+    private static final boolean VDBG = false; /* STOP SHIP if true */
 
     // Key used to read/write current ciphering state
     public static final String CIPHERING_KEY = "ciphering_key";
@@ -99,7 +104,6 @@ public class GSMPhone extends PhoneBase {
     // Instance Variables
     GsmCallTracker mCT;
     GsmServiceStateTracker mSST;
-    CatService mStkService;
     ArrayList <GsmMmiCode> mPendingMMIs = new ArrayList<GsmMmiCode>();
     SimPhoneBookInterfaceManager mSimPhoneBookIntManager;
     SimSmsInterfaceManager mSimSmsIntManager;
@@ -135,22 +139,20 @@ public class GSMPhone extends PhoneBase {
         }
 
         mCM.setPhoneType(Phone.PHONE_TYPE_GSM);
+        mIccCard.set(UiccController.getInstance(this).getIccCard());
+        mIccRecords = mIccCard.get().getIccRecords();
         mCT = new GsmCallTracker(this);
         mSST = new GsmServiceStateTracker (this);
         mSMS = new GsmSMSDispatcher(this, mSmsStorageMonitor, mSmsUsageMonitor);
-        mIccFileHandler = new SIMFileHandler(this);
-        mIccRecords = new SIMRecords(this);
         mDataConnectionTracker = new GsmDataConnectionTracker (this);
-        mIccCard = new SimCard(this);
         if (!unitTestMode) {
             mSimPhoneBookIntManager = new SimPhoneBookInterfaceManager(this);
             mSimSmsIntManager = new SimSmsInterfaceManager(this, mSMS);
             mSubInfo = new PhoneSubInfo(this);
         }
-        mStkService = CatService.getInstance(mCM, mIccRecords, mContext, mIccFileHandler, mIccCard);
 
         mCM.registerForAvailable(this, EVENT_RADIO_AVAILABLE, null);
-        mIccRecords.registerForRecordsLoaded(this, EVENT_SIM_RECORDS_LOADED, null);
+        registerForSimRecordEvents();
         mCM.registerForOffOrNotAvailable(this, EVENT_RADIO_OFF_OR_NOT_AVAILABLE, null);
         mCM.registerForOn(this, EVENT_RADIO_ON, null);
         mCM.setOnUSSD(this, EVENT_USSD, null);
@@ -203,7 +205,7 @@ public class GSMPhone extends PhoneBase {
 
             //Unregister from all former registered events
             mCM.unregisterForAvailable(this); //EVENT_RADIO_AVAILABLE
-            mIccRecords.unregisterForRecordsLoaded(this); //EVENT_SIM_RECORDS_LOADED
+            unregisterForSimRecordEvents();
             mCM.unregisterForOffOrNotAvailable(this); //EVENT_RADIO_OFF_OR_NOT_AVAILABLE
             mCM.unregisterForOn(this); //EVENT_RADIO_ON
             mSST.unregisterForNetworkAttached(this); //EVENT_REGISTERED_TO_NETWORK
@@ -213,13 +215,9 @@ public class GSMPhone extends PhoneBase {
             mPendingMMIs.clear();
 
             //Force all referenced classes to unregister their former registered events
-            mStkService.dispose();
             mCT.dispose();
             mDataConnectionTracker.dispose();
             mSST.dispose();
-            mIccFileHandler.dispose(); // instance of SimFileHandler
-            mIccRecords.dispose();
-            mIccCard.dispose();
             mSimPhoneBookIntManager.dispose();
             mSimSmsIntManager.dispose();
             mSubInfo.dispose();
@@ -229,19 +227,13 @@ public class GSMPhone extends PhoneBase {
     @Override
     public void removeReferences() {
         Log.d(LOG_TAG, "removeReferences");
-        super.removeReferences();
         mSimulatedRadioControl = null;
-        mStkService = null;
         mSimPhoneBookIntManager = null;
         mSimSmsIntManager = null;
-        mSMS = null;
         mSubInfo = null;
-        mIccRecords = null;
-        mIccFileHandler = null;
-        mIccCard = null;
-        mDataConnectionTracker = null;
         mCT = null;
         mSST = null;
+        super.removeReferences();
     }
 
     protected void finalize() {
@@ -1291,6 +1283,21 @@ public class GSMPhone extends PhoneBase {
                 }
                 break;
 
+            case EVENT_NEW_ICC_SMS:
+                ar = (AsyncResult)msg.obj;
+                mSMS.dispatchMessage((SmsMessage)ar.result);
+                break;
+
+            case EVENT_SET_NETWORK_AUTOMATIC:
+                ar = (AsyncResult)msg.obj;
+                setNetworkSelectionModeAutomatic((Message)ar.result);
+                break;
+
+            case EVENT_ICC_RECORD_EVENTS:
+                ar = (AsyncResult)msg.obj;
+                processIccRecordEvents((Integer)ar.result);
+                break;
+
             // handle the select network completion callbacks.
             case EVENT_SET_NETWORK_MANUAL_COMPLETE:
             case EVENT_SET_NETWORK_AUTOMATIC_COMPLETE:
@@ -1314,7 +1321,18 @@ public class GSMPhone extends PhoneBase {
         }
     }
 
-    /**
+    private void processIccRecordEvents(int eventCode) {
+        switch (eventCode) {
+            case SIMRecords.EVENT_CFI:
+                notifyCallForwardingIndicator();
+                break;
+            case SIMRecords.EVENT_MWI:
+                notifyMessageWaitingIndicator();
+                break;
+        }
+    }
+
+   /**
      * Sets the "current" field in the telephony provider according to the SIM's operator
      *
      * @return true for success; false otherwise.
@@ -1423,13 +1441,6 @@ public class GSMPhone extends PhoneBase {
     }
 
     /**
-     * {@inheritDoc}
-     */
-    public IccFileHandler getIccFileHandler(){
-        return this.mIccFileHandler;
-    }
-
-    /**
      * Activate or deactivate cell broadcast SMS.
      *
      * @param activate 0 = activate, 1 = deactivate
@@ -1462,5 +1473,35 @@ public class GSMPhone extends PhoneBase {
 
     public boolean isCspPlmnEnabled() {
         return mIccRecords.isCspPlmnEnabled();
+    }
+
+    private void registerForSimRecordEvents() {
+        mIccRecords.registerForNetworkSelectionModeAutomatic(
+                this, EVENT_SET_NETWORK_AUTOMATIC, null);
+        mIccRecords.registerForNewSms(this, EVENT_NEW_ICC_SMS, null);
+        mIccRecords.registerForRecordsEvents(this, EVENT_ICC_RECORD_EVENTS, null);
+        mIccRecords.registerForRecordsLoaded(this, EVENT_SIM_RECORDS_LOADED, null);
+    }
+
+    private void unregisterForSimRecordEvents() {
+        mIccRecords.unregisterForNetworkSelectionModeAutomatic(this);
+        mIccRecords.unregisterForNewSms(this);
+        mIccRecords.unregisterForRecordsEvents(this);
+        mIccRecords.unregisterForRecordsLoaded(this);
+    }
+
+    @Override
+    public void dump(FileDescriptor fd, PrintWriter pw, String[] args) {
+        pw.println("GSMPhone extends:");
+        super.dump(fd, pw, args);
+        pw.println(" mCT=" + mCT);
+        pw.println(" mSST=" + mSST);
+        pw.println(" mPendingMMIs=" + mPendingMMIs);
+        pw.println(" mSimPhoneBookIntManager=" + mSimPhoneBookIntManager);
+        pw.println(" mSimSmsIntManager=" + mSimSmsIntManager);
+        pw.println(" mSubInfo=" + mSubInfo);
+        if (VDBG) pw.println(" mImei=" + mImei);
+        if (VDBG) pw.println(" mImeiSv=" + mImeiSv);
+        pw.println(" mVmNumber=" + mVmNumber);
     }
 }

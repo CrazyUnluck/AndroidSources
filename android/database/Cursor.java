@@ -20,6 +20,8 @@ import android.content.ContentResolver;
 import android.net.Uri;
 import android.os.Bundle;
 
+import java.io.Closeable;
+
 /**
  * This interface provides random read-write access to the result set returned
  * by a database query.
@@ -27,7 +29,7 @@ import android.os.Bundle;
  * Cursor implementations are not required to be synchronized so code using a Cursor from multiple
  * threads should perform its own synchronization when using the Cursor.
  */
-public interface Cursor {
+public interface Cursor extends Closeable {
     /*
      * Values returned by {@link #getType(int)}.
      * These should be consistent with the corresponding types defined in CursorWindow.h
@@ -341,6 +343,7 @@ public interface Cursor {
      * Deactivates the Cursor, making all calls on it fail until {@link #requery} is called.
      * Inactive Cursors use fewer resources than active Cursors.
      * Calling {@link #requery} will make the cursor active again.
+     * @deprecated Since {@link #requery()} is deprecated, so too is this.
      */
     void deactivate();
 

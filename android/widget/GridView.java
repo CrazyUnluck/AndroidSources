@@ -27,6 +27,8 @@ import android.view.SoundEffectConstants;
 import android.view.View;
 import android.view.ViewDebug;
 import android.view.ViewGroup;
+import android.view.accessibility.AccessibilityEvent;
+import android.view.accessibility.AccessibilityNodeInfo;
 import android.view.animation.GridLayoutAnimationController;
 import android.widget.RemoteViews.RemoteView;
 
@@ -97,7 +99,7 @@ public class GridView extends AbsListView {
     private final Rect mTempRect = new Rect();
 
     public GridView(Context context) {
-        super(context);
+        this(context, null);
     }
 
     public GridView(Context context, AttributeSet attrs) {
@@ -290,6 +292,7 @@ public class GridView extends AbsListView {
             pos += mNumColumns;
         }
 
+        setVisibleRangeHint(mFirstPosition, mFirstPosition + getChildCount() - 1);
         return selectedView;
     }
 
@@ -382,6 +385,7 @@ public class GridView extends AbsListView {
             mFirstPosition = Math.max(0, pos + 1);
         }
 
+        setVisibleRangeHint(mFirstPosition, mFirstPosition + getChildCount() - 1);
         return selectedView;
     }
 
@@ -1025,10 +1029,9 @@ public class GridView extends AbsListView {
         if (count > 0) {
             final View child = obtainView(0, mIsScrap);
 
-            AbsListView.LayoutParams p = (AbsListView.LayoutParams)child.getLayoutParams();
+            AbsListView.LayoutParams p = (AbsListView.LayoutParams) child.getLayoutParams();
             if (p == null) {
-                p = new AbsListView.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT,
-                        ViewGroup.LayoutParams.WRAP_CONTENT, 0);
+                p = (AbsListView.LayoutParams) generateDefaultLayoutParams();
                 child.setLayoutParams(p);
             }
             p.viewType = mAdapter.getItemViewType(0);
@@ -1201,6 +1204,7 @@ public class GridView extends AbsListView {
             // Clear out old views
             //removeAllViewsInLayout();
             detachAllViewsFromParent();
+            recycleBin.removeSkippedScrap();
 
             switch (mLayoutMode) {
             case LAYOUT_SET_SELECTION:
@@ -1271,6 +1275,10 @@ public class GridView extends AbsListView {
 
             mLayoutMode = LAYOUT_NORMAL;
             mDataChanged = false;
+            if (mPositionScrollAfterLayout != null) {
+                post(mPositionScrollAfterLayout);
+                mPositionScrollAfterLayout = null;
+            }
             mNeedSync = false;
             setNextSelectedPositionInt(mSelectedPosition);
 
@@ -1357,10 +1365,9 @@ public class GridView extends AbsListView {
 
         // Respect layout params that are already in the view. Otherwise make
         // some up...
-        AbsListView.LayoutParams p = (AbsListView.LayoutParams)child.getLayoutParams();
+        AbsListView.LayoutParams p = (AbsListView.LayoutParams) child.getLayoutParams();
         if (p == null) {
-            p = new AbsListView.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT,
-                    ViewGroup.LayoutParams.WRAP_CONTENT, 0);
+            p = (AbsListView.LayoutParams) generateDefaultLayoutParams();
         }
         p.viewType = mAdapter.getItemViewType(position);
 
@@ -1460,6 +1467,9 @@ public class GridView extends AbsListView {
             mResurrectToPosition = position;
         }
         mLayoutMode = LAYOUT_SET_SELECTION;
+        if (mPositionScroller != null) {
+            mPositionScroller.stop();
+        }
         requestLayout();
     }
 
@@ -1471,6 +1481,10 @@ public class GridView extends AbsListView {
     @Override
     void setSelectionInt(int position) {
         int previousSelectedPosition = mNextSelectedPosition;
+
+        if (mPositionScroller != null) {
+            mPositionScroller.stop();
+        }
 
         setNextSelectedPositionInt(position);
         layoutChildren();
@@ -1905,7 +1919,8 @@ public class GridView extends AbsListView {
     }
 
     /**
-     * Describes how the child views are horizontally aligned. Defaults to Gravity.LEFT
+     * Set the gravity for this grid. Gravity describes how the child views
+     * are horizontally aligned. Defaults to Gravity.LEFT
      *
      * @param gravity the gravity to apply to this grid's children
      *
@@ -1916,6 +1931,17 @@ public class GridView extends AbsListView {
             mGravity = gravity;
             requestLayoutIfNecessary();
         }
+    }
+
+    /**
+     * Describes how the child views are horizontally aligned. Defaults to Gravity.LEFT
+     *
+     * @return the gravity that will be applied to this grid's children
+     *
+     * @attr ref android.R.styleable#GridView_gravity
+     */
+    public int getGravity() {
+        return mGravity;
     }
 
     /**
@@ -1934,6 +1960,44 @@ public class GridView extends AbsListView {
         }
     }
 
+    /**
+     * Returns the amount of horizontal spacing currently used between each item in the grid.
+     *
+     * <p>This is only accurate for the current layout. If {@link #setHorizontalSpacing(int)}
+     * has been called but layout is not yet complete, this method may return a stale value.
+     * To get the horizontal spacing that was explicitly requested use
+     * {@link #getRequestedHorizontalSpacing()}.</p>
+     *
+     * @return Current horizontal spacing between each item in pixels
+     *
+     * @see #setHorizontalSpacing(int)
+     * @see #getRequestedHorizontalSpacing()
+     *
+     * @attr ref android.R.styleable#GridView_horizontalSpacing
+     */
+    public int getHorizontalSpacing() {
+        return mHorizontalSpacing;
+    }
+
+    /**
+     * Returns the requested amount of horizontal spacing between each item in the grid.
+     *
+     * <p>The value returned may have been supplied during inflation as part of a style,
+     * the default GridView style, or by a call to {@link #setHorizontalSpacing(int)}.
+     * If layout is not yet complete or if GridView calculated a different horizontal spacing
+     * from what was requested, this may return a different value from
+     * {@link #getHorizontalSpacing()}.</p>
+     *
+     * @return The currently requested horizontal spacing between items, in pixels
+     *
+     * @see #setHorizontalSpacing(int)
+     * @see #getHorizontalSpacing()
+     *
+     * @attr ref android.R.styleable#GridView_horizontalSpacing
+     */
+    public int getRequestedHorizontalSpacing() {
+        return mRequestedHorizontalSpacing;
+    }
 
     /**
      * Set the amount of vertical (y) spacing to place between each item
@@ -1942,6 +2006,8 @@ public class GridView extends AbsListView {
      * @param verticalSpacing The amount of vertical space between items,
      * in pixels.
      *
+     * @see #getVerticalSpacing()
+     *
      * @attr ref android.R.styleable#GridView_verticalSpacing
      */
     public void setVerticalSpacing(int verticalSpacing) {
@@ -1949,6 +2015,19 @@ public class GridView extends AbsListView {
             mVerticalSpacing = verticalSpacing;
             requestLayoutIfNecessary();
         }
+    }
+
+    /**
+     * Returns the amount of vertical spacing between each item in the grid.
+     *
+     * @return The vertical spacing between items in pixels
+     *
+     * @see #setVerticalSpacing(int)
+     *
+     * @attr ref android.R.styleable#GridView_verticalSpacing
+     */
+    public int getVerticalSpacing() {
+        return mVerticalSpacing;
     }
 
     /**
@@ -1982,6 +2061,39 @@ public class GridView extends AbsListView {
             mRequestedColumnWidth = columnWidth;
             requestLayoutIfNecessary();
         }
+    }
+
+    /**
+     * Return the width of a column in the grid.
+     *
+     * <p>This may not be valid yet if a layout is pending.</p>
+     *
+     * @return The column width in pixels
+     *
+     * @see #setColumnWidth(int)
+     * @see #getRequestedColumnWidth()
+     *
+     * @attr ref android.R.styleable#GridView_columnWidth
+     */
+    public int getColumnWidth() {
+        return mColumnWidth;
+    }
+
+    /**
+     * Return the requested width of a column in the grid.
+     *
+     * <p>This may not be the actual column width used. Use {@link #getColumnWidth()}
+     * to retrieve the current real width of a column.</p>
+     *
+     * @return The requested column width in pixels
+     *
+     * @see #setColumnWidth(int)
+     * @see #getColumnWidth()
+     *
+     * @attr ref android.R.styleable#GridView_columnWidth
+     */
+    public int getRequestedColumnWidth() {
+        return mRequestedColumnWidth;
     }
 
     /**
@@ -2116,5 +2228,16 @@ public class GridView extends AbsListView {
         }
         return result;
     }
-}
 
+    @Override
+    public void onInitializeAccessibilityEvent(AccessibilityEvent event) {
+        super.onInitializeAccessibilityEvent(event);
+        event.setClassName(GridView.class.getName());
+    }
+
+    @Override
+    public void onInitializeAccessibilityNodeInfo(AccessibilityNodeInfo info) {
+        super.onInitializeAccessibilityNodeInfo(info);
+        info.setClassName(GridView.class.getName());
+    }
+}

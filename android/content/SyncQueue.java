@@ -49,7 +49,8 @@ public class SyncQueue {
         final int N = ops.size();
         for (int i=0; i<N; i++) {
             SyncStorageEngine.PendingOperation op = ops.get(i);
-            final Pair<Long, Long> backoff = syncStorageEngine.getBackoff(op.account, op.authority);
+            final Pair<Long, Long> backoff =
+                    syncStorageEngine.getBackoff(op.account, op.userId, op.authority);
             final RegisteredServicesCache.ServiceInfo<SyncAdapterType> syncAdapterInfo =
                     syncAdapters.getServiceInfo(
                             SyncAdapterType.newKey(op.authority, op.account.type));
@@ -57,9 +58,9 @@ public class SyncQueue {
                 continue;
             }
             SyncOperation syncOperation = new SyncOperation(
-                    op.account, op.syncSource, op.authority, op.extras, 0 /* delay */,
+                    op.account, op.userId, op.syncSource, op.authority, op.extras, 0 /* delay */,
                     backoff != null ? backoff.first : 0,
-                    syncStorageEngine.getDelayUntilTime(op.account, op.authority),
+                    syncStorageEngine.getDelayUntilTime(op.account, op.userId, op.authority),
                     syncAdapterInfo.type.allowParallelSyncs());
             syncOperation.expedited = op.expedited;
             syncOperation.pendingOperation = op;
@@ -102,8 +103,8 @@ public class SyncQueue {
         operation.pendingOperation = pop;
         if (operation.pendingOperation == null) {
             pop = new SyncStorageEngine.PendingOperation(
-                            operation.account, operation.syncSource,
-                            operation.authority, operation.extras, operation.expedited);
+                    operation.account, operation.userId, operation.syncSource,
+                    operation.authority, operation.extras, operation.expedited);
             pop = mSyncStorageEngine.insertIntoPending(pop);
             if (pop == null) {
                 throw new IllegalStateException("error adding pending sync operation "
@@ -114,6 +115,19 @@ public class SyncQueue {
 
         mOperationsMap.put(operationKey, operation);
         return true;
+    }
+
+    public void removeUser(int userId) {
+        ArrayList<SyncOperation> opsToRemove = new ArrayList<SyncOperation>();
+        for (SyncOperation op : mOperationsMap.values()) {
+            if (op.userId == userId) {
+                opsToRemove.add(op);
+            }
+        }
+
+        for (SyncOperation op : opsToRemove) {
+            remove(op);
+        }
     }
 
     /**
@@ -131,11 +145,12 @@ public class SyncQueue {
         }
     }
 
-    public void onBackoffChanged(Account account, String providerName, long backoff) {
+    public void onBackoffChanged(Account account, int userId, String providerName, long backoff) {
         // for each op that matches the account and provider update its
         // backoff and effectiveStartTime
         for (SyncOperation op : mOperationsMap.values()) {
-            if (op.account.equals(account) && op.authority.equals(providerName)) {
+            if (op.account.equals(account) && op.authority.equals(providerName)
+                    && op.userId == userId) {
                 op.backoff = backoff;
                 op.updateEffectiveRunTime();
             }
@@ -153,7 +168,7 @@ public class SyncQueue {
         }
     }
 
-    public void remove(Account account, String authority) {
+    public void remove(Account account, int userId, String authority) {
         Iterator<Map.Entry<String, SyncOperation>> entries = mOperationsMap.entrySet().iterator();
         while (entries.hasNext()) {
             Map.Entry<String, SyncOperation> entry = entries.next();
@@ -162,6 +177,9 @@ public class SyncQueue {
                 continue;
             }
             if (authority != null && !syncOperation.authority.equals(authority)) {
+                continue;
+            }
+            if (userId != syncOperation.userId) {
                 continue;
             }
             entries.remove();

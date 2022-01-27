@@ -608,4 +608,17 @@ class UsimDataDownloadCommands extends BaseCommands {
     @Override
     public void requestIsimAuthentication(String nonce, Message response) {
     }
+
+    @Override
+    public void getVoiceRadioTechnology(Message response) {
+    }
+
+    @Override
+    public void getIMSIForApp(String aid, Message result) {
+    }
+
+    @Override
+    public void iccIOForApp(int command, int fileid, String path, int p1, int p2, int p3,
+            String data, String pin2, String aid, Message response) {
+    }
 }

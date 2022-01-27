@@ -20,6 +20,8 @@ import android.net.NetworkInfo;
 import android.net.wifi.p2p.WifiP2pConfig;
 import android.net.wifi.p2p.WifiP2pDevice;
 import android.net.wifi.p2p.WifiP2pGroup;
+import android.net.wifi.p2p.WifiP2pProvDiscEvent;
+import android.net.wifi.p2p.nsd.WifiP2pServiceResponse;
 import android.net.wifi.StateChangeResult;
 import android.os.Message;
 import android.util.Log;
@@ -28,6 +30,7 @@ import android.util.Log;
 import com.android.internal.util.Protocol;
 import com.android.internal.util.StateMachine;
 
+import java.util.List;
 import java.util.regex.Pattern;
 import java.util.regex.Matcher;
 
@@ -63,7 +66,23 @@ public class WifiMonitor {
        "pre-shared key may be incorrect";
 
     /* WPS events */
+    private static final String WPS_SUCCESS_STR = "WPS-SUCCESS";
+
+    /* Format: WPS-FAIL msg=%d [config_error=%d] [reason=%d (%s)] */
+    private static final String WPS_FAIL_STR    = "WPS-FAIL";
+    private static final String WPS_FAIL_PATTERN =
+            "WPS-FAIL msg=\\d+(?: config_error=(\\d+))?(?: reason=(\\d+))?";
+
+    /* config error code values for config_error=%d */
+    private static final int CONFIG_MULTIPLE_PBC_DETECTED = 12;
+    private static final int CONFIG_AUTH_FAILURE = 18;
+
+    /* reason code values for reason=%d */
+    private static final int REASON_TKIP_ONLY_PROHIBITED = 1;
+    private static final int REASON_WEP_PROHIBITED = 2;
+
     private static final String WPS_OVERLAP_STR = "WPS-OVERLAP-DETECTED";
+    private static final String WPS_TIMEOUT_STR = "WPS-TIMEOUT";
 
     /**
      * Names of events from wpa_supplicant (minus the prefix). In the
@@ -149,6 +168,9 @@ public class WifiMonitor {
     /* P2P-DEVICE-LOST p2p_dev_addr=42:fc:89:e1:e2:27 */
     private static final String P2P_DEVICE_LOST_STR = "P2P-DEVICE-LOST";
 
+    /* P2P-FIND-STOPPED */
+    private static final String P2P_FIND_STOPPED_STR = "P2P-FIND-STOPPED";
+
     /* P2P-GO-NEG-REQUEST 42:fc:89:a8:96:09 dev_passwd_id=4 */
     private static final String P2P_GO_NEG_REQUEST_STR = "P2P-GO-NEG-REQUEST";
 
@@ -181,6 +203,10 @@ public class WifiMonitor {
        pri_dev_type=1-0050F204-1 name='p2p-TEST2' config_methods=0x188 dev_capab=0x27
        group_capab=0x0 */
     private static final String P2P_PROV_DISC_PBC_REQ_STR = "P2P-PROV-DISC-PBC-REQ";
+
+    /* P2P-PROV-DISC-PBC-RESP 02:12:47:f2:5a:36 */
+    private static final String P2P_PROV_DISC_PBC_RSP_STR = "P2P-PROV-DISC-PBC-RESP";
+
     /* P2P-PROV-DISC-ENTER-PIN 42:fc:89:e1:e2:27 p2p_dev_addr=42:fc:89:e1:e2:27
        pri_dev_type=1-0050F204-1 name='p2p-TEST2' config_methods=0x188 dev_capab=0x27
        group_capab=0x0 */
@@ -190,13 +216,60 @@ public class WifiMonitor {
        group_capab=0x0 */
     private static final String P2P_PROV_DISC_SHOW_PIN_STR = "P2P-PROV-DISC-SHOW-PIN";
 
+    /*
+     * Protocol format is as follows.<br>
+     * See the Table.62 in the WiFi Direct specification for the detail.
+     * ______________________________________________________________
+     * |           Length(2byte)     | Type(1byte) | TransId(1byte)}|
+     * ______________________________________________________________
+     * | status(1byte)  |            vendor specific(variable)      |
+     *
+     * P2P-SERV-DISC-RESP 42:fc:89:e1:e2:27 1 0300000101
+     * length=3, service type=0(ALL Service), transaction id=1,
+     * status=1(service protocol type not available)<br>
+     *
+     * P2P-SERV-DISC-RESP 42:fc:89:e1:e2:27 1 0300020201
+     * length=3, service type=2(UPnP), transaction id=2,
+     * status=1(service protocol type not available)
+     *
+     * P2P-SERV-DISC-RESP 42:fc:89:e1:e2:27 1 990002030010757569643a3131323
+     * 2646534652d383537342d353961622d393332322d3333333435363738393034343a3
+     * a75726e3a736368656d61732d75706e702d6f72673a736572766963653a436f6e746
+     * 56e744469726563746f72793a322c757569643a36383539646564652d383537342d3
+     * 53961622d393333322d3132333435363738393031323a3a75706e703a726f6f74646
+     * 576696365
+     * length=153,type=2(UPnP),transaction id=3,status=0
+     *
+     * UPnP Protocol format is as follows.
+     * ______________________________________________________
+     * |  Version (1)  |          USN (Variable)            |
+     *
+     * version=0x10(UPnP1.0) data=usn:uuid:1122de4e-8574-59ab-9322-33345678
+     * 9044::urn:schemas-upnp-org:service:ContentDirectory:2,usn:uuid:6859d
+     * ede-8574-59ab-9332-123456789012::upnp:rootdevice
+     *
+     * P2P-SERV-DISC-RESP 58:17:0c:bc:dd:ca 21 1900010200045f6970
+     * 70c00c000c01094d795072696e746572c027
+     * length=25, type=1(Bonjour),transaction id=2,status=0
+     *
+     * Bonjour Protocol format is as follows.
+     * __________________________________________________________
+     * |DNS Name(Variable)|DNS Type(1)|Version(1)|RDATA(Variable)|
+     *
+     * DNS Name=_ipp._tcp.local.,DNS type=12(PTR), Version=1,
+     * RDATA=MyPrinter._ipp._tcp.local.
+     *
+     */
+    private static final String P2P_SERV_DISC_RESP_STR = "P2P-SERV-DISC-RESP";
+
     private static final String HOST_AP_EVENT_PREFIX_STR = "AP";
-    /* AP-STA-CONNECTED 42:fc:89:a8:96:09 */
+    /* AP-STA-CONNECTED 42:fc:89:a8:96:09 dev_addr=02:90:4c:a0:92:54 */
     private static final String AP_STA_CONNECTED_STR = "AP-STA-CONNECTED";
     /* AP-STA-DISCONNECTED 42:fc:89:a8:96:09 */
     private static final String AP_STA_DISCONNECTED_STR = "AP-STA-DISCONNECTED";
 
     private final StateMachine mStateMachine;
+    private final WifiNative mWifiNative;
 
     /* Supplicant events reported to a state machine */
     private static final int BASE = Protocol.BASE_WIFI_MONITOR;
@@ -215,10 +288,16 @@ public class WifiMonitor {
     public static final int SUPPLICANT_STATE_CHANGE_EVENT        = BASE + 6;
     /* Password failure and EAP authentication failure */
     public static final int AUTHENTICATION_FAILURE_EVENT         = BASE + 7;
-    /* WPS overlap detected */
-    public static final int WPS_OVERLAP_EVENT                    = BASE + 8;
+    /* WPS success detected */
+    public static final int WPS_SUCCESS_EVENT                    = BASE + 8;
+    /* WPS failure detected */
+    public static final int WPS_FAIL_EVENT                       = BASE + 9;
+     /* WPS overlap detected */
+    public static final int WPS_OVERLAP_EVENT                    = BASE + 10;
+     /* WPS timeout detected */
+    public static final int WPS_TIMEOUT_EVENT                    = BASE + 11;
     /* Driver was hung */
-    public static final int DRIVER_HUNG_EVENT                    = BASE + 9;
+    public static final int DRIVER_HUNG_EVENT                    = BASE + 12;
 
     /* P2P events */
     public static final int P2P_DEVICE_FOUND_EVENT               = BASE + 21;
@@ -233,8 +312,11 @@ public class WifiMonitor {
     public static final int P2P_INVITATION_RECEIVED_EVENT        = BASE + 31;
     public static final int P2P_INVITATION_RESULT_EVENT          = BASE + 32;
     public static final int P2P_PROV_DISC_PBC_REQ_EVENT          = BASE + 33;
-    public static final int P2P_PROV_DISC_ENTER_PIN_EVENT        = BASE + 34;
-    public static final int P2P_PROV_DISC_SHOW_PIN_EVENT         = BASE + 35;
+    public static final int P2P_PROV_DISC_PBC_RSP_EVENT          = BASE + 34;
+    public static final int P2P_PROV_DISC_ENTER_PIN_EVENT        = BASE + 35;
+    public static final int P2P_PROV_DISC_SHOW_PIN_EVENT         = BASE + 36;
+    public static final int P2P_FIND_STOPPED_EVENT               = BASE + 37;
+    public static final int P2P_SERV_DISC_RESP_EVENT             = BASE + 38;
 
     /* hostap events */
     public static final int AP_STA_DISCONNECTED_EVENT            = BASE + 41;
@@ -260,8 +342,9 @@ public class WifiMonitor {
      */
     private static final int MAX_RECV_ERRORS    = 10;
 
-    public WifiMonitor(StateMachine wifiStateMachine) {
+    public WifiMonitor(StateMachine wifiStateMachine, WifiNative wifiNative) {
         mStateMachine = wifiStateMachine;
+        mWifiNative = wifiNative;
     }
 
     public void startMonitoring() {
@@ -286,7 +369,7 @@ public class WifiMonitor {
 
             //noinspection InfiniteLoopStatement
             for (;;) {
-                String eventStr = WifiNative.waitForEvent();
+                String eventStr = mWifiNative.waitForEvent();
 
                 // Skip logging the common but mostly uninteresting scan-results event
                 if (false && eventStr.indexOf(SCAN_RESULTS_STR) == -1) {
@@ -296,8 +379,14 @@ public class WifiMonitor {
                     if (eventStr.startsWith(WPA_EVENT_PREFIX_STR) &&
                             0 < eventStr.indexOf(PASSWORD_MAY_BE_INCORRECT_STR)) {
                         mStateMachine.sendMessage(AUTHENTICATION_FAILURE_EVENT);
+                    } else if (eventStr.startsWith(WPS_SUCCESS_STR)) {
+                        mStateMachine.sendMessage(WPS_SUCCESS_EVENT);
+                    } else if (eventStr.startsWith(WPS_FAIL_STR)) {
+                        handleWpsFailEvent(eventStr);
                     } else if (eventStr.startsWith(WPS_OVERLAP_STR)) {
                         mStateMachine.sendMessage(WPS_OVERLAP_EVENT);
+                    } else if (eventStr.startsWith(WPS_TIMEOUT_STR)) {
+                        mStateMachine.sendMessage(WPS_TIMEOUT_EVENT);
                     } else if (eventStr.startsWith(P2P_EVENT_PREFIX_STR)) {
                         handleP2pEvents(eventStr);
                     } else if (eventStr.startsWith(HOST_AP_EVENT_PREFIX_STR)) {
@@ -358,17 +447,6 @@ public class WifiMonitor {
                     handleDriverEvent(eventData);
                 } else if (event == TERMINATING) {
                     /**
-                     * If monitor socket is closed, we have already
-                     * stopped the supplicant, simply exit the monitor thread
-                     */
-                    if (eventData.startsWith(MONITOR_SOCKET_CLOSED_STR)) {
-                        if (false) {
-                            Log.d(TAG, "Monitor socket is closed, exiting thread");
-                        }
-                        break;
-                    }
-
-                    /**
                      * Close the supplicant connection if we see
                      * too many recv errors
                      */
@@ -400,7 +478,7 @@ public class WifiMonitor {
             int connectTries = 0;
 
             while (true) {
-                if (WifiNative.connectToSupplicant()) {
+                if (mWifiNative.connectToSupplicant()) {
                     return true;
                 }
                 if (connectTries++ < 5) {
@@ -446,6 +524,43 @@ public class WifiMonitor {
             }
         }
 
+        private void handleWpsFailEvent(String dataString) {
+            final Pattern p = Pattern.compile(WPS_FAIL_PATTERN);
+            Matcher match = p.matcher(dataString);
+            if (match.find()) {
+                String cfgErr = match.group(1);
+                String reason = match.group(2);
+
+                if (reason != null) {
+                    switch(Integer.parseInt(reason)) {
+                        case REASON_TKIP_ONLY_PROHIBITED:
+                            mStateMachine.sendMessage(mStateMachine.obtainMessage(WPS_FAIL_EVENT,
+                                    WifiManager.WPS_TKIP_ONLY_PROHIBITED, 0));
+                            return;
+                        case REASON_WEP_PROHIBITED:
+                            mStateMachine.sendMessage(mStateMachine.obtainMessage(WPS_FAIL_EVENT,
+                                    WifiManager.WPS_WEP_PROHIBITED, 0));
+                            return;
+                    }
+                }
+                if (cfgErr != null) {
+                    switch(Integer.parseInt(cfgErr)) {
+                        case CONFIG_AUTH_FAILURE:
+                            mStateMachine.sendMessage(mStateMachine.obtainMessage(WPS_FAIL_EVENT,
+                                    WifiManager.WPS_AUTH_FAILURE, 0));
+                            return;
+                        case CONFIG_MULTIPLE_PBC_DETECTED:
+                            mStateMachine.sendMessage(mStateMachine.obtainMessage(WPS_FAIL_EVENT,
+                                    WifiManager.WPS_OVERLAP_ERROR, 0));
+                            return;
+                    }
+                }
+            }
+            //For all other errors, return a generic internal error
+            mStateMachine.sendMessage(mStateMachine.obtainMessage(WPS_FAIL_EVENT,
+                    WifiManager.ERROR, 0));
+        }
+
         /**
          * Handle p2p events
          */
@@ -454,6 +569,8 @@ public class WifiMonitor {
                 mStateMachine.sendMessage(P2P_DEVICE_FOUND_EVENT, new WifiP2pDevice(dataString));
             } else if (dataString.startsWith(P2P_DEVICE_LOST_STR)) {
                 mStateMachine.sendMessage(P2P_DEVICE_LOST_EVENT, new WifiP2pDevice(dataString));
+            } else if (dataString.startsWith(P2P_FIND_STOPPED_STR)) {
+                mStateMachine.sendMessage(P2P_FIND_STOPPED_EVENT);
             } else if (dataString.startsWith(P2P_GO_NEG_REQUEST_STR)) {
                 mStateMachine.sendMessage(P2P_GO_NEGOTIATION_REQUEST_EVENT,
                         new WifiP2pConfig(dataString));
@@ -480,10 +597,23 @@ public class WifiMonitor {
                 mStateMachine.sendMessage(P2P_INVITATION_RESULT_EVENT, nameValue[1]);
             } else if (dataString.startsWith(P2P_PROV_DISC_PBC_REQ_STR)) {
                 mStateMachine.sendMessage(P2P_PROV_DISC_PBC_REQ_EVENT,
-                        new WifiP2pDevice(dataString));
+                        new WifiP2pProvDiscEvent(dataString));
+            } else if (dataString.startsWith(P2P_PROV_DISC_PBC_RSP_STR)) {
+                mStateMachine.sendMessage(P2P_PROV_DISC_PBC_RSP_EVENT,
+                        new WifiP2pProvDiscEvent(dataString));
             } else if (dataString.startsWith(P2P_PROV_DISC_ENTER_PIN_STR)) {
                 mStateMachine.sendMessage(P2P_PROV_DISC_ENTER_PIN_EVENT,
-                        new WifiP2pDevice(dataString));
+                        new WifiP2pProvDiscEvent(dataString));
+            } else if (dataString.startsWith(P2P_PROV_DISC_SHOW_PIN_STR)) {
+                mStateMachine.sendMessage(P2P_PROV_DISC_SHOW_PIN_EVENT,
+                        new WifiP2pProvDiscEvent(dataString));
+            } else if (dataString.startsWith(P2P_SERV_DISC_RESP_STR)) {
+                List<WifiP2pServiceResponse> list = WifiP2pServiceResponse.newInstance(dataString);
+                if (list != null) {
+                    mStateMachine.sendMessage(P2P_SERV_DISC_RESP_EVENT, list);
+                } else {
+                    Log.e(TAG, "Null service resp " + dataString);
+                }
             }
         }
 
@@ -492,10 +622,12 @@ public class WifiMonitor {
          */
         private void handleHostApEvents(String dataString) {
             String[] tokens = dataString.split(" ");
+            /* AP-STA-CONNECTED 42:fc:89:a8:96:09 p2p_dev_addr=02:90:4c:a0:92:54 */
             if (tokens[0].equals(AP_STA_CONNECTED_STR)) {
-                mStateMachine.sendMessage(AP_STA_CONNECTED_EVENT, tokens[1]);
+                mStateMachine.sendMessage(AP_STA_CONNECTED_EVENT, new WifiP2pDevice(dataString));
+            /* AP-STA-DISCONNECTED 42:fc:89:a8:96:09 p2p_dev_addr=02:90:4c:a0:92:54 */
             } else if (tokens[0].equals(AP_STA_DISCONNECTED_STR)) {
-                mStateMachine.sendMessage(AP_STA_DISCONNECTED_EVENT, tokens[1]);
+                mStateMachine.sendMessage(AP_STA_DISCONNECTED_EVENT, new WifiP2pDevice(dataString));
             }
         }
 
@@ -505,6 +637,9 @@ public class WifiMonitor {
          * id=network-id state=new-state
          */
         private void handleSupplicantStateChange(String dataString) {
+            String SSID = null;
+            int index = dataString.lastIndexOf("SSID=");
+            if (index != -1) SSID = dataString.substring(index + 5);
             String[] dataTokens = dataString.split(" ");
 
             String BSSID = null;
@@ -525,7 +660,6 @@ public class WifiMonitor {
                 try {
                     value = Integer.parseInt(nameValue[1]);
                 } catch (NumberFormatException e) {
-                    Log.w(TAG, "STATE-CHANGE non-integer parameter: " + token);
                     continue;
                 }
 
@@ -548,7 +682,7 @@ public class WifiMonitor {
             if (newSupplicantState == SupplicantState.INVALID) {
                 Log.w(TAG, "Invalid supplicant state: " + newState);
             }
-            notifySupplicantStateChange(networkId, BSSID, newSupplicantState);
+            notifySupplicantStateChange(networkId, SSID, BSSID, newSupplicantState);
         }
     }
 
@@ -597,11 +731,13 @@ public class WifiMonitor {
      * Send the state machine a notification that the state of the supplicant
      * has changed.
      * @param networkId the configured network on which the state change occurred
+     * @param SSID network name
+     * @param BSSID network address
      * @param newState the new {@code SupplicantState}
      */
-    void notifySupplicantStateChange(int networkId, String BSSID, SupplicantState newState) {
+    void notifySupplicantStateChange(int networkId, String SSID, String BSSID, SupplicantState newState) {
         mStateMachine.sendMessage(mStateMachine.obtainMessage(SUPPLICANT_STATE_CHANGE_EVENT,
-                new StateChangeResult(networkId, BSSID, newState)));
+                new StateChangeResult(networkId, SSID, BSSID, newState)));
     }
 
     /**

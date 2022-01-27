@@ -77,8 +77,7 @@ public final class SipService extends ISipService.Stub {
 
     private Context mContext;
     private String mLocalIp;
-    private String mNetworkType;
-    private boolean mConnected;
+    private int mNetworkType = -1;
     private SipWakeupTimer mTimer;
     private WifiManager.WifiLock mWifiLock;
     private boolean mSipOnWifiOnly;
@@ -147,9 +146,7 @@ public final class SipService extends ISipService.Stub {
                 android.Manifest.permission.USE_SIP, null);
         localProfile.setCallingUid(Binder.getCallingUid());
         try {
-            boolean addingFirstProfile = mSipGroups.isEmpty();
             createGroup(localProfile);
-            if (addingFirstProfile && !mSipGroups.isEmpty()) registerReceivers();
         } catch (SipException e) {
             Log.e(TAG, "openToMakeCalls()", e);
             // TODO: how to send the exception back
@@ -170,12 +167,11 @@ public final class SipService extends ISipService.Stub {
         if (DEBUG) Log.d(TAG, "open3: " + localProfile.getUriString() + ": "
                 + incomingCallPendingIntent + ": " + listener);
         try {
-            boolean addingFirstProfile = mSipGroups.isEmpty();
             SipSessionGroupExt group = createGroup(localProfile,
                     incomingCallPendingIntent, listener);
-            if (addingFirstProfile && !mSipGroups.isEmpty()) registerReceivers();
             if (localProfile.getAutoRegistration()) {
                 group.openToReceiveCalls();
+                updateWakeLocks();
             }
         } catch (SipException e) {
             Log.e(TAG, "openToReceiveCalls()", e);
@@ -210,10 +206,7 @@ public final class SipService extends ISipService.Stub {
         notifyProfileRemoved(group.getLocalProfile());
         group.close();
 
-        if (!anyOpenedToReceiveCalls()) {
-            unregisterReceivers();
-            mMyWakeLock.reset(); // in case there's leak
-        }
+        updateWakeLocks();
     }
 
     public synchronized boolean isOpened(String localProfileUri) {
@@ -260,7 +253,7 @@ public final class SipService extends ISipService.Stub {
         mContext.enforceCallingOrSelfPermission(
                 android.Manifest.permission.USE_SIP, null);
         localProfile.setCallingUid(Binder.getCallingUid());
-        if (!mConnected) return null;
+        if (mNetworkType == -1) return null;
         try {
             SipSessionGroupExt group = createGroup(localProfile);
             return group.createSession(listener);
@@ -328,6 +321,9 @@ public final class SipService extends ISipService.Stub {
         Intent intent = new Intent(SipManager.ACTION_SIP_ADD_PHONE);
         intent.putExtra(SipManager.EXTRA_LOCAL_URI, localProfile.getUriString());
         mContext.sendBroadcast(intent);
+        if (mSipGroups.size() == 1) {
+            registerReceivers();
+        }
     }
 
     private void notifyProfileRemoved(SipProfile localProfile) {
@@ -335,13 +331,9 @@ public final class SipService extends ISipService.Stub {
         Intent intent = new Intent(SipManager.ACTION_SIP_REMOVE_PHONE);
         intent.putExtra(SipManager.EXTRA_LOCAL_URI, localProfile.getUriString());
         mContext.sendBroadcast(intent);
-    }
-
-    private boolean anyOpenedToReceiveCalls() {
-        for (SipSessionGroupExt group : mSipGroups.values()) {
-            if (group.isOpenedToReceiveCalls()) return true;
+        if (mSipGroups.size() == 0) {
+            unregisterReceivers();
         }
-        return false;
     }
 
     private void stopPortMappingMeasurement() {
@@ -461,9 +453,8 @@ public final class SipService extends ISipService.Stub {
         public SipSessionGroupExt(SipProfile localProfile,
                 PendingIntent incomingCallPendingIntent,
                 ISipSessionListener listener) throws SipException {
-            String password = localProfile.getPassword();
-            SipProfile p = duplicate(localProfile);
-            mSipGroup = createSipSessionGroup(mLocalIp, p, password);
+            mSipGroup = new SipSessionGroup(duplicate(localProfile),
+                    localProfile.getPassword(), mTimer, mMyWakeLock);
             mIncomingCallPendingIntent = incomingCallPendingIntent;
             mAutoRegistration.setListener(listener);
         }
@@ -486,27 +477,6 @@ public final class SipService extends ISipService.Stub {
             mSipGroup.setWakeupTimer(timer);
         }
 
-        // network connectivity is tricky because network can be disconnected
-        // at any instant so need to deal with exceptions carefully even when
-        // you think you are connected
-        private SipSessionGroup createSipSessionGroup(String localIp,
-                SipProfile localProfile, String password) throws SipException {
-            try {
-                return new SipSessionGroup(localIp, localProfile, password,
-                        mTimer, mMyWakeLock);
-            } catch (IOException e) {
-                // network disconnected
-                Log.w(TAG, "createSipSessionGroup(): network disconnected?");
-                if (localIp != null) {
-                    return createSipSessionGroup(null, localProfile, password);
-                } else {
-                    // recursive
-                    Log.wtf(TAG, "impossible! recursive!");
-                    throw new RuntimeException("createSipSessionGroup");
-                }
-            }
-        }
-
         private SipProfile duplicate(SipProfile p) {
             try {
                 return new SipProfile.Builder(p).setPassword("*").build();
@@ -526,7 +496,7 @@ public final class SipService extends ISipService.Stub {
 
         public void openToReceiveCalls() throws SipException {
             mOpenedToReceiveCalls = true;
-            if (mConnected) {
+            if (mNetworkType != -1) {
                 mSipGroup.openToReceiveCalls(this);
                 mAutoRegistration.start(mSipGroup);
             }
@@ -538,7 +508,7 @@ public final class SipService extends ISipService.Stub {
                 throws SipException {
             mSipGroup.onConnectivityChanged();
             if (connected) {
-                resetGroup(mLocalIp);
+                mSipGroup.reset();
                 if (mOpenedToReceiveCalls) openToReceiveCalls();
             } else {
                 // close mSipGroup but remember mOpenedToReceiveCalls
@@ -546,22 +516,6 @@ public final class SipService extends ISipService.Stub {
                         + getUri() + ": " + mIncomingCallPendingIntent);
                 mSipGroup.close();
                 mAutoRegistration.stop();
-            }
-        }
-
-        private void resetGroup(String localIp) throws SipException {
-            try {
-                mSipGroup.reset(localIp);
-            } catch (IOException e) {
-                // network disconnected
-                Log.w(TAG, "resetGroup(): network disconnected?");
-                if (localIp != null) {
-                    resetGroup(null); // reset w/o local IP
-                } else {
-                    // recursive
-                    Log.wtf(TAG, "impossible!");
-                    throw new RuntimeException("resetGroup");
-                }
             }
         }
 
@@ -905,7 +859,7 @@ public final class SipService extends ISipService.Stub {
             mMyWakeLock.release(mSession);
             if (mSession != null) {
                 mSession.setListener(null);
-                if (mConnected && mRegistered) mSession.unregister();
+                if (mNetworkType != -1 && mRegistered) mSession.unregister();
             }
 
             mTimer.cancel(this);
@@ -948,7 +902,7 @@ public final class SipService extends ISipService.Stub {
                             mProxy.onRegistrationFailed(mSession, mErrorCode,
                                     mErrorMessage);
                         }
-                    } else if (!mConnected) {
+                    } else if (mNetworkType == -1) {
                         mProxy.onRegistrationFailed(mSession,
                                 SipErrorCode.DATA_CONNECTION_LOST,
                                 "no data connection");
@@ -980,7 +934,7 @@ public final class SipService extends ISipService.Stub {
                 mErrorCode = SipErrorCode.NO_ERROR;
                 mErrorMessage = null;
                 if (DEBUG) Log.d(TAG, "registering");
-                if (mConnected) {
+                if (mNetworkType != -1) {
                     mMyWakeLock.acquire(mSession);
                     mSession.register(EXPIRY_TIME);
                 }
@@ -1134,7 +1088,25 @@ public final class SipService extends ISipService.Stub {
 
         // Reset variables maintained by ConnectivityReceiver.
         mWifiLock.release();
-        mConnected = false;
+        mNetworkType = -1;
+    }
+
+    private void updateWakeLocks() {
+        for (SipSessionGroupExt group : mSipGroups.values()) {
+            if (group.isOpenedToReceiveCalls()) {
+                // Also grab the WifiLock when we are disconnected, so the
+                // system will keep trying to reconnect. It will be released
+                // when the system eventually connects to something else.
+                if (mNetworkType == ConnectivityManager.TYPE_WIFI || mNetworkType == -1) {
+                    mWifiLock.acquire();
+                } else {
+                    mWifiLock.release();
+                }
+                return;
+            }
+        }
+        mWifiLock.release();
+        mMyWakeLock.reset(); // in case there's a leak
     }
 
     private synchronized void onConnectivityChanged(NetworkInfo info) {
@@ -1144,8 +1116,7 @@ public final class SipService extends ISipService.Stub {
         // getActiveNetworkInfo(), which is critical to our SIP stack. To
         // solve this, if it is a DISCONNECTED event to our current network,
         // respect it. Otherwise get a new one from getActiveNetworkInfo().
-        if (info == null || info.isConnected() ||
-                !info.getTypeName().equals(mNetworkType)) {
+        if (info == null || info.isConnected() || info.getType() != mNetworkType) {
             ConnectivityManager cm = (ConnectivityManager)
                     mContext.getSystemService(Context.CONNECTIVITY_SERVICE);
             info = cm.getActiveNetworkInfo();
@@ -1153,12 +1124,13 @@ public final class SipService extends ISipService.Stub {
 
         // Some devices limit SIP on Wi-Fi. In this case, if we are not on
         // Wi-Fi, treat it as a DISCONNECTED event.
-        boolean connected = (info != null && info.isConnected() &&
-                (!mSipOnWifiOnly || info.getType() == ConnectivityManager.TYPE_WIFI));
-        String networkType = connected ? info.getTypeName() : "null";
+        int networkType = (info != null && info.isConnected()) ? info.getType() : -1;
+        if (mSipOnWifiOnly && networkType != ConnectivityManager.TYPE_WIFI) {
+            networkType = -1;
+        }
 
         // Ignore the event if the current active network is not changed.
-        if (connected == mConnected && networkType.equals(mNetworkType)) {
+        if (mNetworkType == networkType) {
             return;
         }
         if (DEBUG) {
@@ -1167,39 +1139,24 @@ public final class SipService extends ISipService.Stub {
         }
 
         try {
-            if (mConnected) {
+            if (mNetworkType != -1) {
                 mLocalIp = null;
                 stopPortMappingMeasurement();
                 for (SipSessionGroupExt group : mSipGroups.values()) {
                     group.onConnectivityChanged(false);
                 }
             }
-
-            mConnected = connected;
             mNetworkType = networkType;
 
-            if (connected) {
+            if (mNetworkType != -1) {
                 mLocalIp = determineLocalIp();
                 mKeepAliveInterval = -1;
                 mLastGoodKeepAliveInterval = DEFAULT_KEEPALIVE_INTERVAL;
                 for (SipSessionGroupExt group : mSipGroups.values()) {
                     group.onConnectivityChanged(true);
                 }
-
-                // If we are on Wi-Fi, grab the WifiLock. Otherwise release it.
-                if (info.getType() == ConnectivityManager.TYPE_WIFI) {
-                    mWifiLock.acquire();
-                } else {
-                    mWifiLock.release();
-                }
-            } else {
-                // Always grab the WifiLock when we are disconnected, so the
-                // system will keep trying to reconnect. We will release it
-                // if we eventually connect via something else.
-                mWifiLock.acquire();
-
-                mMyWakeLock.reset(); // in case there's a leak
             }
+            updateWakeLocks();
         } catch (SipException e) {
             Log.e(TAG, "onConnectivityChanged()", e);
         }

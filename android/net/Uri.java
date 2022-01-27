@@ -19,19 +19,19 @@ package android.net;
 import android.os.Parcel;
 import android.os.Parcelable;
 import android.util.Log;
-
 import java.io.File;
-import java.io.IOException;
 import java.io.UnsupportedEncodingException;
-import java.io.ByteArrayOutputStream;
 import java.net.URLEncoder;
+import java.nio.charset.Charsets;
 import java.util.AbstractList;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.LinkedHashSet;
 import java.util.List;
+import java.util.Locale;
 import java.util.RandomAccess;
 import java.util.Set;
+import libcore.net.UriCodec;
 
 /**
  * Immutable URI reference. A URI reference includes a URI and a fragment, the
@@ -1305,7 +1305,7 @@ public abstract class Uri implements Parcelable, Comparable<Uri> {
      *
      * <p>An opaque URI follows this pattern:
      * {@code <scheme>:<opaque part>#<fragment>}
-     * 
+     *
      * <p>Use {@link Uri#buildUpon()} to obtain a builder representing an existing URI.
      */
     public static final class Builder {
@@ -1646,6 +1646,9 @@ public abstract class Uri implements Parcelable, Comparable<Uri> {
     /**
      * Searches the query string for the first value with the given key.
      *
+     * <p><strong>Warning:</strong> Prior to Ice Cream Sandwich, this decoded
+     * the '+' character as '+' rather than ' '.
+     *
      * @param key which will be encoded
      * @throws UnsupportedOperationException if this isn't a hierarchical URI
      * @throws NullPointerException if key is null
@@ -1679,9 +1682,10 @@ public abstract class Uri implements Parcelable, Comparable<Uri> {
             if (separator - start == encodedKey.length()
                     && query.regionMatches(start, encodedKey, 0, encodedKey.length())) {
                 if (separator == end) {
-                  return "";
+                    return "";
                 } else {
-                  return decode(query.substring(separator + 1, end));
+                    String encodedValue = query.substring(separator + 1, end);
+                    return UriCodec.decode(encodedValue, true, Charsets.UTF_8, false);
                 }
             }
 
@@ -1711,6 +1715,36 @@ public abstract class Uri implements Parcelable, Comparable<Uri> {
         }
         flag = flag.toLowerCase();
         return (!"false".equals(flag) && !"0".equals(flag));
+    }
+
+    /**
+     * Return an equivalent URI with a lowercase scheme component.
+     * This aligns the Uri with Android best practices for
+     * intent filtering.
+     *
+     * <p>For example, "HTTP://www.android.com" becomes
+     * "http://www.android.com"
+     *
+     * <p>All URIs received from outside Android (such as user input,
+     * or external sources like Bluetooth, NFC, or the Internet) should
+     * be normalized before they are used to create an Intent.
+     *
+     * <p class="note">This method does <em>not</em> validate bad URI's,
+     * or 'fix' poorly formatted URI's - so do not use it for input validation.
+     * A Uri will always be returned, even if the Uri is badly formatted to
+     * begin with and a scheme component cannot be found.
+     *
+     * @return normalized Uri (never null)
+     * @see {@link android.content.Intent#setData}
+     * @see {@link #setNormalizedData}
+     */
+    public Uri normalizeScheme() {
+        String scheme = getScheme();
+        if (scheme == null) return this;  // give up
+        String lowerScheme = scheme.toLowerCase(Locale.US);
+        if (scheme.equals(lowerScheme)) return this;  // no change
+
+        return buildUpon().scheme(lowerScheme).build();
     }
 
     /** Identifies a null parcelled Uri. */
@@ -1877,9 +1911,6 @@ public abstract class Uri implements Parcelable, Comparable<Uri> {
                 || (allow != null && allow.indexOf(c) != NOT_FOUND);
     }
 
-    /** Unicode replacement character: \\uFFFD. */
-    private static final byte[] REPLACEMENT = { (byte) 0xFF, (byte) 0xFD };
-
     /**
      * Decodes '%'-escaped octets in the given string using the UTF-8 scheme.
      * Replaces invalid octets with the unicode replacement character
@@ -1890,104 +1921,10 @@ public abstract class Uri implements Parcelable, Comparable<Uri> {
      *  s is null
      */
     public static String decode(String s) {
-        /*
-        Compared to java.net.URLEncoderDecoder.decode(), this method decodes a
-        chunk at a time instead of one character at a time, and it doesn't
-        throw exceptions. It also only allocates memory when necessary--if
-        there's nothing to decode, this method won't do much.
-        */
-
         if (s == null) {
             return null;
         }
-
-        // Lazily-initialized buffers.
-        StringBuilder decoded = null;
-        ByteArrayOutputStream out = null;
-
-        int oldLength = s.length();
-
-        // This loop alternates between copying over normal characters and
-        // escaping in chunks. This results in fewer method calls and
-        // allocations than decoding one character at a time.
-        int current = 0;
-        while (current < oldLength) {
-            // Start in "copying" mode where we copy over normal characters.
-
-            // Find the next escape sequence.
-            int nextEscape = s.indexOf('%', current);
-
-            if (nextEscape == NOT_FOUND) {
-                if (decoded == null) {
-                    // We didn't actually decode anything.
-                    return s;
-                } else {
-                    // Append the remainder and return the decoded string.
-                    decoded.append(s, current, oldLength);
-                    return decoded.toString();
-                }
-            }
-
-            // Prepare buffers.
-            if (decoded == null) {
-                // Looks like we're going to need the buffers...
-                // We know the new string will be shorter. Using the old length
-                // may overshoot a bit, but it will save us from resizing the
-                // buffer.
-                decoded = new StringBuilder(oldLength);
-                out = new ByteArrayOutputStream(4);
-            } else {
-                // Clear decoding buffer.
-                out.reset();
-            }
-
-            // Append characters leading up to the escape.
-            if (nextEscape > current) {
-                decoded.append(s, current, nextEscape);
-
-                current = nextEscape;
-            } else {
-                // assert current == nextEscape
-            }
-
-            // Switch to "decoding" mode where we decode a string of escape
-            // sequences.
-
-            // Decode and append escape sequences. Escape sequences look like
-            // "%ab" where % is literal and a and b are hex digits.
-            try {
-                do {
-                    if (current + 2 >= oldLength) {
-                        // Truncated escape sequence.
-                        out.write(REPLACEMENT);
-                    } else {
-                        int a = Character.digit(s.charAt(current + 1), 16);
-                        int b = Character.digit(s.charAt(current + 2), 16);
-
-                        if (a == -1 || b == -1) {
-                            // Non hex digits.
-                            out.write(REPLACEMENT);
-                        } else {
-                            // Combine the hex digits into one byte and write.
-                            out.write((a << 4) + b);
-                        }
-                    }
-
-                    // Move passed the escape sequence.
-                    current += 3;
-                } while (current < oldLength && s.charAt(current) == '%');
-
-                // Decode UTF-8 bytes into a string and append it.
-                decoded.append(out.toString(DEFAULT_ENCODING));
-            } catch (UnsupportedEncodingException e) {
-                throw new AssertionError(e);
-            } catch (IOException e) {
-                throw new AssertionError(e);
-            }
-        }
-
-        // If we don't have a buffer, we didn't have to decode anything.
-        return decoded == null ? s : decoded.toString();
+        return UriCodec.decode(s, false, Charsets.UTF_8, false);
     }
 
     /**
@@ -2342,7 +2279,7 @@ public abstract class Uri implements Parcelable, Comparable<Uri> {
      *
      * @param baseUri Uri to append path segment to
      * @param pathSegment encoded path segment to append
-     * @return a new Uri based on baseUri with the given segment appended to 
+     * @return a new Uri based on baseUri with the given segment appended to
      *  the path
      * @throws NullPointerException if baseUri is null
      */

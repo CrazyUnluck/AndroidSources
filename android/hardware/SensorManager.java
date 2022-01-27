@@ -16,23 +16,12 @@
 
 package android.hardware;
 
-import android.os.Looper;
-import android.os.Process;
-import android.os.RemoteException;
 import android.os.Handler;
-import android.os.Message;
-import android.os.ServiceManager;
 import android.util.Log;
 import android.util.SparseArray;
-import android.util.SparseBooleanArray;
-import android.util.SparseIntArray;
-import android.view.IRotationWatcher;
-import android.view.IWindowManager;
-import android.view.Surface;
 
 import java.util.ArrayList;
 import java.util.Collections;
-import java.util.HashMap;
 import java.util.List;
 
 /**
@@ -83,10 +72,18 @@ import java.util.List;
  * @see Sensor
  *
  */
-public class SensorManager
-{
-    private static final String TAG = "SensorManager";
+public abstract class SensorManager {
+    /** @hide */
+    protected static final String TAG = "SensorManager";
+
     private static final float[] mTempMatrix = new float[16];
+
+    // Cached lists of sensors by type.  Guarded by mSensorListByType.
+    private final SparseArray<List<Sensor>> mSensorListByType =
+            new SparseArray<List<Sensor>>();
+
+    // Legacy sensor manager implementation.  Guarded by mSensorListByType during initialization.
+    private LegacySensorManager mLegacySensorManager;
 
     /* NOTE: sensor IDs must be a power of 2 */
 
@@ -353,339 +350,18 @@ public class SensorManager
     /** see {@link #remapCoordinateSystem} */
     public static final int AXIS_MINUS_Z = AXIS_Z | 0x80;
 
-    /*-----------------------------------------------------------------------*/
-
-    Looper mMainLooper;
-    @SuppressWarnings("deprecation")
-    private HashMap<SensorListener, LegacyListener> mLegacyListenersMap =
-        new HashMap<SensorListener, LegacyListener>();
-
-    /*-----------------------------------------------------------------------*/
-
-    private static final int SENSOR_DISABLE = -1;
-    private static boolean sSensorModuleInitialized = false;
-    private static ArrayList<Sensor> sFullSensorsList = new ArrayList<Sensor>();
-    private static SparseArray<List<Sensor>> sSensorListByType = new SparseArray<List<Sensor>>();
-    private static IWindowManager sWindowManager;
-    private static int sRotation = Surface.ROTATION_0;
-    /* The thread and the sensor list are global to the process
-     * but the actual thread is spawned on demand */
-    private static SensorThread sSensorThread;
-    private static int sQueue;
-
-    // Used within this module from outside SensorManager, don't make private
-    static SparseArray<Sensor> sHandleToSensor = new SparseArray<Sensor>();
-    static final ArrayList<ListenerDelegate> sListeners =
-        new ArrayList<ListenerDelegate>();
-
-    /*-----------------------------------------------------------------------*/
-
-    private class SensorEventPool {
-        private final int mPoolSize;
-        private final SensorEvent mPool[];
-        private int mNumItemsInPool;
-
-        private SensorEvent createSensorEvent() {
-            // maximal size for all legacy events is 3
-            return new SensorEvent(3);
-        }
-
-        SensorEventPool(int poolSize) {
-            mPoolSize = poolSize;
-            mNumItemsInPool = poolSize;
-            mPool = new SensorEvent[poolSize];
-        }
-
-        SensorEvent getFromPool() {
-            SensorEvent t = null;
-            synchronized (this) {
-                if (mNumItemsInPool > 0) {
-                    // remove the "top" item from the pool
-                    final int index = mPoolSize - mNumItemsInPool;
-                    t = mPool[index];
-                    mPool[index] = null;
-                    mNumItemsInPool--;
-                }
-            }
-            if (t == null) {
-                // the pool was empty or this item was removed from the pool for
-                // the first time. In any case, we need to create a new item.
-                t = createSensorEvent();
-            }
-            return t;
-        }
-
-        void returnToPool(SensorEvent t) {
-            synchronized (this) {
-                // is there space left in the pool?
-                if (mNumItemsInPool < mPoolSize) {
-                    // if so, return the item to the pool
-                    mNumItemsInPool++;
-                    final int index = mPoolSize - mNumItemsInPool;
-                    mPool[index] = t;
-                }
-            }
-        }
-    }
-
-    private static SensorEventPool sPool;
-
-    /*-----------------------------------------------------------------------*/
-
-    static private class SensorThread {
-
-        Thread mThread;
-        boolean mSensorsReady;
-
-        SensorThread() {
-        }
-
-        @Override
-        protected void finalize() {
-        }
-
-        // must be called with sListeners lock
-        boolean startLocked() {
-            try {
-                if (mThread == null) {
-                    mSensorsReady = false;
-                    SensorThreadRunnable runnable = new SensorThreadRunnable();
-                    Thread thread = new Thread(runnable, SensorThread.class.getName());
-                    thread.start();
-                    synchronized (runnable) {
-                        while (mSensorsReady == false) {
-                            runnable.wait();
-                        }
-                    }
-                    mThread = thread;
-                }
-            } catch (InterruptedException e) {
-            }
-            return mThread == null ? false : true;
-        }
-
-        private class SensorThreadRunnable implements Runnable {
-            SensorThreadRunnable() {
-            }
-
-            private boolean open() {
-                // NOTE: this cannot synchronize on sListeners, since
-                // it's held in the main thread at least until we
-                // return from here.
-                sQueue = sensors_create_queue();
-                return true;
-            }
-
-            public void run() {
-                //Log.d(TAG, "entering main sensor thread");
-                final float[] values = new float[3];
-                final int[] status = new int[1];
-                final long timestamp[] = new long[1];
-                Process.setThreadPriority(Process.THREAD_PRIORITY_URGENT_DISPLAY);
-
-                if (!open()) {
-                    return;
-                }
-
-                synchronized (this) {
-                    // we've open the driver, we're ready to open the sensors
-                    mSensorsReady = true;
-                    this.notify();
-                }
-
-                while (true) {
-                    // wait for an event
-                    final int sensor = sensors_data_poll(sQueue, values, status, timestamp);
-
-                    int accuracy = status[0];
-                    synchronized (sListeners) {
-                        if (sensor == -1 || sListeners.isEmpty()) {
-                            // we lost the connection to the event stream. this happens
-                            // when the last listener is removed or if there is an error
-                            if (sensor == -1 && !sListeners.isEmpty()) {
-                                // log a warning in case of abnormal termination
-                                Log.e(TAG, "_sensors_data_poll() failed, we bail out: sensors=" + sensor);
-                            }
-                            // we have no more listeners or polling failed, terminate the thread
-                            sensors_destroy_queue(sQueue);
-                            sQueue = 0;
-                            mThread = null;
-                            break;
-                        }
-                        final Sensor sensorObject = sHandleToSensor.get(sensor);
-                        if (sensorObject != null) {
-                            // report the sensor event to all listeners that
-                            // care about it.
-                            final int size = sListeners.size();
-                            for (int i=0 ; i<size ; i++) {
-                                ListenerDelegate listener = sListeners.get(i);
-                                if (listener.hasSensor(sensorObject)) {
-                                    // this is asynchronous (okay to call
-                                    // with sListeners lock held).
-                                    listener.onSensorChangedLocked(sensorObject,
-                                            values, timestamp, accuracy);
-                                }
-                            }
-                        }
-                    }
-                }
-                //Log.d(TAG, "exiting main sensor thread");
-            }
-        }
-    }
-
-    /*-----------------------------------------------------------------------*/
-
-    private class ListenerDelegate {
-        private final SensorEventListener mSensorEventListener;
-        private final ArrayList<Sensor> mSensorList = new ArrayList<Sensor>();
-        private final Handler mHandler;
-        public SparseBooleanArray mSensors = new SparseBooleanArray();
-        public SparseBooleanArray mFirstEvent = new SparseBooleanArray();
-        public SparseIntArray mSensorAccuracies = new SparseIntArray();
-
-        ListenerDelegate(SensorEventListener listener, Sensor sensor, Handler handler) {
-            mSensorEventListener = listener;
-            Looper looper = (handler != null) ? handler.getLooper() : mMainLooper;
-            // currently we create one Handler instance per listener, but we could
-            // have one per looper (we'd need to pass the ListenerDelegate
-            // instance to handleMessage and keep track of them separately).
-            mHandler = new Handler(looper) {
-                @Override
-                public void handleMessage(Message msg) {
-                    final SensorEvent t = (SensorEvent)msg.obj;
-                    final int handle = t.sensor.getHandle();
-
-                    switch (t.sensor.getType()) {
-                        // Only report accuracy for sensors that support it.
-                        case Sensor.TYPE_MAGNETIC_FIELD:
-                        case Sensor.TYPE_ORIENTATION:
-                            // call onAccuracyChanged() only if the value changes
-                            final int accuracy = mSensorAccuracies.get(handle);
-                            if ((t.accuracy >= 0) && (accuracy != t.accuracy)) {
-                                mSensorAccuracies.put(handle, t.accuracy);
-                                mSensorEventListener.onAccuracyChanged(t.sensor, t.accuracy);
-                            }
-                            break;
-                        default:
-                            // For other sensors, just report the accuracy once
-                            if (mFirstEvent.get(handle) == false) {
-                                mFirstEvent.put(handle, true);
-                                mSensorEventListener.onAccuracyChanged(
-                                        t.sensor, SENSOR_STATUS_ACCURACY_HIGH);
-                            }
-                            break;
-                    }
-
-                    mSensorEventListener.onSensorChanged(t);
-                    sPool.returnToPool(t);
-                }
-            };
-            addSensor(sensor);
-        }
-
-        Object getListener() {
-            return mSensorEventListener;
-        }
-
-        void addSensor(Sensor sensor) {
-            mSensors.put(sensor.getHandle(), true);
-            mSensorList.add(sensor);
-        }
-        int removeSensor(Sensor sensor) {
-            mSensors.delete(sensor.getHandle());
-            mSensorList.remove(sensor);
-            return mSensors.size();
-        }
-        boolean hasSensor(Sensor sensor) {
-            return mSensors.get(sensor.getHandle());
-        }
-        List<Sensor> getSensors() {
-            return mSensorList;
-        }
-
-        void onSensorChangedLocked(Sensor sensor, float[] values, long[] timestamp, int accuracy) {
-            SensorEvent t = sPool.getFromPool();
-            final float[] v = t.values;
-            v[0] = values[0];
-            v[1] = values[1];
-            v[2] = values[2];
-            t.timestamp = timestamp[0];
-            t.accuracy = accuracy;
-            t.sensor = sensor;
-            Message msg = Message.obtain();
-            msg.what = 0;
-            msg.obj = t;
-            mHandler.sendMessage(msg);
-        }
-    }
 
     /**
      * {@hide}
      */
-    public SensorManager(Looper mainLooper) {
-        mMainLooper = mainLooper;
-
-
-        synchronized(sListeners) {
-            if (!sSensorModuleInitialized) {
-                sSensorModuleInitialized = true;
-
-                nativeClassInit();
-
-                sWindowManager = IWindowManager.Stub.asInterface(
-                        ServiceManager.getService("window"));
-                if (sWindowManager != null) {
-                    // if it's null we're running in the system process
-                    // which won't get the rotated values
-                    try {
-                        sRotation = sWindowManager.watchRotation(
-                                new IRotationWatcher.Stub() {
-                                    public void onRotationChanged(int rotation) {
-                                        SensorManager.this.onRotationChanged(rotation);
-                                    }
-                                }
-                        );
-                    } catch (RemoteException e) {
-                    }
-                }
-
-                // initialize the sensor list
-                sensors_module_init();
-                final ArrayList<Sensor> fullList = sFullSensorsList;
-                int i = 0;
-                do {
-                    Sensor sensor = new Sensor();
-                    i = sensors_module_get_next_sensor(sensor, i);
-
-                    if (i>=0) {
-                        //Log.d(TAG, "found sensor: " + sensor.getName() +
-                        //        ", handle=" + sensor.getHandle());
-                        sensor.setLegacyType(getLegacySensorType(sensor.getType()));
-                        fullList.add(sensor);
-                        sHandleToSensor.append(sensor.getHandle(), sensor);
-                    }
-                } while (i>0);
-
-                sPool = new SensorEventPool( sFullSensorsList.size()*2 );
-                sSensorThread = new SensorThread();
-            }
-        }
+    public SensorManager() {
     }
 
-    private int getLegacySensorType(int type) {
-        switch (type) {
-            case Sensor.TYPE_ACCELEROMETER:
-                return SENSOR_ACCELEROMETER;
-            case Sensor.TYPE_MAGNETIC_FIELD:
-                return SENSOR_MAGNETIC_FIELD;
-            case Sensor.TYPE_ORIENTATION:
-                return SENSOR_ORIENTATION_RAW;
-            case Sensor.TYPE_TEMPERATURE:
-                return SENSOR_TEMPERATURE;
-        }
-        return 0;
-    }
+    /**
+     * Gets the full list of sensors that are available.
+     * @hide
+     */
+    protected abstract List<Sensor> getFullSensorList();
 
     /**
      * @return available sensors.
@@ -694,23 +370,7 @@ public class SensorManager
      */
     @Deprecated
     public int getSensors() {
-        int result = 0;
-        final ArrayList<Sensor> fullList = sFullSensorsList;
-        for (Sensor i : fullList) {
-            switch (i.getType()) {
-                case Sensor.TYPE_ACCELEROMETER:
-                    result |= SensorManager.SENSOR_ACCELEROMETER;
-                    break;
-                case Sensor.TYPE_MAGNETIC_FIELD:
-                    result |= SensorManager.SENSOR_MAGNETIC_FIELD;
-                    break;
-                case Sensor.TYPE_ORIENTATION:
-                    result |= SensorManager.SENSOR_ORIENTATION |
-                    SensorManager.SENSOR_ORIENTATION_RAW;
-                    break;
-            }
-        }
-        return result;
+        return getLegacySensorManager().getSensors();
     }
 
     /**
@@ -730,9 +390,9 @@ public class SensorManager
     public List<Sensor> getSensorList(int type) {
         // cache the returned lists the first time
         List<Sensor> list;
-        final ArrayList<Sensor> fullList = sFullSensorsList;
-        synchronized(fullList) {
-            list = sSensorListByType.get(type);
+        final List<Sensor> fullList = getFullSensorList();
+        synchronized (mSensorListByType) {
+            list = mSensorListByType.get(type);
             if (list == null) {
                 if (type == Sensor.TYPE_ALL) {
                     list = fullList;
@@ -744,7 +404,7 @@ public class SensorManager
                     }
                 }
                 list = Collections.unmodifiableList(list);
-                sSensorListByType.append(type, list);
+                mSensorListByType.append(type, list);
             }
         }
         return list;
@@ -816,128 +476,7 @@ public class SensorManager
      */
     @Deprecated
     public boolean registerListener(SensorListener listener, int sensors, int rate) {
-        if (listener == null) {
-            return false;
-        }
-        boolean result = false;
-        result = registerLegacyListener(SENSOR_ACCELEROMETER, Sensor.TYPE_ACCELEROMETER,
-                listener, sensors, rate) || result;
-        result = registerLegacyListener(SENSOR_MAGNETIC_FIELD, Sensor.TYPE_MAGNETIC_FIELD,
-                listener, sensors, rate) || result;
-        result = registerLegacyListener(SENSOR_ORIENTATION_RAW, Sensor.TYPE_ORIENTATION,
-                listener, sensors, rate) || result;
-        result = registerLegacyListener(SENSOR_ORIENTATION, Sensor.TYPE_ORIENTATION,
-                listener, sensors, rate) || result;
-        result = registerLegacyListener(SENSOR_TEMPERATURE, Sensor.TYPE_TEMPERATURE,
-                listener, sensors, rate) || result;
-        return result;
-    }
-
-    @SuppressWarnings("deprecation")
-    private boolean registerLegacyListener(int legacyType, int type,
-            SensorListener listener, int sensors, int rate)
-    {
-        if (listener == null) {
-            return false;
-        }
-        boolean result = false;
-        // Are we activating this legacy sensor?
-        if ((sensors & legacyType) != 0) {
-            // if so, find a suitable Sensor
-            Sensor sensor = getDefaultSensor(type);
-            if (sensor != null) {
-                // If we don't already have one, create a LegacyListener
-                // to wrap this listener and process the events as
-                // they are expected by legacy apps.
-                LegacyListener legacyListener = null;
-                synchronized (mLegacyListenersMap) {
-                    legacyListener = mLegacyListenersMap.get(listener);
-                    if (legacyListener == null) {
-                        // we didn't find a LegacyListener for this client,
-                        // create one, and put it in our list.
-                        legacyListener = new LegacyListener(listener);
-                        mLegacyListenersMap.put(listener, legacyListener);
-                    }
-                }
-                // register this legacy sensor with this legacy listener
-                legacyListener.registerSensor(legacyType);
-                // and finally, register the legacy listener with the new apis
-                result = registerListener(legacyListener, sensor, rate);
-            }
-        }
-        return result;
-    }
-
-    /**
-     * Unregisters a listener for the sensors with which it is registered.
-     *
-     * @deprecated This method is deprecated, use
-     *             {@link SensorManager#unregisterListener(SensorEventListener, Sensor)}
-     *             instead.
-     *
-     * @param listener
-     *        a SensorListener object
-     *
-     * @param sensors
-     *        a bit masks of the sensors to unregister from
-     */
-    @Deprecated
-    public void unregisterListener(SensorListener listener, int sensors) {
-        unregisterLegacyListener(SENSOR_ACCELEROMETER, Sensor.TYPE_ACCELEROMETER,
-                listener, sensors);
-        unregisterLegacyListener(SENSOR_MAGNETIC_FIELD, Sensor.TYPE_MAGNETIC_FIELD,
-                listener, sensors);
-        unregisterLegacyListener(SENSOR_ORIENTATION_RAW, Sensor.TYPE_ORIENTATION,
-                listener, sensors);
-        unregisterLegacyListener(SENSOR_ORIENTATION, Sensor.TYPE_ORIENTATION,
-                listener, sensors);
-        unregisterLegacyListener(SENSOR_TEMPERATURE, Sensor.TYPE_TEMPERATURE,
-                listener, sensors);
-    }
-
-    @SuppressWarnings("deprecation")
-    private void unregisterLegacyListener(int legacyType, int type,
-            SensorListener listener, int sensors)
-    {
-        if (listener == null) {
-            return;
-        }
-        // do we know about this listener?
-        LegacyListener legacyListener = null;
-        synchronized (mLegacyListenersMap) {
-            legacyListener = mLegacyListenersMap.get(listener);
-        }
-        if (legacyListener != null) {
-            // Are we deactivating this legacy sensor?
-            if ((sensors & legacyType) != 0) {
-                // if so, find the corresponding Sensor
-                Sensor sensor = getDefaultSensor(type);
-                if (sensor != null) {
-                    // unregister this legacy sensor and if we don't
-                    // need the corresponding Sensor, unregister it too
-                    if (legacyListener.unregisterSensor(legacyType)) {
-                        // corresponding sensor not needed, unregister
-                        unregisterListener(legacyListener, sensor);
-                        // finally check if we still need the legacyListener
-                        // in our mapping, if not, get rid of it too.
-                        synchronized(sListeners) {
-                            boolean found = false;
-                            for (ListenerDelegate i : sListeners) {
-                                if (i.getListener() == legacyListener) {
-                                    found = true;
-                                    break;
-                                }
-                            }
-                            if (!found) {
-                                synchronized (mLegacyListenersMap) {
-                                    mLegacyListenersMap.remove(listener);
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-        }
+        return getLegacySensorManager().registerListener(listener, sensors, rate);
     }
 
     /**
@@ -958,6 +497,24 @@ public class SensorManager
     /**
      * Unregisters a listener for the sensors with which it is registered.
      *
+     * @deprecated This method is deprecated, use
+     *             {@link SensorManager#unregisterListener(SensorEventListener, Sensor)}
+     *             instead.
+     *
+     * @param listener
+     *        a SensorListener object
+     *
+     * @param sensors
+     *        a bit masks of the sensors to unregister from
+     */
+    @Deprecated
+    public void unregisterListener(SensorListener listener, int sensors) {
+        getLegacySensorManager().unregisterListener(listener, sensors);
+    }
+
+    /**
+     * Unregisters a listener for the sensors with which it is registered.
+     *
      * @param listener
      *        a SensorEventListener object
      *
@@ -969,7 +526,11 @@ public class SensorManager
      *
      */
     public void unregisterListener(SensorEventListener listener, Sensor sensor) {
-        unregisterListener((Object)listener, sensor);
+        if (listener == null || sensor == null) {
+            return;
+        }
+
+        unregisterListenerImpl(listener, sensor);
     }
 
     /**
@@ -983,8 +544,15 @@ public class SensorManager
      *
      */
     public void unregisterListener(SensorEventListener listener) {
-        unregisterListener((Object)listener);
+        if (listener == null) {
+            return;
+        }
+
+        unregisterListenerImpl(listener, null);
     }
+
+    /** @hide */
+    protected abstract void unregisterListenerImpl(SensorEventListener listener, Sensor sensor);
 
     /**
      * Registers a {@link android.hardware.SensorEventListener
@@ -1016,31 +584,6 @@ public class SensorManager
      */
     public boolean registerListener(SensorEventListener listener, Sensor sensor, int rate) {
         return registerListener(listener, sensor, rate, null);
-    }
-
-    private boolean enableSensorLocked(Sensor sensor, int delay) {
-        boolean result = false;
-        for (ListenerDelegate i : sListeners) {
-            if (i.hasSensor(sensor)) {
-                String name = sensor.getName();
-                int handle = sensor.getHandle();
-                result = sensors_enable_sensor(sQueue, name, handle, delay);
-                break;
-            }
-        }
-        return result;
-    }
-
-    private boolean disableSensorLocked(Sensor sensor) {
-        for (ListenerDelegate i : sListeners) {
-            if (i.hasSensor(sensor)) {
-                // not an error, it's just that this sensor is still in use
-                return true;
-            }
-        }
-        String name = sensor.getName();
-        int handle = sensor.getHandle();
-        return sensors_enable_sensor(sQueue, name, handle, SENSOR_DISABLE);
     }
 
     /**
@@ -1080,7 +623,7 @@ public class SensorManager
         if (listener == null || sensor == null) {
             return false;
         }
-        boolean result = true;
+
         int delay = -1;
         switch (rate) {
             case SENSOR_DELAY_FASTEST:
@@ -1100,92 +643,12 @@ public class SensorManager
                 break;
         }
 
-        synchronized (sListeners) {
-            // look for this listener in our list
-            ListenerDelegate l = null;
-            for (ListenerDelegate i : sListeners) {
-                if (i.getListener() == listener) {
-                    l = i;
-                    break;
-                }
-            }
-
-            // if we don't find it, add it to the list
-            if (l == null) {
-                l = new ListenerDelegate(listener, sensor, handler);
-                sListeners.add(l);
-                // if the list is not empty, start our main thread
-                if (!sListeners.isEmpty()) {
-                    if (sSensorThread.startLocked()) {
-                        if (!enableSensorLocked(sensor, delay)) {
-                            // oops. there was an error
-                            sListeners.remove(l);
-                            result = false;
-                        }
-                    } else {
-                        // there was an error, remove the listener
-                        sListeners.remove(l);
-                        result = false;
-                    }
-                } else {
-                    // weird, we couldn't add the listener
-                    result = false;
-                }
-            } else {
-                l.addSensor(sensor);
-                if (!enableSensorLocked(sensor, delay)) {
-                    // oops. there was an error
-                    l.removeSensor(sensor);
-                    result = false;
-                }
-            }
-        }
-
-        return result;
+        return registerListenerImpl(listener, sensor, delay, handler);
     }
 
-    private void unregisterListener(Object listener, Sensor sensor) {
-        if (listener == null || sensor == null) {
-            return;
-        }
-
-        synchronized (sListeners) {
-            final int size = sListeners.size();
-            for (int i=0 ; i<size ; i++) {
-                ListenerDelegate l = sListeners.get(i);
-                if (l.getListener() == listener) {
-                    if (l.removeSensor(sensor) == 0) {
-                        // if we have no more sensors enabled on this listener,
-                        // take it off the list.
-                        sListeners.remove(i);
-                    }
-                    break;
-                }
-            }
-            disableSensorLocked(sensor);
-        }
-    }
-
-    private void unregisterListener(Object listener) {
-        if (listener == null) {
-            return;
-        }
-
-        synchronized (sListeners) {
-            final int size = sListeners.size();
-            for (int i=0 ; i<size ; i++) {
-                ListenerDelegate l = sListeners.get(i);
-                if (l.getListener() == listener) {
-                    sListeners.remove(i);
-                    // disable all sensors for this listener
-                    for (Sensor sensor : l.getSensors()) {
-                        disableSensorLocked(sensor);
-                    }
-                    break;
-                }
-            }
-        }
-    }
+    /** @hide */
+    protected abstract boolean registerListenerImpl(SensorEventListener listener, Sensor sensor,
+            int delay, Handler handler);
 
     /**
      * <p>
@@ -1652,233 +1115,16 @@ public class SensorManager
      * @param p atmospheric pressure
      * @return Altitude in meters
      */
-   public static float getAltitude(float p0, float p) {
+    public static float getAltitude(float p0, float p) {
         final float coef = 1.0f / 5.255f;
         return 44330.0f * (1.0f - (float)Math.pow(p/p0, coef));
     }
 
-
-   /**
-     * {@hide}
-     */
-    public void onRotationChanged(int rotation) {
-        synchronized(sListeners) {
-            sRotation  = rotation;
-        }
-    }
-
-    static int getRotation() {
-        synchronized(sListeners) {
-            return sRotation;
-        }
-    }
-
-    private class LegacyListener implements SensorEventListener {
-        private float mValues[] = new float[6];
-        @SuppressWarnings("deprecation")
-        private SensorListener mTarget;
-        private int mSensors;
-        private final LmsFilter mYawfilter = new LmsFilter();
-
-        @SuppressWarnings("deprecation")
-        LegacyListener(SensorListener target) {
-            mTarget = target;
-            mSensors = 0;
-        }
-
-        void registerSensor(int legacyType) {
-            mSensors |= legacyType;
-        }
-
-        boolean unregisterSensor(int legacyType) {
-            mSensors &= ~legacyType;
-            int mask = SENSOR_ORIENTATION|SENSOR_ORIENTATION_RAW;
-            if (((legacyType&mask)!=0) && ((mSensors&mask)!=0)) {
-                return false;
-            }
-            return true;
-        }
-
-        @SuppressWarnings("deprecation")
-        public void onAccuracyChanged(Sensor sensor, int accuracy) {
-            try {
-                mTarget.onAccuracyChanged(sensor.getLegacyType(), accuracy);
-            } catch (AbstractMethodError e) {
-                // old app that doesn't implement this method
-                // just ignore it.
-            }
-        }
-
-        @SuppressWarnings("deprecation")
-        public void onSensorChanged(SensorEvent event) {
-            final float v[] = mValues;
-            v[0] = event.values[0];
-            v[1] = event.values[1];
-            v[2] = event.values[2];
-            int legacyType = event.sensor.getLegacyType();
-            mapSensorDataToWindow(legacyType, v, SensorManager.getRotation());
-            if (event.sensor.getType() == Sensor.TYPE_ORIENTATION) {
-                if ((mSensors & SENSOR_ORIENTATION_RAW)!=0) {
-                    mTarget.onSensorChanged(SENSOR_ORIENTATION_RAW, v);
-                }
-                if ((mSensors & SENSOR_ORIENTATION)!=0) {
-                    v[0] = mYawfilter.filter(event.timestamp, v[0]);
-                    mTarget.onSensorChanged(SENSOR_ORIENTATION, v);
-                }
-            } else {
-                mTarget.onSensorChanged(legacyType, v);
-            }
-        }
-
-        /*
-         * Helper function to convert the specified sensor's data to the windows's
-         * coordinate space from the device's coordinate space.
-         *
-         * output: 3,4,5: values in the old API format
-         *         0,1,2: transformed values in the old API format
-         *
-         */
-        private void mapSensorDataToWindow(int sensor,
-                float[] values, int orientation) {
-            float x = values[0];
-            float y = values[1];
-            float z = values[2];
-
-            switch (sensor) {
-                case SensorManager.SENSOR_ORIENTATION:
-                case SensorManager.SENSOR_ORIENTATION_RAW:
-                    z = -z;
-                    break;
-                case SensorManager.SENSOR_ACCELEROMETER:
-                    x = -x;
-                    y = -y;
-                    z = -z;
-                    break;
-                case SensorManager.SENSOR_MAGNETIC_FIELD:
-                    x = -x;
-                    y = -y;
-                    break;
-            }
-            values[0] = x;
-            values[1] = y;
-            values[2] = z;
-            values[3] = x;
-            values[4] = y;
-            values[5] = z;
-
-            if ((orientation & Surface.ROTATION_90) != 0) {
-                // handles 90 and 270 rotation
-                switch (sensor) {
-                    case SENSOR_ACCELEROMETER:
-                    case SENSOR_MAGNETIC_FIELD:
-                        values[0] =-y;
-                        values[1] = x;
-                        values[2] = z;
-                        break;
-                    case SENSOR_ORIENTATION:
-                    case SENSOR_ORIENTATION_RAW:
-                        values[0] = x + ((x < 270) ? 90 : -270);
-                        values[1] = z;
-                        values[2] = y;
-                        break;
-                }
-            }
-            if ((orientation & Surface.ROTATION_180) != 0) {
-                x = values[0];
-                y = values[1];
-                z = values[2];
-                // handles 180 (flip) and 270 (flip + 90) rotation
-                switch (sensor) {
-                    case SENSOR_ACCELEROMETER:
-                    case SENSOR_MAGNETIC_FIELD:
-                        values[0] =-x;
-                        values[1] =-y;
-                        values[2] = z;
-                        break;
-                    case SENSOR_ORIENTATION:
-                    case SENSOR_ORIENTATION_RAW:
-                        values[0] = (x >= 180) ? (x - 180) : (x + 180);
-                        values[1] =-y;
-                        values[2] =-z;
-                        break;
-                }
-            }
-        }
-    }
-
-    class LmsFilter {
-        private static final int SENSORS_RATE_MS = 20;
-        private static final int COUNT = 12;
-        private static final float PREDICTION_RATIO = 1.0f/3.0f;
-        private static final float PREDICTION_TIME = (SENSORS_RATE_MS*COUNT/1000.0f)*PREDICTION_RATIO;
-        private float mV[] = new float[COUNT*2];
-        private float mT[] = new float[COUNT*2];
-        private int mIndex;
-
-        public LmsFilter() {
-            mIndex = COUNT;
-        }
-
-        public float filter(long time, float in) {
-            float v = in;
-            final float ns = 1.0f / 1000000000.0f;
-            final float t = time*ns;
-            float v1 = mV[mIndex];
-            if ((v-v1) > 180) {
-                v -= 360;
-            } else if ((v1-v) > 180) {
-                v += 360;
-            }
-            /* Manage the circular buffer, we write the data twice spaced
-             * by COUNT values, so that we don't have to copy the array
-             * when it's full
-             */
-            mIndex++;
-            if (mIndex >= COUNT*2)
-                mIndex = COUNT;
-            mV[mIndex] = v;
-            mT[mIndex] = t;
-            mV[mIndex-COUNT] = v;
-            mT[mIndex-COUNT] = t;
-
-            float A, B, C, D, E;
-            float a, b;
-            int i;
-
-            A = B = C = D = E = 0;
-            for (i=0 ; i<COUNT-1 ; i++) {
-                final int j = mIndex - 1 - i;
-                final float Z = mV[j];
-                final float T = 0.5f*(mT[j] + mT[j+1]) - t;
-                float dT = mT[j] - mT[j+1];
-                dT *= dT;
-                A += Z*dT;
-                B += T*(T*dT);
-                C +=   (T*dT);
-                D += Z*(T*dT);
-                E += dT;
-            }
-            b = (A*B + C*D) / (E*B + C*C);
-            a = (E*b - A) / C;
-            float f = b + PREDICTION_TIME*a;
-
-            // Normalize
-            f *= (1.0f / 360.0f);
-            if (((f>=0)?f:-f) >= 0.5f)
-                f = f - (float)Math.ceil(f + 0.5f) + 1.0f;
-            if (f < 0)
-                f += 1.0f;
-            f *= 360.0f;
-            return f;
-        }
-    }
-
-
     /** Helper function to compute the angle change between two rotation matrices.
      *  Given a current rotation matrix (R) and a previous rotation matrix
-     *  (prevR) computes the rotation around the x,y, and z axes which
+     *  (prevR) computes the rotation around the z,x, and y axes which
      *  transforms prevR to R.
-     *  outputs a 3 element vector containing the x,y, and z angle
+     *  outputs a 3 element vector containing the z,x, and y angle
      *  change at indexes 0, 1, and 2 respectively.
      * <p> Each input matrix is either as a 3x3 or 4x4 row-major matrix
      * depending on the length of the passed array:
@@ -1897,14 +1143,13 @@ public class SensorManager
      *</pre>
      * @param R current rotation matrix
      * @param prevR previous rotation matrix
-     * @param angleChange an array of floats in which the angle change is stored
+     * @param angleChange an an array of floats (z, x, and y) in which the angle change is stored
      */
 
     public static void getAngleChange( float[] angleChange, float[] R, float[] prevR) {
         float rd1=0,rd4=0, rd6=0,rd7=0, rd8=0;
         float ri0=0,ri1=0,ri2=0,ri3=0,ri4=0,ri5=0,ri6=0,ri7=0,ri8=0;
         float pri0=0, pri1=0, pri2=0, pri3=0, pri4=0, pri5=0, pri6=0, pri7=0, pri8=0;
-        int i, j, k;
 
         if(R.length == 9) {
             ri0 = R[0];
@@ -2059,14 +1304,66 @@ public class SensorManager
         Q[3] = rv[2];
     }
 
-    private static native void nativeClassInit();
+    private LegacySensorManager getLegacySensorManager() {
+        synchronized (mSensorListByType) {
+            if (mLegacySensorManager == null) {
+                Log.i(TAG, "This application is using deprecated SensorManager API which will "
+                        + "be removed someday.  Please consider switching to the new API.");
+                mLegacySensorManager = new LegacySensorManager(this);
+            }
+            return mLegacySensorManager;
+        }
+    }
 
-    private static native int sensors_module_init();
-    private static native int sensors_module_get_next_sensor(Sensor sensor, int next);
+    /**
+     * Sensor event pool implementation.
+     * @hide
+     */
+    protected static final class SensorEventPool {
+        private final int mPoolSize;
+        private final SensorEvent mPool[];
+        private int mNumItemsInPool;
 
-    // Used within this module from outside SensorManager, don't make private
-    static native int sensors_create_queue();
-    static native void sensors_destroy_queue(int queue);
-    static native boolean sensors_enable_sensor(int queue, String name, int sensor, int enable);
-    static native int sensors_data_poll(int queue, float[] values, int[] status, long[] timestamp);
+        private SensorEvent createSensorEvent() {
+            // maximal size for all legacy events is 3
+            return new SensorEvent(3);
+        }
+
+        SensorEventPool(int poolSize) {
+            mPoolSize = poolSize;
+            mNumItemsInPool = poolSize;
+            mPool = new SensorEvent[poolSize];
+        }
+
+        SensorEvent getFromPool() {
+            SensorEvent t = null;
+            synchronized (this) {
+                if (mNumItemsInPool > 0) {
+                    // remove the "top" item from the pool
+                    final int index = mPoolSize - mNumItemsInPool;
+                    t = mPool[index];
+                    mPool[index] = null;
+                    mNumItemsInPool--;
+                }
+            }
+            if (t == null) {
+                // the pool was empty or this item was removed from the pool for
+                // the first time. In any case, we need to create a new item.
+                t = createSensorEvent();
+            }
+            return t;
+        }
+
+        void returnToPool(SensorEvent t) {
+            synchronized (this) {
+                // is there space left in the pool?
+                if (mNumItemsInPool < mPoolSize) {
+                    // if so, return the item to the pool
+                    mNumItemsInPool++;
+                    final int index = mPoolSize - mNumItemsInPool;
+                    mPool[index] = t;
+                }
+            }
+        }
+    }
 }
