@@ -34,17 +34,14 @@ public class RssiPacketCountInfo implements Parcelable {
 
     public int txbad;
 
-    public int rxgood;
-
     public RssiPacketCountInfo() {
-        rssi = txgood = txbad = rxgood = 0;
+        rssi = txgood = txbad = 0;
     }
 
     private RssiPacketCountInfo(Parcel in) {
         rssi = in.readInt();
         txgood = in.readInt();
         txbad = in.readInt();
-        rxgood = in.readInt();
     }
 
     @Override
@@ -52,7 +49,6 @@ public class RssiPacketCountInfo implements Parcelable {
         out.writeInt(rssi);
         out.writeInt(txgood);
         out.writeInt(txbad);
-        out.writeInt(rxgood);
     }
 
     @Override

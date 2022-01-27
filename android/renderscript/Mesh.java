@@ -18,6 +18,8 @@ package android.renderscript;
 
 import java.util.Vector;
 
+import android.util.Log;
+
 /**
  * @hide
  * @deprecated in API 16
@@ -89,9 +91,8 @@ public class Mesh extends BaseObj {
     Allocation[] mIndexBuffers;
     Primitive[] mPrimitives;
 
-    Mesh(long id, RenderScript rs) {
+    Mesh(int id, RenderScript rs) {
         super(id, rs);
-        guard.open("destroy");
     }
 
     /**
@@ -153,8 +154,8 @@ public class Mesh extends BaseObj {
         int vtxCount = mRS.nMeshGetVertexBufferCount(getID(mRS));
         int idxCount = mRS.nMeshGetIndexCount(getID(mRS));
 
-        long[] vtxIDs = new long[vtxCount];
-        long[] idxIDs = new long[idxCount];
+        int[] vtxIDs = new int[vtxCount];
+        int[] idxIDs = new int[idxCount];
         int[] primitives = new int[idxCount];
 
         mRS.nMeshGetVertices(getID(mRS), vtxIDs, vtxCount);
@@ -349,8 +350,8 @@ public class Mesh extends BaseObj {
         **/
         public Mesh create() {
             mRS.validate();
-            long[] vtx = new long[mVertexTypeCount];
-            long[] idx = new long[mIndexTypes.size()];
+            int[] vtx = new int[mVertexTypeCount];
+            int[] idx = new int[mIndexTypes.size()];
             int[] prim = new int[mIndexTypes.size()];
 
             Allocation[] vertexBuffers = new Allocation[mVertexTypeCount];
@@ -364,9 +365,6 @@ public class Mesh extends BaseObj {
                     alloc = Allocation.createTyped(mRS, entry.t, mUsage);
                 } else if(entry.e != null) {
                     alloc = Allocation.createSized(mRS, entry.e, entry.size, mUsage);
-                } else {
-                    // Should never happen because the builder will always set one
-                    throw new IllegalStateException("Builder corrupt, no valid element in entry.");
                 }
                 vertexBuffers[ct] = alloc;
                 vtx[ct] = alloc.getID(mRS);
@@ -379,11 +377,8 @@ public class Mesh extends BaseObj {
                     alloc = Allocation.createTyped(mRS, entry.t, mUsage);
                 } else if(entry.e != null) {
                     alloc = Allocation.createSized(mRS, entry.e, entry.size, mUsage);
-                } else {
-                    // Should never happen because the builder will always set one
-                    throw new IllegalStateException("Builder corrupt, no valid element in entry.");
                 }
-                long allocID = (alloc == null) ? 0 : alloc.getID(mRS);
+                int allocID = (alloc == null) ? 0 : alloc.getID(mRS);
                 indexBuffers[ct] = alloc;
                 primitives[ct] = entry.prim;
 
@@ -391,7 +386,7 @@ public class Mesh extends BaseObj {
                 prim[ct] = entry.prim.mID;
             }
 
-            long id = mRS.nMeshCreate(vtx, idx, prim);
+            int id = mRS.nMeshCreate(vtx, idx, prim);
             Mesh newMesh = new Mesh(id, mRS);
             newMesh.mVertexBuffers = vertexBuffers;
             newMesh.mIndexBuffers = indexBuffers;
@@ -511,8 +506,8 @@ public class Mesh extends BaseObj {
         public Mesh create() {
             mRS.validate();
 
-            long[] vtx = new long[mVertexTypeCount];
-            long[] idx = new long[mIndexTypes.size()];
+            int[] vtx = new int[mVertexTypeCount];
+            int[] idx = new int[mIndexTypes.size()];
             int[] prim = new int[mIndexTypes.size()];
 
             Allocation[] indexBuffers = new Allocation[mIndexTypes.size()];
@@ -527,7 +522,7 @@ public class Mesh extends BaseObj {
 
             for(int ct = 0; ct < mIndexTypes.size(); ct ++) {
                 Entry entry = (Entry)mIndexTypes.elementAt(ct);
-                long allocID = (entry.a == null) ? 0 : entry.a.getID(mRS);
+                int allocID = (entry.a == null) ? 0 : entry.a.getID(mRS);
                 indexBuffers[ct] = entry.a;
                 primitives[ct] = entry.prim;
 
@@ -535,7 +530,7 @@ public class Mesh extends BaseObj {
                 prim[ct] = entry.prim.mID;
             }
 
-            long id = mRS.nMeshCreate(vtx, idx, prim);
+            int id = mRS.nMeshCreate(vtx, idx, prim);
             Mesh newMesh = new Mesh(id, mRS);
             newMesh.mVertexBuffers = vertexBuffers;
             newMesh.mIndexBuffers = indexBuffers;
@@ -818,7 +813,9 @@ public class Mesh extends BaseObj {
 
             sm.getVertexAllocation(0).copy1DRangeFromUnchecked(0, mMaxIndex, mVtxData);
             if(uploadToBufferObject) {
-                sm.getVertexAllocation(0).syncAll(Allocation.USAGE_SCRIPT);
+                if (uploadToBufferObject) {
+                    sm.getVertexAllocation(0).syncAll(Allocation.USAGE_SCRIPT);
+                }
             }
 
             sm.getIndexSetAllocation(0).copy1DRangeFromUnchecked(0, mIndexCount, mIndexData);

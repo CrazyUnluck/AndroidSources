@@ -16,21 +16,17 @@
 
 package android.media;
 
-import java.lang.annotation.Retention;
-import java.lang.annotation.RetentionPolicy;
+import android.media.MediaDrmException;
 import java.lang.ref.WeakReference;
-import java.util.ArrayList;
+import java.util.UUID;
 import java.util.HashMap;
 import java.util.List;
-import java.util.UUID;
-import android.annotation.IntDef;
-import android.annotation.NonNull;
-import android.annotation.Nullable;
-import android.annotation.StringDef;
-import android.annotation.SystemApi;
+import android.os.Binder;
+import android.os.Debug;
 import android.os.Handler;
 import android.os.Looper;
 import android.os.Message;
+import android.os.Bundle;
 import android.os.Parcel;
 import android.util.Log;
 
@@ -89,23 +85,6 @@ import android.util.Log;
  * encrypted content, the samples returned from the extractor remain encrypted, they
  * are only decrypted when the samples are delivered to the decoder.
  * <p>
- * MediaDrm methods throw {@link android.media.MediaDrm.MediaDrmStateException}
- * when a method is called on a MediaDrm object that has had an unrecoverable failure 
- * in the DRM plugin or security hardware. 
- * {@link android.media.MediaDrm.MediaDrmStateException} extends 
- * {@link java.lang.IllegalStateException} with the addition of a developer-readable 
- * diagnostic information string associated with the exception.
- * <p>
- * In the event of a mediaserver process crash or restart while a MediaDrm object
- * is active, MediaDrm methods may throw {@link android.media.MediaDrmResetException}.
- * To recover, the app must release the MediaDrm object, then create and initialize
- * a new one.
- * <p>
- * As {@link android.media.MediaDrmResetException} and 
- * {@link android.media.MediaDrm.MediaDrmStateException} both extend 
- * {@link java.lang.IllegalStateException}, they should be in an earlier catch() 
- * block than {@link java.lang.IllegalStateException} if handled separately.
- * <p>
  * <a name="Callbacks"></a>
  * <h3>Callbacks</h3>
  * <p>Applications should register for informational events in order
@@ -118,16 +97,12 @@ import android.util.Log;
  */
 public final class MediaDrm {
 
-    private static final String TAG = "MediaDrm";
+    private final static String TAG = "MediaDrm";
 
     private static final String PERMISSION = android.Manifest.permission.ACCESS_DRM_CERTIFICATES;
 
     private EventHandler mEventHandler;
-    private EventHandler mOnKeyStatusChangeEventHandler;
-    private EventHandler mOnExpirationUpdateEventHandler;
     private OnEventListener mOnEventListener;
-    private OnKeyStatusChangeListener mOnKeyStatusChangeListener;
-    private OnExpirationUpdateListener mOnExpirationUpdateListener;
 
     private long mNativeContext;
 
@@ -145,20 +120,12 @@ public final class MediaDrm {
      */
     public static final int CERTIFICATE_TYPE_X509 = 1;
 
-    /** @hide */
-    @IntDef({
-        CERTIFICATE_TYPE_NONE,
-        CERTIFICATE_TYPE_X509,
-    })
-    @Retention(RetentionPolicy.SOURCE)
-    public @interface CertificateType {}
-
     /**
      * Query if the given scheme identified by its UUID is supported on
      * this device.
      * @param uuid The UUID of the crypto scheme.
      */
-    public static final boolean isCryptoSchemeSupported(@NonNull UUID uuid) {
+    public static final boolean isCryptoSchemeSupported(UUID uuid) {
         return isCryptoSchemeSupportedNative(getByteArrayFromUUID(uuid), null);
     }
 
@@ -170,12 +137,11 @@ public final class MediaDrm {
      * @param mimeType The MIME type of the media container, e.g. "video/mp4"
      *   or "video/webm"
      */
-    public static final boolean isCryptoSchemeSupported(
-            @NonNull UUID uuid, @NonNull String mimeType) {
+    public static final boolean isCryptoSchemeSupported(UUID uuid, String mimeType) {
         return isCryptoSchemeSupportedNative(getByteArrayFromUUID(uuid), mimeType);
     }
 
-    private static final byte[] getByteArrayFromUUID(@NonNull UUID uuid) {
+    private static final byte[] getByteArrayFromUUID(UUID uuid) {
         long msb = uuid.getMostSignificantBits();
         long lsb = uuid.getLeastSignificantBits();
 
@@ -188,8 +154,8 @@ public final class MediaDrm {
         return uuidBytes;
     }
 
-    private static final native boolean isCryptoSchemeSupportedNative(
-            @NonNull byte[] uuid, @Nullable String mimeType);
+    private static final native boolean isCryptoSchemeSupportedNative(byte[] uuid,
+            String mimeType);
 
     /**
      * Instantiate a MediaDrm object
@@ -199,7 +165,7 @@ public final class MediaDrm {
      * @throws UnsupportedSchemeException if the device does not support the
      * specified scheme UUID
      */
-    public MediaDrm(@NonNull UUID uuid) throws UnsupportedSchemeException {
+    public MediaDrm(UUID uuid) throws UnsupportedSchemeException {
         Looper looper;
         if ((looper = Looper.myLooper()) != null) {
             mEventHandler = new EventHandler(this, looper);
@@ -217,217 +183,11 @@ public final class MediaDrm {
     }
 
     /**
-     * Thrown when an unrecoverable failure occurs during a MediaDrm operation.
-     * Extends java.lang.IllegalStateException with the addition of an error
-     * code that may be useful in diagnosing the failure.
-     */
-    public static final class MediaDrmStateException extends java.lang.IllegalStateException {
-        private final int mErrorCode;
-        private final String mDiagnosticInfo;
-
-        /**
-         * @hide
-         */
-        public MediaDrmStateException(int errorCode, @Nullable String detailMessage) {
-            super(detailMessage);
-            mErrorCode = errorCode;
-
-            // TODO get this from DRM session
-            final String sign = errorCode < 0 ? "neg_" : "";
-            mDiagnosticInfo =
-                "android.media.MediaDrm.error_" + sign + Math.abs(errorCode);
-
-        }
-
-        /**
-         * Retrieve the associated error code
-         *
-         * @hide
-         */
-        public int getErrorCode() {
-            return mErrorCode;
-        }
-
-        /**
-         * Retrieve a developer-readable diagnostic information string
-         * associated with the exception. Do not show this to end-users,
-         * since this string will not be localized or generally comprehensible
-         * to end-users.
-         */
-        @NonNull
-        public String getDiagnosticInfo() {
-            return mDiagnosticInfo;
-        }
-    }
-
-    /**
-     * Register a callback to be invoked when a session expiration update
-     * occurs.  The app's OnExpirationUpdateListener will be notified
-     * when the expiration time of the keys in the session have changed.
-     * @param listener the callback that will be run, or {@code null} to unregister the
-     *     previously registered callback.
-     * @param handler the handler on which the listener should be invoked, or
-     *     {@code null} if the listener should be invoked on the calling thread's looper.
-     */
-    public void setOnExpirationUpdateListener(
-            @Nullable OnExpirationUpdateListener listener, @Nullable Handler handler) {
-        if (listener != null) {
-            Looper looper = handler != null ? handler.getLooper() : Looper.myLooper();
-            if (looper != null) {
-                if (mEventHandler == null || mEventHandler.getLooper() != looper) {
-                    mEventHandler = new EventHandler(this, looper);
-                }
-            }
-        }
-        mOnExpirationUpdateListener = listener;
-    }
-
-    /**
-     * Interface definition for a callback to be invoked when a drm session
-     * expiration update occurs
-     */
-    public interface OnExpirationUpdateListener
-    {
-        /**
-         * Called when a session expiration update occurs, to inform the app
-         * about the change in expiration time
-         *
-         * @param md the MediaDrm object on which the event occurred
-         * @param sessionId the DRM session ID on which the event occurred
-         * @param expirationTime the new expiration time for the keys in the session.
-         *     The time is in milliseconds, relative to the Unix epoch.  A time of
-         *     0 indicates that the keys never expire.
-         */
-        void onExpirationUpdate(
-                @NonNull MediaDrm md, @NonNull byte[] sessionId, long expirationTime);
-    }
-
-    /**
-     * Register a callback to be invoked when the state of keys in a session
-     * change, e.g. when a license update occurs or when a license expires.
-     *
-     * @param listener the callback that will be run when key status changes, or
-     *     {@code null} to unregister the previously registered callback.
-     * @param handler the handler on which the listener should be invoked, or
-     *     null if the listener should be invoked on the calling thread's looper.
-     */
-    public void setOnKeyStatusChangeListener(
-            @Nullable OnKeyStatusChangeListener listener, @Nullable Handler handler) {
-        if (listener != null) {
-            Looper looper = handler != null ? handler.getLooper() : Looper.myLooper();
-            if (looper != null) {
-                if (mEventHandler == null || mEventHandler.getLooper() != looper) {
-                    mEventHandler = new EventHandler(this, looper);
-                }
-            }
-        }
-        mOnKeyStatusChangeListener = listener;
-    }
-
-    /**
-     * Interface definition for a callback to be invoked when the keys in a drm
-     * session change states.
-     */
-    public interface OnKeyStatusChangeListener
-    {
-        /**
-         * Called when the keys in a session change status, such as when the license
-         * is renewed or expires.
-         *
-         * @param md the MediaDrm object on which the event occurred
-         * @param sessionId the DRM session ID on which the event occurred
-         * @param keyInformation a list of {@link MediaDrm.KeyStatus}
-         *     instances indicating the status for each key in the session
-         * @param hasNewUsableKey indicates if a key has been added that is usable,
-         *     which may trigger an attempt to resume playback on the media stream
-         *     if it is currently blocked waiting for a key.
-         */
-        void onKeyStatusChange(
-                @NonNull MediaDrm md, @NonNull byte[] sessionId,
-                @NonNull List<KeyStatus> keyInformation,
-                boolean hasNewUsableKey);
-    }
-
-    /**
-     * Defines the status of a key.
-     * A KeyStatus for each key in a session is provided to the
-     * {@link OnKeyStatusChangeListener#onKeyStatusChange}
-     * listener.
-     */
-    public static final class KeyStatus {
-        private final byte[] mKeyId;
-        private final int mStatusCode;
-
-        /**
-         * The key is currently usable to decrypt media data
-         */
-        public static final int STATUS_USABLE = 0;
-
-        /**
-         * The key is no longer usable to decrypt media data because its
-         * expiration time has passed.
-         */
-        public static final int STATUS_EXPIRED = 1;
-
-        /**
-         * The key is not currently usable to decrypt media data because its
-         * output requirements cannot currently be met.
-         */
-        public static final int STATUS_OUTPUT_NOT_ALLOWED = 2;
-
-        /**
-         * The status of the key is not yet known and is being determined.
-         * The status will be updated with the actual status when it has
-         * been determined.
-         */
-        public static final int STATUS_PENDING = 3;
-
-        /**
-         * The key is not currently usable to decrypt media data because of an
-         * internal error in processing unrelated to input parameters.  This error
-         * is not actionable by an app.
-         */
-        public static final int STATUS_INTERNAL_ERROR = 4;
-
-        /** @hide */
-        @IntDef({
-            STATUS_USABLE,
-            STATUS_EXPIRED,
-            STATUS_OUTPUT_NOT_ALLOWED,
-            STATUS_PENDING,
-            STATUS_INTERNAL_ERROR,
-        })
-        @Retention(RetentionPolicy.SOURCE)
-        public @interface KeyStatusCode {}
-
-        KeyStatus(@NonNull byte[] keyId, @KeyStatusCode int statusCode) {
-            mKeyId = keyId;
-            mStatusCode = statusCode;
-        }
-
-        /**
-         * Returns the status code for the key
-         * @return one of {@link #STATUS_USABLE}, {@link #STATUS_EXPIRED},
-         * {@link #STATUS_OUTPUT_NOT_ALLOWED}, {@link #STATUS_PENDING}
-         * or {@link #STATUS_INTERNAL_ERROR}.
-         */
-        @KeyStatusCode
-        public int getStatusCode() { return mStatusCode; }
-
-        /**
-         * Returns the id for the key
-         */
-        @NonNull
-        public byte[] getKeyId() { return mKeyId; }
-    }
-
-    /**
      * Register a callback to be invoked when an event occurs
      *
-     * @param listener the callback that will be run.  Use {@code null} to
-     *        stop receiving event callbacks.
+     * @param listener the callback that will be run
      */
-    public void setOnEventListener(@Nullable OnEventListener listener)
+    public void setOnEventListener(OnEventListener listener)
     {
         mOnEventListener = listener;
     }
@@ -442,25 +202,18 @@ public final class MediaDrm {
          * Called when an event occurs that requires the app to be notified
          *
          * @param md the MediaDrm object on which the event occurred
-         * @param sessionId the DRM session ID on which the event occurred,
-         *        or {@code null} if there is no session ID associated with the event.
+         * @param sessionId the DRM session ID on which the event occurred
          * @param event indicates the event type
          * @param extra an secondary error code
          * @param data optional byte array of data that may be associated with the event
          */
-        void onEvent(
-                @NonNull MediaDrm md, @Nullable byte[] sessionId,
-                @DrmEvent int event, int extra,
-                @Nullable byte[] data);
+        void onEvent(MediaDrm md, byte[] sessionId, int event, int extra, byte[] data);
     }
 
     /**
      * This event type indicates that the app needs to request a certificate from
      * the provisioning server.  The request message data is obtained using
      * {@link #getProvisionRequest}
-     *
-     * @deprecated Handle provisioning via {@link android.media.NotProvisionedException}
-     * instead.
      */
     public static final int EVENT_PROVISION_REQUIRED = 1;
 
@@ -482,38 +235,19 @@ public final class MediaDrm {
      */
     public static final int EVENT_VENDOR_DEFINED = 4;
 
-    /**
-     * This event indicates that a session opened by the app has been reclaimed by the resource
-     * manager.
-     */
-    public static final int EVENT_SESSION_RECLAIMED = 5;
-
-    /** @hide */
-    @IntDef({
-        EVENT_PROVISION_REQUIRED,
-        EVENT_KEY_REQUIRED,
-        EVENT_KEY_EXPIRED,
-        EVENT_VENDOR_DEFINED,
-        EVENT_SESSION_RECLAIMED,
-    })
-    @Retention(RetentionPolicy.SOURCE)
-    public @interface DrmEvent {}
-
     private static final int DRM_EVENT = 200;
-    private static final int EXPIRATION_UPDATE = 201;
-    private static final int KEY_STATUS_CHANGE = 202;
 
     private class EventHandler extends Handler
     {
         private MediaDrm mMediaDrm;
 
-        public EventHandler(@NonNull MediaDrm md, @NonNull Looper looper) {
+        public EventHandler(MediaDrm md, Looper looper) {
             super(looper);
             mMediaDrm = md;
         }
 
         @Override
-        public void handleMessage(@NonNull Message msg) {
+        public void handleMessage(Message msg) {
             if (mMediaDrm.mNativeContext == 0) {
                 Log.w(TAG, "MediaDrm went away with unhandled events");
                 return;
@@ -521,6 +255,8 @@ public final class MediaDrm {
             switch(msg.what) {
 
             case DRM_EVENT:
+                Log.i(TAG, "Drm event (" + msg.arg1 + "," + msg.arg2 + ")");
+
                 if (mOnEventListener != null) {
                     if (msg.obj != null && msg.obj instanceof Parcel) {
                         Parcel parcel = (Parcel)msg.obj;
@@ -532,42 +268,7 @@ public final class MediaDrm {
                         if (data.length == 0) {
                             data = null;
                         }
-
-                        Log.i(TAG, "Drm event (" + msg.arg1 + "," + msg.arg2 + ")");
                         mOnEventListener.onEvent(mMediaDrm, sessionId, msg.arg1, msg.arg2, data);
-                    }
-                }
-                return;
-
-            case KEY_STATUS_CHANGE:
-                if (mOnKeyStatusChangeListener != null) {
-                    if (msg.obj != null && msg.obj instanceof Parcel) {
-                        Parcel parcel = (Parcel)msg.obj;
-                        byte[] sessionId = parcel.createByteArray();
-                        if (sessionId.length > 0) {
-                            List<KeyStatus> keyStatusList = keyStatusListFromParcel(parcel);
-                            boolean hasNewUsableKey = (parcel.readInt() != 0);
-
-                            Log.i(TAG, "Drm key status changed");
-                            mOnKeyStatusChangeListener.onKeyStatusChange(mMediaDrm, sessionId,
-                                    keyStatusList, hasNewUsableKey);
-                        }
-                    }
-                }
-                return;
-
-            case EXPIRATION_UPDATE:
-                if (mOnExpirationUpdateListener != null) {
-                    if (msg.obj != null && msg.obj instanceof Parcel) {
-                        Parcel parcel = (Parcel)msg.obj;
-                        byte[] sessionId = parcel.createByteArray();
-                        if (sessionId.length > 0) {
-                            long expirationTime = parcel.readLong();
-
-                            Log.i(TAG, "Drm key expiration update: " + expirationTime);
-                            mOnExpirationUpdateListener.onExpirationUpdate(mMediaDrm, sessionId,
-                                    expirationTime);
-                        }
                     }
                 }
                 return;
@@ -579,37 +280,22 @@ public final class MediaDrm {
         }
     }
 
-    /**
-     * Parse a list of KeyStatus objects from an event parcel
-     */
-    @NonNull
-    private List<KeyStatus> keyStatusListFromParcel(@NonNull Parcel parcel) {
-        int nelems = parcel.readInt();
-        List<KeyStatus> keyStatusList = new ArrayList(nelems);
-        while (nelems-- > 0) {
-            byte[] keyId = parcel.createByteArray();
-            int keyStatusCode = parcel.readInt();
-            keyStatusList.add(new KeyStatus(keyId, keyStatusCode));
-        }
-        return keyStatusList;
-    }
-
-    /**
+    /*
      * This method is called from native code when an event occurs.  This method
      * just uses the EventHandler system to post the event back to the main app thread.
      * We use a weak reference to the original MediaPlayer object so that the native
      * code is safe from the object disappearing from underneath it.  (This is
      * the cookie passed to native_setup().)
      */
-    private static void postEventFromNative(@NonNull Object mediadrm_ref,
-            int what, int eventType, int extra, @Nullable Object obj)
+    private static void postEventFromNative(Object mediadrm_ref,
+            int eventType, int extra, Object obj)
     {
-        MediaDrm md = (MediaDrm)((WeakReference<MediaDrm>)mediadrm_ref).get();
+        MediaDrm md = (MediaDrm)((WeakReference)mediadrm_ref).get();
         if (md == null) {
             return;
         }
         if (md.mEventHandler != null) {
-            Message m = md.mEventHandler.obtainMessage(what, eventType, extra, obj);
+            Message m = md.mEventHandler.obtainMessage(DRM_EVENT, eventType, extra, obj);
             md.mEventHandler.sendMessage(m);
         }
     }
@@ -620,15 +306,13 @@ public final class MediaDrm {
      * @throws NotProvisionedException if provisioning is needed
      * @throws ResourceBusyException if required resources are in use
      */
-    @NonNull
-    public native byte[] openSession() throws NotProvisionedException,
-            ResourceBusyException;
+    public native byte[] openSession() throws NotProvisionedException;
 
     /**
      * Close a session on the MediaDrm object that was previously opened
      * with {@link #openSession}.
      */
-    public native void closeSession(@NonNull byte[] sessionId);
+    public native void closeSession(byte[] sessionId);
 
     /**
      * This key request type species that the keys will be for online use, they will
@@ -648,87 +332,26 @@ public final class MediaDrm {
      */
     public static final int KEY_TYPE_RELEASE = 3;
 
-    /** @hide */
-    @IntDef({
-        KEY_TYPE_STREAMING,
-        KEY_TYPE_OFFLINE,
-        KEY_TYPE_RELEASE,
-    })
-    @Retention(RetentionPolicy.SOURCE)
-    public @interface KeyType {}
-
     /**
      * Contains the opaque data an app uses to request keys from a license server
      */
-    public static final class KeyRequest {
+    public final static class KeyRequest {
         private byte[] mData;
         private String mDefaultUrl;
-        private int mRequestType;
-
-        /**
-         * Key request type is initial license request
-         */
-        public static final int REQUEST_TYPE_INITIAL = 0;
-
-        /**
-         * Key request type is license renewal
-         */
-        public static final int REQUEST_TYPE_RENEWAL = 1;
-
-        /**
-         * Key request type is license release
-         */
-        public static final int REQUEST_TYPE_RELEASE = 2;
-
-        /** @hide */
-        @IntDef({
-            REQUEST_TYPE_INITIAL,
-            REQUEST_TYPE_RENEWAL,
-            REQUEST_TYPE_RELEASE,
-        })
-        @Retention(RetentionPolicy.SOURCE)
-        public @interface RequestType {}
 
         KeyRequest() {}
 
         /**
          * Get the opaque message data
          */
-        @NonNull
-        public byte[] getData() {
-            if (mData == null) {
-                // this should never happen as mData is initialized in
-                // JNI after construction of the KeyRequest object. The check
-                // is needed here to guarantee @NonNull annotation.
-                throw new RuntimeException("KeyRequest is not initialized");
-            }
-            return mData;
-        }
+        public byte[] getData() { return mData; }
 
         /**
          * Get the default URL to use when sending the key request message to a
          * server, if known.  The app may prefer to use a different license
          * server URL from other sources.
-         * This method returns an empty string if the default URL is not known.
          */
-        @NonNull
-        public String getDefaultUrl() {
-            if (mDefaultUrl == null) {
-                // this should never happen as mDefaultUrl is initialized in
-                // JNI after construction of the KeyRequest object. The check
-                // is needed here to guarantee @NonNull annotation.
-                throw new RuntimeException("KeyRequest is not initialized");
-            }
-            return mDefaultUrl;
-        }
-
-        /**
-         * Get the type of the request
-         * @return one of {@link #REQUEST_TYPE_INITIAL},
-         * {@link #REQUEST_TYPE_RENEWAL} or {@link #REQUEST_TYPE_RELEASE}
-         */
-        @RequestType
-        public int getRequestType() { return mRequestType; }
+        public String getDefaultUrl() { return mDefaultUrl; }
     };
 
     /**
@@ -760,15 +383,12 @@ public final class MediaDrm {
      * keys, which are identified by a keySetId.
      * @param optionalParameters are included in the key request message to
      * allow a client application to provide additional message parameters to the server.
-     * This may be {@code null} if no additional parameters are to be sent.
+     *
      * @throws NotProvisionedException if reprovisioning is needed, due to a
      * problem with the certifcate
      */
-    @NonNull
-    public native KeyRequest getKeyRequest(
-            @NonNull byte[] scope, @Nullable byte[] init,
-            @Nullable String mimeType, @KeyType int keyType,
-            @Nullable HashMap<String, String> optionalParameters)
+    public native KeyRequest getKeyRequest(byte[] scope, byte[] init,
+            String mimeType, int keyType, HashMap<String, String> optionalParameters)
             throws NotProvisionedException;
 
 
@@ -790,10 +410,9 @@ public final class MediaDrm {
      * reprovisioning is required
      * @throws DeniedByServerException if the response indicates that the
      * server rejected the request
+     * @throws ResourceBusyException if required resources are in use
      */
-    @Nullable
-    public native byte[] provideKeyResponse(
-            @NonNull byte[] scope, @NonNull byte[] response)
+    public native byte[] provideKeyResponse(byte[] scope, byte[] response)
             throws NotProvisionedException, DeniedByServerException;
 
 
@@ -804,14 +423,14 @@ public final class MediaDrm {
      * @param sessionId the session ID for the DRM session
      * @param keySetId identifies the saved key set to restore
      */
-    public native void restoreKeys(@NonNull byte[] sessionId, @NonNull byte[] keySetId);
+    public native void restoreKeys(byte[] sessionId, byte[] keySetId);
 
     /**
      * Remove the current keys from a session.
      *
      * @param sessionId the session ID for the DRM session
      */
-    public native void removeKeys(@NonNull byte[] sessionId);
+    public native void removeKeys(byte[] sessionId);
 
     /**
      * Request an informative description of the key status for the session.  The status is
@@ -822,46 +441,26 @@ public final class MediaDrm {
      *
      * @param sessionId the session ID for the DRM session
      */
-    @NonNull
-    public native HashMap<String, String> queryKeyStatus(@NonNull byte[] sessionId);
+    public native HashMap<String, String> queryKeyStatus(byte[] sessionId);
 
     /**
      * Contains the opaque data an app uses to request a certificate from a provisioning
      * server
      */
-    public static final class ProvisionRequest {
+    public final static class ProvisionRequest {
         ProvisionRequest() {}
 
         /**
          * Get the opaque message data
          */
-        @NonNull
-        public byte[] getData() {
-            if (mData == null) {
-                // this should never happen as mData is initialized in
-                // JNI after construction of the KeyRequest object. The check
-                // is needed here to guarantee @NonNull annotation.
-                throw new RuntimeException("ProvisionRequest is not initialized");
-            }
-            return mData;
-        }
+        public byte[] getData() { return mData; }
 
         /**
          * Get the default URL to use when sending the provision request
          * message to a server, if known. The app may prefer to use a different
          * provisioning server URL obtained from other sources.
-         * This method returns an empty string if the default URL is not known.
          */
-        @NonNull
-        public String getDefaultUrl() {
-            if (mDefaultUrl == null) {
-                // this should never happen as mDefaultUrl is initialized in
-                // JNI after construction of the ProvisionRequest object. The check
-                // is needed here to guarantee @NonNull annotation.
-                throw new RuntimeException("ProvisionRequest is not initialized");
-            }
-            return mDefaultUrl;
-        }
+        public String getDefaultUrl() { return mDefaultUrl; }
 
         private byte[] mData;
         private String mDefaultUrl;
@@ -876,14 +475,12 @@ public final class MediaDrm {
      * is returned in ProvisionRequest.data. The recommended URL to deliver the provision
      * request to is returned in ProvisionRequest.defaultUrl.
      */
-    @NonNull
     public ProvisionRequest getProvisionRequest() {
         return getProvisionRequestNative(CERTIFICATE_TYPE_NONE, "");
     }
 
-    @NonNull
     private native ProvisionRequest getProvisionRequestNative(int certType,
-           @NonNull String certAuthority);
+            String certAuthority);
 
     /**
      * After a provision response is received by the app, it is provided to the DRM
@@ -895,14 +492,12 @@ public final class MediaDrm {
      * @throws DeniedByServerException if the response indicates that the
      * server rejected the request
      */
-    public void provideProvisionResponse(@NonNull byte[] response)
+    public void provideProvisionResponse(byte[] response)
             throws DeniedByServerException {
         provideProvisionResponseNative(response);
     }
 
-    @NonNull
-    /* could there be a valid response with 0-sized certificate or key? */
-    private native Certificate provideProvisionResponseNative(@NonNull byte[] response)
+    private native Certificate provideProvisionResponseNative(byte[] response)
             throws DeniedByServerException;
 
     /**
@@ -920,16 +515,8 @@ public final class MediaDrm {
      * record on the client is only removed after positive confirmation that the server
      * received the message using releaseSecureStops().
      */
-    @NonNull
     public native List<byte[]> getSecureStops();
 
-    /**
-     * Access secure stop by secure stop ID.
-     *
-     * @param ssid - The secure stop ID provided by the license server.
-     */
-    @NonNull
-    public native byte[] getSecureStop(@NonNull byte[] ssid);
 
     /**
      * Process the SecureStop server response message ssRelease.  After authenticating
@@ -937,12 +524,8 @@ public final class MediaDrm {
      *
      * @param ssRelease the server response indicating which secure stops to release
      */
-    public native void releaseSecureStops(@NonNull byte[] ssRelease);
+    public native void releaseSecureStops(byte[] ssRelease);
 
-    /**
-     * Remove all secure stops without requiring interaction with the server.
-     */
-     public native void releaseAllSecureStops();
 
     /**
      * String property name: identifies the maker of the DRM engine plugin
@@ -966,16 +549,6 @@ public final class MediaDrm {
      */
     public static final String PROPERTY_ALGORITHMS = "algorithms";
 
-    /** @hide */
-    @StringDef({
-        PROPERTY_VENDOR,
-        PROPERTY_VERSION,
-        PROPERTY_DESCRIPTION,
-        PROPERTY_ALGORITHMS,
-    })
-    @Retention(RetentionPolicy.SOURCE)
-    public @interface StringProperty {}
-
     /**
      * Read a DRM engine plugin String property value, given the property name string.
      * <p>
@@ -983,68 +556,51 @@ public final class MediaDrm {
      * {@link #PROPERTY_VENDOR}, {@link #PROPERTY_VERSION},
      * {@link #PROPERTY_DESCRIPTION}, {@link #PROPERTY_ALGORITHMS}
      */
-    /* FIXME this throws IllegalStateException for invalid property names */
-    @NonNull
-    public native String getPropertyString(@NonNull @StringProperty String propertyName);
+    public native String getPropertyString(String propertyName);
+
 
     /**
      * Byte array property name: the device unique identifier is established during
      * device provisioning and provides a means of uniquely identifying each device.
      */
-    /* FIXME this throws IllegalStateException for invalid property names */
     public static final String PROPERTY_DEVICE_UNIQUE_ID = "deviceUniqueId";
-
-    /** @hide */
-    @StringDef({
-        PROPERTY_DEVICE_UNIQUE_ID,
-    })
-    @Retention(RetentionPolicy.SOURCE)
-    public @interface ArrayProperty {}
 
     /**
      * Read a DRM engine plugin byte array property value, given the property name string.
      * <p>
      * Standard fields names are {@link #PROPERTY_DEVICE_UNIQUE_ID}
      */
-    @NonNull
-    public native byte[] getPropertyByteArray(@ArrayProperty String propertyName);
+    public native byte[] getPropertyByteArray(String propertyName);
+
 
     /**
      * Set a DRM engine plugin String property value.
      */
-    public native void setPropertyString(
-            @StringProperty String propertyName, @NonNull String value);
+    public native void setPropertyString(String propertyName, String value);
 
     /**
      * Set a DRM engine plugin byte array property value.
      */
-    public native void setPropertyByteArray(
-            @ArrayProperty String propertyName, @NonNull byte[] value);
+    public native void setPropertyByteArray(String propertyName, byte[] value);
 
-    private static final native void setCipherAlgorithmNative(
-            @NonNull MediaDrm drm, @NonNull byte[] sessionId, @NonNull String algorithm);
 
-    private static final native void setMacAlgorithmNative(
-            @NonNull MediaDrm drm, @NonNull byte[] sessionId, @NonNull String algorithm);
+    private static final native void setCipherAlgorithmNative(MediaDrm drm, byte[] sessionId,
+            String algorithm);
 
-    @NonNull
-    private static final native byte[] encryptNative(
-            @NonNull MediaDrm drm, @NonNull byte[] sessionId,
-            @NonNull byte[] keyId, @NonNull byte[] input, @NonNull byte[] iv);
+    private static final native void setMacAlgorithmNative(MediaDrm drm, byte[] sessionId,
+            String algorithm);
 
-    @NonNull
-    private static final native byte[] decryptNative(
-            @NonNull MediaDrm drm, @NonNull byte[] sessionId,
-            @NonNull byte[] keyId, @NonNull byte[] input, @NonNull byte[] iv);
+    private static final native byte[] encryptNative(MediaDrm drm, byte[] sessionId,
+            byte[] keyId, byte[] input, byte[] iv);
 
-    @NonNull
-    private static final native byte[] signNative(
-            @NonNull MediaDrm drm, @NonNull byte[] sessionId,
-            @NonNull byte[] keyId, @NonNull byte[] message);
+    private static final native byte[] decryptNative(MediaDrm drm, byte[] sessionId,
+            byte[] keyId, byte[] input, byte[] iv);
 
-    private static final native boolean verifyNative(
-            @NonNull MediaDrm drm, @NonNull byte[] sessionId,
-            @NonNull byte[] keyId, @NonNull byte[] message, @NonNull byte[] signature);
+    private static final native byte[] signNative(MediaDrm drm, byte[] sessionId,
+            byte[] keyId, byte[] message);
+
+    private static final native boolean verifyNative(MediaDrm drm, byte[] sessionId,
+            byte[] keyId, byte[] message, byte[] signature);
 
     /**
      * In addition to supporting decryption of DASH Common Encrypted Media, the
@@ -1070,15 +626,16 @@ public final class MediaDrm {
      * A CryptoSession is obtained using {@link #getCryptoSession}
      */
     public final class CryptoSession {
+        private MediaDrm mDrm;
         private byte[] mSessionId;
 
-        CryptoSession(@NonNull byte[] sessionId,
-                      @NonNull String cipherAlgorithm,
-                      @NonNull String macAlgorithm)
+        CryptoSession(MediaDrm drm, byte[] sessionId,
+                String cipherAlgorithm, String macAlgorithm)
         {
             mSessionId = sessionId;
-            setCipherAlgorithmNative(MediaDrm.this, sessionId, cipherAlgorithm);
-            setMacAlgorithmNative(MediaDrm.this, sessionId, macAlgorithm);
+            mDrm = drm;
+            setCipherAlgorithmNative(drm, sessionId, cipherAlgorithm);
+            setMacAlgorithmNative(drm, sessionId, macAlgorithm);
         }
 
         /**
@@ -1088,10 +645,8 @@ public final class MediaDrm {
          * @param input the data to encrypt
          * @param iv the initialization vector to use for the cipher
          */
-        @NonNull
-        public byte[] encrypt(
-                @NonNull byte[] keyid, @NonNull byte[] input, @NonNull byte[] iv) {
-            return encryptNative(MediaDrm.this, mSessionId, keyid, input, iv);
+        public byte[] encrypt(byte[] keyid, byte[] input, byte[] iv) {
+            return encryptNative(mDrm, mSessionId, keyid, input, iv);
         }
 
         /**
@@ -1101,10 +656,8 @@ public final class MediaDrm {
          * @param input the data to encrypt
          * @param iv the initialization vector to use for the cipher
          */
-        @NonNull
-        public byte[] decrypt(
-                @NonNull byte[] keyid, @NonNull byte[] input, @NonNull byte[] iv) {
-            return decryptNative(MediaDrm.this, mSessionId, keyid, input, iv);
+        public byte[] decrypt(byte[] keyid, byte[] input, byte[] iv) {
+            return decryptNative(mDrm, mSessionId, keyid, input, iv);
         }
 
         /**
@@ -1113,9 +666,8 @@ public final class MediaDrm {
          * @param keyid specifies which key to use
          * @param message the data for which a signature is to be computed
          */
-        @NonNull
-        public byte[] sign(@NonNull byte[] keyid, @NonNull byte[] message) {
-            return signNative(MediaDrm.this, mSessionId, keyid, message);
+        public byte[] sign(byte[] keyid, byte[] message) {
+            return signNative(mDrm, mSessionId, keyid, message);
         }
 
         /**
@@ -1127,9 +679,8 @@ public final class MediaDrm {
          * @param signature the reference signature which will be compared with the
          *        computed signature
          */
-        public boolean verify(
-                @NonNull byte[] keyid, @NonNull byte[] message, @NonNull byte[] signature) {
-            return verifyNative(MediaDrm.this, mSessionId, keyid, message, signature);
+        public boolean verify(byte[] keyid, byte[] message, byte[] signature) {
+            return verifyNative(mDrm, mSessionId, keyid, message, signature);
         }
     };
 
@@ -1153,11 +704,10 @@ public final class MediaDrm {
      * using the method {@link #getPropertyString} with the property name
      * "algorithms".
      */
-    public CryptoSession getCryptoSession(
-            @NonNull byte[] sessionId,
-            @NonNull String cipherAlgorithm, @NonNull String macAlgorithm)
+    public CryptoSession getCryptoSession(byte[] sessionId,
+            String cipherAlgorithm, String macAlgorithm)
     {
-        return new CryptoSession(sessionId, cipherAlgorithm, macAlgorithm);
+        return new CryptoSession(this, sessionId, cipherAlgorithm, macAlgorithm);
     }
 
     /**
@@ -1166,11 +716,11 @@ public final class MediaDrm {
      *
      * @hide - not part of the public API at this time
      */
-    public static final class CertificateRequest {
+    public final static class CertificateRequest {
         private byte[] mData;
         private String mDefaultUrl;
 
-        CertificateRequest(@NonNull byte[] data, @NonNull String defaultUrl) {
+        CertificateRequest(byte[] data, String defaultUrl) {
             mData = data;
             mDefaultUrl = defaultUrl;
         }
@@ -1178,7 +728,6 @@ public final class MediaDrm {
         /**
          * Get the opaque message data
          */
-        @NonNull
         public byte[] getData() { return mData; }
 
         /**
@@ -1186,7 +735,6 @@ public final class MediaDrm {
          * message to a server, if known. The app may prefer to use a different
          * certificate server URL obtained from other sources.
          */
-        @NonNull
         public String getDefaultUrl() { return mDefaultUrl; }
     }
 
@@ -1202,9 +750,8 @@ public final class MediaDrm {
      *
      * @hide - not part of the public API at this time
      */
-    @NonNull
-    public CertificateRequest getCertificateRequest(
-            @CertificateType int certType, @NonNull String certAuthority)
+    public CertificateRequest getCertificateRequest(int certType,
+            String certAuthority)
     {
         ProvisionRequest provisionRequest = getProvisionRequestNative(certType, certAuthority);
         return new CertificateRequest(provisionRequest.getData(),
@@ -1217,36 +764,18 @@ public final class MediaDrm {
      *
      * @hide - not part of the public API at this time
      */
-    public static final class Certificate {
+    public final static class Certificate {
         Certificate() {}
 
         /**
          * Get the wrapped private key data
          */
-        @NonNull
-        public byte[] getWrappedPrivateKey() {
-            if (mWrappedKey == null) {
-                // this should never happen as mWrappedKey is initialized in
-                // JNI after construction of the KeyRequest object. The check
-                // is needed here to guarantee @NonNull annotation.
-                throw new RuntimeException("Cerfificate is not initialized");
-            }
-            return mWrappedKey;
-        }
+        public byte[] getWrappedPrivateKey() { return mWrappedKey; }
 
         /**
          * Get the PEM-encoded certificate chain
          */
-        @NonNull
-        public byte[] getContent() {
-            if (mCertificateData == null) {
-                // this should never happen as mCertificateData is initialized in
-                // JNI after construction of the KeyRequest object. The check
-                // is needed here to guarantee @NonNull annotation.
-                throw new RuntimeException("Cerfificate is not initialized");
-            }
-            return mCertificateData;
-        }
+        public byte[] getContent() { return mCertificateData; }
 
         private byte[] mWrappedKey;
         private byte[] mCertificateData;
@@ -1270,16 +799,13 @@ public final class MediaDrm {
      *
      * @hide - not part of the public API at this time
      */
-    @NonNull
-    public Certificate provideCertificateResponse(@NonNull byte[] response)
+    public Certificate provideCertificateResponse(byte[] response)
             throws DeniedByServerException {
         return provideProvisionResponseNative(response);
     }
 
-    @NonNull
-    private static final native byte[] signRSANative(
-            @NonNull MediaDrm drm, @NonNull byte[] sessionId,
-            @NonNull String algorithm, @NonNull byte[] wrappedKey, @NonNull byte[] message);
+    private static final native byte[] signRSANative(MediaDrm drm, byte[] sessionId,
+            String algorithm, byte[] wrappedKey, byte[] message);
 
     /**
      * Sign data using an RSA key
@@ -1292,10 +818,8 @@ public final class MediaDrm {
      *
      * @hide - not part of the public API at this time
      */
-    @NonNull
-    public byte[] signRSA(
-            @NonNull byte[] sessionId, @NonNull String algorithm,
-            @NonNull byte[] wrappedKey, @NonNull byte[] message) {
+    public byte[] signRSA(byte[] sessionId, String algorithm,
+            byte[] wrappedKey, byte[] message) {
         return signRSANative(this, sessionId, algorithm, wrappedKey, message);
     }
 

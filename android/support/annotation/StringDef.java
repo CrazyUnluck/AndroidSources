@@ -22,6 +22,7 @@ import static java.lang.annotation.ElementType.ANNOTATION_TYPE;
 import static java.lang.annotation.ElementType.FIELD;
 import static java.lang.annotation.ElementType.METHOD;
 import static java.lang.annotation.ElementType.PARAMETER;
+import static java.lang.annotation.RetentionPolicy.CLASS;
 import static java.lang.annotation.RetentionPolicy.SOURCE;
 
 /**
@@ -29,22 +30,22 @@ import static java.lang.annotation.RetentionPolicy.SOURCE;
  * type and that its value should be one of the explicitly named constants.
  * <p>
  * Example:
- * <pre><code>
+ * <pre>{@code
  *  &#64;Retention(SOURCE)
- *  &#64;StringDef({
+ *  &#64;StringDef(&#123;
  *     POWER_SERVICE,
  *     WINDOW_SERVICE,
  *     LAYOUT_INFLATER_SERVICE
- *  })
- *  public @interface ServiceName {}
+ *  &#125;)
+ *  public &#64;interface ServiceName &#123;&#125;
  *  public static final String POWER_SERVICE = "power";
  *  public static final String WINDOW_SERVICE = "window";
  *  public static final String LAYOUT_INFLATER_SERVICE = "layout_inflater";
  *  ...
- *  public abstract Object getSystemService(@ServiceName String name);
- * </code></pre>
+ *  public abstract Object getSystemService(&#64;ServiceName String name);
+ * }</pre>
  */
-@Retention(SOURCE)
+@Retention(CLASS)
 @Target({ANNOTATION_TYPE})
 public @interface StringDef {
     /** Defines the allowed constants for this element */

@@ -44,6 +44,7 @@ public final class InputWindowHandle {
 
     // Window layout params attributes.  (WindowManager.LayoutParams)
     public int layoutParamsFlags;
+    public int layoutParamsPrivateFlags;
     public int layoutParamsType;
 
     // Dispatching timeout.
@@ -97,18 +98,6 @@ public final class InputWindowHandle {
         this.inputApplicationHandle = inputApplicationHandle;
         this.windowState = windowState;
         this.displayId = displayId;
-    }
-
-    @Override
-    public String toString() {
-        return new StringBuilder(name)
-                .append(", layer=").append(layer)
-                .append(", frame=[").append(frameLeft).append(",").append(frameTop).append(",")
-                        .append(frameRight).append(",").append(frameBottom).append("]")
-                .append(", touchableRegion=").append(touchableRegion)
-                .append(", visible=").append(visible)
-                .toString();
-
     }
 
     @Override

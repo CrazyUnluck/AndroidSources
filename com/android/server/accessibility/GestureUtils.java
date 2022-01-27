@@ -69,7 +69,8 @@ final class GestureUtils {
             return true;
         }
 
-        final float firstMagnitude = (float) Math.hypot(firstDeltaX, firstDeltaY);
+        final float firstMagnitude =
+            (float) Math.sqrt(firstDeltaX * firstDeltaX + firstDeltaY * firstDeltaY);
         final float firstXNormalized =
             (firstMagnitude > 0) ? firstDeltaX / firstMagnitude : firstDeltaX;
         final float firstYNormalized =
@@ -82,7 +83,8 @@ final class GestureUtils {
             return true;
         }
 
-        final float secondMagnitude = (float) Math.hypot(secondDeltaX, secondDeltaY);
+        final float secondMagnitude =
+            (float) Math.sqrt(secondDeltaX * secondDeltaX + secondDeltaY * secondDeltaY);
         final float secondXNormalized =
             (secondMagnitude > 0) ? secondDeltaX / secondMagnitude : secondDeltaX;
         final float secondYNormalized =

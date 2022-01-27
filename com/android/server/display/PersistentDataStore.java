@@ -35,7 +35,6 @@ import java.io.FileNotFoundException;
 import java.io.FileOutputStream;
 import java.io.IOException;
 import java.io.InputStream;
-import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 
 import libcore.io.IoUtils;
@@ -196,7 +195,7 @@ final class PersistentDataStore {
         XmlPullParser parser;
         try {
             parser = Xml.newPullParser();
-            parser.setInput(new BufferedInputStream(is), StandardCharsets.UTF_8.name());
+            parser.setInput(new BufferedInputStream(is), null);
             loadFromXml(parser);
         } catch (IOException ex) {
             Slog.w(TAG, "Failed to load display manager persistent store data.", ex);
@@ -216,7 +215,7 @@ final class PersistentDataStore {
             boolean success = false;
             try {
                 XmlSerializer serializer = new FastXmlSerializer();
-                serializer.setOutput(new BufferedOutputStream(os), StandardCharsets.UTF_8.name());
+                serializer.setOutput(new BufferedOutputStream(os), "utf-8");
                 saveToXml(serializer);
                 serializer.flush();
                 success = true;

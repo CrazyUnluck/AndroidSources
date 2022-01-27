@@ -16,9 +16,6 @@
 
 package android.os;
 
-import android.app.IAlarmManager;
-import android.content.Context;
-import android.util.Slog;
 
 /**
  * Core timekeeping facilities.
@@ -92,8 +89,6 @@ import android.util.Slog;
  * </ul>
  */
 public final class SystemClock {
-    private static final String TAG = "SystemClock";
-
     /**
      * This class is uninstantiable.
      */
@@ -139,23 +134,7 @@ public final class SystemClock {
      *
      * @return if the clock was successfully set to the specified time.
      */
-    public static boolean setCurrentTimeMillis(long millis) {
-        IBinder b = ServiceManager.getService(Context.ALARM_SERVICE);
-        IAlarmManager mgr = IAlarmManager.Stub.asInterface(b);
-        if (mgr == null) {
-            return false;
-        }
-
-        try {
-            return mgr.setTime(millis);
-        } catch (RemoteException e) {
-            Slog.e(TAG, "Unable to set RTC", e);
-        } catch (SecurityException e) {
-            Slog.e(TAG, "Unable to set RTC", e);
-        }
-
-        return false;
-    }
+    native public static boolean setCurrentTimeMillis(long millis);
 
     /**
      * Returns milliseconds since boot, not counting time spent in deep sleep.

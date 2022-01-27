@@ -16,7 +16,6 @@
 
 package android.media;
 
-import android.annotation.NonNull;
 import android.media.MediaCryptoException;
 import java.util.UUID;
 
@@ -35,12 +34,11 @@ public final class MediaCrypto {
      * this device.
      * @param uuid The UUID of the crypto scheme.
      */
-    public static final boolean isCryptoSchemeSupported(@NonNull UUID uuid) {
+    public static final boolean isCryptoSchemeSupported(UUID uuid) {
         return isCryptoSchemeSupportedNative(getByteArrayFromUUID(uuid));
     }
 
-    @NonNull
-    private static final byte[] getByteArrayFromUUID(@NonNull UUID uuid) {
+    private static final byte[] getByteArrayFromUUID(UUID uuid) {
         long msb = uuid.getMostSignificantBits();
         long lsb = uuid.getLeastSignificantBits();
 
@@ -53,7 +51,7 @@ public final class MediaCrypto {
         return uuidBytes;
     }
 
-    private static final native boolean isCryptoSchemeSupportedNative(@NonNull byte[] uuid);
+    private static final native boolean isCryptoSchemeSupportedNative(byte[] uuid);
 
     /**
      * Instantiate a MediaCrypto object using opaque, crypto scheme specific
@@ -61,7 +59,7 @@ public final class MediaCrypto {
      * @param uuid The UUID of the crypto scheme.
      * @param initData Opaque initialization data specific to the crypto scheme.
      */
-    public MediaCrypto(@NonNull UUID uuid, @NonNull byte[] initData) throws MediaCryptoException {
+    public MediaCrypto(UUID uuid, byte[] initData) throws MediaCryptoException {
         native_setup(getByteArrayFromUUID(uuid), initData);
     }
 
@@ -70,21 +68,7 @@ public final class MediaCrypto {
      * to decode data of the given mime type.
      * @param mime The mime type of the media data
      */
-    public final native boolean requiresSecureDecoderComponent(@NonNull String mime);
-
-    /**
-     * Associate a MediaDrm session with this MediaCrypto instance.  The
-     * MediaDrm session is used to securely load decryption keys for a
-     * crypto scheme.  The crypto keys loaded through the MediaDrm session
-     * may be selected for use during the decryption operation performed
-     * by {@link android.media.MediaCodec#queueSecureInputBuffer} by specifying
-     * their key ids in the {@link android.media.MediaCodec.CryptoInfo#key} field.
-     * @param sessionId the MediaDrm sessionId to associate with this
-     * MediaCrypto instance
-     * @throws MediaCryptoException on failure to set the sessionId
-     */
-    public final native void setMediaDrmSession(@NonNull byte[] sessionId)
-        throws MediaCryptoException;
+    public final native boolean requiresSecureDecoderComponent(String mime);
 
     @Override
     protected void finalize() {
@@ -94,7 +78,7 @@ public final class MediaCrypto {
     public native final void release();
     private static native final void native_init();
 
-    private native final void native_setup(@NonNull byte[] uuid, @NonNull byte[] initData)
+    private native final void native_setup(byte[] uuid, byte[] initData)
         throws MediaCryptoException;
 
     private native final void native_finalize();

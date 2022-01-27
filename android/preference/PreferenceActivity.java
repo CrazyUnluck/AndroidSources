@@ -16,9 +16,6 @@
 
 package android.preference;
 
-import android.annotation.Nullable;
-import android.annotation.StringRes;
-import android.annotation.XmlRes;
 import android.app.Fragment;
 import android.app.FragmentBreadCrumbs;
 import android.app.FragmentManager;
@@ -36,6 +33,7 @@ import android.os.Parcel;
 import android.os.Parcelable;
 import android.text.TextUtils;
 import android.util.AttributeSet;
+import android.util.Log;
 import android.util.TypedValue;
 import android.util.Xml;
 import android.view.LayoutInflater;
@@ -215,9 +213,6 @@ public abstract class PreferenceActivity extends ListActivity implements
 
     private Button mNextButton;
 
-    private int mPreferenceHeaderItemResId = 0;
-    private boolean mPreferenceHeaderRemoveEmptyIcon = false;
-
     /**
      * The starting request code given out to preference framework.
      */
@@ -264,15 +259,10 @@ public abstract class PreferenceActivity extends ListActivity implements
         }
 
         private LayoutInflater mInflater;
-        private int mLayoutResId;
-        private boolean mRemoveIconIfEmpty;
 
-        public HeaderAdapter(Context context, List<Header> objects, int layoutResId,
-                boolean removeIconBehavior) {
+        public HeaderAdapter(Context context, List<Header> objects) {
             super(context, 0, objects);
             mInflater = (LayoutInflater)context.getSystemService(Context.LAYOUT_INFLATER_SERVICE);
-            mLayoutResId = layoutResId;
-            mRemoveIconIfEmpty = removeIconBehavior;
         }
 
         @Override
@@ -281,7 +271,8 @@ public abstract class PreferenceActivity extends ListActivity implements
             View view;
 
             if (convertView == null) {
-                view = mInflater.inflate(mLayoutResId, parent, false);
+                view = mInflater.inflate(com.android.internal.R.layout.preference_header_item,
+                        parent, false);
                 holder = new HeaderViewHolder();
                 holder.icon = (ImageView) view.findViewById(com.android.internal.R.id.icon);
                 holder.title = (TextView) view.findViewById(com.android.internal.R.id.title);
@@ -294,16 +285,7 @@ public abstract class PreferenceActivity extends ListActivity implements
 
             // All view fields must be updated every time, because the view may be recycled 
             Header header = getItem(position);
-            if (mRemoveIconIfEmpty) {
-                if (header.iconRes == 0) {
-                    holder.icon.setVisibility(View.GONE);
-                } else {
-                    holder.icon.setVisibility(View.VISIBLE);
-                    holder.icon.setImageResource(header.iconRes);
-                }
-            } else {
-                holder.icon.setImageResource(header.iconRes);
-            }
+            holder.icon.setImageResource(header.iconRes);
             holder.title.setText(header.getTitle(getContext().getResources()));
             CharSequence summary = header.getSummary(getContext().getResources());
             if (!TextUtils.isEmpty(summary)) {
@@ -340,7 +322,6 @@ public abstract class PreferenceActivity extends ListActivity implements
          * Resource ID of title of the header that is shown to the user.
          * @attr ref android.R.styleable#PreferenceHeader_title
          */
-        @StringRes
         public int titleRes;
 
         /**
@@ -353,7 +334,6 @@ public abstract class PreferenceActivity extends ListActivity implements
          * Resource ID of optional summary describing what this header controls.
          * @attr ref android.R.styleable#PreferenceHeader_summary
          */
-        @StringRes
         public int summaryRes;
 
         /**
@@ -366,7 +346,6 @@ public abstract class PreferenceActivity extends ListActivity implements
          * Resource ID of optional text to show as the title in the bread crumb.
          * @attr ref android.R.styleable#PreferenceHeader_breadCrumbTitle
          */
-        @StringRes
         public int breadCrumbTitleRes;
 
         /**
@@ -379,7 +358,6 @@ public abstract class PreferenceActivity extends ListActivity implements
          * Resource ID of optional text to show as the short title in the bread crumb.
          * @attr ref android.R.styleable#PreferenceHeader_breadCrumbShortTitle
          */
-        @StringRes
         public int breadCrumbShortTitleRes;
 
         /**
@@ -532,29 +510,10 @@ public abstract class PreferenceActivity extends ListActivity implements
     }
 
     @Override
-    protected void onCreate(@Nullable Bundle savedInstanceState) {
+    protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
 
-        // Theming for the PreferenceActivity layout and for the Preference Header(s) layout
-        TypedArray sa = obtainStyledAttributes(null,
-                com.android.internal.R.styleable.PreferenceActivity,
-                com.android.internal.R.attr.preferenceActivityStyle,
-                0);
-
-        final int layoutResId = sa.getResourceId(
-                com.android.internal.R.styleable.PreferenceActivity_layout,
-                com.android.internal.R.layout.preference_list_content);
-
-        mPreferenceHeaderItemResId = sa.getResourceId(
-                com.android.internal.R.styleable.PreferenceActivity_headerLayout,
-                com.android.internal.R.layout.preference_header_item);
-        mPreferenceHeaderRemoveEmptyIcon = sa.getBoolean(
-                com.android.internal.R.styleable.PreferenceActivity_headerRemoveIconIfEmpty,
-                false);
-
-        sa.recycle();
-
-        setContentView(layoutResId);
+        setContentView(com.android.internal.R.layout.preference_list_content);
 
         mListFooter = (FrameLayout)findViewById(com.android.internal.R.id.list_footer);
         mPrefsContainer = (ViewGroup) findViewById(com.android.internal.R.id.prefs_frame);
@@ -624,8 +583,7 @@ public abstract class PreferenceActivity extends ListActivity implements
                 showBreadCrumbs(initialTitleStr, initialShortTitleStr);
             }
         } else if (mHeaders.size() > 0) {
-            setListAdapter(new HeaderAdapter(this, mHeaders, mPreferenceHeaderItemResId,
-                    mPreferenceHeaderRemoveEmptyIcon));
+            setListAdapter(new HeaderAdapter(this, mHeaders));
             if (!mSinglePane) {
                 // Multi-pane.
                 getListView().setChoiceMode(AbsListView.CHOICE_MODE_SINGLE);
@@ -804,7 +762,7 @@ public abstract class PreferenceActivity extends ListActivity implements
      * @param resid The XML resource to load and parse.
      * @param target The list in which the parsed headers should be placed.
      */
-    public void loadHeadersFromResource(@XmlRes int resid, List<Header> target) {
+    public void loadHeadersFromResource(int resid, List<Header> target) {
         XmlResourceParser parser = null;
         try {
             parser = getResources().getXml(resid);
@@ -836,8 +794,8 @@ public abstract class PreferenceActivity extends ListActivity implements
                 if ("header".equals(nodeName)) {
                     Header header = new Header();
 
-                    TypedArray sa = obtainStyledAttributes(
-                            attrs, com.android.internal.R.styleable.PreferenceHeader);
+                    TypedArray sa = getResources().obtainAttributes(attrs,
+                            com.android.internal.R.styleable.PreferenceHeader);
                     header.id = sa.getResourceId(
                             com.android.internal.R.styleable.PreferenceHeader_id,
                             (int)HEADER_ID_UNDEFINED);
@@ -1093,7 +1051,7 @@ public abstract class PreferenceActivity extends ListActivity implements
      * fragment.
      */
     public Intent onBuildStartFragmentIntent(String fragmentName, Bundle args,
-            @StringRes int titleRes, int shortTitleRes) {
+            int titleRes, int shortTitleRes) {
         Intent intent = new Intent(Intent.ACTION_MAIN);
         intent.setClass(this, getClass());
         intent.putExtra(EXTRA_SHOW_FRAGMENT, fragmentName);
@@ -1131,8 +1089,7 @@ public abstract class PreferenceActivity extends ListActivity implements
      * this set of preferences.
      */
     public void startWithFragment(String fragmentName, Bundle args,
-            Fragment resultTo, int resultRequestCode, @StringRes int titleRes,
-            @StringRes int shortTitleRes) {
+            Fragment resultTo, int resultRequestCode, int titleRes, int shortTitleRes) {
         Intent intent = onBuildStartFragmentIntent(fragmentName, args, titleRes, shortTitleRes);
         if (resultTo == null) {
             startActivity(intent);
@@ -1216,7 +1173,7 @@ public abstract class PreferenceActivity extends ListActivity implements
         }
     }
 
-    private void switchToHeaderInner(String fragmentName, Bundle args) {
+    private void switchToHeaderInner(String fragmentName, Bundle args, int direction) {
         getFragmentManager().popBackStack(BACK_STACK_PREFS,
                 FragmentManager.POP_BACK_STACK_INCLUSIVE);
         if (!isValidFragment(fragmentName)) {
@@ -1238,15 +1195,8 @@ public abstract class PreferenceActivity extends ListActivity implements
      * @param args Optional arguments to supply to the fragment.
      */
     public void switchToHeader(String fragmentName, Bundle args) {
-        Header selectedHeader = null;
-        for (int i = 0; i < mHeaders.size(); i++) {
-            if (fragmentName.equals(mHeaders.get(i).fragment)) {
-                selectedHeader = mHeaders.get(i);
-                break;
-            }
-        }
-        setSelectedHeader(selectedHeader);
-        switchToHeaderInner(fragmentName, args);
+        setSelectedHeader(null);
+        switchToHeaderInner(fragmentName, args, 0);
     }
 
     /**
@@ -1265,7 +1215,8 @@ public abstract class PreferenceActivity extends ListActivity implements
             if (header.fragment == null) {
                 throw new IllegalStateException("can't switch to header that has no fragment");
             }
-            switchToHeaderInner(header.fragment, header.fragmentArguments);
+            int direction = mHeaders.indexOf(header) - mHeaders.indexOf(mCurHeader);
+            switchToHeaderInner(header.fragment, header.fragmentArguments, direction);
             setSelectedHeader(header);
         }
     }
@@ -1351,9 +1302,9 @@ public abstract class PreferenceActivity extends ListActivity implements
      * preference panel is done.  The launched panel must use
      * {@link #finishPreferencePanel(Fragment, int, Intent)} when done.
      * @param resultRequestCode If resultTo is non-null, this is the caller's
-     * request code to be received with the result.
+     * request code to be received with the resut.
      */
-    public void startPreferencePanel(String fragmentClass, Bundle args, @StringRes int titleRes,
+    public void startPreferencePanel(String fragmentClass, Bundle args, int titleRes,
             CharSequence titleText, Fragment resultTo, int resultRequestCode) {
         if (mSinglePane) {
             startWithFragment(fragmentClass, args, resultTo, resultRequestCode, titleRes, 0);

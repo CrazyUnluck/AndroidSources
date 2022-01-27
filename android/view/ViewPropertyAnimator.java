@@ -19,6 +19,7 @@ package android.view;
 import android.animation.Animator;
 import android.animation.ValueAnimator;
 import android.animation.TimeInterpolator;
+
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.Set;
@@ -50,7 +51,7 @@ public class ViewPropertyAnimator {
      * The View whose properties are being animated by this class. This is set at
      * construction time.
      */
-    final View mView;
+    private final View mView;
 
     /**
      * The duration of the underlying Animator object. By default, we don't set the duration
@@ -108,11 +109,6 @@ public class ViewPropertyAnimator {
     private ValueAnimator mTempValueAnimator;
 
     /**
-     * A RenderThread-driven backend that may intercept startAnimation
-     */
-    private ViewPropertyAnimatorRT mRTBackend;
-
-    /**
      * This listener is the mechanism by which the underlying Animator causes changes to the
      * properties currently being animated, as well as the cleanup after an animation is
      * complete.
@@ -137,22 +133,20 @@ public class ViewPropertyAnimator {
      * Constants used to associate a property being requested and the mechanism used to set
      * the property (this class calls directly into View to set the properties in question).
      */
-    static final int NONE           = 0x0000;
-    static final int TRANSLATION_X  = 0x0001;
-    static final int TRANSLATION_Y  = 0x0002;
-    static final int TRANSLATION_Z  = 0x0004;
-    static final int SCALE_X        = 0x0008;
-    static final int SCALE_Y        = 0x0010;
-    static final int ROTATION       = 0x0020;
-    static final int ROTATION_X     = 0x0040;
-    static final int ROTATION_Y     = 0x0080;
-    static final int X              = 0x0100;
-    static final int Y              = 0x0200;
-    static final int Z              = 0x0400;
-    static final int ALPHA          = 0x0800;
+    private static final int NONE           = 0x0000;
+    private static final int TRANSLATION_X  = 0x0001;
+    private static final int TRANSLATION_Y  = 0x0002;
+    private static final int SCALE_X        = 0x0004;
+    private static final int SCALE_Y        = 0x0008;
+    private static final int ROTATION       = 0x0010;
+    private static final int ROTATION_X     = 0x0020;
+    private static final int ROTATION_Y     = 0x0040;
+    private static final int X              = 0x0080;
+    private static final int Y              = 0x0100;
+    private static final int ALPHA          = 0x0200;
 
-    private static final int TRANSFORM_MASK = TRANSLATION_X | TRANSLATION_Y | TRANSLATION_Z |
-            SCALE_X | SCALE_Y | ROTATION | ROTATION_X | ROTATION_Y | X | Y | Z;
+    private static final int TRANSFORM_MASK = TRANSLATION_X | TRANSLATION_Y | SCALE_X | SCALE_Y |
+            ROTATION | ROTATION_X | ROTATION_Y | X | Y;
 
     /**
      * The mechanism by which the user can request several properties that are then animated
@@ -231,7 +225,7 @@ public class ViewPropertyAnimator {
      * values are used to calculate the animated value for a given animation fraction
      * during the animation.
      */
-    static class NameValuesHolder {
+    private static class NameValuesHolder {
         int mNameConstant;
         float mFromValue;
         float mDeltaValue;
@@ -320,8 +314,8 @@ public class ViewPropertyAnimator {
      */
     public ViewPropertyAnimator setStartDelay(long startDelay) {
         if (startDelay < 0) {
-            throw new IllegalArgumentException("Animators cannot have negative start " +
-                "delay: " + startDelay);
+            throw new IllegalArgumentException("Animators cannot have negative duration: " +
+                    startDelay);
         }
         mStartDelaySet = true;
         mStartDelay = startDelay;
@@ -333,8 +327,7 @@ public class ViewPropertyAnimator {
      * By default, the animator uses the default interpolator for ValueAnimator. Calling this method
      * will cause the declared object to be used instead.
      * 
-     * @param interpolator The TimeInterpolator to be used for ensuing property animations. A value
-     * of <code>null</code> will result in linear interpolation.
+     * @param interpolator The TimeInterpolator to be used for ensuing property animations.
      * @return This object, allowing calls to methods in this class to be chained.
      */
     public ViewPropertyAnimator setInterpolator(TimeInterpolator interpolator) {
@@ -376,10 +369,6 @@ public class ViewPropertyAnimator {
         return this;
     }
 
-    Animator.AnimatorListener getListener() {
-        return mListener;
-    }
-
     /**
      * Sets a listener for update events in the underlying ValueAnimator that runs
      * the property animations. Note that the underlying animator is animating between
@@ -397,10 +386,6 @@ public class ViewPropertyAnimator {
     public ViewPropertyAnimator setUpdateListener(ValueAnimator.AnimatorUpdateListener listener) {
         mUpdateListener = listener;
         return this;
-    }
-
-    ValueAnimator.AnimatorUpdateListener getUpdateListener() {
-        return mUpdateListener;
     }
 
     /**
@@ -428,14 +413,7 @@ public class ViewPropertyAnimator {
             }
         }
         mPendingAnimations.clear();
-        mPendingSetupAction = null;
-        mPendingCleanupAction = null;
-        mPendingOnStartAction = null;
-        mPendingOnEndAction = null;
         mView.removeCallbacks(mAnimationStarter);
-        if (mRTBackend != null) {
-            mRTBackend.cancelAll();
-        }
     }
 
     /**
@@ -487,32 +465,6 @@ public class ViewPropertyAnimator {
      */
     public ViewPropertyAnimator yBy(float value) {
         animatePropertyBy(Y, value);
-        return this;
-    }
-
-    /**
-     * This method will cause the View's <code>z</code> property to be animated to the
-     * specified value. Animations already running on the property will be canceled.
-     *
-     * @param value The value to be animated to.
-     * @see View#setZ(float)
-     * @return This object, allowing calls to methods in this class to be chained.
-     */
-    public ViewPropertyAnimator z(float value) {
-        animateProperty(Z, value);
-        return this;
-    }
-
-    /**
-     * This method will cause the View's <code>z</code> property to be animated by the
-     * specified value. Animations already running on the property will be canceled.
-     *
-     * @param value The amount to be animated by, as an offset from the current value.
-     * @see View#setZ(float)
-     * @return This object, allowing calls to methods in this class to be chained.
-     */
-    public ViewPropertyAnimator zBy(float value) {
-        animatePropertyBy(Z, value);
         return this;
     }
 
@@ -646,31 +598,6 @@ public class ViewPropertyAnimator {
         return this;
     }
 
-    /**
-     * This method will cause the View's <code>translationZ</code> property to be animated to the
-     * specified value. Animations already running on the property will be canceled.
-     *
-     * @param value The value to be animated to.
-     * @see View#setTranslationZ(float)
-     * @return This object, allowing calls to methods in this class to be chained.
-     */
-    public ViewPropertyAnimator translationZ(float value) {
-        animateProperty(TRANSLATION_Z, value);
-        return this;
-    }
-
-    /**
-     * This method will cause the View's <code>translationZ</code> property to be animated by the
-     * specified value. Animations already running on the property will be canceled.
-     *
-     * @param value The amount to be animated by, as an offset from the current value.
-     * @see View#setTranslationZ(float)
-     * @return This object, allowing calls to methods in this class to be chained.
-     */
-    public ViewPropertyAnimator translationZBy(float value) {
-        animatePropertyBy(TRANSLATION_Z, value);
-        return this;
-    }
     /**
      * This method will cause the View's <code>scaleX</code> property to be animated to the
      * specified value. Animations already running on the property will be canceled.
@@ -845,22 +772,12 @@ public class ViewPropertyAnimator {
         return this;
     }
 
-    boolean hasActions() {
-        return mPendingSetupAction != null
-                || mPendingCleanupAction != null
-                || mPendingOnStartAction != null
-                || mPendingOnEndAction != null;
-    }
-
     /**
      * Starts the underlying Animator for a set of properties. We use a single animator that
      * simply runs from 0 to 1, and then use that fractional value to set each property
      * value accordingly.
      */
     private void startAnimation() {
-        if (mRTBackend != null && mRTBackend.startAnimation(this)) {
-            return;
-        }
         mView.setHasTransientState(true);
         ValueAnimator animator = ValueAnimator.ofFloat(1.0f);
         ArrayList<NameValuesHolder> nameValueList =
@@ -982,44 +899,47 @@ public class ViewPropertyAnimator {
      */
     private void setValue(int propertyConstant, float value) {
         final View.TransformationInfo info = mView.mTransformationInfo;
-        final RenderNode renderNode = mView.mRenderNode;
+        final DisplayList displayList = mView.mDisplayList;
         switch (propertyConstant) {
             case TRANSLATION_X:
-                renderNode.setTranslationX(value);
+                info.mTranslationX = value;
+                if (displayList != null) displayList.setTranslationX(value);
                 break;
             case TRANSLATION_Y:
-                renderNode.setTranslationY(value);
-                break;
-            case TRANSLATION_Z:
-                renderNode.setTranslationZ(value);
+                info.mTranslationY = value;
+                if (displayList != null) displayList.setTranslationY(value);
                 break;
             case ROTATION:
-                renderNode.setRotation(value);
+                info.mRotation = value;
+                if (displayList != null) displayList.setRotation(value);
                 break;
             case ROTATION_X:
-                renderNode.setRotationX(value);
+                info.mRotationX = value;
+                if (displayList != null) displayList.setRotationX(value);
                 break;
             case ROTATION_Y:
-                renderNode.setRotationY(value);
+                info.mRotationY = value;
+                if (displayList != null) displayList.setRotationY(value);
                 break;
             case SCALE_X:
-                renderNode.setScaleX(value);
+                info.mScaleX = value;
+                if (displayList != null) displayList.setScaleX(value);
                 break;
             case SCALE_Y:
-                renderNode.setScaleY(value);
+                info.mScaleY = value;
+                if (displayList != null) displayList.setScaleY(value);
                 break;
             case X:
-                renderNode.setTranslationX(value - mView.mLeft);
+                info.mTranslationX = value - mView.mLeft;
+                if (displayList != null) displayList.setTranslationX(value - mView.mLeft);
                 break;
             case Y:
-                renderNode.setTranslationY(value - mView.mTop);
-                break;
-            case Z:
-                renderNode.setTranslationZ(value - renderNode.getElevation());
+                info.mTranslationY = value - mView.mTop;
+                if (displayList != null) displayList.setTranslationY(value - mView.mTop);
                 break;
             case ALPHA:
                 info.mAlpha = value;
-                renderNode.setAlpha(value);
+                if (displayList != null) displayList.setAlpha(value);
                 break;
         }
     }
@@ -1031,32 +951,28 @@ public class ViewPropertyAnimator {
      * @return float The value of the named property
      */
     private float getValue(int propertyConstant) {
-        final RenderNode node = mView.mRenderNode;
+        final View.TransformationInfo info = mView.mTransformationInfo;
         switch (propertyConstant) {
             case TRANSLATION_X:
-                return node.getTranslationX();
+                return info.mTranslationX;
             case TRANSLATION_Y:
-                return node.getTranslationY();
-            case TRANSLATION_Z:
-                return node.getTranslationZ();
+                return info.mTranslationY;
             case ROTATION:
-                return node.getRotation();
+                return info.mRotation;
             case ROTATION_X:
-                return node.getRotationX();
+                return info.mRotationX;
             case ROTATION_Y:
-                return node.getRotationY();
+                return info.mRotationY;
             case SCALE_X:
-                return node.getScaleX();
+                return info.mScaleX;
             case SCALE_Y:
-                return node.getScaleY();
+                return info.mScaleY;
             case X:
-                return mView.mLeft + node.getTranslationX();
+                return mView.mLeft + info.mTranslationX;
             case Y:
-                return mView.mTop + node.getTranslationY();
-            case Z:
-                return node.getElevation() + node.getTranslationZ();
+                return mView.mTop + info.mTranslationY;
             case ALPHA:
-                return mView.mTransformationInfo.mAlpha;
+                return info.mAlpha;
         }
         return 0;
     }
@@ -1110,13 +1026,6 @@ public class ViewPropertyAnimator {
         @Override
         public void onAnimationEnd(Animator animation) {
             mView.setHasTransientState(false);
-            if (mAnimatorCleanupMap != null) {
-                Runnable r = mAnimatorCleanupMap.get(animation);
-                if (r != null) {
-                    r.run();
-                }
-                mAnimatorCleanupMap.remove(animation);
-            }
             if (mListener != null) {
                 mListener.onAnimationEnd(animation);
             }
@@ -1126,6 +1035,13 @@ public class ViewPropertyAnimator {
                     r.run();
                 }
                 mAnimatorOnEndMap.remove(animation);
+            }
+            if (mAnimatorCleanupMap != null) {
+                Runnable r = mAnimatorCleanupMap.get(animation);
+                if (r != null) {
+                    r.run();
+                }
+                mAnimatorCleanupMap.remove(animation);
             }
             mAnimatorMap.remove(animation);
         }
@@ -1145,8 +1061,7 @@ public class ViewPropertyAnimator {
                 // Shouldn't happen, but just to play it safe
                 return;
             }
-
-            boolean hardwareAccelerated = mView.isHardwareAccelerated();
+            boolean useDisplayListProperties = mView.mDisplayList != null;
 
             // alpha requires slightly different treatment than the other (transform) properties.
             // The logic in setAlpha() is not simply setting mAlpha, plus the invalidation
@@ -1154,13 +1069,13 @@ public class ViewPropertyAnimator {
             // We track what kinds of properties are set, and how alpha is handled when it is
             // set, and perform the invalidation steps appropriately.
             boolean alphaHandled = false;
-            if (!hardwareAccelerated) {
+            if (!useDisplayListProperties) {
                 mView.invalidateParentCaches();
             }
             float fraction = animation.getAnimatedFraction();
             int propertyMask = propertyBundle.mPropertyMask;
             if ((propertyMask & TRANSFORM_MASK) != 0) {
-                mView.invalidateViewProperty(hardwareAccelerated, false);
+                mView.invalidateViewProperty(false, false);
             }
             ArrayList<NameValuesHolder> valueList = propertyBundle.mNameValuesHolder;
             if (valueList != null) {
@@ -1176,7 +1091,8 @@ public class ViewPropertyAnimator {
                 }
             }
             if ((propertyMask & TRANSFORM_MASK) != 0) {
-                if (!hardwareAccelerated) {
+                mView.mTransformationInfo.mMatrixDirty = true;
+                if (!useDisplayListProperties) {
                     mView.mPrivateFlags |= View.PFLAG_DRAWN; // force another invalidation
                 }
             }

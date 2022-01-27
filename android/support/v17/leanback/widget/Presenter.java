@@ -16,21 +16,11 @@ package android.support.v17.leanback.widget;
 import android.view.View;
 import android.view.ViewGroup;
 
-import java.util.HashMap;
-import java.util.Map;
-
 /**
  * A Presenter is used to generate {@link View}s and bind Objects to them on
- * demand. It is closely related to the concept of an {@link
+ * demand. It is closely related to concept of an {@link
  * android.support.v7.widget.RecyclerView.Adapter RecyclerView.Adapter}, but is
- * not position-based.  The leanback framework implements the adapter concept using
- * {@link ObjectAdapter} which refers to a Presenter (or {@link PresenterSelector}) instance.
- *
- * <p>
- * Presenters should be stateless.  Presenters typically extend {@link ViewHolder} to store all
- * necessary view state information, such as references to child views to be used when
- * binding to avoid expensive calls to {@link View#findViewById(int)}.
- * </p>
+ * not position-based.
  *
  * <p>
  * A trivial Presenter that takes a string and renders it into a {@link
@@ -61,59 +51,20 @@ import java.util.Map;
  *     }
  * }
  * </pre>
- * In addition to view creation and binding, Presenter allows dynamic interface (facet) to
- * be added: {@link #setFacet(Class, Object)}.  Supported facets:
- * <li> {@link ItemAlignmentFacet} is used by {@link HorizontalGridView} and
- * {@link VerticalGridView} to customize child alignment.
  */
-public abstract class Presenter implements FacetProvider {
+public abstract class Presenter {
     /**
      * ViewHolder can be subclassed and used to cache any view accessors needed
      * to improve binding performance (for example, results of findViewById)
      * without needing to subclass a View.
      */
-    public static class ViewHolder implements FacetProvider {
+    public static class ViewHolder {
         public final View view;
-        private Map<Class, Object> mFacets;
 
         public ViewHolder(View view) {
             this.view = view;
         }
-
-        @Override
-        public final Object getFacet(Class<?> facetClass) {
-            if (mFacets == null) {
-                return null;
-            }
-            return mFacets.get(facetClass);
-        }
-
-        /**
-         * Sets dynamic implemented facet in addition to basic ViewHolder functions.
-         * @param facetClass   Facet classes to query,  can be class of {@link ItemAlignmentFacet}.
-         * @param facetImpl  Facet implementation.
-         */
-        public final void setFacet(Class<?> facetClass, Object facetImpl) {
-            if (mFacets == null) {
-                mFacets = new HashMap<Class, Object>();
-            }
-            mFacets.put(facetClass, facetImpl);
-        }
     }
-
-    /**
-     * Base class to perform a task on Presenter.ViewHolder.
-     */
-    public static abstract class ViewHolderTask {
-        /**
-         * Called to perform a task on view holder.
-         * @param holder The view holder to perform task.
-         */
-        public void run(Presenter.ViewHolder holder) {
-        }
-    }
-
-    private Map<Class, Object> mFacets;
 
     /**
      * Creates a new {@link View}.
@@ -150,64 +101,11 @@ public abstract class Presenter implements FacetProvider {
      *
      * <p>Becoming detached from the window is not necessarily a permanent condition;
      * the consumer of an presenter's views may choose to cache views offscreen while they
-     * are not visible, attaching and detaching them as appropriate.</p>
-     *
-     * Any view property animations should be cancelled here or the view may fail
-     * to be recycled.
+     * are not visible, attaching an detaching them as appropriate.</p>
      *
      * @param holder Holder of the view being detached
      */
     public void onViewDetachedFromWindow(ViewHolder holder) {
-        // If there are view property animations running then RecyclerView won't recycle.
-        cancelAnimationsRecursive(holder.view);
     }
 
-    /**
-     * Utility method for removing all running animations on a view.
-     */
-    protected static void cancelAnimationsRecursive(View view) {
-        if (view != null && view.hasTransientState()) {
-            view.animate().cancel();
-            if (view instanceof ViewGroup) {
-                final int count = ((ViewGroup) view).getChildCount();
-                for (int i = 0; view.hasTransientState() && i < count; i++) {
-                    cancelAnimationsRecursive(((ViewGroup) view).getChildAt(i));
-                }
-            }
-        }
-    }
-
-    /**
-     * Called to set a click listener for the given view holder.
-     *
-     * The default implementation sets the click listener on the root view in the view holder.
-     * If the root view isn't focusable this method should be overridden to set the listener
-     * on the appropriate focusable child view(s).
-     *
-     * @param holder The view holder containing the view(s) on which the listener should be set.
-     * @param listener The click listener to be set.
-     */
-    public void setOnClickListener(ViewHolder holder, View.OnClickListener listener) {
-        holder.view.setOnClickListener(listener);
-    }
-
-    @Override
-    public final Object getFacet(Class<?> facetClass) {
-        if (mFacets == null) {
-            return null;
-        }
-        return mFacets.get(facetClass);
-    }
-
-    /**
-     * Sets dynamic implemented facet in addition to basic Presenter functions.
-     * @param facetClass   Facet classes to query,  can be class of {@link ItemAlignmentFacet}.
-     * @param facetImpl  Facet implementation.
-     */
-    public final void setFacet(Class<?> facetClass, Object facetImpl) {
-        if (mFacets == null) {
-            mFacets = new HashMap<Class, Object>();
-        }
-        mFacets.put(facetClass, facetImpl);
-    }
 }

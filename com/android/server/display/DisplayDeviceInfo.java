@@ -21,8 +21,6 @@ import android.util.DisplayMetrics;
 import android.view.Display;
 import android.view.Surface;
 
-import java.util.Arrays;
-
 import libcore.util.Objects;
 
 /**
@@ -88,11 +86,6 @@ final class DisplayDeviceInfo {
     public static final int FLAG_OWN_CONTENT_ONLY = 1 << 7;
 
     /**
-     * Flag: This display device has a round shape.
-     */
-    public static final int FLAG_ROUND = 1 << 8;
-
-    /**
      * Touch attachment: Display does not receive touch.
      */
     public static final int TOUCH_NONE = 0;
@@ -108,25 +101,10 @@ final class DisplayDeviceInfo {
     public static final int TOUCH_EXTERNAL = 2;
 
     /**
-     * Diff result: The {@link #state} fields differ.
-     */
-    public static final int DIFF_STATE = 1 << 0;
-
-    /**
-     * Diff result: Other fields differ.
-     */
-    public static final int DIFF_OTHER = 1 << 1;
-
-    /**
-     * Gets the name of the display device, which may be derived from EDID or
-     * other sources. The name may be localized and displayed to the user.
+     * Gets the name of the display device, which may be derived from
+     * EDID or other sources.  The name may be displayed to the user.
      */
     public String name;
-
-    /**
-     * Unique Id of display device.
-     */
-    public String uniqueId;
 
     /**
      * The width of the display in its natural orientation, in pixels.
@@ -141,33 +119,9 @@ final class DisplayDeviceInfo {
     public int height;
 
     /**
-     * The active mode of the display.
+     * The refresh rate of the display.
      */
-    public int modeId;
-
-    /**
-     * The default mode of the display.
-     */
-    public int defaultModeId;
-
-    /**
-     * The supported modes of the display.
-     */
-    public Display.Mode[] supportedModes = Display.Mode.EMPTY_ARRAY;
-
-    /** The active color transform of the display */
-    public int colorTransformId;
-
-    /** The default color transform of the display */
-    public int defaultColorTransformId;
-
-    /** The supported color transforms of the display */
-    public Display.ColorTransform[] supportedColorTransforms = Display.ColorTransform.EMPTY_ARRAY;
-
-    /**
-     * The HDR capabilities this display claims to support.
-     */
-    public Display.HdrCapabilities hdrCapabilities;
+    public float refreshRate;
 
     /**
      * The nominal apparent density of the display in DPI used for layout calculations.
@@ -188,20 +142,6 @@ final class DisplayDeviceInfo {
      * This density should specify the physical size of each pixel.
      */
     public float yDpi;
-
-    /**
-     * This is a positive value indicating the phase offset of the VSYNC events provided by
-     * Choreographer relative to the display refresh.  For example, if Choreographer reports
-     * that the refresh occurred at time N, it actually occurred at (N - appVsyncOffsetNanos).
-     */
-    public long appVsyncOffsetNanos;
-
-    /**
-     * This is how far in advance a buffer must be queued for presentation at
-     * a given time.  If you want a buffer to appear on the screen at
-     * time N, you must submit the buffer before (N - bufferDeadlineNanos).
-     */
-    public long presentationDeadlineNanos;
 
     /**
      * Display flags.
@@ -271,44 +211,22 @@ final class DisplayDeviceInfo {
     }
 
     public boolean equals(DisplayDeviceInfo other) {
-        return other != null && diff(other) == 0;
-    }
-
-    /**
-     * Computes the difference between display device infos.
-     * Assumes other is not null.
-     */
-    public int diff(DisplayDeviceInfo other) {
-        int diff = 0;
-        if (state != other.state) {
-            diff |= DIFF_STATE;
-        }
-        if (!Objects.equal(name, other.name)
-                || !Objects.equal(uniqueId, other.uniqueId)
-                || width != other.width
-                || height != other.height
-                || modeId != other.modeId
-                || defaultModeId != other.defaultModeId
-                || !Arrays.equals(supportedModes, other.supportedModes)
-                || colorTransformId != other.colorTransformId
-                || defaultColorTransformId != other.defaultColorTransformId
-                || !Arrays.equals(supportedColorTransforms, other.supportedColorTransforms)
-                || !Objects.equal(hdrCapabilities, other.hdrCapabilities)
-                || densityDpi != other.densityDpi
-                || xDpi != other.xDpi
-                || yDpi != other.yDpi
-                || appVsyncOffsetNanos != other.appVsyncOffsetNanos
-                || presentationDeadlineNanos != other.presentationDeadlineNanos
-                || flags != other.flags
-                || touch != other.touch
-                || rotation != other.rotation
-                || type != other.type
-                || !Objects.equal(address, other.address)
-                || ownerUid != other.ownerUid
-                || !Objects.equal(ownerPackageName, other.ownerPackageName)) {
-            diff |= DIFF_OTHER;
-        }
-        return diff;
+        return other != null
+                && Objects.equal(name, other.name)
+                && width == other.width
+                && height == other.height
+                && refreshRate == other.refreshRate
+                && densityDpi == other.densityDpi
+                && xDpi == other.xDpi
+                && yDpi == other.yDpi
+                && flags == other.flags
+                && touch == other.touch
+                && rotation == other.rotation
+                && type == other.type
+                && Objects.equal(address, other.address)
+                && state == other.state
+                && ownerUid == other.ownerUid
+                && Objects.equal(ownerPackageName, other.ownerPackageName);
     }
 
     @Override
@@ -318,21 +236,12 @@ final class DisplayDeviceInfo {
 
     public void copyFrom(DisplayDeviceInfo other) {
         name = other.name;
-        uniqueId = other.uniqueId;
         width = other.width;
         height = other.height;
-        modeId = other.modeId;
-        defaultModeId = other.defaultModeId;
-        supportedModes = other.supportedModes;
-        colorTransformId = other.colorTransformId;
-        defaultColorTransformId = other.defaultColorTransformId;
-        supportedColorTransforms = other.supportedColorTransforms;
-        hdrCapabilities = other.hdrCapabilities;
+        refreshRate = other.refreshRate;
         densityDpi = other.densityDpi;
         xDpi = other.xDpi;
         yDpi = other.yDpi;
-        appVsyncOffsetNanos = other.appVsyncOffsetNanos;
-        presentationDeadlineNanos = other.presentationDeadlineNanos;
         flags = other.flags;
         touch = other.touch;
         rotation = other.rotation;
@@ -348,19 +257,10 @@ final class DisplayDeviceInfo {
     public String toString() {
         StringBuilder sb = new StringBuilder();
         sb.append("DisplayDeviceInfo{\"");
-        sb.append(name).append("\": uniqueId=\"").append(uniqueId).append("\", ");
-        sb.append(width).append(" x ").append(height);
-        sb.append(", modeId ").append(modeId);
-        sb.append(", defaultModeId ").append(defaultModeId);
-        sb.append(", supportedModes ").append(Arrays.toString(supportedModes));
-        sb.append(", colorTransformId ").append(colorTransformId);
-        sb.append(", defaultColorTransformId ").append(defaultColorTransformId);
-        sb.append(", supportedColorTransforms ").append(Arrays.toString(supportedColorTransforms));
-        sb.append(", HdrCapabilities ").append(hdrCapabilities);
-        sb.append(", density ").append(densityDpi);
+        sb.append(name).append("\": ").append(width).append(" x ").append(height);
+        sb.append(", ").append(refreshRate).append(" fps, ");
+        sb.append("density ").append(densityDpi);
         sb.append(", ").append(xDpi).append(" x ").append(yDpi).append(" dpi");
-        sb.append(", appVsyncOff ").append(appVsyncOffsetNanos);
-        sb.append(", presDeadline ").append(presentationDeadlineNanos);
         sb.append(", touch ").append(touchToString(touch));
         sb.append(", rotation ").append(rotation);
         sb.append(", type ").append(Display.typeToString(type));
@@ -415,9 +315,6 @@ final class DisplayDeviceInfo {
         }
         if ((flags & FLAG_OWN_CONTENT_ONLY) != 0) {
             msg.append(", FLAG_OWN_CONTENT_ONLY");
-        }
-        if ((flags & FLAG_ROUND) != 0) {
-            msg.append(", FLAG_ROUND");
         }
         return msg.toString();
     }

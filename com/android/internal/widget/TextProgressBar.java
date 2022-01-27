@@ -19,6 +19,7 @@ package com.android.internal.widget;
 import android.content.Context;
 import android.os.SystemClock;
 import android.util.AttributeSet;
+import android.util.Log;
 import android.view.Gravity;
 import android.view.View;
 import android.view.ViewGroup;
@@ -58,13 +59,9 @@ public class TextProgressBar extends RelativeLayout implements OnChronometerTick
 
     boolean mChronometerFollow = false;
     int mChronometerGravity = Gravity.NO_GRAVITY;
-
-    public TextProgressBar(Context context, AttributeSet attrs, int defStyleAttr, int defStyleRes) {
-        super(context, attrs, defStyleAttr, defStyleRes);
-    }
     
-    public TextProgressBar(Context context, AttributeSet attrs, int defStyleAttr) {
-        super(context, attrs, defStyleAttr);
+    public TextProgressBar(Context context, AttributeSet attrs, int defStyle) {
+        super(context, attrs, defStyle);
     }
 
     public TextProgressBar(Context context, AttributeSet attrs) {

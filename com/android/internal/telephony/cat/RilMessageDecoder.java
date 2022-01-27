@@ -16,16 +16,13 @@
 
 package com.android.internal.telephony.cat;
 
-import android.os.Handler;
-import android.os.Message;
-import android.telephony.SubscriptionManager;
-import android.telephony.TelephonyManager;
-
-import com.android.internal.telephony.PhoneConstants;
 import com.android.internal.telephony.uicc.IccFileHandler;
 import com.android.internal.telephony.uicc.IccUtils;
+
+import android.os.Handler;
 import com.android.internal.util.State;
 import com.android.internal.util.StateMachine;
+import android.os.Message;
 
 /**
  * Class used for queuing raw ril messages, decoding them into CommanParams
@@ -38,11 +35,10 @@ class RilMessageDecoder extends StateMachine {
     private static final int CMD_PARAMS_READY = 2;
 
     // members
+    private static RilMessageDecoder sInstance = null;
     private CommandParamsFactory mCmdParamsFactory = null;
     private RilMessage mCurrentRilMessage = null;
     private Handler mCaller = null;
-    private static int mSimCount = 0;
-    private static RilMessageDecoder[] mInstance = null;
 
     // States
     private StateStart mStateStart = new StateStart();
@@ -55,26 +51,12 @@ class RilMessageDecoder extends StateMachine {
      * @param fh
      * @return RilMesssageDecoder
      */
-    public static synchronized RilMessageDecoder getInstance(Handler caller, IccFileHandler fh,
-            int slotId) {
-        if (null == mInstance) {
-            mSimCount = TelephonyManager.getDefault().getSimCount();
-            mInstance = new RilMessageDecoder[mSimCount];
-            for (int i = 0; i < mSimCount; i++) {
-                mInstance[i] = null;
-            }
+    public static synchronized RilMessageDecoder getInstance(Handler caller, IccFileHandler fh) {
+        if (sInstance == null) {
+            sInstance = new RilMessageDecoder(caller, fh);
+            sInstance.start();
         }
-
-        if (slotId != SubscriptionManager.INVALID_SIM_SLOT_INDEX && slotId < mSimCount) {
-            if (null == mInstance[slotId]) {
-                mInstance[slotId] = new RilMessageDecoder(caller, fh);
-            }
-        } else {
-            CatLog.d("RilMessageDecoder", "invaild slot id: " + slotId);
-            return null;
-        }
-
-        return mInstance[slotId];
+        return sInstance;
     }
 
     /**
@@ -117,10 +99,6 @@ class RilMessageDecoder extends StateMachine {
 
         mCaller = caller;
         mCmdParamsFactory = CommandParamsFactory.getInstance(this, fh);
-    }
-
-    private RilMessageDecoder() {
-        super("RilMessageDecoder");
     }
 
     private class StateStart extends State {
@@ -195,16 +173,5 @@ class RilMessageDecoder extends StateMachine {
             break;
         }
         return decodingStarted;
-    }
-
-    public void dispose() {
-        quitNow();
-        mStateStart = null;
-        mStateCmdParamsReady = null;
-        mCmdParamsFactory.dispose();
-        mCmdParamsFactory = null;
-        mCurrentRilMessage = null;
-        mCaller = null;
-        mInstance = null;
     }
 }

@@ -8,49 +8,33 @@
 
 package jsr166;
 
-import static java.util.concurrent.TimeUnit.MILLISECONDS;
-
-import java.util.ArrayList;
+import junit.framework.*;
 import java.util.Arrays;
+import java.util.ArrayList;
 import java.util.Collection;
 import java.util.Iterator;
 import java.util.NoSuchElementException;
+import java.util.Queue;
 import java.util.concurrent.BlockingQueue;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.Executors;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.SynchronousQueue;
-
-import junit.framework.Test;
+import static java.util.concurrent.TimeUnit.MILLISECONDS;
 
 public class SynchronousQueueTest extends JSR166TestCase {
 
-    // android-note: These tests have been moved into their own separate
-    // classes to work around CTS issues.
-    //
-    // public static class Fair extends BlockingQueueTest {
-    //     protected BlockingQueue emptyCollection() {
-    //         return new SynchronousQueue(true);
-    //     }
-    // }
+    public static class Fair extends BlockingQueueTest {
+        protected BlockingQueue emptyCollection() {
+            return new SynchronousQueue(true);
+        }
+    }
 
-    // public static class NonFair extends BlockingQueueTest {
-    //     protected BlockingQueue emptyCollection() {
-    //         return new SynchronousQueue(false);
-    //     }
-    // }
-
-    // android-note: Removed because the CTS runner does a bad job of
-    // retrying tests that have suite() declarations.
-    //
-    // public static void main(String[] args) {
-    //     main(suite(), args);
-    // }
-    // public static Test suite() {
-    //     return newTestSuite(SynchronousQueueTest.class,
-    //                         new Fair().testSuite(),
-    //                         new NonFair().testSuite());
-    // }
+    public static class NonFair extends BlockingQueueTest {
+        protected BlockingQueue emptyCollection() {
+            return new SynchronousQueue(false);
+        }
+    }
 
     /**
      * Any SynchronousQueue is both empty and full
@@ -264,6 +248,7 @@ public class SynchronousQueueTest extends JSR166TestCase {
                 pleaseOffer.countDown();
                 startTime = System.nanoTime();
                 assertSame(zero, q.poll(LONG_DELAY_MS, MILLISECONDS));
+                assertTrue(millisElapsedSince(startTime) < MEDIUM_DELAY_MS);
 
                 Thread.currentThread().interrupt();
                 try {
@@ -278,15 +263,13 @@ public class SynchronousQueueTest extends JSR166TestCase {
                     shouldThrow();
                 } catch (InterruptedException success) {}
                 assertFalse(Thread.interrupted());
-
-                assertTrue(millisElapsedSince(startTime) < LONG_DELAY_MS);
             }});
 
         await(pleaseOffer);
         long startTime = System.nanoTime();
         try { assertTrue(q.offer(zero, LONG_DELAY_MS, MILLISECONDS)); }
         catch (InterruptedException e) { threadUnexpectedException(e); }
-        assertTrue(millisElapsedSince(startTime) < LONG_DELAY_MS);
+        assertTrue(millisElapsedSince(startTime) < MEDIUM_DELAY_MS);
 
         await(pleaseInterrupt);
         assertThreadStaysAlive(t);
@@ -431,7 +414,7 @@ public class SynchronousQueueTest extends JSR166TestCase {
     public void testToArray_null(boolean fair) {
         final SynchronousQueue q = new SynchronousQueue(fair);
         try {
-            Object[] o = q.toArray(null);
+            Object o[] = q.toArray(null);
             shouldThrow();
         } catch (NullPointerException success) {}
     }
@@ -442,7 +425,13 @@ public class SynchronousQueueTest extends JSR166TestCase {
     public void testIterator()      { testIterator(false); }
     public void testIterator_fair() { testIterator(true); }
     public void testIterator(boolean fair) {
-        assertIteratorExhausted(new SynchronousQueue(fair).iterator());
+        final SynchronousQueue q = new SynchronousQueue(fair);
+        Iterator it = q.iterator();
+        assertFalse(it.hasNext());
+        try {
+            Object x = it.next();
+            shouldThrow();
+        } catch (NoSuchElementException success) {}
     }
 
     /**
@@ -477,24 +466,24 @@ public class SynchronousQueueTest extends JSR166TestCase {
     public void testOfferInExecutor_fair() { testOfferInExecutor(true); }
     public void testOfferInExecutor(boolean fair) {
         final SynchronousQueue q = new SynchronousQueue(fair);
+        ExecutorService executor = Executors.newFixedThreadPool(2);
         final CheckedBarrier threadsStarted = new CheckedBarrier(2);
-        final ExecutorService executor = Executors.newFixedThreadPool(2);
-        try (PoolCleaner cleaner = cleaner(executor)) {
 
-            executor.execute(new CheckedRunnable() {
-                public void realRun() throws InterruptedException {
-                    assertFalse(q.offer(one));
-                    threadsStarted.await();
-                    assertTrue(q.offer(one, LONG_DELAY_MS, MILLISECONDS));
-                    assertEquals(0, q.remainingCapacity());
-                }});
+        executor.execute(new CheckedRunnable() {
+            public void realRun() throws InterruptedException {
+                assertFalse(q.offer(one));
+                threadsStarted.await();
+                assertTrue(q.offer(one, LONG_DELAY_MS, MILLISECONDS));
+                assertEquals(0, q.remainingCapacity());
+            }});
 
-            executor.execute(new CheckedRunnable() {
-                public void realRun() throws InterruptedException {
-                    threadsStarted.await();
-                    assertSame(one, q.take());
-                }});
-        }
+        executor.execute(new CheckedRunnable() {
+            public void realRun() throws InterruptedException {
+                threadsStarted.await();
+                assertSame(one, q.take());
+            }});
+
+        joinPool(executor);
     }
 
     /**
@@ -505,22 +494,22 @@ public class SynchronousQueueTest extends JSR166TestCase {
     public void testPollInExecutor(boolean fair) {
         final SynchronousQueue q = new SynchronousQueue(fair);
         final CheckedBarrier threadsStarted = new CheckedBarrier(2);
-        final ExecutorService executor = Executors.newFixedThreadPool(2);
-        try (PoolCleaner cleaner = cleaner(executor)) {
-            executor.execute(new CheckedRunnable() {
-                public void realRun() throws InterruptedException {
-                    assertNull(q.poll());
-                    threadsStarted.await();
-                    assertSame(one, q.poll(LONG_DELAY_MS, MILLISECONDS));
-                    assertTrue(q.isEmpty());
-                }});
+        ExecutorService executor = Executors.newFixedThreadPool(2);
+        executor.execute(new CheckedRunnable() {
+            public void realRun() throws InterruptedException {
+                assertNull(q.poll());
+                threadsStarted.await();
+                assertSame(one, q.poll(LONG_DELAY_MS, MILLISECONDS));
+                assertTrue(q.isEmpty());
+            }});
 
-            executor.execute(new CheckedRunnable() {
-                public void realRun() throws InterruptedException {
-                    threadsStarted.await();
-                    q.put(one);
-                }});
-        }
+        executor.execute(new CheckedRunnable() {
+            public void realRun() throws InterruptedException {
+                threadsStarted.await();
+                q.put(one);
+            }});
+
+        joinPool(executor);
     }
 
     /**
@@ -598,26 +587,15 @@ public class SynchronousQueueTest extends JSR166TestCase {
             }});
 
         ArrayList l = new ArrayList();
-        int drained;
-        while ((drained = q.drainTo(l, 1)) == 0) Thread.yield();
-        assertEquals(1, drained);
+        delay(SHORT_DELAY_MS);
+        q.drainTo(l, 1);
         assertEquals(1, l.size());
-        while ((drained = q.drainTo(l, 1)) == 0) Thread.yield();
-        assertEquals(1, drained);
+        q.drainTo(l, 1);
         assertEquals(2, l.size());
         assertTrue(l.contains(one));
         assertTrue(l.contains(two));
         awaitTermination(t1);
         awaitTermination(t2);
-    }
-
-    /**
-     * remove(null), contains(null) always return false
-     */
-    public void testNeverContainsNull() {
-        Collection<?> q = new SynchronousQueue();
-        assertFalse(q.contains(null));
-        assertFalse(q.remove(null));
     }
 
 }

@@ -31,18 +31,86 @@ import android.view.ViewGroup;
  */
 class ItemAlignment {
 
-    final static class Axis extends ItemAlignmentFacet.ItemAlignmentDef {
+    final static class Axis {
         private int mOrientation;
+        private int mOffset = 0;
+        private float mOffsetPercent = 50;
+        private int mViewId = 0;
+        private Rect mRect = new Rect();
 
         Axis(int orientation) {
             mOrientation = orientation;
         }
 
-        /**
-         * get alignment position relative to optical left/top of itemView.
-         */
+        public void setItemAlignmentOffset(int offset) {
+            mOffset = offset;
+        }
+
+        public int getItemAlignmentOffset() {
+            return mOffset;
+        }
+
+        public void setItemAlignmentOffsetPercent(float percent) {
+            if ( (percent < 0 || percent > 100) &&
+                    percent != ITEM_ALIGN_OFFSET_PERCENT_DISABLED) {
+                throw new IllegalArgumentException();
+            }
+            mOffsetPercent = percent;
+        }
+
+        public float getItemAlignmentOffsetPercent() {
+            return mOffsetPercent;
+        }
+
+        public void setItemAlignmentViewId(int viewId) {
+            mViewId = viewId;
+        }
+
+        public int getItemAlignmentViewId() {
+            return mViewId;
+        }
+
         public int getAlignmentPosition(View itemView) {
-            return ItemAlignmentFacetHelper.getAlignmentPosition(itemView, this, mOrientation);
+
+            LayoutParams p = (LayoutParams) itemView.getLayoutParams();
+            View view = itemView;
+            if (mViewId != 0) {
+                view = itemView.findViewById(mViewId);
+                if (view == null) {
+                    view = itemView;
+                }
+            }
+            int alignPos;
+            if (mOrientation == HORIZONTAL) {
+                if (mOffset >= 0) {
+                    alignPos = mOffset;
+                } else {
+                    alignPos = p.getOpticalWidth(itemView) + mOffset;
+                }
+                if (mOffsetPercent != ITEM_ALIGN_OFFSET_PERCENT_DISABLED) {
+                    alignPos += (p.getOpticalWidth(itemView) * mOffsetPercent) / 100;
+                }
+                if (itemView != view) {
+                    mRect.left = alignPos;
+                    ((ViewGroup) itemView).offsetDescendantRectToMyCoords(view, mRect);
+                    alignPos = mRect.left;
+                }
+            } else {
+                if (mOffset >= 0) {
+                    alignPos = mOffset;
+                } else {
+                    alignPos = p.getOpticalHeight(itemView) + mOffset;
+                }
+                if (mOffsetPercent != ITEM_ALIGN_OFFSET_PERCENT_DISABLED) {
+                    alignPos += (p.getOpticalHeight(itemView) * mOffsetPercent) / 100;
+                }
+                if (itemView != view) {
+                    mRect.top = alignPos;
+                    ((ViewGroup) itemView).offsetDescendantRectToMyCoords(view, mRect);
+                    alignPos = mRect.top;
+                }
+            }
+            return alignPos;
         }
     }
 

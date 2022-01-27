@@ -16,9 +16,9 @@
 
 package android.os;
 
-import android.system.ErrnoException;
-import android.system.Os;
-import android.system.StructStatVfs;
+import libcore.io.ErrnoException;
+import libcore.io.Libcore;
+import libcore.io.StructStatVfs;
 
 /**
  * Retrieve overall information about the space on a filesystem. This is a
@@ -41,7 +41,7 @@ public class StatFs {
 
     private static StructStatVfs doStat(String path) {
         try {
-            return Os.statvfs(path);
+            return Libcore.os.statvfs(path);
         } catch (ErrnoException e) {
             throw new IllegalArgumentException("Invalid path: " + path, e);
         }

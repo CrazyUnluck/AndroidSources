@@ -16,9 +16,6 @@
 
 package android.widget;
 
-import com.android.internal.widget.ScrollBarUtils;
-
-import android.annotation.NonNull;
 import android.graphics.Canvas;
 import android.graphics.ColorFilter;
 import android.graphics.PixelFormat;
@@ -26,74 +23,60 @@ import android.graphics.Rect;
 import android.graphics.drawable.Drawable;
 
 /**
- * This is only used by View for displaying its scroll bars. It should probably
+ * This is only used by View for displaying its scroll bars.  It should probably
  * be moved in to the view package since it is used in that lower-level layer.
  * For now, we'll hide it so it can be cleaned up later.
- *
  * {@hide}
  */
-public class ScrollBarDrawable extends Drawable implements Drawable.Callback {
+public class ScrollBarDrawable extends Drawable {
     private Drawable mVerticalTrack;
     private Drawable mHorizontalTrack;
     private Drawable mVerticalThumb;
     private Drawable mHorizontalThumb;
-
     private int mRange;
     private int mOffset;
     private int mExtent;
-
     private boolean mVertical;
-    private boolean mBoundsChanged;
+    private boolean mChanged;
     private boolean mRangeChanged;
+    private final Rect mTempBounds = new Rect();
     private boolean mAlwaysDrawHorizontalTrack;
     private boolean mAlwaysDrawVerticalTrack;
-    private boolean mMutated;
 
-    private int mAlpha = 255;
-    private boolean mHasSetAlpha;
-
-    private ColorFilter mColorFilter;
-    private boolean mHasSetColorFilter;
+    public ScrollBarDrawable() {
+    }
 
     /**
-     * Indicate whether the horizontal scrollbar track should always be drawn
-     * regardless of the extent. Defaults to false.
+     * Indicate whether the horizontal scrollbar track should always be drawn regardless of the
+     * extent. Defaults to false.
      *
-     * @param alwaysDrawTrack Whether the track should always be drawn
-     *
-     * @see #getAlwaysDrawHorizontalTrack()
+     * @param alwaysDrawTrack Set to true if the track should always be drawn
      */
     public void setAlwaysDrawHorizontalTrack(boolean alwaysDrawTrack) {
         mAlwaysDrawHorizontalTrack = alwaysDrawTrack;
     }
 
     /**
-     * Indicate whether the vertical scrollbar track should always be drawn
-     * regardless of the extent. Defaults to false.
+     * Indicate whether the vertical scrollbar track should always be drawn regardless of the
+     * extent. Defaults to false.
      *
-     * @param alwaysDrawTrack Whether the track should always be drawn
-     *
-     * @see #getAlwaysDrawVerticalTrack()
+     * @param alwaysDrawTrack Set to true if the track should always be drawn
      */
     public void setAlwaysDrawVerticalTrack(boolean alwaysDrawTrack) {
         mAlwaysDrawVerticalTrack = alwaysDrawTrack;
     }
 
     /**
-     * @return whether the vertical scrollbar track should always be drawn
-     *         regardless of the extent.
-     *
-     * @see #setAlwaysDrawVerticalTrack(boolean)
+     * Indicates whether the vertical scrollbar track should always be drawn regardless of the
+     * extent.
      */
     public boolean getAlwaysDrawVerticalTrack() {
         return mAlwaysDrawVerticalTrack;
     }
 
     /**
-     * @return whether the horizontal scrollbar track should always be drawn
-     *         regardless of the extent.
-     *
-     * @see #setAlwaysDrawHorizontalTrack(boolean)
+     * Indicates whether the horizontal scrollbar track should always be drawn regardless of the
+     * extent.
      */
     public boolean getAlwaysDrawHorizontalTrack() {
         return mAlwaysDrawHorizontalTrack;
@@ -101,18 +84,17 @@ public class ScrollBarDrawable extends Drawable implements Drawable.Callback {
 
     public void setParameters(int range, int offset, int extent, boolean vertical) {
         if (mVertical != vertical) {
-            mVertical = vertical;
-
-            mBoundsChanged = true;
+            mChanged = true;
         }
 
         if (mRange != range || mOffset != offset || mExtent != extent) {
-            mRange = range;
-            mOffset = offset;
-            mExtent = extent;
-
             mRangeChanged = true;
         }
+
+        mRange = range;
+        mOffset = offset;
+        mExtent = extent;
+        mVertical = vertical;
     }
 
     @Override
@@ -128,253 +110,142 @@ public class ScrollBarDrawable extends Drawable implements Drawable.Callback {
             drawThumb = false;
         }
 
-        final Rect r = getBounds();
+        Rect r = getBounds();
         if (canvas.quickReject(r.left, r.top, r.right, r.bottom, Canvas.EdgeType.AA)) {
             return;
         }
-
         if (drawTrack) {
             drawTrack(canvas, r, vertical);
         }
 
         if (drawThumb) {
-            final int scrollBarLength = vertical ? r.height() : r.width();
-            final int thickness = vertical ? r.width() : r.height();
-            final int thumbLength =
-                    ScrollBarUtils.getThumbLength(scrollBarLength, thickness, extent, range);
-            final int thumbOffset =
-                    ScrollBarUtils.getThumbOffset(scrollBarLength, thumbLength, extent, range,
-                            mOffset);
+            int size = vertical ? r.height() : r.width();
+            int thickness = vertical ? r.width() : r.height();
+            int length = Math.round((float) size * extent / range);
+            int offset = Math.round((float) (size - length) * mOffset / (range - extent));
 
-            drawThumb(canvas, r, thumbOffset, thumbLength, vertical);
+            // avoid the tiny thumb
+            int minLength = thickness * 2;
+            if (length < minLength) {
+                length = minLength;
+            }
+            // avoid the too-big thumb
+            if (offset + length > size) {
+                offset = size - length;
+            }
+
+            drawThumb(canvas, r, offset, length, vertical);
         }
     }
 
     @Override
     protected void onBoundsChange(Rect bounds) {
         super.onBoundsChange(bounds);
-        mBoundsChanged = true;
+        mChanged = true;
     }
 
-    @Override
-    public boolean isStateful() {
-        return (mVerticalTrack != null && mVerticalTrack.isStateful())
-                || (mVerticalThumb != null && mVerticalThumb.isStateful())
-                || (mHorizontalTrack != null && mHorizontalTrack.isStateful())
-                || (mHorizontalThumb != null && mHorizontalThumb.isStateful())
-                || super.isStateful();
-    }
-
-    @Override
-    protected boolean onStateChange(int[] state) {
-        boolean changed = super.onStateChange(state);
-        if (mVerticalTrack != null) {
-            changed |= mVerticalTrack.setState(state);
-        }
-        if (mVerticalThumb != null) {
-            changed |= mVerticalThumb.setState(state);
-        }
-        if (mHorizontalTrack != null) {
-            changed |= mHorizontalTrack.setState(state);
-        }
-        if (mHorizontalThumb != null) {
-            changed |= mHorizontalThumb.setState(state);
-        }
-        return changed;
-    }
-
-    private void drawTrack(Canvas canvas, Rect bounds, boolean vertical) {
-        final Drawable track;
+    protected void drawTrack(Canvas canvas, Rect bounds, boolean vertical) {
+        Drawable track;
         if (vertical) {
             track = mVerticalTrack;
         } else {
             track = mHorizontalTrack;
         }
-
         if (track != null) {
-            if (mBoundsChanged) {
+            if (mChanged) {
                 track.setBounds(bounds);
             }
             track.draw(canvas);
         }
     }
 
-    private void drawThumb(Canvas canvas, Rect bounds, int offset, int length, boolean vertical) {
-        final boolean changed = mRangeChanged || mBoundsChanged;
+    protected void drawThumb(Canvas canvas, Rect bounds, int offset, int length, boolean vertical) {
+        final Rect thumbRect = mTempBounds;
+        final boolean changed = mRangeChanged || mChanged;
+        if (changed) {
+            if (vertical) {
+                thumbRect.set(bounds.left,  bounds.top + offset,
+                        bounds.right, bounds.top + offset + length);
+            } else {
+                thumbRect.set(bounds.left + offset, bounds.top,
+                        bounds.left + offset + length, bounds.bottom);
+            }
+        }
+
         if (vertical) {
-            if (mVerticalThumb != null) {
-                final Drawable thumb = mVerticalThumb;
-                if (changed) {
-                    thumb.setBounds(bounds.left, bounds.top + offset,
-                            bounds.right, bounds.top + offset + length);
-                }
-
-                thumb.draw(canvas);
-            }
+            final Drawable thumb = mVerticalThumb;
+            if (changed) thumb.setBounds(thumbRect);
+            thumb.draw(canvas);
         } else {
-            if (mHorizontalThumb != null) {
-                final Drawable thumb = mHorizontalThumb;
-                if (changed) {
-                    thumb.setBounds(bounds.left + offset, bounds.top,
-                            bounds.left + offset + length, bounds.bottom);
-                }
-
-                thumb.draw(canvas);
-            }
+            final Drawable thumb = mHorizontalThumb;
+            if (changed) thumb.setBounds(thumbRect);
+            thumb.draw(canvas);
         }
     }
 
     public void setVerticalThumbDrawable(Drawable thumb) {
-        if (mVerticalThumb != null) {
-            mVerticalThumb.setCallback(null);
+        if (thumb != null) {
+            mVerticalThumb = thumb;
         }
-
-        propagateCurrentState(thumb);
-        mVerticalThumb = thumb;
     }
 
     public void setVerticalTrackDrawable(Drawable track) {
-        if (mVerticalTrack != null) {
-            mVerticalTrack.setCallback(null);
-        }
-
-        propagateCurrentState(track);
         mVerticalTrack = track;
     }
 
     public void setHorizontalThumbDrawable(Drawable thumb) {
-        if (mHorizontalThumb != null) {
-            mHorizontalThumb.setCallback(null);
+        if (thumb != null) {
+            mHorizontalThumb = thumb;
         }
-
-        propagateCurrentState(thumb);
-        mHorizontalThumb = thumb;
     }
 
     public void setHorizontalTrackDrawable(Drawable track) {
-        if (mHorizontalTrack != null) {
-            mHorizontalTrack.setCallback(null);
-        }
-
-        propagateCurrentState(track);
         mHorizontalTrack = track;
-    }
-
-    private void propagateCurrentState(Drawable d) {
-        if (d != null) {
-            if (mMutated) {
-                d.mutate();
-            }
-
-            d.setState(getState());
-            d.setCallback(this);
-
-            if (mHasSetAlpha) {
-                d.setAlpha(mAlpha);
-            }
-
-            if (mHasSetColorFilter) {
-                d.setColorFilter(mColorFilter);
-            }
-        }
     }
 
     public int getSize(boolean vertical) {
         if (vertical) {
-            return mVerticalTrack != null ? mVerticalTrack.getIntrinsicWidth() :
-                    mVerticalThumb != null ? mVerticalThumb.getIntrinsicWidth() : 0;
+            return (mVerticalTrack != null ?
+                    mVerticalTrack : mVerticalThumb).getIntrinsicWidth();
         } else {
-            return mHorizontalTrack != null ? mHorizontalTrack.getIntrinsicHeight() :
-                    mHorizontalThumb != null ? mHorizontalThumb.getIntrinsicHeight() : 0;
+            return (mHorizontalTrack != null ?
+                    mHorizontalTrack : mHorizontalThumb).getIntrinsicHeight();
         }
-    }
-
-    @Override
-    public ScrollBarDrawable mutate() {
-        if (!mMutated && super.mutate() == this) {
-            if (mVerticalTrack != null) {
-                mVerticalTrack.mutate();
-            }
-            if (mVerticalThumb != null) {
-                mVerticalThumb.mutate();
-            }
-            if (mHorizontalTrack != null) {
-                mHorizontalTrack.mutate();
-            }
-            if (mHorizontalThumb != null) {
-                mHorizontalThumb.mutate();
-            }
-            mMutated = true;
-        }
-        return this;
     }
 
     @Override
     public void setAlpha(int alpha) {
-        mAlpha = alpha;
-        mHasSetAlpha = true;
-
         if (mVerticalTrack != null) {
             mVerticalTrack.setAlpha(alpha);
         }
-        if (mVerticalThumb != null) {
-            mVerticalThumb.setAlpha(alpha);
-        }
+        mVerticalThumb.setAlpha(alpha);
         if (mHorizontalTrack != null) {
             mHorizontalTrack.setAlpha(alpha);
         }
-        if (mHorizontalThumb != null) {
-            mHorizontalThumb.setAlpha(alpha);
-        }
+        mHorizontalThumb.setAlpha(alpha);
     }
 
     @Override
     public int getAlpha() {
-        return mAlpha;
+        // All elements should have same alpha, just return one of them
+        return mVerticalThumb.getAlpha();
     }
 
     @Override
-    public void setColorFilter(ColorFilter colorFilter) {
-        mColorFilter = colorFilter;
-        mHasSetColorFilter = true;
-
+    public void setColorFilter(ColorFilter cf) {
         if (mVerticalTrack != null) {
-            mVerticalTrack.setColorFilter(colorFilter);
+            mVerticalTrack.setColorFilter(cf);
         }
-        if (mVerticalThumb != null) {
-            mVerticalThumb.setColorFilter(colorFilter);
-        }
+        mVerticalThumb.setColorFilter(cf);
         if (mHorizontalTrack != null) {
-            mHorizontalTrack.setColorFilter(colorFilter);
+            mHorizontalTrack.setColorFilter(cf);
         }
-        if (mHorizontalThumb != null) {
-            mHorizontalThumb.setColorFilter(colorFilter);
-        }
-    }
-
-    @Override
-    public ColorFilter getColorFilter() {
-        return mColorFilter;
+        mHorizontalThumb.setColorFilter(cf);
     }
 
     @Override
     public int getOpacity() {
         return PixelFormat.TRANSLUCENT;
-    }
-
-    @Override
-    public void invalidateDrawable(@NonNull Drawable who) {
-        invalidateSelf();
-    }
-
-    @Override
-    public void scheduleDrawable(@NonNull Drawable who, @NonNull Runnable what, long when) {
-        scheduleSelf(what, when);
-    }
-
-    @Override
-    public void unscheduleDrawable(@NonNull Drawable who, @NonNull Runnable what) {
-        unscheduleSelf(what);
     }
 
     @Override

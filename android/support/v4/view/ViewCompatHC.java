@@ -17,10 +17,8 @@
 package android.support.v4.view;
 
 import android.animation.ValueAnimator;
-import android.graphics.Matrix;
 import android.graphics.Paint;
 import android.view.View;
-import android.view.ViewParent;
 
 class ViewCompatHC {
     static long getFrameTime() {
@@ -99,10 +97,6 @@ class ViewCompatHC {
         view.setTranslationY(value);
     }
 
-    public static Matrix getMatrix(View view) {
-        return view.getMatrix();
-    }
-
     public static void setAlpha(View view, float value) {
         view.setAlpha(value);
     }
@@ -149,47 +143,5 @@ class ViewCompatHC {
 
     public static float getPivotY(View view) {
         return view.getPivotY();
-    }
-
-    public static void jumpDrawablesToCurrentState(View view) {
-        view.jumpDrawablesToCurrentState();
-    }
-
-    public static void setSaveFromParentEnabled(View view, boolean enabled) {
-        view.setSaveFromParentEnabled(enabled);
-    }
-
-    public static void setActivated(View view, boolean activated) {
-        view.setActivated(activated);
-    }
-
-    public static int combineMeasuredStates(int curState, int newState) {
-        return View.combineMeasuredStates(curState, newState);
-    }
-
-    static void offsetTopAndBottom(View view, int offset) {
-        view.offsetTopAndBottom(offset);
-        tickleInvalidationFlag(view);
-
-        ViewParent parent = view.getParent();
-        if (parent instanceof View) {
-            tickleInvalidationFlag((View) parent);
-        }
-    }
-
-    static void offsetLeftAndRight(View view, int offset) {
-        view.offsetLeftAndRight(offset);
-        tickleInvalidationFlag(view);
-
-        ViewParent parent = view.getParent();
-        if (parent instanceof View) {
-            tickleInvalidationFlag((View) parent);
-        }
-    }
-
-    private static void tickleInvalidationFlag(View view) {
-        final float y = view.getTranslationY();
-        view.setTranslationY(y + 1);
-        view.setTranslationY(y);
     }
 }

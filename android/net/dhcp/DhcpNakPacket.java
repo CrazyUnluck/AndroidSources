@@ -16,6 +16,7 @@
 
 package android.net.dhcp;
 
+import java.net.InetAddress;
 import java.net.Inet4Address;
 import java.nio.ByteBuffer;
 
@@ -26,10 +27,10 @@ class DhcpNakPacket extends DhcpPacket {
     /**
      * Generates a NAK packet with the specified parameters.
      */
-    DhcpNakPacket(int transId, short secs, Inet4Address clientIp, Inet4Address yourIp,
-                  Inet4Address nextIp, Inet4Address relayIp,
+    DhcpNakPacket(int transId, InetAddress clientIp, InetAddress yourIp,
+                  InetAddress nextIp, InetAddress relayIp,
                   byte[] clientMac) {
-        super(transId, secs, INADDR_ANY, INADDR_ANY, nextIp, relayIp,
+        super(transId, Inet4Address.ANY, Inet4Address.ANY, nextIp, relayIp,
             clientMac, false);
     }
 
@@ -43,8 +44,8 @@ class DhcpNakPacket extends DhcpPacket {
      */
     public ByteBuffer buildPacket(int encap, short destUdp, short srcUdp) {
         ByteBuffer result = ByteBuffer.allocate(MAX_LENGTH);
-        Inet4Address destIp = mClientIp;
-        Inet4Address srcIp = mYourIp;
+        InetAddress destIp = mClientIp;
+        InetAddress srcIp = mYourIp;
 
         fillInPacket(encap, destIp, srcIp, destUdp, srcUdp, result,
             DHCP_BOOTREPLY, mBroadcast);
@@ -60,5 +61,12 @@ class DhcpNakPacket extends DhcpPacket {
         addTlv(buffer, DHCP_SERVER_IDENTIFIER, mServerIdentifier);
         addTlv(buffer, DHCP_MESSAGE, mMessage);
         addTlvEnd(buffer);
+    }
+
+    /**
+     * Notifies the specified state machine of the newly-arrived NAK packet.
+     */
+    public void doNextOp(DhcpStateMachine machine) {
+        machine.onNakReceived();
     }
 }

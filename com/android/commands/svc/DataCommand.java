@@ -18,6 +18,8 @@ package com.android.commands.svc;
 
 import android.os.ServiceManager;
 import android.os.RemoteException;
+import android.net.IConnectivityManager;
+import android.net.ConnectivityManager;
 import android.content.Context;
 import com.android.internal.telephony.ITelephony;
 
@@ -34,7 +36,9 @@ public class DataCommand extends Svc.Command {
         return shortHelp() + "\n"
                 + "\n"
                 + "usage: svc data [enable|disable]\n"
-                + "         Turn mobile data on or off.\n\n";
+                + "         Turn mobile data on or off.\n\n"
+                + "       svc data prefer\n"
+                + "          Set mobile as the preferred data network\n";
     }
 
     public void run(String[] args) {
@@ -47,6 +51,15 @@ public class DataCommand extends Svc.Command {
             } else if ("disable".equals(args[1])) {
                 flag = false;
                 validCommand = true;
+            } else if ("prefer".equals(args[1])) {
+                IConnectivityManager connMgr =
+                        IConnectivityManager.Stub.asInterface(ServiceManager.getService(Context.CONNECTIVITY_SERVICE));
+                try {
+                    connMgr.setNetworkPreference(ConnectivityManager.TYPE_MOBILE);
+                } catch (RemoteException e) {
+                    System.err.println("Failed to set preferred network: " + e);
+                }
+                return;
             }
             if (validCommand) {
                 ITelephony phoneMgr

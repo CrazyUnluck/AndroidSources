@@ -5,9 +5,7 @@
  */
 
 package java.util.concurrent.atomic;
-
-import java.util.function.IntBinaryOperator;
-import java.util.function.IntUnaryOperator;
+import sun.misc.Unsafe;
 
 /**
  * An {@code int} value that may be updated atomically.  See the
@@ -21,20 +19,19 @@ import java.util.function.IntUnaryOperator;
  *
  * @since 1.5
  * @author Doug Lea
- */
+*/
 public class AtomicInteger extends Number implements java.io.Serializable {
     private static final long serialVersionUID = 6214790243416807050L;
 
-    private static final sun.misc.Unsafe U = sun.misc.Unsafe.getUnsafe();
-    private static final long VALUE;
+    // setup to use Unsafe.compareAndSwapInt for updates
+    private static final Unsafe unsafe = Unsafe.getUnsafe();
+    private static final long valueOffset;
 
     static {
         try {
-            VALUE = U.objectFieldOffset
+            valueOffset = unsafe.objectFieldOffset
                 (AtomicInteger.class.getDeclaredField("value"));
-        } catch (ReflectiveOperationException e) {
-            throw new Error(e);
-        }
+        } catch (Exception ex) { throw new Error(ex); }
     }
 
     private volatile int value;
@@ -79,7 +76,7 @@ public class AtomicInteger extends Number implements java.io.Serializable {
      * @since 1.6
      */
     public final void lazySet(int newValue) {
-        U.putOrderedInt(this, VALUE, newValue);
+        unsafe.putOrderedInt(this, valueOffset, newValue);
     }
 
     /**
@@ -89,7 +86,11 @@ public class AtomicInteger extends Number implements java.io.Serializable {
      * @return the previous value
      */
     public final int getAndSet(int newValue) {
-        return U.getAndSetInt(this, VALUE, newValue);
+        for (;;) {
+            int current = get();
+            if (compareAndSet(current, newValue))
+                return current;
+        }
     }
 
     /**
@@ -98,11 +99,11 @@ public class AtomicInteger extends Number implements java.io.Serializable {
      *
      * @param expect the expected value
      * @param update the new value
-     * @return {@code true} if successful. False return indicates that
+     * @return true if successful. False return indicates that
      * the actual value was not equal to the expected value.
      */
     public final boolean compareAndSet(int expect, int update) {
-        return U.compareAndSwapInt(this, VALUE, expect, update);
+        return unsafe.compareAndSwapInt(this, valueOffset, expect, update);
     }
 
     /**
@@ -115,10 +116,10 @@ public class AtomicInteger extends Number implements java.io.Serializable {
      *
      * @param expect the expected value
      * @param update the new value
-     * @return {@code true} if successful
+     * @return true if successful
      */
     public final boolean weakCompareAndSet(int expect, int update) {
-        return U.compareAndSwapInt(this, VALUE, expect, update);
+        return unsafe.compareAndSwapInt(this, valueOffset, expect, update);
     }
 
     /**
@@ -127,7 +128,12 @@ public class AtomicInteger extends Number implements java.io.Serializable {
      * @return the previous value
      */
     public final int getAndIncrement() {
-        return U.getAndAddInt(this, VALUE, 1);
+        for (;;) {
+            int current = get();
+            int next = current + 1;
+            if (compareAndSet(current, next))
+                return current;
+        }
     }
 
     /**
@@ -136,7 +142,12 @@ public class AtomicInteger extends Number implements java.io.Serializable {
      * @return the previous value
      */
     public final int getAndDecrement() {
-        return U.getAndAddInt(this, VALUE, -1);
+        for (;;) {
+            int current = get();
+            int next = current - 1;
+            if (compareAndSet(current, next))
+                return current;
+        }
     }
 
     /**
@@ -146,7 +157,12 @@ public class AtomicInteger extends Number implements java.io.Serializable {
      * @return the previous value
      */
     public final int getAndAdd(int delta) {
-        return U.getAndAddInt(this, VALUE, delta);
+        for (;;) {
+            int current = get();
+            int next = current + delta;
+            if (compareAndSet(current, next))
+                return current;
+        }
     }
 
     /**
@@ -155,7 +171,12 @@ public class AtomicInteger extends Number implements java.io.Serializable {
      * @return the updated value
      */
     public final int incrementAndGet() {
-        return U.getAndAddInt(this, VALUE, 1) + 1;
+        for (;;) {
+            int current = get();
+            int next = current + 1;
+            if (compareAndSet(current, next))
+                return next;
+        }
     }
 
     /**
@@ -164,7 +185,12 @@ public class AtomicInteger extends Number implements java.io.Serializable {
      * @return the updated value
      */
     public final int decrementAndGet() {
-        return U.getAndAddInt(this, VALUE, -1) - 1;
+        for (;;) {
+            int current = get();
+            int next = current - 1;
+            if (compareAndSet(current, next))
+                return next;
+        }
     }
 
     /**
@@ -174,93 +200,12 @@ public class AtomicInteger extends Number implements java.io.Serializable {
      * @return the updated value
      */
     public final int addAndGet(int delta) {
-        return U.getAndAddInt(this, VALUE, delta) + delta;
-    }
-
-    /**
-     * Atomically updates the current value with the results of
-     * applying the given function, returning the previous value. The
-     * function should be side-effect-free, since it may be re-applied
-     * when attempted updates fail due to contention among threads.
-     *
-     * @param updateFunction a side-effect-free function
-     * @return the previous value
-     * @since 1.8
-     */
-    public final int getAndUpdate(IntUnaryOperator updateFunction) {
-        int prev, next;
-        do {
-            prev = get();
-            next = updateFunction.applyAsInt(prev);
-        } while (!compareAndSet(prev, next));
-        return prev;
-    }
-
-    /**
-     * Atomically updates the current value with the results of
-     * applying the given function, returning the updated value. The
-     * function should be side-effect-free, since it may be re-applied
-     * when attempted updates fail due to contention among threads.
-     *
-     * @param updateFunction a side-effect-free function
-     * @return the updated value
-     * @since 1.8
-     */
-    public final int updateAndGet(IntUnaryOperator updateFunction) {
-        int prev, next;
-        do {
-            prev = get();
-            next = updateFunction.applyAsInt(prev);
-        } while (!compareAndSet(prev, next));
-        return next;
-    }
-
-    /**
-     * Atomically updates the current value with the results of
-     * applying the given function to the current and given values,
-     * returning the previous value. The function should be
-     * side-effect-free, since it may be re-applied when attempted
-     * updates fail due to contention among threads.  The function
-     * is applied with the current value as its first argument,
-     * and the given update as the second argument.
-     *
-     * @param x the update value
-     * @param accumulatorFunction a side-effect-free function of two arguments
-     * @return the previous value
-     * @since 1.8
-     */
-    public final int getAndAccumulate(int x,
-                                      IntBinaryOperator accumulatorFunction) {
-        int prev, next;
-        do {
-            prev = get();
-            next = accumulatorFunction.applyAsInt(prev, x);
-        } while (!compareAndSet(prev, next));
-        return prev;
-    }
-
-    /**
-     * Atomically updates the current value with the results of
-     * applying the given function to the current and given values,
-     * returning the updated value. The function should be
-     * side-effect-free, since it may be re-applied when attempted
-     * updates fail due to contention among threads.  The function
-     * is applied with the current value as its first argument,
-     * and the given update as the second argument.
-     *
-     * @param x the update value
-     * @param accumulatorFunction a side-effect-free function of two arguments
-     * @return the updated value
-     * @since 1.8
-     */
-    public final int accumulateAndGet(int x,
-                                      IntBinaryOperator accumulatorFunction) {
-        int prev, next;
-        do {
-            prev = get();
-            next = accumulatorFunction.applyAsInt(prev, x);
-        } while (!compareAndSet(prev, next));
-        return next;
+        for (;;) {
+            int current = get();
+            int next = current + delta;
+            if (compareAndSet(current, next))
+                return next;
+        }
     }
 
     /**
@@ -273,7 +218,6 @@ public class AtomicInteger extends Number implements java.io.Serializable {
 
     /**
      * Returns the value of this {@code AtomicInteger} as an {@code int}.
-     * Equivalent to {@link #get()}.
      */
     public int intValue() {
         return get();
@@ -282,7 +226,6 @@ public class AtomicInteger extends Number implements java.io.Serializable {
     /**
      * Returns the value of this {@code AtomicInteger} as a {@code long}
      * after a widening primitive conversion.
-     * @jls 5.1.2 Widening Primitive Conversions
      */
     public long longValue() {
         return (long)get();
@@ -291,7 +234,6 @@ public class AtomicInteger extends Number implements java.io.Serializable {
     /**
      * Returns the value of this {@code AtomicInteger} as a {@code float}
      * after a widening primitive conversion.
-     * @jls 5.1.2 Widening Primitive Conversions
      */
     public float floatValue() {
         return (float)get();
@@ -300,7 +242,6 @@ public class AtomicInteger extends Number implements java.io.Serializable {
     /**
      * Returns the value of this {@code AtomicInteger} as a {@code double}
      * after a widening primitive conversion.
-     * @jls 5.1.2 Widening Primitive Conversions
      */
     public double doubleValue() {
         return (double)get();

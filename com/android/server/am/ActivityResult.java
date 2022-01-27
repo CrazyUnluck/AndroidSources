@@ -18,6 +18,7 @@ package com.android.server.am;
 
 import android.app.ResultInfo;
 import android.content.Intent;
+import android.os.Bundle;
 
 /**
  * Pending result information to send back to an activity.

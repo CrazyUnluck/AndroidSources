@@ -26,8 +26,6 @@ import android.database.sqlite.SQLiteDebug.DbStats;
 import android.os.CancellationSignal;
 import android.os.OperationCanceledException;
 import android.os.ParcelFileDescriptor;
-import android.os.SystemClock;
-import android.os.Trace;
 import android.util.Log;
 import android.util.LruCache;
 import android.util.Printer;
@@ -92,6 +90,8 @@ public final class SQLiteConnection implements CancellationSignal.OnCancelListen
 
     private static final String[] EMPTY_STRING_ARRAY = new String[0];
     private static final byte[] EMPTY_BYTE_ARRAY = new byte[0];
+
+    private static final Pattern TRIM_SQL_PATTERN = Pattern.compile("[\\s]*\\n+[\\s]*");
 
     private final CloseGuard mCloseGuard = CloseGuard.get();
 
@@ -1203,11 +1203,7 @@ public final class SQLiteConnection implements CancellationSignal.OnCancelListen
     }
 
     private static String trimSqlForDisplay(String sql) {
-        // Note: Creating and caching a regular expression is expensive at preload-time
-        //       and stops compile-time initialization. This pattern is only used when
-        //       dumping the connection, which is a rare (mainly error) case. So:
-        //       DO NOT CACHE.
-        return sql.replaceAll("[\\s]*\\n+[\\s]*", " ");
+        return TRIM_SQL_PATTERN.matcher(sql).replaceAll(" ");
     }
 
     /**
@@ -1312,8 +1308,7 @@ public final class SQLiteConnection implements CancellationSignal.OnCancelListen
                         operation.mBindArgs.clear();
                     }
                 }
-                operation.mStartWallTime = System.currentTimeMillis();
-                operation.mStartTime = SystemClock.uptimeMillis();
+                operation.mStartTime = System.currentTimeMillis();
                 operation.mKind = kind;
                 operation.mSql = sql;
                 if (bindArgs != null) {
@@ -1333,10 +1328,6 @@ public final class SQLiteConnection implements CancellationSignal.OnCancelListen
                     }
                 }
                 operation.mCookie = newOperationCookieLocked(index);
-                if (Trace.isTagEnabled(Trace.TRACE_TAG_DATABASE)) {
-                    Trace.asyncTraceBegin(Trace.TRACE_TAG_DATABASE, operation.getTraceMethodName(),
-                            operation.mCookie);
-                }
                 mIndex = index;
                 return operation.mCookie;
             }
@@ -1374,11 +1365,7 @@ public final class SQLiteConnection implements CancellationSignal.OnCancelListen
         private boolean endOperationDeferLogLocked(int cookie) {
             final Operation operation = getOperationLocked(cookie);
             if (operation != null) {
-                if (Trace.isTagEnabled(Trace.TRACE_TAG_DATABASE)) {
-                    Trace.asyncTraceEnd(Trace.TRACE_TAG_DATABASE, operation.getTraceMethodName(),
-                            operation.mCookie);
-                }
-                operation.mEndTime = SystemClock.uptimeMillis();
+                operation.mEndTime = System.currentTimeMillis();
                 operation.mFinished = true;
                 return SQLiteDebug.DEBUG_LOG_SLOW_QUERIES && SQLiteDebug.shouldLogSlowQuery(
                                 operation.mEndTime - operation.mStartTime);
@@ -1450,15 +1437,11 @@ public final class SQLiteConnection implements CancellationSignal.OnCancelListen
     }
 
     private static final class Operation {
-        // Trim all SQL statements to 256 characters inside the trace marker.
-        // This limit gives plenty of context while leaving space for other
-        // entries in the trace buffer (and ensures atrace doesn't truncate the
-        // marker for us, potentially losing metadata in the process).
-        private static final int MAX_TRACE_METHOD_NAME_LEN = 256;
+        private static final SimpleDateFormat sDateFormat =
+                new SimpleDateFormat("yyyy-MM-dd HH:mm:ss.SSS");
 
-        public long mStartWallTime; // in System.currentTimeMillis()
-        public long mStartTime; // in SystemClock.uptimeMillis();
-        public long mEndTime; // in SystemClock.uptimeMillis();
+        public long mStartTime;
+        public long mEndTime;
         public String mKind;
         public String mSql;
         public ArrayList<Object> mBindArgs;
@@ -1471,7 +1454,7 @@ public final class SQLiteConnection implements CancellationSignal.OnCancelListen
             if (mFinished) {
                 msg.append(" took ").append(mEndTime - mStartTime).append("ms");
             } else {
-                msg.append(" started ").append(System.currentTimeMillis() - mStartWallTime)
+                msg.append(" started ").append(System.currentTimeMillis() - mStartTime)
                         .append("ms ago");
             }
             msg.append(" - ").append(getStatus());
@@ -1510,19 +1493,8 @@ public final class SQLiteConnection implements CancellationSignal.OnCancelListen
             return mException != null ? "failed" : "succeeded";
         }
 
-        private String getTraceMethodName() {
-            String methodName = mKind + " " + mSql;
-            if (methodName.length() > MAX_TRACE_METHOD_NAME_LEN)
-                return methodName.substring(0, MAX_TRACE_METHOD_NAME_LEN);
-            return methodName;
-        }
-
         private String getFormattedStartTime() {
-            // Note: SimpleDateFormat is not thread-safe, cannot be compile-time created, and is
-            //       relatively expensive to create during preloading. This method is only used
-            //       when dumping a connection, which is a rare (mainly error) case. So:
-            //       DO NOT CACHE.
-            return new SimpleDateFormat("yyyy-MM-dd HH:mm:ss.SSS").format(new Date(mStartWallTime));
+            return sDateFormat.format(new Date(mStartTime));
         }
     }
 }

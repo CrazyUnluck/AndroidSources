@@ -17,6 +17,9 @@
 package android.renderscript;
 
 
+import android.util.Log;
+
+
 /**
  * @hide
  * @deprecated in API 16
@@ -36,7 +39,7 @@ package android.renderscript;
  *
  **/
 public class ProgramFragment extends Program {
-    ProgramFragment(long id, RenderScript rs) {
+    ProgramFragment(int id, RenderScript rs) {
         super(id, rs);
     }
 
@@ -62,7 +65,7 @@ public class ProgramFragment extends Program {
          */
         public ProgramFragment create() {
             mRS.validate();
-            long[] tmp = new long[(mInputCount + mOutputCount + mConstantCount + mTextureCount) * 2];
+            int[] tmp = new int[(mInputCount + mOutputCount + mConstantCount + mTextureCount) * 2];
             String[] texNames = new String[mTextureCount];
             int idx = 0;
 
@@ -84,7 +87,7 @@ public class ProgramFragment extends Program {
                 texNames[i] = mTextureNames[i];
             }
 
-            long id = mRS.nProgramFragmentCreate(mShader, texNames, tmp);
+            int id = mRS.nProgramFragmentCreate(mShader, texNames, tmp);
             ProgramFragment pf = new ProgramFragment(id, mRS);
             initProgram(pf);
             return pf;

@@ -16,9 +16,7 @@
 
 package android.widget;
 
-import android.annotation.NonNull;
 import android.os.Build;
-import android.os.Build.VERSION_CODES;
 import android.os.Parcel;
 import android.os.Parcelable;
 import com.android.internal.R;
@@ -40,7 +38,6 @@ import android.view.View;
 import android.view.ViewConfiguration;
 import android.view.ViewDebug;
 import android.view.ViewGroup;
-import android.view.ViewHierarchyEncoder;
 import android.view.ViewParent;
 import android.view.accessibility.AccessibilityEvent;
 import android.view.accessibility.AccessibilityNodeInfo;
@@ -141,13 +138,6 @@ public class ScrollView extends FrameLayout {
     private int mActivePointerId = INVALID_POINTER;
 
     /**
-     * Used during scrolling to retrieve the new offset within the window.
-     */
-    private final int[] mScrollOffset = new int[2];
-    private final int[] mScrollConsumed = new int[2];
-    private int mNestedYOffset;
-
-    /**
      * The StrictMode "critical time span" objects to catch animation
      * stutters.  Non-null when a time-sensitive animation is
      * in-flight.  Must call finish() on them when done animating.
@@ -172,16 +162,12 @@ public class ScrollView extends FrameLayout {
         this(context, attrs, com.android.internal.R.attr.scrollViewStyle);
     }
 
-    public ScrollView(Context context, AttributeSet attrs, int defStyleAttr) {
-        this(context, attrs, defStyleAttr, 0);
-    }
-
-    public ScrollView(Context context, AttributeSet attrs, int defStyleAttr, int defStyleRes) {
-        super(context, attrs, defStyleAttr, defStyleRes);
+    public ScrollView(Context context, AttributeSet attrs, int defStyle) {
+        super(context, attrs, defStyle);
         initScrollView();
 
-        final TypedArray a = context.obtainStyledAttributes(
-                attrs, com.android.internal.R.styleable.ScrollView, defStyleAttr, defStyleRes);
+        TypedArray a =
+            context.obtainStyledAttributes(attrs, com.android.internal.R.styleable.ScrollView, defStyle, 0);
 
         setFillViewport(a.getBoolean(R.styleable.ScrollView_fillViewport, false));
 
@@ -350,24 +336,17 @@ public class ScrollView extends FrameLayout {
 
         if (getChildCount() > 0) {
             final View child = getChildAt(0);
-            final int widthPadding;
-            final int heightPadding;
-            final int targetSdkVersion = getContext().getApplicationInfo().targetSdkVersion;
-            final FrameLayout.LayoutParams lp = (LayoutParams) child.getLayoutParams();
-            if (targetSdkVersion >= VERSION_CODES.M) {
-                widthPadding = mPaddingLeft + mPaddingRight + lp.leftMargin + lp.rightMargin;
-                heightPadding = mPaddingTop + mPaddingBottom + lp.topMargin + lp.bottomMargin;
-            } else {
-                widthPadding = mPaddingLeft + mPaddingRight;
-                heightPadding = mPaddingTop + mPaddingBottom;
-            }
+            int height = getMeasuredHeight();
+            if (child.getMeasuredHeight() < height) {
+                final FrameLayout.LayoutParams lp = (LayoutParams) child.getLayoutParams();
 
-            final int desiredHeight = getMeasuredHeight() - heightPadding;
-            if (child.getMeasuredHeight() < desiredHeight) {
-                final int childWidthMeasureSpec = getChildMeasureSpec(
-                        widthMeasureSpec, widthPadding, lp.width);
-                final int childHeightMeasureSpec = MeasureSpec.makeMeasureSpec(
-                        desiredHeight, MeasureSpec.EXACTLY);
+                int childWidthMeasureSpec = getChildMeasureSpec(widthMeasureSpec,
+                        mPaddingLeft + mPaddingRight, lp.width);
+                height -= mPaddingTop;
+                height -= mPaddingBottom;
+                int childHeightMeasureSpec =
+                        MeasureSpec.makeMeasureSpec(height, MeasureSpec.EXACTLY);
+
                 child.measure(childWidthMeasureSpec, childHeightMeasureSpec);
             }
         }
@@ -489,10 +468,6 @@ public class ScrollView extends FrameLayout {
             return true;
         }
 
-        if (super.onInterceptTouchEvent(ev)) {
-            return true;
-        }
-
         /*
          * Don't try to intercept touch if we can't scroll anyway.
          */
@@ -526,12 +501,11 @@ public class ScrollView extends FrameLayout {
 
                 final int y = (int) ev.getY(pointerIndex);
                 final int yDiff = Math.abs(y - mLastMotionY);
-                if (yDiff > mTouchSlop && (getNestedScrollAxes() & SCROLL_AXIS_VERTICAL) == 0) {
+                if (yDiff > mTouchSlop) {
                     mIsBeingDragged = true;
                     mLastMotionY = y;
                     initVelocityTrackerIfNotExists();
                     mVelocityTracker.addMovement(ev);
-                    mNestedYOffset = 0;
                     if (mScrollStrictSpan == null) {
                         mScrollStrictSpan = StrictMode.enterCriticalSpan("ScrollView-scroll");
                     }
@@ -561,17 +535,14 @@ public class ScrollView extends FrameLayout {
                 initOrResetVelocityTracker();
                 mVelocityTracker.addMovement(ev);
                 /*
-                 * If being flinged and user touches the screen, initiate drag;
-                 * otherwise don't. mScroller.isFinished should be false when
-                 * being flinged. We need to call computeScrollOffset() first so that
-                 * isFinished() is correct.
+                * If being flinged and user touches the screen, initiate drag;
+                * otherwise don't.  mScroller.isFinished should be false when
+                * being flinged.
                 */
-                mScroller.computeScrollOffset();
                 mIsBeingDragged = !mScroller.isFinished();
                 if (mIsBeingDragged && mScrollStrictSpan == null) {
                     mScrollStrictSpan = StrictMode.enterCriticalSpan("ScrollView-scroll");
                 }
-                startNestedScroll(SCROLL_AXIS_VERTICAL);
                 break;
             }
 
@@ -584,7 +555,6 @@ public class ScrollView extends FrameLayout {
                 if (mScroller.springBack(mScrollX, mScrollY, 0, 0, 0, getScrollRange())) {
                     postInvalidateOnAnimation();
                 }
-                stopNestedScroll();
                 break;
             case MotionEvent.ACTION_POINTER_UP:
                 onSecondaryPointerUp(ev);
@@ -601,17 +571,11 @@ public class ScrollView extends FrameLayout {
     @Override
     public boolean onTouchEvent(MotionEvent ev) {
         initVelocityTrackerIfNotExists();
+        mVelocityTracker.addMovement(ev);
 
-        MotionEvent vtev = MotionEvent.obtain(ev);
+        final int action = ev.getAction();
 
-        final int actionMasked = ev.getActionMasked();
-
-        if (actionMasked == MotionEvent.ACTION_DOWN) {
-            mNestedYOffset = 0;
-        }
-        vtev.offsetLocation(0, mNestedYOffset);
-
-        switch (actionMasked) {
+        switch (action & MotionEvent.ACTION_MASK) {
             case MotionEvent.ACTION_DOWN: {
                 if (getChildCount() == 0) {
                     return false;
@@ -638,7 +602,6 @@ public class ScrollView extends FrameLayout {
                 // Remember where the motion event started
                 mLastMotionY = (int) ev.getY();
                 mActivePointerId = ev.getPointerId(0);
-                startNestedScroll(SCROLL_AXIS_VERTICAL);
                 break;
             }
             case MotionEvent.ACTION_MOVE:
@@ -650,11 +613,6 @@ public class ScrollView extends FrameLayout {
 
                 final int y = (int) ev.getY(activePointerIndex);
                 int deltaY = mLastMotionY - y;
-                if (dispatchNestedPreScroll(0, deltaY, mScrollConsumed, mScrollOffset)) {
-                    deltaY -= mScrollConsumed[1];
-                    vtev.offsetLocation(0, mScrollOffset[1]);
-                    mNestedYOffset += mScrollOffset[1];
-                }
                 if (!mIsBeingDragged && Math.abs(deltaY) > mTouchSlop) {
                     final ViewParent parent = getParent();
                     if (parent != null) {
@@ -669,39 +627,32 @@ public class ScrollView extends FrameLayout {
                 }
                 if (mIsBeingDragged) {
                     // Scroll to follow the motion event
-                    mLastMotionY = y - mScrollOffset[1];
+                    mLastMotionY = y;
 
+                    final int oldX = mScrollX;
                     final int oldY = mScrollY;
                     final int range = getScrollRange();
                     final int overscrollMode = getOverScrollMode();
-                    boolean canOverscroll = overscrollMode == OVER_SCROLL_ALWAYS ||
+                    final boolean canOverscroll = overscrollMode == OVER_SCROLL_ALWAYS ||
                             (overscrollMode == OVER_SCROLL_IF_CONTENT_SCROLLS && range > 0);
 
                     // Calling overScrollBy will call onOverScrolled, which
                     // calls onScrollChanged if applicable.
-                    if (overScrollBy(0, deltaY, 0, mScrollY, 0, range, 0, mOverscrollDistance, true)
-                            && !hasNestedScrollingParent()) {
+                    if (overScrollBy(0, deltaY, 0, mScrollY,
+                            0, range, 0, mOverscrollDistance, true)) {
                         // Break our velocity if we hit a scroll barrier.
                         mVelocityTracker.clear();
                     }
 
-                    final int scrolledDeltaY = mScrollY - oldY;
-                    final int unconsumedY = deltaY - scrolledDeltaY;
-                    if (dispatchNestedScroll(0, scrolledDeltaY, 0, unconsumedY, mScrollOffset)) {
-                        mLastMotionY -= mScrollOffset[1];
-                        vtev.offsetLocation(0, mScrollOffset[1]);
-                        mNestedYOffset += mScrollOffset[1];
-                    } else if (canOverscroll) {
+                    if (canOverscroll) {
                         final int pulledToY = oldY + deltaY;
                         if (pulledToY < 0) {
-                            mEdgeGlowTop.onPull((float) deltaY / getHeight(),
-                                    ev.getX(activePointerIndex) / getWidth());
+                            mEdgeGlowTop.onPull((float) deltaY / getHeight());
                             if (!mEdgeGlowBottom.isFinished()) {
                                 mEdgeGlowBottom.onRelease();
                             }
                         } else if (pulledToY > range) {
-                            mEdgeGlowBottom.onPull((float) deltaY / getHeight(),
-                                    1.f - ev.getX(activePointerIndex) / getWidth());
+                            mEdgeGlowBottom.onPull((float) deltaY / getHeight());
                             if (!mEdgeGlowTop.isFinished()) {
                                 mEdgeGlowTop.onRelease();
                             }
@@ -719,11 +670,15 @@ public class ScrollView extends FrameLayout {
                     velocityTracker.computeCurrentVelocity(1000, mMaximumVelocity);
                     int initialVelocity = (int) velocityTracker.getYVelocity(mActivePointerId);
 
-                    if ((Math.abs(initialVelocity) > mMinimumVelocity)) {
-                        flingWithNestedDispatch(-initialVelocity);
-                    } else if (mScroller.springBack(mScrollX, mScrollY, 0, 0, 0,
-                            getScrollRange())) {
-                        postInvalidateOnAnimation();
+                    if (getChildCount() > 0) {
+                        if ((Math.abs(initialVelocity) > mMinimumVelocity)) {
+                            fling(-initialVelocity);
+                        } else {
+                            if (mScroller.springBack(mScrollX, mScrollY, 0, 0, 0,
+                                    getScrollRange())) {
+                                postInvalidateOnAnimation();
+                            }
+                        }
                     }
 
                     mActivePointerId = INVALID_POINTER;
@@ -750,11 +705,6 @@ public class ScrollView extends FrameLayout {
                 mLastMotionY = (int) ev.getY(ev.findPointerIndex(mActivePointerId));
                 break;
         }
-
-        if (mVelocityTracker != null) {
-            mVelocityTracker.addMovement(vtev);
-        }
-        vtev.recycle();
         return true;
     }
 
@@ -825,18 +775,16 @@ public class ScrollView extends FrameLayout {
         awakenScrollBars();
     }
 
-    /** @hide */
     @Override
-    public boolean performAccessibilityActionInternal(int action, Bundle arguments) {
-        if (super.performAccessibilityActionInternal(action, arguments)) {
+    public boolean performAccessibilityAction(int action, Bundle arguments) {
+        if (super.performAccessibilityAction(action, arguments)) {
             return true;
         }
         if (!isEnabled()) {
             return false;
         }
         switch (action) {
-            case AccessibilityNodeInfo.ACTION_SCROLL_FORWARD:
-            case R.id.accessibilityActionScrollDown: {
+            case AccessibilityNodeInfo.ACTION_SCROLL_FORWARD: {
                 final int viewportHeight = getHeight() - mPaddingBottom - mPaddingTop;
                 final int targetScrollY = Math.min(mScrollY + viewportHeight, getScrollRange());
                 if (targetScrollY != mScrollY) {
@@ -844,8 +792,7 @@ public class ScrollView extends FrameLayout {
                     return true;
                 }
             } return false;
-            case AccessibilityNodeInfo.ACTION_SCROLL_BACKWARD:
-            case R.id.accessibilityActionScrollUp: {
+            case AccessibilityNodeInfo.ACTION_SCROLL_BACKWARD: {
                 final int viewportHeight = getHeight() - mPaddingBottom - mPaddingTop;
                 final int targetScrollY = Math.max(mScrollY - viewportHeight, 0);
                 if (targetScrollY != mScrollY) {
@@ -858,35 +805,27 @@ public class ScrollView extends FrameLayout {
     }
 
     @Override
-    public CharSequence getAccessibilityClassName() {
-        return ScrollView.class.getName();
-    }
-
-    /** @hide */
-    @Override
-    public void onInitializeAccessibilityNodeInfoInternal(AccessibilityNodeInfo info) {
-        super.onInitializeAccessibilityNodeInfoInternal(info);
+    public void onInitializeAccessibilityNodeInfo(AccessibilityNodeInfo info) {
+        super.onInitializeAccessibilityNodeInfo(info);
+        info.setClassName(ScrollView.class.getName());
         if (isEnabled()) {
             final int scrollRange = getScrollRange();
             if (scrollRange > 0) {
                 info.setScrollable(true);
                 if (mScrollY > 0) {
-                    info.addAction(
-                            AccessibilityNodeInfo.AccessibilityAction.ACTION_SCROLL_BACKWARD);
-                    info.addAction(AccessibilityNodeInfo.AccessibilityAction.ACTION_SCROLL_UP);
+                    info.addAction(AccessibilityNodeInfo.ACTION_SCROLL_BACKWARD);
                 }
                 if (mScrollY < scrollRange) {
-                    info.addAction(AccessibilityNodeInfo.AccessibilityAction.ACTION_SCROLL_FORWARD);
-                    info.addAction(AccessibilityNodeInfo.AccessibilityAction.ACTION_SCROLL_DOWN);
+                    info.addAction(AccessibilityNodeInfo.ACTION_SCROLL_FORWARD);
                 }
             }
         }
     }
 
-    /** @hide */
     @Override
-    public void onInitializeAccessibilityEventInternal(AccessibilityEvent event) {
-        super.onInitializeAccessibilityEventInternal(event);
+    public void onInitializeAccessibilityEvent(AccessibilityEvent event) {
+        super.onInitializeAccessibilityEvent(event);
+        event.setClassName(ScrollView.class.getName());
         final boolean scrollable = getScrollRange() > 0;
         event.setScrollable(scrollable);
         event.setScrollX(mScrollX);
@@ -1259,8 +1198,7 @@ public class ScrollView extends FrameLayout {
     }
 
     @Override
-    protected void measureChild(View child, int parentWidthMeasureSpec,
-            int parentHeightMeasureSpec) {
+    protected void measureChild(View child, int parentWidthMeasureSpec, int parentHeightMeasureSpec) {
         ViewGroup.LayoutParams lp = child.getLayoutParams();
 
         int childWidthMeasureSpec;
@@ -1268,10 +1206,8 @@ public class ScrollView extends FrameLayout {
 
         childWidthMeasureSpec = getChildMeasureSpec(parentWidthMeasureSpec, mPaddingLeft
                 + mPaddingRight, lp.width);
-        final int verticalPadding = mPaddingTop + mPaddingBottom;
-        childHeightMeasureSpec = MeasureSpec.makeSafeMeasureSpec(
-                Math.max(0, MeasureSpec.getSize(parentHeightMeasureSpec) - verticalPadding),
-                MeasureSpec.UNSPECIFIED);
+
+        childHeightMeasureSpec = MeasureSpec.makeMeasureSpec(0, MeasureSpec.UNSPECIFIED);
 
         child.measure(childWidthMeasureSpec, childHeightMeasureSpec);
     }
@@ -1284,11 +1220,8 @@ public class ScrollView extends FrameLayout {
         final int childWidthMeasureSpec = getChildMeasureSpec(parentWidthMeasureSpec,
                 mPaddingLeft + mPaddingRight + lp.leftMargin + lp.rightMargin
                         + widthUsed, lp.width);
-        final int usedTotal = mPaddingTop + mPaddingBottom + lp.topMargin + lp.bottomMargin +
-                heightUsed;
-        final int childHeightMeasureSpec = MeasureSpec.makeSafeMeasureSpec(
-                Math.max(0, MeasureSpec.getSize(parentHeightMeasureSpec) - usedTotal),
-                MeasureSpec.UNSPECIFIED);
+        final int childHeightMeasureSpec = MeasureSpec.makeMeasureSpec(
+                lp.topMargin + lp.bottomMargin, MeasureSpec.UNSPECIFIED);
 
         child.measure(childWidthMeasureSpec, childHeightMeasureSpec);
     }
@@ -1616,17 +1549,6 @@ public class ScrollView extends FrameLayout {
         }
     }
 
-    private void flingWithNestedDispatch(int velocityY) {
-        final boolean canFling = (mScrollY > 0 || velocityY > 0) &&
-                (mScrollY < getScrollRange() || velocityY < 0);
-        if (!dispatchNestedPreFling(0, velocityY)) {
-            dispatchNestedFling(0, velocityY, canFling);
-            if (canFling) {
-                fling(velocityY);
-            }
-        }
-    }
-
     private void endDrag() {
         mIsBeingDragged = false;
 
@@ -1677,71 +1599,16 @@ public class ScrollView extends FrameLayout {
     }
 
     @Override
-    public boolean onStartNestedScroll(View child, View target, int nestedScrollAxes) {
-        return (nestedScrollAxes & SCROLL_AXIS_VERTICAL) != 0;
-    }
-
-    @Override
-    public void onNestedScrollAccepted(View child, View target, int axes) {
-        super.onNestedScrollAccepted(child, target, axes);
-        startNestedScroll(SCROLL_AXIS_VERTICAL);
-    }
-
-    /**
-     * @inheritDoc
-     */
-    @Override
-    public void onStopNestedScroll(View target) {
-        super.onStopNestedScroll(target);
-    }
-
-    @Override
-    public void onNestedScroll(View target, int dxConsumed, int dyConsumed,
-            int dxUnconsumed, int dyUnconsumed) {
-        final int oldScrollY = mScrollY;
-        scrollBy(0, dyUnconsumed);
-        final int myConsumed = mScrollY - oldScrollY;
-        final int myUnconsumed = dyUnconsumed - myConsumed;
-        dispatchNestedScroll(0, myConsumed, 0, myUnconsumed, null);
-    }
-
-    /**
-     * @inheritDoc
-     */
-    @Override
-    public boolean onNestedFling(View target, float velocityX, float velocityY, boolean consumed) {
-        if (!consumed) {
-            flingWithNestedDispatch((int) velocityY);
-            return true;
-        }
-        return false;
-    }
-
-    @Override
     public void draw(Canvas canvas) {
         super.draw(canvas);
         if (mEdgeGlowTop != null) {
             final int scrollY = mScrollY;
-            final boolean clipToPadding = getClipToPadding();
             if (!mEdgeGlowTop.isFinished()) {
                 final int restoreCount = canvas.save();
-                final int width;
-                final int height;
-                final float translateX;
-                final float translateY;
-                if (clipToPadding) {
-                    width = getWidth() - mPaddingLeft - mPaddingRight;
-                    height = getHeight() - mPaddingTop - mPaddingBottom;
-                    translateX = mPaddingLeft;
-                    translateY = mPaddingTop;
-                } else {
-                    width = getWidth();
-                    height = getHeight();
-                    translateX = 0;
-                    translateY = 0;
-                }
-                canvas.translate(translateX, Math.min(0, scrollY) + translateY);
-                mEdgeGlowTop.setSize(width, height);
+                final int width = getWidth() - mPaddingLeft - mPaddingRight;
+
+                canvas.translate(mPaddingLeft, Math.min(0, scrollY));
+                mEdgeGlowTop.setSize(width, getHeight());
                 if (mEdgeGlowTop.draw(canvas)) {
                     postInvalidateOnAnimation();
                 }
@@ -1749,23 +1616,11 @@ public class ScrollView extends FrameLayout {
             }
             if (!mEdgeGlowBottom.isFinished()) {
                 final int restoreCount = canvas.save();
-                final int width;
-                final int height;
-                final float translateX;
-                final float translateY;
-                if (clipToPadding) {
-                    width = getWidth() - mPaddingLeft - mPaddingRight;
-                    height = getHeight() - mPaddingTop - mPaddingBottom;
-                    translateX = mPaddingLeft;
-                    translateY = mPaddingTop;
-                } else {
-                    width = getWidth();
-                    height = getHeight();
-                    translateX = 0;
-                    translateY = 0;
-                }
-                canvas.translate(-width + translateX,
-                            Math.max(getScrollRange(), scrollY) + height + translateY);
+                final int width = getWidth() - mPaddingLeft - mPaddingRight;
+                final int height = getHeight();
+
+                canvas.translate(-width + mPaddingLeft,
+                        Math.max(getScrollRange(), scrollY) + height);
                 canvas.rotate(180, width, 0);
                 mEdgeGlowBottom.setSize(width, height);
                 if (mEdgeGlowBottom.draw(canvas)) {
@@ -1831,13 +1686,6 @@ public class ScrollView extends FrameLayout {
         SavedState ss = new SavedState(superState);
         ss.scrollPosition = mScrollY;
         return ss;
-    }
-
-    /** @hide */
-    @Override
-    protected void encodeProperties(@NonNull ViewHierarchyEncoder encoder) {
-        super.encodeProperties(encoder);
-        encoder.addProperty("fillViewport", mFillViewport);
     }
 
     static class SavedState extends BaseSavedState {

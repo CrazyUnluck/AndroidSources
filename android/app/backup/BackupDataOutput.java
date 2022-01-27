@@ -16,8 +16,8 @@
 
 package android.app.backup;
 
-import android.annotation.SystemApi;
 import android.os.ParcelFileDescriptor;
+
 import java.io.FileDescriptor;
 import java.io.IOException;
 
@@ -65,7 +65,6 @@ public class BackupDataOutput {
     long mBackupWriter;
 
     /** @hide */
-    @SystemApi
     public BackupDataOutput(FileDescriptor fd) {
         if (fd == null) throw new NullPointerException();
         mBackupWriter = ctor(fd);
@@ -77,8 +76,7 @@ public class BackupDataOutput {
     /**
      * Mark the beginning of one record in the backup data stream. This must be called before
      * {@link #writeEntityData}.
-     * @param key A string key that uniquely identifies the data record within the application.
-     *    Keys whose first character is \uFF00 or higher are not valid.
+     * @param key A string key that uniquely identifies the data record within the application
      * @param dataSize The size in bytes of this record's data.  Passing a dataSize
      *    of -1 indicates that the record under this key should be deleted.
      * @return The number of bytes written to the backup stream
@@ -115,7 +113,6 @@ public class BackupDataOutput {
     }
 
     /** @hide */
-    @Override
     protected void finalize() throws Throwable {
         try {
             dtor(mBackupWriter);

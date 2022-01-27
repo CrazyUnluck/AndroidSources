@@ -20,7 +20,7 @@ package android.support.v4.app;
  * Helper for accessing features in {@link android.app.Service}
  * introduced after API level 4 in a backwards compatible fashion.
  */
-public final class ServiceCompat {
+public class ServiceCompat {
 
     private ServiceCompat() {
         /* Hide constructor */

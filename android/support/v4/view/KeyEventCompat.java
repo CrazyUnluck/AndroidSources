@@ -23,19 +23,19 @@ import android.view.View;
  * Helper for accessing features in {@link KeyEvent} introduced after
  * API level 4 in a backwards compatible fashion.
  */
-public final class KeyEventCompat {
+public class KeyEventCompat {
     /**
      * Interface for the full API.
      */
     interface KeyEventVersionImpl {
-        int normalizeMetaState(int metaState);
-        boolean metaStateHasModifiers(int metaState, int modifiers);
-        boolean metaStateHasNoModifiers(int metaState);
-        void startTracking(KeyEvent event);
-        boolean isTracking(KeyEvent event);
-        Object getKeyDispatcherState(View view);
-        boolean dispatch(KeyEvent event, KeyEvent.Callback receiver, Object state, Object target);
-        boolean isCtrlPressed(KeyEvent event);
+        public int normalizeMetaState(int metaState);
+        public boolean metaStateHasModifiers(int metaState, int modifiers);
+        public boolean metaStateHasNoModifiers(int metaState);
+        public void startTracking(KeyEvent event);
+        public boolean isTracking(KeyEvent event);
+        public Object getKeyDispatcherState(View view);
+        public boolean dispatch(KeyEvent event, KeyEvent.Callback receiver, Object state,
+                    Object target);
     }
 
     /**
@@ -113,11 +113,6 @@ public final class KeyEventCompat {
                     Object target) {
             return event.dispatch(receiver);
         }
-
-        @Override
-        public boolean isCtrlPressed(KeyEvent event) {
-            return false;
-        }
     }
 
     static class EclairKeyEventVersionImpl extends BaseKeyEventVersionImpl {
@@ -160,11 +155,6 @@ public final class KeyEventCompat {
         @Override
         public boolean metaStateHasNoModifiers(int metaState) {
             return KeyEventCompatHoneycomb.metaStateHasNoModifiers(metaState);
-        }
-
-        @Override
-        public boolean isCtrlPressed(KeyEvent event) {
-            return KeyEventCompatHoneycomb.isCtrlPressed(event);
         }
     }
 
@@ -218,10 +208,4 @@ public final class KeyEventCompat {
                 Object target) {
         return IMPL.dispatch(event, receiver, state, target);
     }
-
-    public static boolean isCtrlPressed(KeyEvent event) {
-        return IMPL.isCtrlPressed(event);
-    }
-
-    private KeyEventCompat() {}
 }

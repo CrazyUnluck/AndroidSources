@@ -26,7 +26,6 @@ import android.os.Message;
 import android.os.PowerManager;
 import android.provider.Telephony.Sms.Intents;
 import android.telephony.Rlog;
-import android.telephony.SubscriptionManager;
 
 /**
  * Monitors the device and ICC storage, and sends the appropriate events.
@@ -35,7 +34,7 @@ import android.telephony.SubscriptionManager;
  * into a separate class to support instantiation of multiple SMSDispatchers on
  * dual-mode devices that require support for both 3GPP and 3GPP2 format messages.
  */
-public class SmsStorageMonitor extends Handler {
+public final class SmsStorageMonitor extends Handler {
     private static final String TAG = "SmsStorageMonitor";
 
     /** SIM/RUIM storage is full */
@@ -55,9 +54,6 @@ public class SmsStorageMonitor extends Handler {
 
     private boolean mReportMemoryStatusPending;
 
-    /** it is use to put in to extra value for SIM_FULL_ACTION and SMS_REJECTED_ACTION */
-    Phone mPhone;
-
     final CommandsInterface mCi;                            // accessed from inner class
     boolean mStorageAvailable = true;                       // accessed from inner class
 
@@ -71,8 +67,7 @@ public class SmsStorageMonitor extends Handler {
      * Creates an SmsStorageMonitor and registers for events.
      * @param phone the Phone to use
      */
-    public SmsStorageMonitor(Phone phone) {
-        mPhone = phone;
+    public SmsStorageMonitor(PhoneBase phone) {
         mContext = phone.getContext();
         mCi = phone.mCi;
 
@@ -144,7 +139,6 @@ public class SmsStorageMonitor extends Handler {
         // broadcast SIM_FULL intent
         Intent intent = new Intent(Intents.SIM_FULL_ACTION);
         mWakeLock.acquire(WAKE_LOCK_TIMEOUT);
-        SubscriptionManager.putPhoneIdAndSubIdExtra(intent, mPhone.getPhoneId());
         mContext.sendBroadcast(intent, android.Manifest.permission.RECEIVE_SMS);
     }
 

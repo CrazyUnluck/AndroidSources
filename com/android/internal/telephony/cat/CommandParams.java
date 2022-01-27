@@ -24,8 +24,6 @@ import android.graphics.Bitmap;
  */
 class CommandParams {
     CommandDetails mCmdDet;
-    // Variable to track if an optional icon load has failed.
-    boolean mLoadIconFailed = false;
 
     CommandParams(CommandDetails cmdDet) {
         mCmdDet = cmdDet;
@@ -59,11 +57,6 @@ class DisplayTextParams extends CommandParams {
         }
         return false;
     }
-
-    @Override
-    public String toString() {
-        return "TextMessage=" + mTextMsg + " " + super.toString();
-    }
 }
 
 class LaunchBrowserParams extends CommandParams {
@@ -86,19 +79,6 @@ class LaunchBrowserParams extends CommandParams {
             return true;
         }
         return false;
-    }
-
-    @Override
-    public String toString() {
-        return "TextMessage=" + mConfirmMsg + " " + super.toString();
-    }
-}
-
-class SetEventListParams extends CommandParams {
-    int[] mEventInfo;
-    SetEventListParams(CommandDetails cmdDet, int[] eventInfo) {
-        super(cmdDet);
-        this.mEventInfo = eventInfo;
     }
 }
 

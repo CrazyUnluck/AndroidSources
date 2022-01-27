@@ -70,7 +70,7 @@ public class Point {
     }
 
     public float length() {
-        return (float)Math.hypot(x, y);
+        return (float)Math.sqrt(x*x + y*y);
     }
 
     public float distanceTo(Point p) {

@@ -36,7 +36,7 @@ final class StringBlock {
     private static final String TAG = "AssetManager";
     private static final boolean localLOGV = false;
 
-    private final long mNative;
+    private final int mNative;
     private final boolean mUseSparse;
     private final boolean mOwnsNative;
     private CharSequence[] mStrings;
@@ -311,13 +311,13 @@ final class StringBlock {
      * the color black is returned instead.
      *
      * @param color The color as a string. Can be a resource reference,
-     *              hexadecimal, octal or a name
+     *              HTML hexadecimal, octal or a name
      * @param foreground True if the color will be used as the foreground color,
      *                   false otherwise
      *
      * @return A CharacterStyle
      *
-     * @see Color#parseColor(String)
+     * @see Color#getHtmlColor(String)
      */
     private static CharacterStyle getColor(String color, boolean foreground) {
         int c = 0xff000000;
@@ -328,7 +328,7 @@ final class StringBlock {
                 String name = color.substring(1);
                 int colorRes = res.getIdentifier(name, "color", "android");
                 if (colorRes != 0) {
-                    ColorStateList colors = res.getColorStateList(colorRes, null);
+                    ColorStateList colors = res.getColorStateList(colorRes);
                     if (foreground) {
                         return new TextAppearanceSpan(null, 0, 0, colors, null);
                     } else {
@@ -336,11 +336,7 @@ final class StringBlock {
                     }
                 }
             } else {
-                try {
-                    c = Color.parseColor(color);
-                } catch (IllegalArgumentException e) {
-                    c = Color.BLACK;
-                }
+                c = Color.getHtmlColor(color);
             }
         }
 
@@ -478,7 +474,7 @@ final class StringBlock {
      *  are doing!  The given native object must exist for the entire lifetime
      *  of this newly creating StringBlock.
      */
-    StringBlock(long obj, boolean useSparse) {
+    StringBlock(int obj, boolean useSparse) {
         mNative = obj;
         mUseSparse = useSparse;
         mOwnsNative = false;
@@ -486,11 +482,11 @@ final class StringBlock {
                 + ": " + nativeGetSize(mNative));
     }
 
-    private static native long nativeCreate(byte[] data,
+    private static native int nativeCreate(byte[] data,
                                                  int offset,
                                                  int size);
-    private static native int nativeGetSize(long obj);
-    private static native String nativeGetString(long obj, int idx);
-    private static native int[] nativeGetStyle(long obj, int idx);
-    private static native void nativeDestroy(long obj);
+    private static native int nativeGetSize(int obj);
+    private static native String nativeGetString(int obj, int idx);
+    private static native int[] nativeGetStyle(int obj, int idx);
+    private static native void nativeDestroy(int obj);
 }

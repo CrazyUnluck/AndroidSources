@@ -29,7 +29,7 @@ import android.view.View;
  * android.view.MenuItem}, but take a {@link android.view.MenuItem} object as an additional
  * argument.</p>
  */
-public final class MenuItemCompat {
+public class MenuItemCompat {
     private static final String TAG = "MenuItemCompat";
 
     /**
@@ -437,6 +437,4 @@ public final class MenuItemCompat {
         }
         return IMPL.setOnActionExpandListener(item, listener);
     }
-
-    private MenuItemCompat() {}
 }

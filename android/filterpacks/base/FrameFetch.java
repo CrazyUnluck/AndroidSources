@@ -24,6 +24,8 @@ import android.filterfw.core.FrameFormat;
 import android.filterfw.core.GenerateFieldPort;
 import android.filterfw.core.GenerateFinalPort;
 
+import android.util.Log;
+
 /**
  * @hide
  */

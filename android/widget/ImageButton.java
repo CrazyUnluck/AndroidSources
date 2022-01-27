@@ -17,8 +17,15 @@
 package android.widget;
 
 import android.content.Context;
+import android.os.Handler;
+import android.os.Message;
 import android.util.AttributeSet;
+import android.view.MotionEvent;
+import android.view.accessibility.AccessibilityEvent;
+import android.view.accessibility.AccessibilityNodeInfo;
 import android.widget.RemoteViews.RemoteView;
+
+import java.util.Map;
 
 /**
  * <p>
@@ -76,12 +83,8 @@ public class ImageButton extends ImageView {
         this(context, attrs, com.android.internal.R.attr.imageButtonStyle);
     }
 
-    public ImageButton(Context context, AttributeSet attrs, int defStyleAttr) {
-        this(context, attrs, defStyleAttr, 0);
-    }
-
-    public ImageButton(Context context, AttributeSet attrs, int defStyleAttr, int defStyleRes) {
-        super(context, attrs, defStyleAttr, defStyleRes);
+    public ImageButton(Context context, AttributeSet attrs, int defStyle) {
+        super(context, attrs, defStyle);
         setFocusable(true);
     }
 
@@ -91,7 +94,14 @@ public class ImageButton extends ImageView {
     }
 
     @Override
-    public CharSequence getAccessibilityClassName() {
-        return ImageButton.class.getName();
+    public void onInitializeAccessibilityEvent(AccessibilityEvent event) {
+        super.onInitializeAccessibilityEvent(event);
+        event.setClassName(ImageButton.class.getName());
+    }
+
+    @Override
+    public void onInitializeAccessibilityNodeInfo(AccessibilityNodeInfo info) {
+        super.onInitializeAccessibilityNodeInfo(info);
+        info.setClassName(ImageButton.class.getName());
     }
 }

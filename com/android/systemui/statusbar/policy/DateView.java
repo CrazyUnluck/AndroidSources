@@ -20,10 +20,10 @@ import android.content.BroadcastReceiver;
 import android.content.Context;
 import android.content.Intent;
 import android.content.IntentFilter;
-import android.content.res.TypedArray;
-import android.icu.text.DateFormat;
-import android.icu.text.DisplayContext;
 import android.util.AttributeSet;
+import android.util.Log;
+import android.view.View;
+import android.view.ViewParent;
 import android.widget.TextView;
 
 import com.android.systemui.R;
@@ -32,14 +32,15 @@ import java.text.SimpleDateFormat;
 import java.util.Date;
 import java.util.Locale;
 
+import libcore.icu.ICU;
+
 public class DateView extends TextView {
     private static final String TAG = "DateView";
 
     private final Date mCurrentTime = new Date();
 
-    private DateFormat mDateFormat;
+    private SimpleDateFormat mDateFormat;
     private String mLastText;
-    private String mDatePattern;
 
     private BroadcastReceiver mIntentReceiver = new BroadcastReceiver() {
         @Override
@@ -61,19 +62,6 @@ public class DateView extends TextView {
 
     public DateView(Context context, AttributeSet attrs) {
         super(context, attrs);
-        TypedArray a = context.getTheme().obtainStyledAttributes(
-                attrs,
-                R.styleable.DateView,
-                0, 0);
-
-        try {
-            mDatePattern = a.getString(R.styleable.DateView_datePattern);
-        } finally {
-            a.recycle();
-        }
-        if (mDatePattern == null) {
-            mDatePattern = getContext().getString(R.string.system_ui_date_pattern);
-        }
     }
 
     @Override
@@ -85,7 +73,7 @@ public class DateView extends TextView {
         filter.addAction(Intent.ACTION_TIME_CHANGED);
         filter.addAction(Intent.ACTION_TIMEZONE_CHANGED);
         filter.addAction(Intent.ACTION_LOCALE_CHANGED);
-        getContext().registerReceiver(mIntentReceiver, filter, null, null);
+        mContext.registerReceiver(mIntentReceiver, filter, null, null);
 
         updateClock();
     }
@@ -95,15 +83,15 @@ public class DateView extends TextView {
         super.onDetachedFromWindow();
 
         mDateFormat = null; // reload the locale next time
-        getContext().unregisterReceiver(mIntentReceiver);
+        mContext.unregisterReceiver(mIntentReceiver);
     }
 
     protected void updateClock() {
         if (mDateFormat == null) {
+            final String dateFormat = getContext().getString(R.string.system_ui_date_pattern);
             final Locale l = Locale.getDefault();
-            DateFormat format = DateFormat.getInstanceForSkeleton(mDatePattern, l);
-            format.setContext(DisplayContext.CAPITALIZATION_FOR_STANDALONE);
-            mDateFormat = format;
+            final String fmt = ICU.getBestDateTimePattern(dateFormat, l.toString());
+            mDateFormat = new SimpleDateFormat(fmt, l);
         }
 
         mCurrentTime.setTime(System.currentTimeMillis());

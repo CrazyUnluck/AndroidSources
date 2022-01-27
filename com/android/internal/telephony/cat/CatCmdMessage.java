@@ -33,8 +33,6 @@ public class CatCmdMessage implements Parcelable {
     private BrowserSettings mBrowserSettings = null;
     private ToneSettings mToneSettings = null;
     private CallSettings mCallSettings = null;
-    private SetupEventListSettings mSetupEventListSettings = null;
-    private boolean mLoadIconFailed = false;
 
     /*
      * Container for Launch Browser command settings.
@@ -52,27 +50,8 @@ public class CatCmdMessage implements Parcelable {
         public TextMessage callMsg;
     }
 
-    public class SetupEventListSettings {
-        public int[] eventList;
-    }
-
-    public final class SetupEventListConstants {
-        // Event values in SETUP_EVENT_LIST Proactive Command as per ETSI 102.223
-        public static final int USER_ACTIVITY_EVENT          = 0x04;
-        public static final int IDLE_SCREEN_AVAILABLE_EVENT  = 0x05;
-        public static final int LANGUAGE_SELECTION_EVENT     = 0x07;
-        public static final int BROWSER_TERMINATION_EVENT    = 0x08;
-        public static final int BROWSING_STATUS_EVENT        = 0x0F;
-    }
-
-    public final class BrowserTerminationCauses {
-        public static final int USER_TERMINATION             = 0x00;
-        public static final int ERROR_TERMINATION            = 0x01;
-    }
-
     CatCmdMessage(CommandParams cmdParams) {
         mCmdDet = cmdParams.mCmdDet;
-        mLoadIconFailed =  cmdParams.mLoadIconFailed;
         switch(getCmdType()) {
         case SET_UP_MENU:
         case SELECT_ITEM:
@@ -116,12 +95,9 @@ public class CatCmdMessage implements Parcelable {
             BIPClientParams param = (BIPClientParams) cmdParams;
             mTextMsg = param.mTextMsg;
             break;
-        case SET_UP_EVENT_LIST:
-            mSetupEventListSettings = new SetupEventListSettings();
-            mSetupEventListSettings.eventList = ((SetEventListParams) cmdParams).mEventInfo;
-            break;
         case PROVIDE_LOCAL_INFORMATION:
         case REFRESH:
+        case SET_UP_EVENT_LIST:
         default:
             break;
         }
@@ -132,7 +108,6 @@ public class CatCmdMessage implements Parcelable {
         mTextMsg = in.readParcelable(null);
         mMenu = in.readParcelable(null);
         mInput = in.readParcelable(null);
-        mLoadIconFailed = (in.readByte() == 1);
         switch (getCmdType()) {
         case LAUNCH_BROWSER:
             mBrowserSettings = new BrowserSettings();
@@ -147,14 +122,6 @@ public class CatCmdMessage implements Parcelable {
             mCallSettings.confirmMsg = in.readParcelable(null);
             mCallSettings.callMsg = in.readParcelable(null);
             break;
-        case SET_UP_EVENT_LIST:
-            mSetupEventListSettings = new SetupEventListSettings();
-            int length = in.readInt();
-            mSetupEventListSettings.eventList = new int[length];
-            for (int i = 0; i < length; i++) {
-                mSetupEventListSettings.eventList[i] = in.readInt();
-            }
-            break;
         default:
             break;
         }
@@ -166,7 +133,6 @@ public class CatCmdMessage implements Parcelable {
         dest.writeParcelable(mTextMsg, 0);
         dest.writeParcelable(mMenu, 0);
         dest.writeParcelable(mInput, 0);
-        dest.writeByte((byte) (mLoadIconFailed ? 1 : 0));
         switch(getCmdType()) {
         case LAUNCH_BROWSER:
             dest.writeString(mBrowserSettings.url);
@@ -178,9 +144,6 @@ public class CatCmdMessage implements Parcelable {
         case SET_UP_CALL:
             dest.writeParcelable(mCallSettings.confirmMsg, 0);
             dest.writeParcelable(mCallSettings.callMsg, 0);
-            break;
-        case SET_UP_EVENT_LIST:
-            dest.writeIntArray(mSetupEventListSettings.eventList);
             break;
         default:
             break;
@@ -231,17 +194,5 @@ public class CatCmdMessage implements Parcelable {
 
     public CallSettings getCallSettings() {
         return mCallSettings;
-    }
-
-    public SetupEventListSettings getSetEventList() {
-        return mSetupEventListSettings;
-    }
-
-    /**
-     * API to be used by application to check if loading optional icon
-     * has failed
-     */
-    public boolean hasIconLoadFailed() {
-        return mLoadIconFailed;
     }
 }

@@ -396,14 +396,6 @@ public class SpeechRecognizer {
      * Destroys the {@code SpeechRecognizer} object.
      */
     public void destroy() {
-        if (mService != null) {
-            try {
-                mService.cancel(mListener);
-            } catch (final RemoteException e) {
-                // Not important
-            }
-        }
-
         if (mConnection != null) {
             mContext.unbindService(mConnection);
         }

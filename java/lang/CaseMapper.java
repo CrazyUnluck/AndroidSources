@@ -16,7 +16,6 @@
 
 package java.lang;
 
-import android.icu.text.Transliterator;
 import java.util.Locale;
 import libcore.icu.ICU;
 
@@ -34,42 +33,46 @@ class CaseMapper {
     /**
      * Our current GC makes short-lived objects more expensive than we'd like. When that's fixed,
      * this class should be changed so that you instantiate it with the String and its value,
-     * and count fields.
+     * offset, and count fields.
      */
     private CaseMapper() {
     }
 
     /**
-     * Implements String.toLowerCase. The original String instance is returned if nothing changes.
+     * Implements String.toLowerCase. We need 's' so that we can return the original String instance
+     * if nothing changes. We need 'value', 'offset', and 'count' because they're not otherwise
+     * accessible.
      */
-    public static String toLowerCase(Locale locale, String s) {
+    public static String toLowerCase(Locale locale, String s, char[] value, int offset, int count) {
         // Punt hard cases to ICU4C.
-        // Note that Greek isn't a particularly hard case for toLowerCase, only toUpperCase.
         String languageCode = locale.getLanguage();
         if (languageCode.equals("tr") || languageCode.equals("az") || languageCode.equals("lt")) {
-            return ICU.toLowerCase(s, locale);
+            return ICU.toLowerCase(s, locale.toString());
         }
 
-        String newString = null;
-        for (int i = 0, end = s.length(); i < end; ++i) {
-            char ch = s.charAt(i);
+        char[] newValue = null;
+        int newCount = 0;
+        for (int i = offset, end = offset + count; i < end; ++i) {
+            char ch = value[i];
             char newCh;
             if (ch == LATIN_CAPITAL_I_WITH_DOT || Character.isHighSurrogate(ch)) {
                 // Punt these hard cases.
-                return ICU.toLowerCase(s, locale);
-            } else if (ch == GREEK_CAPITAL_SIGMA && isFinalSigma(s, i)) {
+                return ICU.toLowerCase(s, locale.toString());
+            } else if (ch == GREEK_CAPITAL_SIGMA && isFinalSigma(value, offset, count, i)) {
                 newCh = GREEK_SMALL_FINAL_SIGMA;
             } else {
                 newCh = Character.toLowerCase(ch);
             }
-            if (ch != newCh) {
-                if (newString == null) {
-                    newString = StringFactory.newStringFromString(s);
-                }
-                newString.setCharAt(i, newCh);
+            if (newValue == null && ch != newCh) {
+                newValue = new char[count]; // The result can't be longer than the input.
+                newCount = i - offset;
+                System.arraycopy(value, offset, newValue, 0, newCount);
+            }
+            if (newValue != null) {
+                newValue[newCount++] = newCh;
             }
         }
-        return newString != null ? newString : s;
+        return newValue != null ? new String(0, newCount, newValue) : s;
     }
 
     /**
@@ -77,20 +80,20 @@ class CaseMapper {
      * sequence, and 'index' is not followed by a sequence consisting of an ignorable sequence and
      * then a cased letter.
      */
-    private static boolean isFinalSigma(String s, int index) {
+    private static boolean isFinalSigma(char[] value, int offset, int count, int index) {
         // TODO: we don't skip case-ignorable sequences like we should.
         // TODO: we should add a more direct way to test for a cased letter.
-        if (index <= 0) {
+        if (index <= offset) {
             return false;
         }
-        char previous = s.charAt(index - 1);
+        char previous = value[index - 1];
         if (!(Character.isLowerCase(previous) || Character.isUpperCase(previous) || Character.isTitleCase(previous))) {
             return false;
         }
-        if (index + 1 >= s.length()) {
+        if (index + 1 >= offset + count) {
             return true;
         }
-        char next = s.charAt(index + 1);
+        char next = value[index + 1];
         if (Character.isLowerCase(next) || Character.isUpperCase(next) || Character.isTitleCase(next)) {
             return false;
         }
@@ -136,28 +139,18 @@ class CaseMapper {
         return index;
     }
 
-    private static final ThreadLocal<Transliterator> EL_UPPER = new ThreadLocal<Transliterator>() {
-        @Override protected Transliterator initialValue() {
-            return Transliterator.getInstance("el-Upper");
-        }
-    };
-
-    public static String toUpperCase(Locale locale, String s, int count) {
+    public static String toUpperCase(Locale locale, String s, char[] value, int offset, int count) {
         String languageCode = locale.getLanguage();
         if (languageCode.equals("tr") || languageCode.equals("az") || languageCode.equals("lt")) {
-            return ICU.toUpperCase(s, locale);
-        }
-        if (languageCode.equals("el")) {
-            return EL_UPPER.get().transliterate(s);
+            return ICU.toUpperCase(s, locale.toString());
         }
 
         char[] output = null;
-        String newString = null;
         int i = 0;
-        for (int o = 0, end = count; o < end; o++) {
-            char ch = s.charAt(o);
+        for (int o = offset, end = offset + count; o < end; o++) {
+            char ch = value[o];
             if (Character.isHighSurrogate(ch)) {
-                return ICU.toUpperCase(s, locale);
+                return ICU.toUpperCase(s, locale.toString());
             }
             int index = upperIndex(ch);
             if (index == -1) {
@@ -167,25 +160,23 @@ class CaseMapper {
                     output = newoutput;
                 }
                 char upch = Character.toUpperCase(ch);
-                if (output != null) {
-                    output[i++] = upch;
-                } else if (ch != upch) {
-                    if (newString == null) {
-                        newString = StringFactory.newStringFromString(s);
+                if (ch != upch) {
+                    if (output == null) {
+                        output = new char[count];
+                        i = o - offset;
+                        System.arraycopy(value, offset, output, 0, i);
                     }
-                    newString.setCharAt(o, upch);
+                    output[i++] = upch;
+                } else if (output != null) {
+                    output[i++] = ch;
                 }
             } else {
                 int target = index * 3;
                 char val3 = upperValues[target + 2];
                 if (output == null) {
                     output = new char[count + (count / 6) + 2];
-                    i = o;
-                    if (newString != null) {
-                        System.arraycopy(newString.toCharArray(), 0, output, 0, i);
-                    } else {
-                        System.arraycopy(s.toCharArray(), 0, output, 0, i);
-                    }
+                    i = o - offset;
+                    System.arraycopy(value, offset, output, 0, i);
                 } else if (i + (val3 == 0 ? 1 : 2) >= output.length) {
                     char[] newoutput = new char[output.length + (count / 6) + 3];
                     System.arraycopy(output, 0, newoutput, 0, output.length);
@@ -202,11 +193,7 @@ class CaseMapper {
             }
         }
         if (output == null) {
-            if (newString != null) {
-                return newString;
-            } else {
-                return s;
-            }
+            return s;
         }
         return output.length == i || output.length - i < 8 ? new String(0, i, output) : new String(output, 0, i);
     }

@@ -40,7 +40,7 @@ import java.io.IOException;
  * appropriate mutual exclusion invariants whenever it accesses the file.
  * </p>
  */
-public final class AtomicFile {
+public class AtomicFile {
     private final File mBaseName;
     private final File mBackupName;
     
@@ -129,16 +129,7 @@ public final class AtomicFile {
         } catch (IOException e) {
         }
     }
-
-    public boolean exists() {
-        return mBaseName.exists() || mBackupName.exists();
-    }
-
-    public void delete() {
-        mBaseName.delete();
-        mBackupName.delete();
-    }
-
+    
     public FileInputStream openRead() throws FileNotFoundException {
         if (mBackupName.exists()) {
             mBaseName.delete();

@@ -5,7 +5,6 @@
  */
 
 package java.util.concurrent;
-
 import java.util.concurrent.locks.AbstractQueuedSynchronizer;
 
 /**
@@ -44,7 +43,7 @@ import java.util.concurrent.locks.AbstractQueuedSynchronizer;
  * until all workers have completed.
  * </ul>
  *
- * <pre> {@code
+ *  <pre> {@code
  * class Driver { // ...
  *   void main() throws InterruptedException {
  *     CountDownLatch startSignal = new CountDownLatch(1);
@@ -85,7 +84,7 @@ import java.util.concurrent.locks.AbstractQueuedSynchronizer;
  * will be able to pass through await. (When threads must repeatedly
  * count down in this way, instead use a {@link CyclicBarrier}.)
  *
- * <pre> {@code
+ *  <pre> {@code
  * class Driver2 { // ...
  *   void main() throws InterruptedException {
  *     CountDownLatch doneSignal = new CountDownLatch(N);
@@ -151,7 +150,7 @@ public class CountDownLatch {
                 int c = getState();
                 if (c == 0)
                     return false;
-                int nextc = c - 1;
+                int nextc = c-1;
                 if (compareAndSetState(c, nextc))
                     return nextc == 0;
             }

@@ -16,6 +16,9 @@
 
 package com.android.location.fused;
 
+import java.io.FileDescriptor;
+import java.io.PrintWriter;
+
 import android.app.Service;
 import android.content.Intent;
 import android.os.IBinder;

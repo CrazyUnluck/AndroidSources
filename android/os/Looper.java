@@ -16,20 +16,19 @@
 
 package android.os;
 
-import android.annotation.NonNull;
-import android.annotation.Nullable;
 import android.util.Log;
 import android.util.Printer;
+import android.util.PrefixPrinter;
 
 /**
   * Class used to run a message loop for a thread.  Threads by default do
   * not have a message loop associated with them; to create one, call
   * {@link #prepare} in the thread that is to run the loop, and then
   * {@link #loop} to have it process messages until the loop is stopped.
-  *
+  * 
   * <p>Most interaction with a message loop is through the
   * {@link Handler} class.
-  *
+  * 
   * <p>This is a typical example of the implementation of a Looper thread,
   * using the separation of {@link #prepare} and {@link #loop} to create an
   * initial Handler to communicate with the Looper.
@@ -52,16 +51,6 @@ import android.util.Printer;
   *  }</pre>
   */
 public final class Looper {
-    /*
-     * API Implementation Note:
-     *
-     * This class contains the code required to set up and manage an event loop
-     * based on MessageQueue.  APIs that affect the state of the queue should be
-     * defined on MessageQueue or Handler rather than on Looper itself.  For example,
-     * idle handlers and sync barriers are defined on the queue whereas preparing the
-     * thread, looping, and quitting are defined on the looper.
-     */
-
     private static final String TAG = "Looper";
 
     // sThreadLocal.get() will return null unless you've called prepare().
@@ -72,7 +61,6 @@ public final class Looper {
     final Thread mThread;
 
     private Printer mLogging;
-    private long mTraceTag;
 
      /** Initialize the current thread as a looper.
       * This gives you a chance to create handlers that then reference
@@ -107,8 +95,7 @@ public final class Looper {
         }
     }
 
-    /**
-     * Returns the application's main looper, which lives in the main thread of the application.
+    /** Returns the application's main looper, which lives in the main thread of the application.
      */
     public static Looper getMainLooper() {
         synchronized (Looper.class) {
@@ -140,23 +127,13 @@ public final class Looper {
             }
 
             // This must be in a local variable, in case a UI event sets the logger
-            final Printer logging = me.mLogging;
+            Printer logging = me.mLogging;
             if (logging != null) {
                 logging.println(">>>>> Dispatching to " + msg.target + " " +
                         msg.callback + ": " + msg.what);
             }
 
-            final long traceTag = me.mTraceTag;
-            if (traceTag != 0) {
-                Trace.traceBegin(traceTag, msg.target.getTraceName(msg));
-            }
-            try {
-                msg.target.dispatchMessage(msg);
-            } finally {
-                if (traceTag != 0) {
-                    Trace.traceEnd(traceTag);
-                }
-            }
+            msg.target.dispatchMessage(msg);
 
             if (logging != null) {
                 logging.println("<<<<< Finished to " + msg.target + " " + msg.callback);
@@ -173,7 +150,7 @@ public final class Looper {
                         + msg.callback + " what=" + msg.what);
             }
 
-            msg.recycleUnchecked();
+            msg.recycle();
         }
     }
 
@@ -181,16 +158,29 @@ public final class Looper {
      * Return the Looper object associated with the current thread.  Returns
      * null if the calling thread is not associated with a Looper.
      */
-    public static @Nullable Looper myLooper() {
+    public static Looper myLooper() {
         return sThreadLocal.get();
     }
 
+    /**
+     * Control logging of messages as they are processed by this Looper.  If
+     * enabled, a log message will be written to <var>printer</var> 
+     * at the beginning and ending of each message dispatch, identifying the
+     * target Handler and message contents.
+     * 
+     * @param printer A Printer object that will receive log messages, or
+     * null to disable message logging.
+     */
+    public void setMessageLogging(Printer printer) {
+        mLogging = printer;
+    }
+    
     /**
      * Return the {@link MessageQueue} object associated with the current
      * thread.  This must be called from a thread running a Looper, or a
      * NullPointerException will be thrown.
      */
-    public static @NonNull MessageQueue myQueue() {
+    public static MessageQueue myQueue() {
         return myLooper().mQueue;
     }
 
@@ -201,27 +191,10 @@ public final class Looper {
 
     /**
      * Returns true if the current thread is this looper's thread.
+     * @hide
      */
     public boolean isCurrentThread() {
         return Thread.currentThread() == mThread;
-    }
-
-    /**
-     * Control logging of messages as they are processed by this Looper.  If
-     * enabled, a log message will be written to <var>printer</var>
-     * at the beginning and ending of each message dispatch, identifying the
-     * target Handler and message contents.
-     *
-     * @param printer A Printer object that will receive log messages, or
-     * null to disable message logging.
-     */
-    public void setMessageLogging(@Nullable Printer printer) {
-        mLogging = printer;
-    }
-
-    /** {@hide} */
-    public void setTraceTag(long traceTag) {
-        mTraceTag = traceTag;
     }
 
     /**
@@ -261,35 +234,74 @@ public final class Looper {
     }
 
     /**
-     * Gets the Thread associated with this Looper.
+     * Posts a synchronization barrier to the Looper's message queue.
      *
-     * @return The looper's thread.
+     * Message processing occurs as usual until the message queue encounters the
+     * synchronization barrier that has been posted.  When the barrier is encountered,
+     * later synchronous messages in the queue are stalled (prevented from being executed)
+     * until the barrier is released by calling {@link #removeSyncBarrier} and specifying
+     * the token that identifies the synchronization barrier.
+     *
+     * This method is used to immediately postpone execution of all subsequently posted
+     * synchronous messages until a condition is met that releases the barrier.
+     * Asynchronous messages (see {@link Message#isAsynchronous} are exempt from the barrier
+     * and continue to be processed as usual.
+     *
+     * This call must be always matched by a call to {@link #removeSyncBarrier} with
+     * the same token to ensure that the message queue resumes normal operation.
+     * Otherwise the application will probably hang!
+     *
+     * @return A token that uniquely identifies the barrier.  This token must be
+     * passed to {@link #removeSyncBarrier} to release the barrier.
+     *
+     * @hide
      */
-    public @NonNull Thread getThread() {
-        return mThread;
+    public int postSyncBarrier() {
+        return mQueue.enqueueSyncBarrier(SystemClock.uptimeMillis());
+    }
+
+
+    /**
+     * Removes a synchronization barrier.
+     *
+     * @param token The synchronization barrier token that was returned by
+     * {@link #postSyncBarrier}.
+     *
+     * @throws IllegalStateException if the barrier was not found.
+     *
+     * @hide
+     */
+    public void removeSyncBarrier(int token) {
+        mQueue.removeSyncBarrier(token);
     }
 
     /**
-     * Gets this looper's message queue.
-     *
-     * @return The looper's message queue.
+     * Return the Thread associated with this Looper.
      */
-    public @NonNull MessageQueue getQueue() {
+    public Thread getThread() {
+        return mThread;
+    }
+
+    /** @hide */
+    public MessageQueue getQueue() {
         return mQueue;
     }
 
     /**
-     * Dumps the state of the looper for debugging purposes.
-     *
-     * @param pw A printer to receive the contents of the dump.
-     * @param prefix A prefix to prepend to each line which is printed.
+     * Return whether this looper's thread is currently idle, waiting for new work
+     * to do.  This is intrinsically racy, since its state can change before you get
+     * the result back.
+     * @hide
      */
-    public void dump(@NonNull Printer pw, @NonNull String prefix) {
+    public boolean isIdling() {
+        return mQueue.isIdling();
+    }
+
+    public void dump(Printer pw, String prefix) {
         pw.println(prefix + toString());
         mQueue.dump(pw, prefix + "  ");
     }
 
-    @Override
     public String toString() {
         return "Looper (" + mThread.getName() + ", tid " + mThread.getId()
                 + ") {" + Integer.toHexString(System.identityHashCode(this)) + "}";

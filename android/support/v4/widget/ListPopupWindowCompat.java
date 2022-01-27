@@ -23,7 +23,7 @@ import android.view.View.OnTouchListener;
  * Helper for accessing features in ListPopupWindow introduced after API level 4
  * in a backwards compatible fashion.
  */
-public final class ListPopupWindowCompat {
+public class ListPopupWindowCompat {
     /**
      * Interface for the full API.
      */

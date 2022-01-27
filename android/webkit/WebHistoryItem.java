@@ -16,7 +16,6 @@
 
 package android.webkit;
 
-import android.annotation.SystemApi;
 import android.graphics.Bitmap;
 
 /**
@@ -25,7 +24,14 @@ import android.graphics.Bitmap;
  * item. Each history item may be updated during the load of a page.
  * @see WebBackForwardList
  */
-public abstract class WebHistoryItem implements Cloneable {
+public class WebHistoryItem implements Cloneable {
+
+    /**
+     * @hide
+     */
+    public WebHistoryItem() {
+    }
+
     /**
      * Return an identifier for this history item. If an item is a copy of
      * another item, the identifiers will be the same even if they are not the
@@ -34,9 +40,10 @@ public abstract class WebHistoryItem implements Cloneable {
      * @deprecated This method is now obsolete.
      * @hide Since API level {@link android.os.Build.VERSION_CODES#JELLY_BEAN_MR1}
      */
-    @SystemApi
     @Deprecated
-    public abstract int getId();
+    public int getId() {
+        throw new MustOverrideException();
+    }
 
     /**
      * Return the url of this history item. The url is the base url of this
@@ -46,23 +53,29 @@ public abstract class WebHistoryItem implements Cloneable {
      * Note: The VM ensures 32-bit atomic read/write operations so we don't have
      * to synchronize this method.
      */
-    public abstract String getUrl();
+    public String getUrl() {
+        throw new MustOverrideException();
+    }
 
     /**
      * Return the original url of this history item. This was the requested
-     * url, the final url may be different as there might have been
+     * url, the final url may be different as there might have been 
      * redirects while loading the site.
      * @return The original url of this history item.
      */
-    public abstract String getOriginalUrl();
-
+    public String getOriginalUrl() {
+        throw new MustOverrideException();
+    }
+    
     /**
      * Return the document title of this history item.
      * @return The document title of this history item.
      * Note: The VM ensures 32-bit atomic read/write operations so we don't have
      * to synchronize this method.
      */
-    public abstract String getTitle();
+    public String getTitle() {
+        throw new MustOverrideException();
+    }
 
     /**
      * Return the favicon of this history item or null if no favicon was found.
@@ -70,10 +83,15 @@ public abstract class WebHistoryItem implements Cloneable {
      * Note: The VM ensures 32-bit atomic read/write operations so we don't have
      * to synchronize this method.
      */
-    public abstract Bitmap getFavicon();
+    public Bitmap getFavicon() {
+        throw new MustOverrideException();
+    }
 
     /**
      * Clone the history item for use by clients of WebView.
      */
-    protected abstract WebHistoryItem clone();
+    protected synchronized WebHistoryItem clone() {
+        throw new MustOverrideException();
+    }
+
 }

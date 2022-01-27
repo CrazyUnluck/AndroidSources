@@ -32,6 +32,8 @@ import android.os.UserHandle;
 import android.util.Log;
 import com.android.server.ServiceWatcher;
 
+import java.util.List;
+
 /**
  * @hide
  */
@@ -94,7 +96,7 @@ public final class GeofenceProxy {
 
     private void bindHardwareGeofence() {
         mContext.bindServiceAsUser(new Intent(mContext, GeofenceHardwareService.class),
-                mServiceConnection, Context.BIND_AUTO_CREATE, UserHandle.SYSTEM);
+                mServiceConnection, Context.BIND_AUTO_CREATE, UserHandle.OWNER);
     }
 
     private ServiceConnection mServiceConnection = new ServiceConnection() {
@@ -129,9 +131,7 @@ public final class GeofenceProxy {
 
     private void setGpsGeofenceLocked() {
         try {
-            if (mGpsGeofenceHardware != null) {
-                mGeofenceHardware.setGpsGeofenceHardware(mGpsGeofenceHardware);
-            }
+            mGeofenceHardware.setGpsGeofenceHardware(mGpsGeofenceHardware);
         } catch (RemoteException e) {
             Log.e(TAG, "Error while connecting to GeofenceHardwareService");
         }

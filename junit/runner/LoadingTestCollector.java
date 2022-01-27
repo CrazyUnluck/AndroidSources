@@ -1,6 +1,7 @@
 package junit.runner;
 
 import java.lang.reflect.*;
+import junit.runner.*;
 import junit.framework.*;
 
 /**

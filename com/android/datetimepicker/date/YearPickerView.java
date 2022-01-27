@@ -97,7 +97,7 @@ public class YearPickerView extends ListView implements OnItemClickListener, OnD
     }
 
     private static int getYearFromTextView(TextView view) {
-        return Integer.parseInt(view.getText().toString());
+        return Integer.valueOf(view.getText().toString());
     }
 
     private class YearAdapter extends ArrayAdapter<String> {

@@ -16,15 +16,11 @@
 
 package com.android.internal.telephony;
 
-import com.android.internal.telephony.GsmAlphabet.TextEncodingDetails;
 import com.android.internal.telephony.SmsConstants;
 import com.android.internal.telephony.SmsHeader;
-import java.text.BreakIterator;
 import java.util.Arrays;
 
 import android.provider.Telephony;
-import android.telephony.SmsMessage;
-import android.text.Emoji;
 
 /**
  * Base class declaring the specific methods and members for SmsMessage.
@@ -52,7 +48,7 @@ public abstract class SmsMessageBase {
     /** {@hide} */
     protected boolean mIsEmail;
 
-    /** {@hide} Time when SC (service centre) received the message */
+    /** {@hide} */
     protected long mScTimeMillis;
 
     /** {@hide} The raw PDU of the message */
@@ -350,84 +346,4 @@ public abstract class SmsMessageBase {
          mIsEmail = Telephony.Mms.isEmailAddress(mEmailFrom);
     }
 
-    /**
-     * Find the next position to start a new fragment of a multipart SMS.
-     *
-     * @param currentPosition current start position of the fragment
-     * @param byteLimit maximum number of bytes in the fragment
-     * @param msgBody text of the SMS in UTF-16 encoding
-     * @return the position to start the next fragment
-     */
-    public static int findNextUnicodePosition(
-            int currentPosition, int byteLimit, CharSequence msgBody) {
-        int nextPos = Math.min(currentPosition + byteLimit / 2, msgBody.length());
-        // Check whether the fragment ends in a character boundary. Some characters take 4-bytes
-        // in UTF-16 encoding. Many carriers cannot handle
-        // a fragment correctly if it does not end at a character boundary.
-        if (nextPos < msgBody.length()) {
-            BreakIterator breakIterator = BreakIterator.getCharacterInstance();
-            breakIterator.setText(msgBody.toString());
-            if (!breakIterator.isBoundary(nextPos)) {
-                int breakPos = breakIterator.preceding(nextPos);
-                while (breakPos + 4 <= nextPos
-                        && Emoji.isRegionalIndicatorSymbol(
-                            Character.codePointAt(msgBody, breakPos))
-                        && Emoji.isRegionalIndicatorSymbol(
-                            Character.codePointAt(msgBody, breakPos + 2))) {
-                    // skip forward over flags (pairs of Regional Indicator Symbol)
-                    breakPos += 4;
-                }
-                if (breakPos > currentPosition) {
-                    nextPos = breakPos;
-                } else if (Character.isHighSurrogate(msgBody.charAt(nextPos - 1))) {
-                    // no character boundary in this fragment, try to at least land on a code point
-                    nextPos -= 1;
-                }
-            }
-        }
-        return nextPos;
-    }
-
-    /**
-     * Calculate the TextEncodingDetails of a message encoded in Unicode.
-     */
-    public static TextEncodingDetails calcUnicodeEncodingDetails(CharSequence msgBody) {
-        TextEncodingDetails ted = new TextEncodingDetails();
-        int octets = msgBody.length() * 2;
-        ted.codeUnitSize = SmsConstants.ENCODING_16BIT;
-        ted.codeUnitCount = msgBody.length();
-        if (octets > SmsConstants.MAX_USER_DATA_BYTES) {
-            // If EMS is not supported, break down EMS into single segment SMS
-            // and add page info " x/y".
-            // In the case of UCS2 encoding type, we need 8 bytes for this
-            // but we only have 6 bytes from UDH, so truncate the limit for
-            // each segment by 2 bytes (1 char).
-            int maxUserDataBytesWithHeader = SmsConstants.MAX_USER_DATA_BYTES_WITH_HEADER;
-            if (!SmsMessage.hasEmsSupport()) {
-                // make sure total number of segments is less than 10
-                if (octets <= 9 * (maxUserDataBytesWithHeader - 2)) {
-                    maxUserDataBytesWithHeader -= 2;
-                }
-            }
-
-            int pos = 0;  // Index in code units.
-            int msgCount = 0;
-            while (pos < msgBody.length()) {
-                int nextPos = findNextUnicodePosition(pos, maxUserDataBytesWithHeader,
-                        msgBody);
-                if (nextPos == msgBody.length()) {
-                    ted.codeUnitsRemaining = pos + maxUserDataBytesWithHeader / 2 -
-                            msgBody.length();
-                }
-                pos = nextPos;
-                msgCount++;
-            }
-            ted.msgCount = msgCount;
-        } else {
-            ted.msgCount = 1;
-            ted.codeUnitsRemaining = (SmsConstants.MAX_USER_DATA_BYTES - octets) / 2;
-        }
-
-        return ted;
-    }
 }

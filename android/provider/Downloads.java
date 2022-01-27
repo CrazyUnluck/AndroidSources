@@ -412,11 +412,6 @@ public final class Downloads {
 
         public static final String COLUMN_ALLOW_WRITE = "allow_write";
 
-        public static final int FLAG_REQUIRES_CHARGING = 1 << 0;
-        public static final int FLAG_REQUIRES_DEVICE_IDLE = 1 << 1;
-
-        public static final String COLUMN_FLAGS = "flags";
-
         /**
          * default value for {@link #COLUMN_LAST_UPDATESRC}.
          * This value is used when this column's value is not relevant.
@@ -614,7 +609,7 @@ public final class Downloads {
          * This download has successfully completed.
          * Warning: there might be other status values that indicate success
          * in the future.
-         * Use isStatusSuccess() to capture the entire category.
+         * Use isSucccess() to capture the entire category.
          */
         public static final int STATUS_SUCCESS = 200;
 

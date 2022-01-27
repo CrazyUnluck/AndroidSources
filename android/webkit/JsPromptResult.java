@@ -16,8 +16,6 @@
 
 package android.webkit;
 
-import android.annotation.SystemApi;
-
 
 /**
  * Public class for handling JavaScript prompt requests. The WebChromeClient will receive a
@@ -41,7 +39,6 @@ public class JsPromptResult extends JsResult {
     /**
      * @hide Only for use by WebViewProvider implementations
      */
-    @SystemApi
     public JsPromptResult(ResultReceiver receiver) {
         super(receiver);
     }
@@ -49,7 +46,6 @@ public class JsPromptResult extends JsResult {
     /**
      * @hide Only for use by WebViewProvider implementations
      */
-    @SystemApi
     public String getStringResult() {
         return mStringResult;
     }

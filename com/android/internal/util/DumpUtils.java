@@ -35,14 +35,13 @@ public final class DumpUtils {
      * trying to acquire, we use a short timeout to avoid deadlocks.  The process
      * is inelegant but this function is only used for debugging purposes.
      */
-    public static void dumpAsync(Handler handler, final Dump dump, PrintWriter pw,
-            final String prefix, long timeout) {
+    public static void dumpAsync(Handler handler, final Dump dump, PrintWriter pw, long timeout) {
         final StringWriter sw = new StringWriter();
         if (handler.runWithScissors(new Runnable() {
             @Override
             public void run() {
                 PrintWriter lpw = new FastPrintWriter(sw);
-                dump.dump(lpw, prefix);
+                dump.dump(lpw);
                 lpw.close();
             }
         }, timeout)) {
@@ -53,6 +52,6 @@ public final class DumpUtils {
     }
 
     public interface Dump {
-        void dump(PrintWriter pw, String prefix);
+        void dump(PrintWriter pw);
     }
 }

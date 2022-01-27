@@ -38,19 +38,7 @@ public final class NfcEvent {
      */
     public final NfcAdapter nfcAdapter;
 
-    /**
-     * The major LLCP version number of the peer associated with the NFC event.
-     */
-    public final int peerLlcpMajorVersion;
-
-    /**
-     * The minor LLCP version number of the peer associated with the NFC event.
-     */
-    public final int peerLlcpMinorVersion;
-
-    NfcEvent(NfcAdapter nfcAdapter, byte peerLlcpVersion) {
+    NfcEvent(NfcAdapter nfcAdapter) {
         this.nfcAdapter = nfcAdapter;
-        this.peerLlcpMajorVersion = (peerLlcpVersion & 0xF0) >> 4;
-        this.peerLlcpMinorVersion = peerLlcpVersion & 0x0F;
     }
 }

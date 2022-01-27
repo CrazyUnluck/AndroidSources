@@ -23,17 +23,11 @@ import android.widget.EditText;
 /**
  * EditText widget that monitors keyboard changes.
  */
-public class SearchEditText extends StreamingTextView {
+public class SearchEditText extends EditText {
     private static final String TAG = SearchEditText.class.getSimpleName();
     private static final boolean DEBUG = false;
 
-    /**
-     * Interface for receiving notification when the keyboard is dismissed.
-     */
     public interface OnKeyboardDismissListener {
-        /**
-         * Method invoked when the keyboard is dismissed.
-         */
         public void onKeyboardDismiss();
     }
 
@@ -56,13 +50,13 @@ public class SearchEditText extends StreamingTextView {
         if (event.getKeyCode() == KeyEvent.KEYCODE_BACK) {
             if (DEBUG) Log.v(TAG, "Keyboard being dismissed");
             mKeyboardDismissListener.onKeyboardDismiss();
-            return false;
+            return true;
         }
         return super.onKeyPreIme(keyCode, event);
     }
 
     /**
-     * Sets a keyboard dismissed listener.
+     * Set a keyboard dismissed listener.
      *
      * @param listener The listener.
      */

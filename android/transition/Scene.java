@@ -34,7 +34,7 @@ public final class Scene {
     private Context mContext;
     private int mLayoutId = -1;
     private ViewGroup mSceneRoot;
-    private View mLayout; // alternative to layoutId
+    private ViewGroup mLayout; // alternative to layoutId
     Runnable mEnterAction, mExitAction;
 
     /**
@@ -114,15 +114,6 @@ public final class Scene {
      * @param layout The view hierarchy of this scene, added as a child
      * of sceneRoot when this scene is entered.
      */
-    public Scene(ViewGroup sceneRoot, View layout) {
-        mSceneRoot = sceneRoot;
-        mLayout = layout;
-    }
-
-    /**
-     * @deprecated use {@link #Scene(ViewGroup, View)}.
-     */
-    @Deprecated
     public Scene(ViewGroup sceneRoot, ViewGroup layout) {
         mSceneRoot = sceneRoot;
         mLayout = layout;

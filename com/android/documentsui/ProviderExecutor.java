@@ -19,6 +19,9 @@ package com.android.documentsui;
 import android.os.AsyncTask;
 
 import com.android.internal.annotations.GuardedBy;
+import com.android.internal.util.Preconditions;
+import com.google.android.collect.Lists;
+import com.google.android.collect.Maps;
 
 import java.lang.ref.WeakReference;
 import java.util.ArrayList;
@@ -29,7 +32,7 @@ import java.util.concurrent.LinkedBlockingQueue;
 public class ProviderExecutor extends Thread implements Executor {
 
     @GuardedBy("sExecutors")
-    private static HashMap<String, ProviderExecutor> sExecutors = new HashMap<>();
+    private static HashMap<String, ProviderExecutor> sExecutors = Maps.newHashMap();
 
     public static ProviderExecutor forAuthority(String authority) {
         synchronized (sExecutors) {
@@ -50,7 +53,7 @@ public class ProviderExecutor extends Thread implements Executor {
 
     private final LinkedBlockingQueue<Runnable> mQueue = new LinkedBlockingQueue<Runnable>();
 
-    private final ArrayList<WeakReference<Preemptable>> mPreemptable = new ArrayList<>();
+    private final ArrayList<WeakReference<Preemptable>> mPreemptable = Lists.newArrayList();
 
     private void preempt() {
         synchronized (mPreemptable) {
@@ -84,7 +87,7 @@ public class ProviderExecutor extends Thread implements Executor {
     private Executor mNonPreemptingExecutor = new Executor() {
         @Override
         public void execute(Runnable command) {
-            assert(command != null);
+            Preconditions.checkNotNull(command);
             mQueue.add(command);
         }
     };
@@ -92,7 +95,7 @@ public class ProviderExecutor extends Thread implements Executor {
     @Override
     public void execute(Runnable command) {
         preempt();
-        assert(command != null);
+        Preconditions.checkNotNull(command);
         mQueue.add(command);
     }
 

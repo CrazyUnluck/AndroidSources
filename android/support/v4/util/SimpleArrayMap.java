@@ -270,17 +270,7 @@ public class SimpleArrayMap<K, V> {
      * @return Returns true if the key exists, else false.
      */
     public boolean containsKey(Object key) {
-        return indexOfKey(key) >= 0;
-    }
-
-    /**
-     * Returns the index of a key in the set.
-     *
-     * @param key The key to search for.
-     * @return Returns the index of the key if it exists, else a negative integer.
-     */
-    public int indexOfKey(Object key) {
-        return key == null ? indexOfNull() : indexOf(key, key.hashCode());
+        return key == null ? (indexOfNull() >= 0) : (indexOf(key, key.hashCode()) >= 0);
     }
 
     int indexOfValue(Object value) {
@@ -320,7 +310,7 @@ public class SimpleArrayMap<K, V> {
      * or null if there is no such key.
      */
     public V get(Object key) {
-        final int index = indexOfKey(key);
+        final int index = key == null ? indexOfNull() : indexOf(key, key.hashCode());
         return index >= 0 ? (V)mArray[(index<<1)+1] : null;
     }
 
@@ -448,7 +438,7 @@ public class SimpleArrayMap<K, V> {
      * was no such key.
      */
     public V remove(Object key) {
-        final int index = indexOfKey(key);
+        int index = key == null ? indexOfNull() : indexOf(key, key.hashCode());
         if (index >= 0) {
             return removeAt(index);
         }
@@ -522,42 +512,17 @@ public class SimpleArrayMap<K, V> {
     /**
      * {@inheritDoc}
      *
-     * <p>This implementation returns false if the object is not a Map or
-     * SimpleArrayMap, or if the maps have different sizes. Otherwise, for each
-     * key in this map, values of both maps are compared. If the values for any
-     * key are not equal, the method returns false, otherwise it returns true.
+     * <p>This implementation returns false if the object is not a map, or
+     * if the maps have different sizes. Otherwise, for each key in this map,
+     * values of both maps are compared. If the values for any key are not
+     * equal, the method returns false, otherwise it returns true.
      */
     @Override
     public boolean equals(Object object) {
         if (this == object) {
             return true;
         }
-        if (object instanceof SimpleArrayMap) {
-            SimpleArrayMap<?, ?> map = (SimpleArrayMap<?, ?>) object;
-            if (size() != map.size()) {
-                return false;
-            }
-
-            try {
-                for (int i=0; i<mSize; i++) {
-                    K key = keyAt(i);
-                    V mine = valueAt(i);
-                    Object theirs = map.get(key);
-                    if (mine == null) {
-                        if (theirs != null || !map.containsKey(key)) {
-                            return false;
-                        }
-                    } else if (!mine.equals(theirs)) {
-                        return false;
-                    }
-                }
-            } catch (NullPointerException ignored) {
-                return false;
-            } catch (ClassCastException ignored) {
-                return false;
-            }
-            return true;
-        } else if (object instanceof Map) {
+        if (object instanceof Map) {
             Map<?, ?> map = (Map<?, ?>) object;
             if (size() != map.size()) {
                 return false;

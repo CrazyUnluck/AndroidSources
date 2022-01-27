@@ -16,8 +16,6 @@
 
 package android.content;
 
-import android.annotation.Nullable;
-
 import java.util.Map;
 import java.util.Set;
 
@@ -30,7 +28,8 @@ import java.util.Set;
  * when they are committed to storage.  Objects that are returned from the
  * various <code>get</code> methods must be treated as immutable by the application.
  *
- * <p><em>Note: This class does not support use across multiple processes.</em>
+ * <p><em>Note: currently this class does not support use across multiple
+ * processes.  This will be added later.</em>
  *
  * <div class="special reference">
  * <h3>Developer Guides</h3>
@@ -72,18 +71,18 @@ public interface SharedPreferences {
          * {@link #commit} or {@link #apply} are called.
          * 
          * @param key The name of the preference to modify.
-         * @param value The new value for the preference.  Passing {@code null}
-         *    for this argument is equivalent to calling {@link #remove(String)} with
+         * @param value The new value for the preference.  Supplying {@code null}
+         *    as the value is equivalent to calling {@link #remove(String)} with
          *    this key.
          * 
          * @return Returns a reference to the same Editor object, so you can
          * chain put calls together.
          */
-        Editor putString(String key, @Nullable String value);
+        Editor putString(String key, String value);
         
         /**
          * Set a set of String values in the preferences editor, to be written
-         * back once {@link #commit} or {@link #apply} is called.
+         * back once {@link #commit} is called.
          * 
          * @param key The name of the preference to modify.
          * @param values The set of new values for the preference.  Passing {@code null}
@@ -92,7 +91,7 @@ public interface SharedPreferences {
          * @return Returns a reference to the same Editor object, so you can
          * chain put calls together.
          */
-        Editor putStringSet(String key, @Nullable Set<String> values);
+        Editor putStringSet(String key, Set<String> values);
         
         /**
          * Set an int value in the preferences editor, to be written back once
@@ -255,8 +254,7 @@ public interface SharedPreferences {
      * 
      * @throws ClassCastException
      */
-    @Nullable
-    String getString(String key, @Nullable String defValue);
+    String getString(String key, String defValue);
     
     /**
      * Retrieve a set of String values from the preferences.
@@ -274,8 +272,7 @@ public interface SharedPreferences {
      * 
      * @throws ClassCastException
      */
-    @Nullable
-    Set<String> getStringSet(String key, @Nullable Set<String> defValues);
+    Set<String> getStringSet(String key, Set<String> defValues);
     
     /**
      * Retrieve an int value from the preferences.

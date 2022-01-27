@@ -16,7 +16,6 @@
 
 package android.preference;
 
-import android.annotation.ArrayRes;
 import android.app.AlertDialog.Builder;
 import android.content.Context;
 import android.content.DialogInterface;
@@ -43,12 +42,12 @@ public class ListPreference extends DialogPreference {
     private String mSummary;
     private int mClickedDialogEntryIndex;
     private boolean mValueSet;
-
-    public ListPreference(Context context, AttributeSet attrs, int defStyleAttr, int defStyleRes) {
-        super(context, attrs, defStyleAttr, defStyleRes);
-
-        TypedArray a = context.obtainStyledAttributes(
-                attrs, com.android.internal.R.styleable.ListPreference, defStyleAttr, defStyleRes);
+    
+    public ListPreference(Context context, AttributeSet attrs) {
+        super(context, attrs);
+        
+        TypedArray a = context.obtainStyledAttributes(attrs,
+                com.android.internal.R.styleable.ListPreference, 0, 0);
         mEntries = a.getTextArray(com.android.internal.R.styleable.ListPreference_entries);
         mEntryValues = a.getTextArray(com.android.internal.R.styleable.ListPreference_entryValues);
         a.recycle();
@@ -57,17 +56,9 @@ public class ListPreference extends DialogPreference {
          * in the Preference class.
          */
         a = context.obtainStyledAttributes(attrs,
-                com.android.internal.R.styleable.Preference, defStyleAttr, defStyleRes);
+                com.android.internal.R.styleable.Preference, 0, 0);
         mSummary = a.getString(com.android.internal.R.styleable.Preference_summary);
         a.recycle();
-    }
-
-    public ListPreference(Context context, AttributeSet attrs, int defStyleAttr) {
-        this(context, attrs, defStyleAttr, 0);
-    }
-
-    public ListPreference(Context context, AttributeSet attrs) {
-        this(context, attrs, com.android.internal.R.attr.dialogPreferenceStyle);
     }
 
     public ListPreference(Context context) {
@@ -92,7 +83,7 @@ public class ListPreference extends DialogPreference {
      * @see #setEntries(CharSequence[])
      * @param entriesResId The entries array as a resource.
      */
-    public void setEntries(@ArrayRes int entriesResId) {
+    public void setEntries(int entriesResId) {
         setEntries(getContext().getResources().getTextArray(entriesResId));
     }
     
@@ -120,7 +111,7 @@ public class ListPreference extends DialogPreference {
      * @see #setEntryValues(CharSequence[])
      * @param entryValuesResId The entry values array as a resource.
      */
-    public void setEntryValues(@ArrayRes int entryValuesResId) {
+    public void setEntryValues(int entryValuesResId) {
         setEntryValues(getContext().getResources().getTextArray(entryValuesResId));
     }
     
@@ -163,10 +154,10 @@ public class ListPreference extends DialogPreference {
     @Override
     public CharSequence getSummary() {
         final CharSequence entry = getEntry();
-        if (mSummary == null) {
+        if (mSummary == null || entry == null) {
             return super.getSummary();
         } else {
-            return String.format(mSummary, entry == null ? "" : entry);
+            return String.format(mSummary, entry);
         }
     }
 

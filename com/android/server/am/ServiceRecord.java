@@ -16,7 +16,7 @@
 
 package com.android.server.am;
 
-import com.android.internal.app.procstats.ServiceState;
+import com.android.internal.app.ProcessStats;
 import com.android.internal.os.BatteryStatsImpl;
 import com.android.server.LocalServices;
 import com.android.server.notification.NotificationManagerInternal;
@@ -45,17 +45,11 @@ import android.util.TimeUtils;
 import java.io.PrintWriter;
 import java.util.ArrayList;
 import java.util.List;
-import java.util.Objects;
-
-import static com.android.server.am.ActivityManagerDebugConfig.TAG_AM;
-import static com.android.server.am.ActivityManagerDebugConfig.TAG_WITH_CLASS_NAME;
 
 /**
  * A running application service.
  */
 final class ServiceRecord extends Binder {
-    private static final String TAG = TAG_WITH_CLASS_NAME ? "ServiceRecord" : TAG_AM;
-
     // Maximum number of delivery attempts before giving up.
     static final int MAX_DELIVERY_COUNT = 3;
 
@@ -76,6 +70,9 @@ final class ServiceRecord extends Binder {
     final String packageName; // the package implementing intent's component
     final String processName; // process where this component wants to run
     final String permission;// permission needed to access service
+    final String baseDir;   // where activity source (resources etc) located
+    final String resDir;   // where public activity source (public resources etc) located
+    final String dataDir;   // where activity data should go
     final boolean exported; // from ServiceInfo.exported
     final Runnable restarter; // used to schedule retries of starting the service
     final long createTime;  // when this service was created
@@ -88,9 +85,8 @@ final class ServiceRecord extends Binder {
 
     ProcessRecord app;      // where this service is running or null.
     ProcessRecord isolatedProc; // keep track of isolated process, if requested
-    ServiceState tracker; // tracking service execution, may be null
-    ServiceState restartTracker; // tracking service restart
-    boolean whitelistManager; // any bindings to this service have BIND_ALLOW_WHITELIST_MANAGEMENT?
+    ProcessStats.ServiceState tracker; // tracking service execution, may be null
+    ProcessStats.ServiceState restartTracker; // tracking service restart
     boolean delayed;        // are we waiting to start this service in the background?
     boolean isForeground;   // is service currently in foreground mode?
     int foregroundId;       // Notification ID of last foreground req.
@@ -111,8 +107,6 @@ final class ServiceRecord extends Binder {
     long restartDelay;      // delay until next restart attempt.
     long restartTime;       // time of last restart.
     long nextRestartTime;   // time when restartDelay will expire.
-    boolean destroying;     // set when we have started destroying the service
-    long destroyTime;       // time at which destory was initiated.
 
     String stringName;      // caching of toString
     
@@ -199,7 +193,14 @@ final class ServiceRecord extends Binder {
                         pw.println(si.neededGrants);
             }
             if (si.uriPermissions != null) {
-                si.uriPermissions.dump(pw, prefix);
+                if (si.uriPermissions.readUriPermissions != null) {
+                    pw.print(prefix); pw.print("  readUriPermissions=");
+                            pw.println(si.uriPermissions.readUriPermissions);
+                }
+                if (si.uriPermissions.writeUriPermissions != null) {
+                    pw.print(prefix); pw.print("  writeUriPermissions=");
+                            pw.println(si.uriPermissions.writeUriPermissions);
+                }
             }
         }
     }
@@ -215,19 +216,14 @@ final class ServiceRecord extends Binder {
         }
         long now = SystemClock.uptimeMillis();
         long nowReal = SystemClock.elapsedRealtime();
-        if (appInfo != null) {
-            pw.print(prefix); pw.print("baseDir="); pw.println(appInfo.sourceDir);
-            if (!Objects.equals(appInfo.sourceDir, appInfo.publicSourceDir)) {
-                pw.print(prefix); pw.print("resDir="); pw.println(appInfo.publicSourceDir);
-            }
-            pw.print(prefix); pw.print("dataDir="); pw.println(appInfo.dataDir);
+        pw.print(prefix); pw.print("baseDir="); pw.println(baseDir);
+        if (!resDir.equals(baseDir)) {
+            pw.print(prefix); pw.print("resDir="); pw.println(resDir);
         }
+        pw.print(prefix); pw.print("dataDir="); pw.println(dataDir);
         pw.print(prefix); pw.print("app="); pw.println(app);
         if (isolatedProc != null) {
             pw.print(prefix); pw.print("isolatedProc="); pw.println(isolatedProc);
-        }
-        if (whitelistManager) {
-            pw.print(prefix); pw.print("whitelistManager="); pw.println(whitelistManager);
         }
         if (delayed) {
             pw.print(prefix); pw.print("delayed="); pw.println(delayed);
@@ -259,12 +255,6 @@ final class ServiceRecord extends Binder {
                     pw.print(" executeFg="); pw.print(executeFg);
                     pw.print(" executingStart=");
                     TimeUtils.formatDuration(executingStart, now, pw);
-                    pw.println();
-        }
-        if (destroying || destroyTime != 0) {
-            pw.print(prefix); pw.print("destroying="); pw.print(destroying);
-                    pw.print(" destroyTime=");
-                    TimeUtils.formatDuration(destroyTime, now, pw);
                     pw.println();
         }
         if (crashCount != 0 || restartCount != 0
@@ -322,6 +312,9 @@ final class ServiceRecord extends Binder {
         packageName = sInfo.applicationInfo.packageName;
         processName = sInfo.processName;
         permission = sInfo.permission;
+        baseDir = sInfo.applicationInfo.sourceDir;
+        resDir = sInfo.applicationInfo.publicSourceDir;
+        dataDir = sInfo.applicationInfo.dataDir;
         exported = sInfo.exported;
         this.restarter = restarter;
         createTime = SystemClock.elapsedRealtime();
@@ -330,14 +323,13 @@ final class ServiceRecord extends Binder {
         createdFromFg = callerIsFg;
     }
 
-    public ServiceState getTracker() {
+    public ProcessStats.ServiceState getTracker() {
         if (tracker != null) {
             return tracker;
         }
         if ((serviceInfo.applicationInfo.flags&ApplicationInfo.FLAG_PERSISTENT) == 0) {
             tracker = ams.mProcessStats.getServiceStateLocked(serviceInfo.packageName,
-                    serviceInfo.applicationInfo.uid, serviceInfo.applicationInfo.versionCode,
-                    serviceInfo.processName, serviceInfo.name);
+                    serviceInfo.applicationInfo.uid, serviceInfo.processName, serviceInfo.name);
             tracker.applyNewOwner(this);
         }
         return tracker;
@@ -354,8 +346,7 @@ final class ServiceRecord extends Binder {
         if (restartTracker == null) {
             if ((serviceInfo.applicationInfo.flags&ApplicationInfo.FLAG_PERSISTENT) == 0) {
                 restartTracker = ams.mProcessStats.getServiceStateLocked(serviceInfo.packageName,
-                        serviceInfo.applicationInfo.uid, serviceInfo.applicationInfo.versionCode,
-                        serviceInfo.processName, serviceInfo.name);
+                        serviceInfo.applicationInfo.uid, serviceInfo.processName, serviceInfo.name);
             }
             if (restartTracker == null) {
                 return;
@@ -393,19 +384,6 @@ final class ServiceRecord extends Binder {
             }
         }
         return false;
-    }
-
-    public void updateWhitelistManager() {
-        whitelistManager = false;
-        for (int conni=connections.size()-1; conni>=0; conni--) {
-            ArrayList<ConnectionRecord> cr = connections.valueAt(conni);
-            for (int i=0; i<cr.size(); i++) {
-                if ((cr.get(i).flags&Context.BIND_ALLOW_WHITELIST_MANAGEMENT) != 0) {
-                    whitelistManager = true;
-                    return;
-                }
-            }
-        }
     }
 
     public void resetRestartCounter() {
@@ -447,7 +425,7 @@ final class ServiceRecord extends Binder {
             // avoid deadlocks.
             final String localPackageName = packageName;
             final int localForegroundId = foregroundId;
-            final Notification _foregroundNoti = foregroundNoti;
+            final Notification localForegroundNoti = foregroundNoti;
             ams.mHandler.post(new Runnable() {
                 public void run() {
                     NotificationManagerInternal nm = LocalServices.getService(
@@ -455,19 +433,16 @@ final class ServiceRecord extends Binder {
                     if (nm == null) {
                         return;
                     }
-                    Notification localForegroundNoti = _foregroundNoti;
                     try {
-                        if (localForegroundNoti.getSmallIcon() == null) {
-                            // It is not correct for the caller to not supply a notification
+                        if (localForegroundNoti.icon == 0) {
+                            // It is not correct for the caller to supply a notification
                             // icon, but this used to be able to slip through, so for
-                            // those dirty apps we will create a notification clearly
-                            // blaming the app.
-                            Slog.v(TAG, "Attempted to start a foreground service ("
-                                    + name
-                                    + ") with a broken notification (no icon: "
-                                    + localForegroundNoti
-                                    + ")");
+                            // those dirty apps give it the app's icon.
+                            localForegroundNoti.icon = appInfo.icon;
 
+                            // Do not allow apps to present a sneaky invisible content view either.
+                            localForegroundNoti.contentView = null;
+                            localForegroundNoti.bigContentView = null;
                             CharSequence appName = appInfo.loadLabel(
                                     ams.mContext.getPackageManager());
                             if (appName == null) {
@@ -475,65 +450,46 @@ final class ServiceRecord extends Binder {
                             }
                             Context ctx = null;
                             try {
-                                ctx = ams.mContext.createPackageContextAsUser(
-                                        appInfo.packageName, 0, new UserHandle(userId));
-
-                                Notification.Builder notiBuilder = new Notification.Builder(ctx);
-
-                                // it's ugly, but it clearly identifies the app
-                                notiBuilder.setSmallIcon(appInfo.icon);
-
-                                // mark as foreground
-                                notiBuilder.setFlag(Notification.FLAG_FOREGROUND_SERVICE, true);
-
-                                // we are doing the app a kindness here
-                                notiBuilder.setPriority(Notification.PRIORITY_MIN);
-
+                                ctx = ams.mContext.createPackageContext(
+                                        appInfo.packageName, 0);
                                 Intent runningIntent = new Intent(
                                         Settings.ACTION_APPLICATION_DETAILS_SETTINGS);
                                 runningIntent.setData(Uri.fromParts("package",
                                         appInfo.packageName, null));
                                 PendingIntent pi = PendingIntent.getActivity(ams.mContext, 0,
                                         runningIntent, PendingIntent.FLAG_UPDATE_CURRENT);
-                                notiBuilder.setColor(ams.mContext.getColor(
-                                        com.android.internal
-                                                .R.color.system_notification_accent_color));
-                                notiBuilder.setContentTitle(
+                                localForegroundNoti.setLatestEventInfo(ctx,
                                         ams.mContext.getString(
                                                 com.android.internal.R.string
                                                         .app_running_notification_title,
-                                                appName));
-                                notiBuilder.setContentText(
+                                                appName),
                                         ams.mContext.getString(
                                                 com.android.internal.R.string
                                                         .app_running_notification_text,
-                                                appName));
-                                notiBuilder.setContentIntent(pi);
-
-                                localForegroundNoti = notiBuilder.build();
+                                                appName),
+                                        pi);
                             } catch (PackageManager.NameNotFoundException e) {
+                                localForegroundNoti.icon = 0;
                             }
                         }
-                        if (localForegroundNoti.getSmallIcon() == null) {
+                        if (localForegroundNoti.icon == 0) {
                             // Notifications whose icon is 0 are defined to not show
                             // a notification, silently ignoring it.  We don't want to
                             // just ignore it, we want to prevent the service from
                             // being foreground.
-                            throw new RuntimeException("invalid service notification: "
-                                    + foregroundNoti);
+                            throw new RuntimeException("icon must be non-zero");
                         }
                         int[] outId = new int[1];
                         nm.enqueueNotification(localPackageName, localPackageName,
                                 appUid, appPid, null, localForegroundId, localForegroundNoti,
                                 outId, userId);
-
-                        foregroundNoti = localForegroundNoti; // save it for amending next time
                     } catch (RuntimeException e) {
-                        Slog.w(TAG, "Error showing notification for service", e);
+                        Slog.w(ActivityManagerService.TAG,
+                                "Error showing notification for service", e);
                         // If it gave us a garbage notification, it doesn't
                         // get to be foreground.
                         ams.setServiceForeground(name, ServiceRecord.this,
-                                0, null, 0);
+                                0, null, true);
                         ams.crashApplication(appUid, appPid, localPackageName,
                                 "Bad notification for startForeground: " + e);
                     }
@@ -558,37 +514,13 @@ final class ServiceRecord extends Binder {
                         inm.cancelNotificationWithTag(localPackageName, null,
                                 localForegroundId, userId);
                     } catch (RuntimeException e) {
-                        Slog.w(TAG, "Error canceling notification for service", e);
+                        Slog.w(ActivityManagerService.TAG,
+                                "Error canceling notification for service", e);
                     } catch (RemoteException e) {
                     }
                 }
             });
         }
-    }
-
-    public void stripForegroundServiceFlagFromNotification() {
-        if (foregroundId == 0) {
-            return;
-        }
-
-        final int localForegroundId = foregroundId;
-        final int localUserId = userId;
-        final String localPackageName = packageName;
-
-        // Do asynchronous communication with notification manager to
-        // avoid deadlocks.
-        ams.mHandler.post(new Runnable() {
-            @Override
-            public void run() {
-                NotificationManagerInternal nmi = LocalServices.getService(
-                        NotificationManagerInternal.class);
-                if (nmi == null) {
-                    return;
-                }
-                nmi.removeForegroundServiceFlagFromNotification(localPackageName, localForegroundId,
-                        localUserId);
-            }
-        });
     }
     
     public void clearDeliveredStartsLocked() {

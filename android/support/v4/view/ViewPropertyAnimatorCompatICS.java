@@ -17,8 +17,11 @@ package android.support.v4.view;
 
 import android.animation.Animator;
 import android.animation.AnimatorListenerAdapter;
+import android.animation.TimeInterpolator;
 import android.view.View;
 import android.view.animation.Interpolator;
+
+import java.util.WeakHashMap;
 
 class ViewPropertyAnimatorCompatICS {
 
@@ -132,25 +135,21 @@ class ViewPropertyAnimatorCompatICS {
 
     public static void setListener(final View view,
             final ViewPropertyAnimatorListener listener) {
-        if (listener != null) {
-            view.animate().setListener(new AnimatorListenerAdapter() {
-                @Override
-                public void onAnimationCancel(Animator animation) {
-                    listener.onAnimationCancel(view);
-                }
+        view.animate().setListener(new AnimatorListenerAdapter() {
+            @Override
+            public void onAnimationCancel(Animator animation) {
+                listener.onAnimationCancel(view);
+            }
 
-                @Override
-                public void onAnimationEnd(Animator animation) {
-                    listener.onAnimationEnd(view);
-                }
+            @Override
+            public void onAnimationEnd(Animator animation) {
+                listener.onAnimationEnd(view);
+            }
 
-                @Override
-                public void onAnimationStart(Animator animation) {
-                    listener.onAnimationStart(view);
-                }
-            });
-        } else {
-            view.animate().setListener(null);
-        }
+            @Override
+            public void onAnimationStart(Animator animation) {
+                listener.onAnimationStart(view);
+            }
+        });
     }
 }

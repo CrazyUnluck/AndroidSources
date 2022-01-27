@@ -16,8 +16,6 @@
 
 package android.view.accessibility;
 
-import android.annotation.NonNull;
-import android.annotation.Nullable;
 import android.content.ContentResolver;
 import android.content.Context;
 import android.database.ContentObserver;
@@ -52,9 +50,11 @@ public class CaptioningManager {
     /** Default scaling value for caption fonts. */
     private static final float DEFAULT_FONT_SCALE = 1;
 
-    private final ArrayList<CaptioningChangeListener> mListeners = new ArrayList<>();
+    private final ArrayList<CaptioningChangeListener>
+            mListeners = new ArrayList<CaptioningChangeListener>();
+    private final Handler mHandler = new Handler();
+
     private final ContentResolver mContentResolver;
-    private final ContentObserver mContentObserver;
 
     /**
      * Creates a new captioning manager for the specified context.
@@ -63,9 +63,6 @@ public class CaptioningManager {
      */
     public CaptioningManager(Context context) {
         mContentResolver = context.getContentResolver();
-
-        final Handler handler = new Handler(context.getMainLooper());
-        mContentObserver = new MyContentObserver(handler);
     }
 
     /**
@@ -81,7 +78,6 @@ public class CaptioningManager {
      *         language
      * @hide
      */
-    @Nullable
     public final String getRawLocale() {
         return Secure.getString(mContentResolver, Secure.ACCESSIBILITY_CAPTIONING_LOCALE);
     }
@@ -90,7 +86,6 @@ public class CaptioningManager {
      * @return the locale for the user's preferred captioning language, or null
      *         if not specified
      */
-    @Nullable
     public final Locale getLocale() {
         final String rawLocale = getRawLocale();
         if (!TextUtils.isEmpty(rawLocale)) {
@@ -130,7 +125,6 @@ public class CaptioningManager {
      * @return the user's preferred visual properties for captions as a
      *         {@link CaptionStyle}, or the default style if not specified
      */
-    @NonNull
     public CaptionStyle getUserStyle() {
         final int preset = getRawUserStyle();
         if (preset == CaptionStyle.PRESET_CUSTOM) {
@@ -146,19 +140,17 @@ public class CaptioningManager {
      *
      * @param listener the listener to add
      */
-    public void addCaptioningChangeListener(@NonNull CaptioningChangeListener listener) {
+    public void addCaptioningChangeListener(CaptioningChangeListener listener) {
         synchronized (mListeners) {
             if (mListeners.isEmpty()) {
                 registerObserver(Secure.ACCESSIBILITY_CAPTIONING_ENABLED);
                 registerObserver(Secure.ACCESSIBILITY_CAPTIONING_FOREGROUND_COLOR);
                 registerObserver(Secure.ACCESSIBILITY_CAPTIONING_BACKGROUND_COLOR);
-                registerObserver(Secure.ACCESSIBILITY_CAPTIONING_WINDOW_COLOR);
                 registerObserver(Secure.ACCESSIBILITY_CAPTIONING_EDGE_TYPE);
                 registerObserver(Secure.ACCESSIBILITY_CAPTIONING_EDGE_COLOR);
                 registerObserver(Secure.ACCESSIBILITY_CAPTIONING_TYPEFACE);
                 registerObserver(Secure.ACCESSIBILITY_CAPTIONING_FONT_SCALE);
                 registerObserver(Secure.ACCESSIBILITY_CAPTIONING_LOCALE);
-                registerObserver(Secure.ACCESSIBILITY_CAPTIONING_PRESET);
             }
 
             mListeners.add(listener);
@@ -175,7 +167,7 @@ public class CaptioningManager {
      *
      * @param listener the listener to remove
      */
-    public void removeCaptioningChangeListener(@NonNull CaptioningChangeListener listener) {
+    public void removeCaptioningChangeListener(CaptioningChangeListener listener) {
         synchronized (mListeners) {
             mListeners.remove(listener);
 
@@ -221,15 +213,7 @@ public class CaptioningManager {
         }
     }
 
-    private class MyContentObserver extends ContentObserver {
-        private final Handler mHandler;
-
-        public MyContentObserver(Handler handler) {
-            super(handler);
-
-            mHandler = handler;
-        }
-
+    private final ContentObserver mContentObserver = new ContentObserver(mHandler) {
         @Override
         public void onChange(boolean selfChange, Uri uri) {
             final String uriPath = uri.getPath();
@@ -266,38 +250,17 @@ public class CaptioningManager {
      * background colors, edge properties, and typeface.
      */
     public static final class CaptionStyle {
-        /**
-         * Packed value for a color of 'none' and a cached opacity of 100%.
-         *
-         * @hide
-         */
-        private static final int COLOR_NONE_OPAQUE = 0x000000FF;
-
-        /**
-         * Packed value for a color of 'default' and opacity of 100%.
-         *
-         * @hide
-         */
-        public static final int COLOR_UNSPECIFIED = 0x00FFFFFF;
-
         private static final CaptionStyle WHITE_ON_BLACK;
         private static final CaptionStyle BLACK_ON_WHITE;
         private static final CaptionStyle YELLOW_ON_BLACK;
         private static final CaptionStyle YELLOW_ON_BLUE;
         private static final CaptionStyle DEFAULT_CUSTOM;
-        private static final CaptionStyle UNSPECIFIED;
-
-        /** The default caption style used to fill in unspecified values. @hide */
-        public static final CaptionStyle DEFAULT;
 
         /** @hide */
         public static final CaptionStyle[] PRESETS;
 
         /** @hide */
         public static final int PRESET_CUSTOM = -1;
-
-        /** Unspecified edge type value. */
-        public static final int EDGE_TYPE_UNSPECIFIED = -1;
 
         /** Edge type value specifying no character edges. */
         public static final int EDGE_TYPE_NONE = 0;
@@ -308,12 +271,6 @@ public class CaptioningManager {
         /** Edge type value specifying drop-shadowed character edges. */
         public static final int EDGE_TYPE_DROP_SHADOW = 2;
 
-        /** Edge type value specifying raised bevel character edges. */
-        public static final int EDGE_TYPE_RAISED = 3;
-
-        /** Edge type value specifying depressed bevel character edges. */
-        public static final int EDGE_TYPE_DEPRESSED = 4;
-
         /** The preferred foreground color for video captions. */
         public final int foregroundColor;
 
@@ -323,12 +280,9 @@ public class CaptioningManager {
         /**
          * The preferred edge type for video captions, one of:
          * <ul>
-         * <li>{@link #EDGE_TYPE_UNSPECIFIED}
          * <li>{@link #EDGE_TYPE_NONE}
          * <li>{@link #EDGE_TYPE_OUTLINE}
          * <li>{@link #EDGE_TYPE_DROP_SHADOW}
-         * <li>{@link #EDGE_TYPE_RAISED}
-         * <li>{@link #EDGE_TYPE_DEPRESSED}
          * </ul>
          */
         public final int edgeType;
@@ -339,132 +293,27 @@ public class CaptioningManager {
          */
         public final int edgeColor;
 
-        /** The preferred window color for video captions. */
-        public final int windowColor;
-
         /**
          * @hide
          */
         public final String mRawTypeface;
 
-        private final boolean mHasForegroundColor;
-        private final boolean mHasBackgroundColor;
-        private final boolean mHasEdgeType;
-        private final boolean mHasEdgeColor;
-        private final boolean mHasWindowColor;
-
-        /** Lazily-created typeface based on the raw typeface string. */
         private Typeface mParsedTypeface;
 
         private CaptionStyle(int foregroundColor, int backgroundColor, int edgeType, int edgeColor,
-                int windowColor, String rawTypeface) {
-            mHasForegroundColor = hasColor(foregroundColor);
-            mHasBackgroundColor = hasColor(backgroundColor);
-            mHasEdgeType = edgeType != EDGE_TYPE_UNSPECIFIED;
-            mHasEdgeColor = hasColor(edgeColor);
-            mHasWindowColor = hasColor(windowColor);
-
-            // Always use valid colors, even when no override is specified, to
-            // ensure backwards compatibility with apps targeting KitKat MR2.
-            this.foregroundColor = mHasForegroundColor ? foregroundColor : Color.WHITE;
-            this.backgroundColor = mHasBackgroundColor ? backgroundColor : Color.BLACK;
-            this.edgeType = mHasEdgeType ? edgeType : EDGE_TYPE_NONE;
-            this.edgeColor = mHasEdgeColor ? edgeColor : Color.BLACK;
-            this.windowColor = mHasWindowColor ? windowColor : COLOR_NONE_OPAQUE;
+                String rawTypeface) {
+            this.foregroundColor = foregroundColor;
+            this.backgroundColor = backgroundColor;
+            this.edgeType = edgeType;
+            this.edgeColor = edgeColor;
 
             mRawTypeface = rawTypeface;
-        }
-
-        /**
-         * Returns whether a packed color indicates a non-default value.
-         *
-         * @param packedColor the packed color value
-         * @return {@code true} if a non-default value is specified
-         * @hide
-         */
-        public static boolean hasColor(int packedColor) {
-            // Matches the color packing code from Settings. "Default" packed
-            // colors are indicated by zero alpha and non-zero red/blue. The
-            // cached alpha value used by Settings is stored in green.
-            return (packedColor >>> 24) != 0 || (packedColor & 0xFFFF00) == 0;
-        }
-
-        /**
-         * Applies a caption style, overriding any properties that are specified
-         * in the overlay caption.
-         *
-         * @param overlay The style to apply
-         * @return A caption style with the overlay style applied
-         * @hide
-         */
-        @NonNull
-        public CaptionStyle applyStyle(@NonNull CaptionStyle overlay) {
-            final int newForegroundColor = overlay.hasForegroundColor() ?
-                    overlay.foregroundColor : foregroundColor;
-            final int newBackgroundColor = overlay.hasBackgroundColor() ?
-                    overlay.backgroundColor : backgroundColor;
-            final int newEdgeType = overlay.hasEdgeType() ?
-                    overlay.edgeType : edgeType;
-            final int newEdgeColor = overlay.hasEdgeColor() ?
-                    overlay.edgeColor : edgeColor;
-            final int newWindowColor = overlay.hasWindowColor() ?
-                    overlay.windowColor : windowColor;
-            final String newRawTypeface = overlay.mRawTypeface != null ?
-                    overlay.mRawTypeface : mRawTypeface;
-            return new CaptionStyle(newForegroundColor, newBackgroundColor, newEdgeType,
-                    newEdgeColor, newWindowColor, newRawTypeface);
-        }
-
-        /**
-         * @return {@code true} if the user has specified a background color
-         *         that should override the application default, {@code false}
-         *         otherwise
-         */
-        public boolean hasBackgroundColor() {
-            return mHasBackgroundColor;
-        }
-
-        /**
-         * @return {@code true} if the user has specified a foreground color
-         *         that should override the application default, {@code false}
-         *         otherwise
-         */
-        public boolean hasForegroundColor() {
-            return mHasForegroundColor;
-        }
-
-        /**
-         * @return {@code true} if the user has specified an edge type that
-         *         should override the application default, {@code false}
-         *         otherwise
-         */
-        public boolean hasEdgeType() {
-            return mHasEdgeType;
-        }
-
-        /**
-         * @return {@code true} if the user has specified an edge color that
-         *         should override the application default, {@code false}
-         *         otherwise
-         */
-        public boolean hasEdgeColor() {
-            return mHasEdgeColor;
-        }
-
-        /**
-         * @return {@code true} if the user has specified a window color that
-         *         should override the application default, {@code false}
-         *         otherwise
-         */
-        public boolean hasWindowColor() {
-            return mHasWindowColor;
         }
 
         /**
          * @return the preferred {@link Typeface} for video captions, or null if
          *         not specified
          */
-        @Nullable
         public Typeface getTypeface() {
             if (mParsedTypeface == null && !TextUtils.isEmpty(mRawTypeface)) {
                 mParsedTypeface = Typeface.create(mRawTypeface, Typeface.NORMAL);
@@ -475,7 +324,6 @@ public class CaptioningManager {
         /**
          * @hide
          */
-        @NonNull
         public static CaptionStyle getCustomStyle(ContentResolver cr) {
             final CaptionStyle defStyle = CaptionStyle.DEFAULT_CUSTOM;
             final int foregroundColor = Secure.getInt(
@@ -486,38 +334,31 @@ public class CaptioningManager {
                     cr, Secure.ACCESSIBILITY_CAPTIONING_EDGE_TYPE, defStyle.edgeType);
             final int edgeColor = Secure.getInt(
                     cr, Secure.ACCESSIBILITY_CAPTIONING_EDGE_COLOR, defStyle.edgeColor);
-            final int windowColor = Secure.getInt(
-                    cr, Secure.ACCESSIBILITY_CAPTIONING_WINDOW_COLOR, defStyle.windowColor);
 
             String rawTypeface = Secure.getString(cr, Secure.ACCESSIBILITY_CAPTIONING_TYPEFACE);
             if (rawTypeface == null) {
                 rawTypeface = defStyle.mRawTypeface;
             }
 
-            return new CaptionStyle(foregroundColor, backgroundColor, edgeType, edgeColor,
-                    windowColor, rawTypeface);
+            return new CaptionStyle(
+                    foregroundColor, backgroundColor, edgeType, edgeColor, rawTypeface);
         }
 
         static {
-            WHITE_ON_BLACK = new CaptionStyle(Color.WHITE, Color.BLACK, EDGE_TYPE_NONE,
-                    Color.BLACK, COLOR_NONE_OPAQUE, null);
-            BLACK_ON_WHITE = new CaptionStyle(Color.BLACK, Color.WHITE, EDGE_TYPE_NONE,
-                    Color.BLACK, COLOR_NONE_OPAQUE, null);
-            YELLOW_ON_BLACK = new CaptionStyle(Color.YELLOW, Color.BLACK, EDGE_TYPE_NONE,
-                    Color.BLACK, COLOR_NONE_OPAQUE, null);
-            YELLOW_ON_BLUE = new CaptionStyle(Color.YELLOW, Color.BLUE, EDGE_TYPE_NONE,
-                    Color.BLACK, COLOR_NONE_OPAQUE, null);
-            UNSPECIFIED = new CaptionStyle(COLOR_UNSPECIFIED, COLOR_UNSPECIFIED,
-                    EDGE_TYPE_UNSPECIFIED, COLOR_UNSPECIFIED, COLOR_UNSPECIFIED, null);
+            WHITE_ON_BLACK = new CaptionStyle(
+                    Color.WHITE, Color.BLACK, EDGE_TYPE_NONE, Color.BLACK, null);
+            BLACK_ON_WHITE = new CaptionStyle(
+                    Color.BLACK, Color.WHITE, EDGE_TYPE_NONE, Color.BLACK, null);
+            YELLOW_ON_BLACK = new CaptionStyle(
+                    Color.YELLOW, Color.BLACK, EDGE_TYPE_NONE, Color.BLACK, null);
+            YELLOW_ON_BLUE = new CaptionStyle(
+                    Color.YELLOW, Color.BLUE, EDGE_TYPE_NONE, Color.BLACK, null);
 
-            // The ordering of these cannot change since we store the index
-            // directly in preferences.
             PRESETS = new CaptionStyle[] {
-                    WHITE_ON_BLACK, BLACK_ON_WHITE, YELLOW_ON_BLACK, YELLOW_ON_BLUE, UNSPECIFIED
+                    WHITE_ON_BLACK, BLACK_ON_WHITE, YELLOW_ON_BLACK, YELLOW_ON_BLUE
             };
 
             DEFAULT_CUSTOM = WHITE_ON_BLACK;
-            DEFAULT = WHITE_ON_BLACK;
         }
     }
 
@@ -531,7 +372,8 @@ public class CaptioningManager {
          *
          * @param enabled the user's new preferred captioning enabled state
          */
-        public void onEnabledChanged(boolean enabled) {}
+        public void onEnabledChanged(boolean enabled) {
+        }
 
         /**
          * Called when the captioning user style changes.
@@ -539,15 +381,17 @@ public class CaptioningManager {
          * @param userStyle the user's new preferred style
          * @see CaptioningManager#getUserStyle()
          */
-        public void onUserStyleChanged(@NonNull CaptionStyle userStyle) {}
+        public void onUserStyleChanged(CaptionStyle userStyle) {
+        }
 
         /**
          * Called when the captioning locale changes.
          *
-         * @param locale the preferred captioning locale, or {@code null} if not specified
+         * @param locale the preferred captioning locale
          * @see CaptioningManager#getLocale()
          */
-        public void onLocaleChanged(@Nullable Locale locale) {}
+        public void onLocaleChanged(Locale locale) {
+        }
 
         /**
          * Called when the captioning font scaling factor changes.
@@ -555,6 +399,7 @@ public class CaptioningManager {
          * @param fontScale the preferred font scaling factor
          * @see CaptioningManager#getFontScale()
          */
-        public void onFontScaleChanged(float fontScale) {}
+        public void onFontScaleChanged(float fontScale) {
+        }
     }
 }

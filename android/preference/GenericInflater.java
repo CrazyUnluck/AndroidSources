@@ -23,7 +23,6 @@ import java.util.HashMap;
 import org.xmlpull.v1.XmlPullParser;
 import org.xmlpull.v1.XmlPullParserException;
 
-import android.annotation.XmlRes;
 import android.content.Context;
 import android.content.res.XmlResourceParser;
 import android.util.AttributeSet;
@@ -192,7 +191,7 @@ abstract class GenericInflater<T, P extends GenericInflater.Parent> {
     public void setFactory(Factory<T> factory) {
         if (mFactorySet) {
             throw new IllegalStateException("" +
-                    "A factory has already been set on this inflater");
+            		"A factory has already been set on this inflater");
         }
         if (factory == null) {
             throw new NullPointerException("Given factory can not be null");
@@ -217,7 +216,7 @@ abstract class GenericInflater<T, P extends GenericInflater.Parent> {
      *         this is the root item; otherwise it is the root of the inflated
      *         XML file.
      */
-    public T inflate(@XmlRes int resource, P root) {
+    public T inflate(int resource, P root) {
         return inflate(resource, root, root != null);
     }
 
@@ -257,7 +256,7 @@ abstract class GenericInflater<T, P extends GenericInflater.Parent> {
      *         attachToRoot is true, this is root; otherwise it is the root of
      *         the inflated XML file.
      */
-    public T inflate(@XmlRes int resource, P root, boolean attachToRoot) {
+    public T inflate(int resource, P root, boolean attachToRoot) {
         if (DEBUG) System.out.println("INFLATING from resource: " + resource);
         XmlResourceParser parser = getContext().getResources().getXml(resource);
         try {
@@ -376,7 +375,6 @@ abstract class GenericInflater<T, P extends GenericInflater.Parent> {
                 Class clazz = mContext.getClassLoader().loadClass(
                         prefix != null ? (prefix + name) : name);
                 constructor = clazz.getConstructor(mConstructorSignature);
-                constructor.setAccessible(true);
                 sConstructorMap.put(name, constructor);
             }
 

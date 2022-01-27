@@ -16,8 +16,6 @@
 
 package com.android.server.wm;
 
-import static com.android.server.wm.WindowManagerDebugConfig.TAG_WM;
-
 import android.graphics.Canvas;
 import android.graphics.Paint;
 import android.graphics.PixelFormat;
@@ -55,9 +53,9 @@ class Watermark {
 
     Watermark(Display display, DisplayMetrics dm, SurfaceSession session, String[] tokens) {
         if (false) {
-            Log.i(TAG_WM, "*********************** WATERMARK");
+            Log.i(WindowManagerService.TAG, "*********************** WATERMARK");
             for (int i=0; i<tokens.length; i++) {
-                Log.i(TAG_WM, "  TOKEN #" + i + ": " + tokens[i]);
+                Log.i(WindowManagerService.TAG, "  TOKEN #" + i + ": " + tokens[i]);
             }
         }
 
@@ -80,7 +78,7 @@ class Watermark {
         }
         mText = builder.toString();
         if (false) {
-            Log.i(TAG_WM, "Final text: " + mText);
+            Log.i(WindowManagerService.TAG, "Final text: " + mText);
         }
 
         int fontSize = WindowManagerService.getPropertyInt(tokens, 1,

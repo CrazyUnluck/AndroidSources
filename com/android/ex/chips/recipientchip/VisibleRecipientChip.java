@@ -19,18 +19,26 @@ package com.android.ex.chips.recipientchip;
 import android.graphics.Canvas;
 import android.graphics.Rect;
 import android.graphics.drawable.Drawable;
+import android.text.style.DynamicDrawableSpan;
+import android.text.style.ImageSpan;
 
 import com.android.ex.chips.RecipientEntry;
 
 /**
- * VisibleRecipientChip defines a ReplacementSpan that contains information relevant to a
+ * VisibleRecipientChip defines an ImageSpan that contains information relevant to a
  * particular recipient and renders a background asset to go with it.
  */
-public class VisibleRecipientChip extends ReplacementDrawableSpan implements DrawableRecipientChip {
+public class VisibleRecipientChip extends ImageSpan implements DrawableRecipientChip {
     private final SimpleRecipientChip mDelegate;
 
     public VisibleRecipientChip(final Drawable drawable, final RecipientEntry entry) {
-        super(drawable);
+        this(drawable, entry, DynamicDrawableSpan.ALIGN_BOTTOM);
+    }
+
+    public VisibleRecipientChip(final Drawable drawable, final RecipientEntry entry,
+            final int verticalAlignment) {
+        super(drawable, verticalAlignment);
+
         mDelegate = new SimpleRecipientChip(entry);
     }
 
@@ -91,12 +99,12 @@ public class VisibleRecipientChip extends ReplacementDrawableSpan implements Dra
 
     @Override
     public Rect getBounds() {
-        return super.getBounds();
+        return getDrawable().getBounds();
     }
 
     @Override
     public void draw(final Canvas canvas) {
-        mDrawable.draw(canvas);
+        getDrawable().draw(canvas);
     }
 
     @Override

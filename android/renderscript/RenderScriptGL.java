@@ -16,10 +16,17 @@
 
 package android.renderscript;
 
+import java.lang.reflect.Field;
+
 import android.content.Context;
+import android.graphics.PixelFormat;
+import android.graphics.Bitmap;
+import android.graphics.BitmapFactory;
 import android.graphics.SurfaceTexture;
+import android.util.Log;
 import android.view.Surface;
 import android.view.SurfaceHolder;
+import android.view.SurfaceView;
 
 /**
  * @hide
@@ -177,9 +184,9 @@ public class RenderScriptGL extends RenderScript {
 
         mWidth = 0;
         mHeight = 0;
-        long device = nDeviceCreate();
+        mDev = nDeviceCreate();
         int dpi = ctx.getResources().getDisplayMetrics().densityDpi;
-        mContext = nContextCreateGL(device, 0, sdkVersion,
+        mContext = nContextCreateGL(mDev, 0, sdkVersion,
                                     mSurfaceConfig.mColorMin, mSurfaceConfig.mColorPref,
                                     mSurfaceConfig.mAlphaMin, mSurfaceConfig.mAlphaPref,
                                     mSurfaceConfig.mDepthMin, mSurfaceConfig.mDepthPref,
@@ -225,13 +232,9 @@ public class RenderScriptGL extends RenderScript {
         validate();
         //android.util.Log.v("rs", "set surface " + sur + " w=" + w + ", h=" + h);
 
-        Surface s = null;
-        if (sur != null) {
-            s = new Surface(sur);
-        }
         mWidth = w;
         mHeight = h;
-        nContextSetSurface(w, h, s);
+        nContextSetSurfaceTexture(w, h, sur);
     }
 
     /**
@@ -283,7 +286,7 @@ public class RenderScriptGL extends RenderScript {
      */
     public void bindRootScript(Script s) {
         validate();
-        nContextBindRootScript((int)safeID(s));
+        nContextBindRootScript(safeID(s));
     }
 
     /**
@@ -295,7 +298,7 @@ public class RenderScriptGL extends RenderScript {
      */
     public void bindProgramStore(ProgramStore p) {
         validate();
-        nContextBindProgramStore((int)safeID(p));
+        nContextBindProgramStore(safeID(p));
     }
 
     /**
@@ -307,7 +310,7 @@ public class RenderScriptGL extends RenderScript {
      */
     public void bindProgramFragment(ProgramFragment p) {
         validate();
-        nContextBindProgramFragment((int)safeID(p));
+        nContextBindProgramFragment(safeID(p));
     }
 
     /**
@@ -319,7 +322,7 @@ public class RenderScriptGL extends RenderScript {
      */
     public void bindProgramRaster(ProgramRaster p) {
         validate();
-        nContextBindProgramRaster((int)safeID(p));
+        nContextBindProgramRaster(safeID(p));
     }
 
     /**
@@ -331,7 +334,7 @@ public class RenderScriptGL extends RenderScript {
      */
     public void bindProgramVertex(ProgramVertex p) {
         validate();
-        nContextBindProgramVertex((int)safeID(p));
+        nContextBindProgramVertex(safeID(p));
     }
 
 }

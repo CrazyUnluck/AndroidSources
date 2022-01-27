@@ -18,7 +18,7 @@ package android.animation;
 
 import android.animation.Keyframe.IntKeyframe;
 
-import java.util.List;
+import java.util.ArrayList;
 
 /**
  * This class holds a collection of IntKeyframe objects and is called by ValueAnimator to calculate
@@ -30,7 +30,7 @@ import java.util.List;
  * TypeEvaluator set for the animation, so that values can be calculated without autoboxing to the
  * Object equivalents of these primitive types.</p>
  */
-class IntKeyframeSet extends KeyframeSet implements Keyframes.IntKeyframes {
+class IntKeyframeSet extends KeyframeSet {
     private int firstValue;
     private int lastValue;
     private int deltaValue;
@@ -47,7 +47,7 @@ class IntKeyframeSet extends KeyframeSet implements Keyframes.IntKeyframes {
 
     @Override
     public IntKeyframeSet clone() {
-        List<Keyframe> keyframes = mKeyframes;
+        ArrayList<Keyframe> keyframes = mKeyframes;
         int numKeyframes = mKeyframes.size();
         IntKeyframe[] newKeyframes = new IntKeyframe[numKeyframes];
         for (int i = 0; i < numKeyframes; ++i) {
@@ -57,12 +57,6 @@ class IntKeyframeSet extends KeyframeSet implements Keyframes.IntKeyframes {
         return newSet;
     }
 
-    @Override
-    public void invalidateCache() {
-        firstTime = true;
-    }
-
-    @Override
     public int getIntValue(float fraction) {
         if (mNumKeyframes == 2) {
             if (firstTime) {
@@ -117,14 +111,13 @@ class IntKeyframeSet extends KeyframeSet implements Keyframes.IntKeyframes {
             IntKeyframe nextKeyframe = (IntKeyframe) mKeyframes.get(i);
             if (fraction < nextKeyframe.getFraction()) {
                 final TimeInterpolator interpolator = nextKeyframe.getInterpolator();
+                if (interpolator != null) {
+                    fraction = interpolator.getInterpolation(fraction);
+                }
                 float intervalFraction = (fraction - prevKeyframe.getFraction()) /
                     (nextKeyframe.getFraction() - prevKeyframe.getFraction());
                 int prevValue = prevKeyframe.getIntValue();
                 int nextValue = nextKeyframe.getIntValue();
-                // Apply interpolator on the proportional duration.
-                if (interpolator != null) {
-                    intervalFraction = interpolator.getInterpolation(intervalFraction);
-                }
                 return mEvaluator == null ?
                         prevValue + (int)(intervalFraction * (nextValue - prevValue)) :
                         ((Number)mEvaluator.evaluate(intervalFraction, prevValue, nextValue)).
@@ -136,9 +129,5 @@ class IntKeyframeSet extends KeyframeSet implements Keyframes.IntKeyframes {
         return ((Number)mKeyframes.get(mNumKeyframes - 1).getValue()).intValue();
     }
 
-    @Override
-    public Class getType() {
-        return Integer.class;
-    }
 }
 

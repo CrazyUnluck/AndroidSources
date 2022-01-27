@@ -17,12 +17,9 @@
 package com.android.internal.app;
 
 import android.app.Activity;
-import android.app.Dialog;
 import android.content.DialogInterface;
 import android.os.Bundle;
 import android.view.KeyEvent;
-import android.view.ViewGroup;
-import android.view.accessibility.AccessibilityEvent;
 
 /**
  * An activity that follows the visual style of an AlertDialog.
@@ -63,19 +60,6 @@ public abstract class AlertActivity extends Activity implements DialogInterface 
         if (!isFinishing()) {
             finish();
         }
-    }
-
-    @Override
-    public boolean dispatchPopulateAccessibilityEvent(AccessibilityEvent event) {
-        event.setClassName(Dialog.class.getName());
-        event.setPackageName(getPackageName());
-
-        ViewGroup.LayoutParams params = getWindow().getAttributes();
-        boolean isFullScreen = (params.width == ViewGroup.LayoutParams.MATCH_PARENT) &&
-                (params.height == ViewGroup.LayoutParams.MATCH_PARENT);
-        event.setFullScreen(isFullScreen);
-
-        return false;
     }
 
     /**

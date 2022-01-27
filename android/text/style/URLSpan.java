@@ -16,7 +16,6 @@
 
 package android.text.style;
 
-import android.content.ActivityNotFoundException;
 import android.content.Context;
 import android.content.Intent;
 import android.net.Uri;
@@ -24,7 +23,6 @@ import android.os.Parcel;
 import android.provider.Browser;
 import android.text.ParcelableSpan;
 import android.text.TextUtils;
-import android.util.Log;
 import android.view.View;
 
 public class URLSpan extends ClickableSpan implements ParcelableSpan {
@@ -40,11 +38,6 @@ public class URLSpan extends ClickableSpan implements ParcelableSpan {
     }
     
     public int getSpanTypeId() {
-        return getSpanTypeIdInternal();
-    }
-
-    /** @hide */
-    public int getSpanTypeIdInternal() {
         return TextUtils.URL_SPAN;
     }
     
@@ -53,11 +46,6 @@ public class URLSpan extends ClickableSpan implements ParcelableSpan {
     }
 
     public void writeToParcel(Parcel dest, int flags) {
-        writeToParcelInternal(dest, flags);
-    }
-
-    /** @hide */
-    public void writeToParcelInternal(Parcel dest, int flags) {
         dest.writeString(mURL);
     }
 
@@ -71,10 +59,6 @@ public class URLSpan extends ClickableSpan implements ParcelableSpan {
         Context context = widget.getContext();
         Intent intent = new Intent(Intent.ACTION_VIEW, uri);
         intent.putExtra(Browser.EXTRA_APPLICATION_ID, context.getPackageName());
-        try {
-            context.startActivity(intent);
-        } catch (ActivityNotFoundException e) {
-            Log.w("URLSpan", "Actvity was not found for intent, " + intent.toString());
-        }
+        context.startActivity(intent);
     }
 }

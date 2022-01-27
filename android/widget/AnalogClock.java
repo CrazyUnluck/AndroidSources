@@ -40,10 +40,8 @@ import java.util.TimeZone;
  * @attr ref android.R.styleable#AnalogClock_dial
  * @attr ref android.R.styleable#AnalogClock_hand_hour
  * @attr ref android.R.styleable#AnalogClock_hand_minute
- * @deprecated This widget is no longer supported.
  */
 @RemoteView
-@Deprecated
 public class AnalogClock extends View {
     private Time mCalendar;
 
@@ -56,6 +54,7 @@ public class AnalogClock extends View {
 
     private boolean mAttached;
 
+    private final Handler mHandler = new Handler();
     private float mMinutes;
     private float mHour;
     private boolean mChanged;
@@ -68,30 +67,27 @@ public class AnalogClock extends View {
         this(context, attrs, 0);
     }
 
-    public AnalogClock(Context context, AttributeSet attrs, int defStyleAttr) {
-        this(context, attrs, defStyleAttr, 0);
-    }
-
-    public AnalogClock(Context context, AttributeSet attrs, int defStyleAttr, int defStyleRes) {
-        super(context, attrs, defStyleAttr, defStyleRes);
-
-        final Resources r = context.getResources();
-        final TypedArray a = context.obtainStyledAttributes(
-                attrs, com.android.internal.R.styleable.AnalogClock, defStyleAttr, defStyleRes);
+    public AnalogClock(Context context, AttributeSet attrs,
+                       int defStyle) {
+        super(context, attrs, defStyle);
+        Resources r = mContext.getResources();
+        TypedArray a =
+                context.obtainStyledAttributes(
+                        attrs, com.android.internal.R.styleable.AnalogClock, defStyle, 0);
 
         mDial = a.getDrawable(com.android.internal.R.styleable.AnalogClock_dial);
         if (mDial == null) {
-            mDial = context.getDrawable(com.android.internal.R.drawable.clock_dial);
+            mDial = r.getDrawable(com.android.internal.R.drawable.clock_dial);
         }
 
         mHourHand = a.getDrawable(com.android.internal.R.styleable.AnalogClock_hand_hour);
         if (mHourHand == null) {
-            mHourHand = context.getDrawable(com.android.internal.R.drawable.clock_hand_hour);
+            mHourHand = r.getDrawable(com.android.internal.R.drawable.clock_hand_hour);
         }
 
         mMinuteHand = a.getDrawable(com.android.internal.R.styleable.AnalogClock_hand_minute);
         if (mMinuteHand == null) {
-            mMinuteHand = context.getDrawable(com.android.internal.R.drawable.clock_hand_minute);
+            mMinuteHand = r.getDrawable(com.android.internal.R.drawable.clock_hand_minute);
         }
 
         mCalendar = new Time();
@@ -112,15 +108,7 @@ public class AnalogClock extends View {
             filter.addAction(Intent.ACTION_TIME_CHANGED);
             filter.addAction(Intent.ACTION_TIMEZONE_CHANGED);
 
-            // OK, this is gross but needed. This class is supported by the
-            // remote views machanism and as a part of that the remote views
-            // can be inflated by a context for another user without the app
-            // having interact users permission - just for loading resources.
-            // For exmaple, when adding widgets from a user profile to the
-            // home screen. Therefore, we register the receiver as the current
-            // user not the one the context is for.
-            getContext().registerReceiverAsUser(mIntentReceiver,
-                    android.os.Process.myUserHandle(), filter, null, getHandler());
+            getContext().registerReceiver(mIntentReceiver, filter, null, mHandler);
         }
 
         // NOTE: It's safe to do these after registering the receiver since the receiver always runs

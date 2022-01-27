@@ -8,82 +8,16 @@
 
 package jsr166;
 
+import junit.framework.*;
 import java.util.concurrent.atomic.AtomicReferenceFieldUpdater;
-
-import junit.framework.Test;
-import junit.framework.TestSuite;
 
 public class AtomicReferenceFieldUpdaterTest extends JSR166TestCase {
     volatile Integer x = null;
-    protected volatile Integer protectedField;
-    private volatile Integer privateField;
     Object z;
     Integer w;
     volatile int i;
 
-    // android-note: Removed because the CTS runner does a bad job of
-    // retrying tests that have suite() declarations.
-    //
-    // public static void main(String[] args) {
-    //     main(suite(), args);
-    // }
-    // public static Test suite() {
-    //     return new TestSuite(AtomicReferenceFieldUpdaterTest.class);
-    // }
-
-    // for testing subclass access
-    // android-note: Removed because android doesn't restrict reflection access
-    // static class AtomicReferenceFieldUpdaterTestSubclass extends AtomicReferenceFieldUpdaterTest {
-    //     public void checkPrivateAccess() {
-    //         try {
-    //             AtomicReferenceFieldUpdater<AtomicReferenceFieldUpdaterTest,Integer> a =
-    //                 AtomicReferenceFieldUpdater.newUpdater
-    //                 (AtomicReferenceFieldUpdaterTest.class, Integer.class, "privateField");
-    //             shouldThrow();
-    //         } catch (RuntimeException success) {
-    //             assertNotNull(success.getCause());
-    //         }
-    //     }
-
-    //     public void checkCompareAndSetProtectedSub() {
-    //         AtomicReferenceFieldUpdater<AtomicReferenceFieldUpdaterTest,Integer> a =
-    //             AtomicReferenceFieldUpdater.newUpdater
-    //             (AtomicReferenceFieldUpdaterTest.class, Integer.class, "protectedField");
-    //         this.protectedField = one;
-    //         assertTrue(a.compareAndSet(this, one, two));
-    //         assertTrue(a.compareAndSet(this, two, m4));
-    //         assertSame(m4, a.get(this));
-    //         assertFalse(a.compareAndSet(this, m5, seven));
-    //         assertFalse(seven == a.get(this));
-    //         assertTrue(a.compareAndSet(this, m4, seven));
-    //         assertSame(seven, a.get(this));
-    //     }
-    // }
-
-    // static class UnrelatedClass {
-    //     public void checkPackageAccess(AtomicReferenceFieldUpdaterTest obj) {
-    //         obj.x = one;
-    //         AtomicReferenceFieldUpdater<AtomicReferenceFieldUpdaterTest,Integer> a =
-    //             AtomicReferenceFieldUpdater.newUpdater
-    //             (AtomicReferenceFieldUpdaterTest.class, Integer.class, "x");
-    //         assertSame(one, a.get(obj));
-    //         assertTrue(a.compareAndSet(obj, one, two));
-    //         assertSame(two, a.get(obj));
-    //     }
-
-    //     public void checkPrivateAccess(AtomicReferenceFieldUpdaterTest obj) {
-    //         try {
-    //             AtomicReferenceFieldUpdater<AtomicReferenceFieldUpdaterTest,Integer> a =
-    //                 AtomicReferenceFieldUpdater.newUpdater
-    //                 (AtomicReferenceFieldUpdaterTest.class, Integer.class, "privateField");
-    //             throw new AssertionError("should throw");
-    //         } catch (RuntimeException success) {
-    //             assertNotNull(success.getCause());
-    //         }
-    //     }
-    // }
-
-    static AtomicReferenceFieldUpdater<AtomicReferenceFieldUpdaterTest, Integer> updaterFor(String fieldName) {
+    AtomicReferenceFieldUpdater<AtomicReferenceFieldUpdaterTest, Integer> updaterFor(String fieldName) {
         return AtomicReferenceFieldUpdater.newUpdater
             (AtomicReferenceFieldUpdaterTest.class, Integer.class, fieldName);
     }
@@ -131,30 +65,10 @@ public class AtomicReferenceFieldUpdaterTest extends JSR166TestCase {
     }
 
     /**
-     * construction using private field from subclass throws RuntimeException
-     */
-    // android-note: Removed because android doesn't restrict reflection access
-    // public void testPrivateFieldInSubclass() {
-    //     AtomicReferenceFieldUpdaterTestSubclass s =
-    //         new AtomicReferenceFieldUpdaterTestSubclass();
-    //     s.checkPrivateAccess();
-    // }
-
-    /**
-     * construction from unrelated class; package access is allowed,
-     * private access is not
-     */
-    // android-note: Removed because android doesn't restrict reflection access
-    // public void testUnrelatedClassAccess() {
-    //     new UnrelatedClass().checkPackageAccess(this);
-    //     new UnrelatedClass().checkPrivateAccess(this);
-    // }
-
-    /**
      * get returns the last value set or assigned
      */
     public void testGetSet() {
-        AtomicReferenceFieldUpdater<AtomicReferenceFieldUpdaterTest, Integer> a;
+        AtomicReferenceFieldUpdater<AtomicReferenceFieldUpdaterTest, Integer>a;
         a = updaterFor("x");
         x = one;
         assertSame(one, a.get(this));
@@ -168,7 +82,7 @@ public class AtomicReferenceFieldUpdaterTest extends JSR166TestCase {
      * get returns the last value lazySet by same thread
      */
     public void testGetLazySet() {
-        AtomicReferenceFieldUpdater<AtomicReferenceFieldUpdaterTest, Integer> a;
+        AtomicReferenceFieldUpdater<AtomicReferenceFieldUpdaterTest, Integer>a;
         a = updaterFor("x");
         x = one;
         assertSame(one, a.get(this));
@@ -182,7 +96,7 @@ public class AtomicReferenceFieldUpdaterTest extends JSR166TestCase {
      * compareAndSet succeeds in changing value if equal to expected else fails
      */
     public void testCompareAndSet() {
-        AtomicReferenceFieldUpdater<AtomicReferenceFieldUpdaterTest, Integer> a;
+        AtomicReferenceFieldUpdater<AtomicReferenceFieldUpdaterTest, Integer>a;
         a = updaterFor("x");
         x = one;
         assertTrue(a.compareAndSet(this, one, two));
@@ -200,7 +114,7 @@ public class AtomicReferenceFieldUpdaterTest extends JSR166TestCase {
      */
     public void testCompareAndSetInMultipleThreads() throws Exception {
         x = one;
-        final AtomicReferenceFieldUpdater<AtomicReferenceFieldUpdaterTest, Integer> a;
+        final AtomicReferenceFieldUpdater<AtomicReferenceFieldUpdaterTest, Integer>a;
         a = updaterFor("x");
 
         Thread t = new Thread(new CheckedRunnable() {
@@ -221,13 +135,13 @@ public class AtomicReferenceFieldUpdaterTest extends JSR166TestCase {
      * to expected
      */
     public void testWeakCompareAndSet() {
-        AtomicReferenceFieldUpdater<AtomicReferenceFieldUpdaterTest, Integer> a;
+        AtomicReferenceFieldUpdater<AtomicReferenceFieldUpdaterTest, Integer>a;
         a = updaterFor("x");
         x = one;
-        do {} while (!a.weakCompareAndSet(this, one, two));
-        do {} while (!a.weakCompareAndSet(this, two, m4));
+        while (!a.weakCompareAndSet(this, one, two));
+        while (!a.weakCompareAndSet(this, two, m4));
         assertSame(m4, a.get(this));
-        do {} while (!a.weakCompareAndSet(this, m4, seven));
+        while (!a.weakCompareAndSet(this, m4, seven));
         assertSame(seven, a.get(this));
     }
 
@@ -235,7 +149,7 @@ public class AtomicReferenceFieldUpdaterTest extends JSR166TestCase {
      * getAndSet returns previous value and sets to given value
      */
     public void testGetAndSet() {
-        AtomicReferenceFieldUpdater<AtomicReferenceFieldUpdaterTest, Integer> a;
+        AtomicReferenceFieldUpdater<AtomicReferenceFieldUpdaterTest, Integer>a;
         a = updaterFor("x");
         x = one;
         assertSame(one, a.getAndSet(this, zero));

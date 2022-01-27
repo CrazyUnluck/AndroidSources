@@ -17,7 +17,6 @@
 
 package android.bluetooth;
 
-import android.annotation.BinderThread;
 import android.os.ParcelFileDescriptor;
 import android.util.Log;
 
@@ -40,7 +39,6 @@ public abstract class BluetoothHealthCallback {
      *            {@link BluetoothHealth#APP_CONFIG_UNREGISTRATION_SUCCESS} or
      *            {@link BluetoothHealth#APP_CONFIG_UNREGISTRATION_FAILURE}
      */
-    @BinderThread
     public void onHealthAppConfigurationStatusChange(BluetoothHealthAppConfiguration config,
             int status) {
         Log.d(TAG, "onHealthAppConfigurationStatusChange: " + config + "Status: " + status);
@@ -60,7 +58,6 @@ public abstract class BluetoothHealthCallback {
      * @param channelId The id associated with the channel. This id will be used
      *            in future calls like when disconnecting the channel.
      */
-    @BinderThread
     public void onHealthChannelStateChange(BluetoothHealthAppConfiguration config,
             BluetoothDevice device, int prevState, int newState, ParcelFileDescriptor fd,
             int channelId) {

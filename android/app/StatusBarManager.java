@@ -17,7 +17,6 @@
 
 package android.app;
 
-import android.annotation.IntDef;
 import android.content.Context;
 import android.os.Binder;
 import android.os.RemoteException;
@@ -27,9 +26,6 @@ import android.util.Slog;
 import android.view.View;
 
 import com.android.internal.statusbar.IStatusBarService;
-
-import java.lang.annotation.Retention;
-import java.lang.annotation.RetentionPolicy;
 
 /**
  * Allows an app to control the status bar.
@@ -42,7 +38,6 @@ public class StatusBarManager {
     public static final int DISABLE_NOTIFICATION_ICONS = View.STATUS_BAR_DISABLE_NOTIFICATION_ICONS;
     public static final int DISABLE_NOTIFICATION_ALERTS
             = View.STATUS_BAR_DISABLE_NOTIFICATION_ALERTS;
-    @Deprecated
     public static final int DISABLE_NOTIFICATION_TICKER
             = View.STATUS_BAR_DISABLE_NOTIFICATION_TICKER;
     public static final int DISABLE_SYSTEM_INFO = View.STATUS_BAR_DISABLE_SYSTEM_INFO;
@@ -63,25 +58,7 @@ public class StatusBarManager {
             | DISABLE_SYSTEM_INFO | DISABLE_RECENT | DISABLE_HOME | DISABLE_BACK | DISABLE_CLOCK
             | DISABLE_SEARCH;
 
-    /**
-     * Flag to disable quick settings.
-     *
-     * Setting this flag disables quick settings completely, but does not disable expanding the
-     * notification shade.
-     */
-    public static final int DISABLE2_QUICK_SETTINGS = 0x00000001;
-
-    public static final int DISABLE2_NONE = 0x00000000;
-
-    public static final int DISABLE2_MASK = DISABLE2_QUICK_SETTINGS;
-
-    @IntDef(flag = true,
-            value = {DISABLE2_NONE, DISABLE2_MASK, DISABLE2_QUICK_SETTINGS})
-    @Retention(RetentionPolicy.SOURCE)
-    public @interface Disable2Flags {}
-
     public static final int NAVIGATION_HINT_BACK_ALT      = 1 << 0;
-    public static final int NAVIGATION_HINT_IME_SHOWN     = 1 << 1;
 
     public static final int WINDOW_STATUS_BAR = 1;
     public static final int WINDOW_NAVIGATION_BAR = 2;
@@ -89,9 +66,6 @@ public class StatusBarManager {
     public static final int WINDOW_STATE_SHOWING = 0;
     public static final int WINDOW_STATE_HIDING = 1;
     public static final int WINDOW_STATE_HIDDEN = 2;
-
-    public static final int CAMERA_LAUNCH_SOURCE_WIGGLE = 0;
-    public static final int CAMERA_LAUNCH_SOURCE_POWER_DOUBLE_TAP = 1;
 
     private Context mContext;
     private IStatusBarService mService;
@@ -123,27 +97,11 @@ public class StatusBarManager {
                 svc.disable(what, mToken, mContext.getPackageName());
             }
         } catch (RemoteException ex) {
-            throw ex.rethrowFromSystemServer();
+            // system process is dead anyway.
+            throw new RuntimeException(ex);
         }
     }
-
-    /**
-     * Disable additional status bar features. Pass the bitwise-or of the DISABLE2_* flags.
-     * To re-enable everything, pass {@link #DISABLE_NONE}.
-     *
-     * Warning: Only pass DISABLE2_* flags into this function, do not use DISABLE_* flags.
-     */
-    public void disable2(@Disable2Flags int what) {
-        try {
-            final IStatusBarService svc = getService();
-            if (svc != null) {
-                svc.disable2(what, mToken, mContext.getPackageName());
-            }
-        } catch (RemoteException ex) {
-            throw ex.rethrowFromSystemServer();
-        }
-    }
-
+    
     /**
      * Expand the notifications panel.
      */
@@ -154,7 +112,8 @@ public class StatusBarManager {
                 svc.expandNotificationsPanel();
             }
         } catch (RemoteException ex) {
-            throw ex.rethrowFromSystemServer();
+            // system process is dead anyway.
+            throw new RuntimeException(ex);
         }
     }
     
@@ -168,7 +127,8 @@ public class StatusBarManager {
                 svc.collapsePanels();
             }
         } catch (RemoteException ex) {
-            throw ex.rethrowFromSystemServer();
+            // system process is dead anyway.
+            throw new RuntimeException(ex);
         }
     }
 
@@ -176,20 +136,14 @@ public class StatusBarManager {
      * Expand the settings panel.
      */
     public void expandSettingsPanel() {
-        expandSettingsPanel(null);
-    }
-
-    /**
-     * Expand the settings panel and open a subPanel, pass null to just open the settings panel.
-     */
-    public void expandSettingsPanel(String subPanel) {
         try {
             final IStatusBarService svc = getService();
             if (svc != null) {
-                svc.expandSettingsPanel(subPanel);
+                svc.expandSettingsPanel();
             }
         } catch (RemoteException ex) {
-            throw ex.rethrowFromSystemServer();
+            // system process is dead anyway.
+            throw new RuntimeException(ex);
         }
     }
 
@@ -201,7 +155,8 @@ public class StatusBarManager {
                     contentDescription);
             }
         } catch (RemoteException ex) {
-            throw ex.rethrowFromSystemServer();
+            // system process is dead anyway.
+            throw new RuntimeException(ex);
         }
     }
 
@@ -212,7 +167,8 @@ public class StatusBarManager {
                 svc.removeIcon(slot);
             }
         } catch (RemoteException ex) {
-            throw ex.rethrowFromSystemServer();
+            // system process is dead anyway.
+            throw new RuntimeException(ex);
         }
     }
 
@@ -223,7 +179,8 @@ public class StatusBarManager {
                 svc.setIconVisibility(slot, visible);
             }
         } catch (RemoteException ex) {
-            throw ex.rethrowFromSystemServer();
+            // system process is dead anyway.
+            throw new RuntimeException(ex);
         }
     }
 

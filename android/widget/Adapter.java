@@ -130,7 +130,8 @@ public interface Adapter {
      * type of View for all items, this method should return 1.
      * </p>
      * <p>
-     * This method will only be called when the adapter is set on the {@link AdapterView}.
+     * This method will only be called when when the adapter is set on the
+     * the {@link AdapterView}.
      * </p>
      * 
      * @return The number of types of Views that will be created by this adapter
@@ -147,3 +148,4 @@ public interface Adapter {
       */
      boolean isEmpty();
 }
+

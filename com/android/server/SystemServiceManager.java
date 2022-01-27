@@ -17,7 +17,6 @@
 package com.android.server;
 
 import android.content.Context;
-import android.os.Trace;
 import android.util.Slog;
 
 import java.lang.reflect.Constructor;
@@ -51,19 +50,8 @@ public class SystemServiceManager {
      * @return The service instance.
      */
     @SuppressWarnings("unchecked")
-    public SystemService startService(String className) {
-        final Class<SystemService> serviceClass;
-        try {
-            serviceClass = (Class<SystemService>)Class.forName(className);
-        } catch (ClassNotFoundException ex) {
-            Slog.i(TAG, "Starting " + className);
-            throw new RuntimeException("Failed to create service " + className
-                    + ": service class not found, usually indicates that the caller should "
-                    + "have called PackageManager.hasSystemFeature() to check whether the "
-                    + "feature is available on this device before trying to start the "
-                    + "services that implement it", ex);
-        }
-        return startService(serviceClass);
+    public SystemService startService(String className) throws ClassNotFoundException {
+        return startService((Class<SystemService>) Class.forName(className));
     }
 
     /**
@@ -76,48 +64,43 @@ public class SystemServiceManager {
      */
     @SuppressWarnings("unchecked")
     public <T extends SystemService> T startService(Class<T> serviceClass) {
-        try {
-            final String name = serviceClass.getName();
-            Slog.i(TAG, "Starting " + name);
-            Trace.traceBegin(Trace.TRACE_TAG_SYSTEM_SERVER, "StartService " + name);
+        final String name = serviceClass.getName();
+        Slog.i(TAG, "Starting " + name);
 
-            // Create the service.
-            if (!SystemService.class.isAssignableFrom(serviceClass)) {
-                throw new RuntimeException("Failed to create " + name
-                        + ": service must extend " + SystemService.class.getName());
-            }
-            final T service;
-            try {
-                Constructor<T> constructor = serviceClass.getConstructor(Context.class);
-                service = constructor.newInstance(mContext);
-            } catch (InstantiationException ex) {
-                throw new RuntimeException("Failed to create service " + name
-                        + ": service could not be instantiated", ex);
-            } catch (IllegalAccessException ex) {
-                throw new RuntimeException("Failed to create service " + name
-                        + ": service must have a public constructor with a Context argument", ex);
-            } catch (NoSuchMethodException ex) {
-                throw new RuntimeException("Failed to create service " + name
-                        + ": service must have a public constructor with a Context argument", ex);
-            } catch (InvocationTargetException ex) {
-                throw new RuntimeException("Failed to create service " + name
-                        + ": service constructor threw an exception", ex);
-            }
-
-            // Register it.
-            mServices.add(service);
-
-            // Start it.
-            try {
-                service.onStart();
-            } catch (RuntimeException ex) {
-                throw new RuntimeException("Failed to start service " + name
-                        + ": onStart threw an exception", ex);
-            }
-            return service;
-        } finally {
-            Trace.traceEnd(Trace.TRACE_TAG_SYSTEM_SERVER);
+        // Create the service.
+        if (!SystemService.class.isAssignableFrom(serviceClass)) {
+            throw new RuntimeException("Failed to create " + name
+                    + ": service must extend " + SystemService.class.getName());
         }
+        final T service;
+        try {
+            Constructor<T> constructor = serviceClass.getConstructor(Context.class);
+            service = constructor.newInstance(mContext);
+        } catch (InstantiationException ex) {
+            throw new RuntimeException("Failed to create service " + name
+                    + ": service could not be instantiated", ex);
+        } catch (IllegalAccessException ex) {
+            throw new RuntimeException("Failed to create service " + name
+                    + ": service must have a public constructor with a Context argument", ex);
+        } catch (NoSuchMethodException ex) {
+            throw new RuntimeException("Failed to create service " + name
+                    + ": service must have a public constructor with a Context argument", ex);
+        } catch (InvocationTargetException ex) {
+            throw new RuntimeException("Failed to create service " + name
+                    + ": service constructor threw an exception", ex);
+        }
+
+        // Register it.
+        mServices.add(service);
+
+        // Start it.
+        try {
+            service.onStart();
+        } catch (RuntimeException ex) {
+            throw new RuntimeException("Failed to start service " + name
+                    + ": onStart threw an exception", ex);
+        }
+        return service;
     }
 
     /**
@@ -133,86 +116,17 @@ public class SystemServiceManager {
         mCurrentPhase = phase;
 
         Slog.i(TAG, "Starting phase " + mCurrentPhase);
-        try {
-            Trace.traceBegin(Trace.TRACE_TAG_SYSTEM_SERVER, "OnBootPhase " + phase);
-            final int serviceLen = mServices.size();
-            for (int i = 0; i < serviceLen; i++) {
-                final SystemService service = mServices.get(i);
-                try {
-                    service.onBootPhase(mCurrentPhase);
-                } catch (Exception ex) {
-                    throw new RuntimeException("Failed to boot service "
-                            + service.getClass().getName()
-                            + ": onBootPhase threw an exception during phase "
-                            + mCurrentPhase, ex);
-                }
-            }
-        } finally {
-            Trace.traceEnd(Trace.TRACE_TAG_SYSTEM_SERVER);
-        }
-    }
 
-    public void startUser(final int userHandle) {
         final int serviceLen = mServices.size();
         for (int i = 0; i < serviceLen; i++) {
             final SystemService service = mServices.get(i);
             try {
-                service.onStartUser(userHandle);
+                service.onBootPhase(mCurrentPhase);
             } catch (Exception ex) {
-                Slog.wtf(TAG, "Failure reporting start of user " + userHandle
-                        + " to service " + service.getClass().getName(), ex);
-            }
-        }
-    }
-
-    public void unlockUser(final int userHandle) {
-        final int serviceLen = mServices.size();
-        for (int i = 0; i < serviceLen; i++) {
-            final SystemService service = mServices.get(i);
-            try {
-                service.onUnlockUser(userHandle);
-            } catch (Exception ex) {
-                Slog.wtf(TAG, "Failure reporting unlock of user " + userHandle
-                        + " to service " + service.getClass().getName(), ex);
-            }
-        }
-    }
-
-    public void switchUser(final int userHandle) {
-        final int serviceLen = mServices.size();
-        for (int i = 0; i < serviceLen; i++) {
-            final SystemService service = mServices.get(i);
-            try {
-                service.onSwitchUser(userHandle);
-            } catch (Exception ex) {
-                Slog.wtf(TAG, "Failure reporting switch of user " + userHandle
-                        + " to service " + service.getClass().getName(), ex);
-            }
-        }
-    }
-
-    public void stopUser(final int userHandle) {
-        final int serviceLen = mServices.size();
-        for (int i = 0; i < serviceLen; i++) {
-            final SystemService service = mServices.get(i);
-            try {
-                service.onStopUser(userHandle);
-            } catch (Exception ex) {
-                Slog.wtf(TAG, "Failure reporting stop of user " + userHandle
-                        + " to service " + service.getClass().getName(), ex);
-            }
-        }
-    }
-
-    public void cleanupUser(final int userHandle) {
-        final int serviceLen = mServices.size();
-        for (int i = 0; i < serviceLen; i++) {
-            final SystemService service = mServices.get(i);
-            try {
-                service.onCleanupUser(userHandle);
-            } catch (Exception ex) {
-                Slog.wtf(TAG, "Failure reporting cleanup of user " + userHandle
-                        + " to service " + service.getClass().getName(), ex);
+                throw new RuntimeException("Failed to boot service "
+                        + service.getClass().getName()
+                        + ": onBootPhase threw an exception during phase "
+                        + mCurrentPhase, ex);
             }
         }
     }

@@ -17,7 +17,6 @@
 package android.widget;
 
 import android.content.Context;
-import android.os.Bundle;
 import android.text.Editable;
 import android.text.Selection;
 import android.text.Spannable;
@@ -25,6 +24,7 @@ import android.text.TextUtils;
 import android.text.method.ArrowKeyMovementMethod;
 import android.text.method.MovementMethod;
 import android.util.AttributeSet;
+import android.view.accessibility.AccessibilityEvent;
 import android.view.accessibility.AccessibilityNodeInfo;
 
 
@@ -56,17 +56,8 @@ public class EditText extends TextView {
         this(context, attrs, com.android.internal.R.attr.editTextStyle);
     }
 
-    public EditText(Context context, AttributeSet attrs, int defStyleAttr) {
-        this(context, attrs, defStyleAttr, 0);
-    }
-
-    public EditText(Context context, AttributeSet attrs, int defStyleAttr, int defStyleRes) {
-        super(context, attrs, defStyleAttr, defStyleRes);
-    }
-
-    @Override
-    public boolean getFreezesText() {
-        return true;
+    public EditText(Context context, AttributeSet attrs, int defStyle) {
+        super(context, attrs, defStyle);
     }
 
     @Override
@@ -117,16 +108,6 @@ public class EditText extends TextView {
         Selection.extendSelection(getText(), index);
     }
 
-    /**
-     * Causes words in the text that are longer than the view's width to be ellipsized instead of
-     * broken in the middle. {@link TextUtils.TruncateAt#MARQUEE
-     * TextUtils.TruncateAt#MARQUEE} is not supported.
-     *
-     * @param ellipsis Type of ellipsis to be applied.
-     * @throws IllegalArgumentException When the value of <code>ellipsis</code> parameter is
-     *      {@link TextUtils.TruncateAt#MARQUEE}.
-     * @see TextView#setEllipsize(TextUtils.TruncateAt)
-     */
     @Override
     public void setEllipsize(TextUtils.TruncateAt ellipsis) {
         if (ellipsis == TextUtils.TruncateAt.MARQUEE) {
@@ -137,16 +118,14 @@ public class EditText extends TextView {
     }
 
     @Override
-    public CharSequence getAccessibilityClassName() {
-        return EditText.class.getName();
+    public void onInitializeAccessibilityEvent(AccessibilityEvent event) {
+        super.onInitializeAccessibilityEvent(event);
+        event.setClassName(EditText.class.getName());
     }
 
-    /** @hide */
     @Override
-    public void onInitializeAccessibilityNodeInfoInternal(AccessibilityNodeInfo info) {
-        super.onInitializeAccessibilityNodeInfoInternal(info);
-        if (isEnabled()) {
-            info.addAction(AccessibilityNodeInfo.AccessibilityAction.ACTION_SET_TEXT);
-        }
+    public void onInitializeAccessibilityNodeInfo(AccessibilityNodeInfo info) {
+        super.onInitializeAccessibilityNodeInfo(info);
+        info.setClassName(EditText.class.getName());
     }
 }

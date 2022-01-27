@@ -43,7 +43,7 @@ import android.util.Log;
  * system.
  * </ul>
  */
-public final class LocalBroadcastManager {
+public class LocalBroadcastManager {
     private static class ReceiverRecord {
         final IntentFilter filter;
         final BroadcastReceiver receiver;

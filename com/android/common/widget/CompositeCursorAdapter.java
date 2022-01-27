@@ -54,10 +54,6 @@ public abstract class CompositeCursorAdapter extends BaseAdapter {
         public boolean getHasHeader() {
             return hasHeader;
         }
-
-        public boolean isEmpty() {
-            return count == 0;
-        }
     }
 
     private final Context mContext;
@@ -114,7 +110,7 @@ public abstract class CompositeCursorAdapter extends BaseAdapter {
     /**
      * Removes cursors for all partitions.
      */
-    // TODO: Is this really what this is supposed to do? Just remove the cursors? Not close them?
+    // TODO: Is this really what this is supposed to do? Just remove the cursors? Not close them? 
     // Not remove the partitions themselves? Isn't this leaking?
 
     public void clearPartitions() {
@@ -170,12 +166,7 @@ public abstract class CompositeCursorAdapter extends BaseAdapter {
         mCount = 0;
         for (Partition partition : mPartitions) {
             Cursor cursor = partition.cursor;
-            int count;
-            if (cursor == null || cursor.isClosed()) {
-                count = 0;
-            } else {
-                count = cursor.getCount();
-            }
+            int count = cursor != null ? cursor.getCount() : 0;
             if (partition.hasHeader) {
                 if (count != 0 || partition.showIfEmpty) {
                     count++;
@@ -220,7 +211,7 @@ public abstract class CompositeCursorAdapter extends BaseAdapter {
                 prevCursor.close();
             }
             mPartitions.get(partition).cursor = cursor;
-            if (cursor != null && !cursor.isClosed()) {
+            if (cursor != null) {
                 mPartitions.get(partition).idColumnIndex = cursor.getColumnIndex("_id");
             }
             invalidate();
@@ -233,7 +224,7 @@ public abstract class CompositeCursorAdapter extends BaseAdapter {
      */
     public boolean isPartitionEmpty(int partition) {
         Cursor cursor = mPartitions.get(partition).cursor;
-        return cursor == null || cursor.isClosed() || cursor.getCount() == 0;
+        return cursor == null || cursor.getCount() == 0;
     }
 
     /**
@@ -433,9 +424,7 @@ public abstract class CompositeCursorAdapter extends BaseAdapter {
                     return null;
                 }
                 Cursor cursor = mPartition.cursor;
-                if (cursor == null || cursor.isClosed() || !cursor.moveToPosition(offset)) {
-                    return null;
-                }
+                cursor.moveToPosition(offset);
                 return cursor;
             }
             start = end;

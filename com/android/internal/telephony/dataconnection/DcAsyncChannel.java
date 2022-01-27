@@ -21,9 +21,9 @@ import com.android.internal.telephony.dataconnection.DataConnection.DisconnectPa
 import com.android.internal.util.AsyncChannel;
 import com.android.internal.util.Protocol;
 
+import android.net.LinkCapabilities;
 import android.net.LinkProperties;
-import android.net.NetworkCapabilities;
-import android.net.ProxyInfo;
+import android.net.ProxyProperties;
 import android.os.Message;
 
 /**
@@ -53,8 +53,8 @@ public class DcAsyncChannel extends AsyncChannel {
     public static final int REQ_SET_LINK_PROPERTIES_HTTP_PROXY = BASE + 8;
     public static final int RSP_SET_LINK_PROPERTIES_HTTP_PROXY = BASE + 9;
 
-    public static final int REQ_GET_NETWORK_CAPABILITIES = BASE + 10;
-    public static final int RSP_GET_NETWORK_CAPABILITIES = BASE + 11;
+    public static final int REQ_GET_LINK_CAPABILITIES = BASE + 10;
+    public static final int RSP_GET_LINK_CAPABILITIES = BASE + 11;
 
     public static final int REQ_RESET = BASE + 12;
     public static final int RSP_RESET = BASE + 13;
@@ -74,8 +74,8 @@ public class DcAsyncChannel extends AsyncChannel {
                 "REQ_SET_LINK_PROPERTIES_HTTP_PROXY";
         sCmdToString[RSP_SET_LINK_PROPERTIES_HTTP_PROXY - BASE] =
                 "RSP_SET_LINK_PROPERTIES_HTTP_PROXY";
-        sCmdToString[REQ_GET_NETWORK_CAPABILITIES - BASE] = "REQ_GET_NETWORK_CAPABILITIES";
-        sCmdToString[RSP_GET_NETWORK_CAPABILITIES - BASE] = "RSP_GET_NETWORK_CAPABILITIES";
+        sCmdToString[REQ_GET_LINK_CAPABILITIES - BASE] = "REQ_GET_LINK_CAPABILITIES";
+        sCmdToString[RSP_GET_LINK_CAPABILITIES - BASE] = "RSP_GET_LINK_CAPABILITIES";
         sCmdToString[REQ_RESET - BASE] = "REQ_RESET";
         sCmdToString[RSP_RESET - BASE] = "RSP_RESET";
     }
@@ -284,7 +284,7 @@ public class DcAsyncChannel extends AsyncChannel {
      * Request setting the connections LinkProperties.HttpProxy.
      * Response RSP_SET_LINK_PROPERTIES when complete.
      */
-    public void reqSetLinkPropertiesHttpProxy(ProxyInfo proxy) {
+    public void reqSetLinkPropertiesHttpProxy(ProxyProperties proxy) {
         sendMessage(REQ_SET_LINK_PROPERTIES_HTTP_PROXY, proxy);
         if (DBG) log("reqSetLinkPropertiesHttpProxy proxy=" + proxy);
     }
@@ -292,7 +292,7 @@ public class DcAsyncChannel extends AsyncChannel {
     /**
      * Set the connections LinkProperties.HttpProxy
      */
-    public void setLinkPropertiesHttpProxySync(ProxyInfo proxy) {
+    public void setLinkPropertiesHttpProxySync(ProxyProperties proxy) {
         if (isCallerOnDifferentThread()) {
             Message response =
                 sendMessageSynchronously(REQ_SET_LINK_PROPERTIES_HTTP_PROXY, proxy);
@@ -307,47 +307,48 @@ public class DcAsyncChannel extends AsyncChannel {
     }
 
     /**
-     * Request the connections NetworkCapabilities.
-     * Response {@link #rspNetworkCapabilities}
+     * Request the connections LinkCapabilities.
+     * Response {@link #rspLinkCapabilities}
      */
-    public void reqNetworkCapabilities() {
-        sendMessage(REQ_GET_NETWORK_CAPABILITIES);
-        if (DBG) log("reqNetworkCapabilities");
+    public void reqLinkCapabilities() {
+        sendMessage(REQ_GET_LINK_CAPABILITIES);
+        if (DBG) log("reqLinkCapabilities");
     }
 
     /**
-     * Evaluate RSP_GET_NETWORK_CAPABILITIES
+     * Evaluate RSP_GET_LINK_CAPABILITIES
      *
      * @param response
-     * @return NetworkCapabilites, maybe null.
+     * @return LinkCapabilites, maybe null.
      */
-    public NetworkCapabilities rspNetworkCapabilities(Message response) {
-        NetworkCapabilities retVal = (NetworkCapabilities) response.obj;
-        if (DBG) log("rspNetworkCapabilities=" + retVal);
+    public LinkCapabilities rspLinkCapabilities(Message response) {
+        LinkCapabilities retVal = (LinkCapabilities) response.obj;
+        if (DBG) log("rspLinkCapabilities=" + retVal);
         return retVal;
     }
 
     /**
-     * Get the connections NetworkCapabilities.
+     * Get the connections LinkCapabilities.
      *
-     * @return NetworkCapabilities or null if an error
+     * @return LinkCapabilities or null if an error
      */
-    public NetworkCapabilities getNetworkCapabilitiesSync() {
-        NetworkCapabilities value;
+    public LinkCapabilities getLinkCapabilitiesSync() {
+        LinkCapabilities value;
         if (isCallerOnDifferentThread()) {
-            Message response = sendMessageSynchronously(REQ_GET_NETWORK_CAPABILITIES);
-            if ((response != null) && (response.what == RSP_GET_NETWORK_CAPABILITIES)) {
-                value = rspNetworkCapabilities(response);
+            Message response = sendMessageSynchronously(REQ_GET_LINK_CAPABILITIES);
+            if ((response != null) && (response.what == RSP_GET_LINK_CAPABILITIES)) {
+                value = rspLinkCapabilities(response);
             } else {
                 value = null;
             }
         } else {
-            value = mDc.getCopyNetworkCapabilities();
+            value = mDc.getCopyLinkCapabilities();
         }
         return value;
     }
 
     /**
+     * Request the connections LinkCapabilities.
      * Response RSP_RESET when complete
      */
     public void reqReset() {
@@ -361,19 +362,21 @@ public class DcAsyncChannel extends AsyncChannel {
      * as GSM networks.
      *
      * @param apnContext is the Access Point Name to bring up a connection to
+     * @param initialMaxRetry the number of retires for initial bringup.
      * @param profileId for the conneciton
      * @param onCompletedMsg is sent with its msg.obj as an AsyncResult object.
      *        With AsyncResult.userObj set to the original msg.obj,
      *        AsyncResult.result = FailCause and AsyncResult.exception = Exception().
      */
-    public void bringUp(ApnContext apnContext, int profileId, int rilRadioTechnology,
-                        Message onCompletedMsg, int connectionGeneration) {
+    public void bringUp(ApnContext apnContext, int initialMaxRetry, int profileId,
+            int rilRadioTechnology, Message onCompletedMsg) {
         if (DBG) {
-            log("bringUp: apnContext=" + apnContext + " onCompletedMsg=" + onCompletedMsg);
+            log("bringUp: apnContext=" + apnContext + " initialMaxRetry=" + initialMaxRetry
+                + " onCompletedMsg=" + onCompletedMsg);
         }
         sendMessage(DataConnection.EVENT_CONNECT,
-                new ConnectionParams(apnContext, profileId, rilRadioTechnology, onCompletedMsg,
-                        connectionGeneration));
+                    new ConnectionParams(apnContext, initialMaxRetry, profileId,
+                            rilRadioTechnology, onCompletedMsg));
     }
 
     /**
@@ -426,9 +429,5 @@ public class DcAsyncChannel extends AsyncChannel {
 
     private void log(String s) {
         android.telephony.Rlog.d(mLogTag, "DataConnectionAc " + s);
-    }
-
-    public String[] getPcscfAddr() {
-        return mDc.mPcscfAddr;
     }
 }

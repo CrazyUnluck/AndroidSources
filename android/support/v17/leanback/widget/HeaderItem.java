@@ -16,28 +16,29 @@ package android.support.v17.leanback.widget;
 import static android.support.v17.leanback.widget.ObjectAdapter.NO_ID;
 
 /**
- * A header item describes the metadata of a {@link Row}, such as a category
- * of media items.  May be subclassed to add more information.
+ * A header item is an item that describes metadata of {@link Row}, such as a category
+ * of media items.  Developer may override this class to add more information.
  */
 public class HeaderItem {
 
     private final long mId;
+    private final String mImageUri;
     private final String mName;
-    private CharSequence mContentDescription;
 
     /**
      * Create a header item.  All fields are optional.
      */
-    public HeaderItem(long id, String name) {
+    public HeaderItem(long id, String name, String imageUri) {
         mId = id;
         mName = name;
+        mImageUri = imageUri;
     }
 
     /**
-     * Create a header item.
+     * Create a header item.  All fields are optional.
      */
-    public HeaderItem(String name) {
-        this(NO_ID, name);
+    public HeaderItem(String name, String imageUri) {
+        this(NO_ID, name, imageUri);
     }
 
     /**
@@ -55,19 +56,10 @@ public class HeaderItem {
     }
 
     /**
-     * Returns optional content description for the HeaderItem.  When it is null, {@link #getName()}
-     * should be used for the content description.
-     * @return Content description for the HeaderItem.
+     * Returns the icon for this header item.
      */
-    public CharSequence getContentDescription() {
-        return mContentDescription;
+    public final String getImageUri() {
+        return mImageUri;
     }
 
-    /**
-     * Sets optional content description for the HeaderItem.
-     * @param contentDescription Content description sets on the HeaderItem.
-     */
-    public void setContentDescription(CharSequence contentDescription) {
-        mContentDescription = contentDescription;
-    }
 }

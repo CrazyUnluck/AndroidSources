@@ -136,11 +136,6 @@ public class TextAppearanceSpan extends MetricAffectingSpan implements Parcelabl
     }
     
     public int getSpanTypeId() {
-        return getSpanTypeIdInternal();
-    }
-
-    /** @hide */
-    public int getSpanTypeIdInternal() {
         return TextUtils.TEXT_APPEARANCE_SPAN;
     }
     
@@ -149,11 +144,6 @@ public class TextAppearanceSpan extends MetricAffectingSpan implements Parcelabl
     }
 
     public void writeToParcel(Parcel dest, int flags) {
-        writeToParcelInternal(dest, flags);
-    }
-
-    /** @hide */
-    public void writeToParcelInternal(Parcel dest, int flags) {
         dest.writeString(mTypeface);
         dest.writeInt(mStyle);
         dest.writeInt(mTextSize);

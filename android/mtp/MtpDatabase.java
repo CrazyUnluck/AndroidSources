@@ -16,51 +16,42 @@
 
 package android.mtp;
 
-import android.content.BroadcastReceiver;
-import android.content.ContentProviderClient;
-import android.content.ContentValues;
 import android.content.Context;
+import android.content.ContentValues;
+import android.content.IContentProvider;
 import android.content.Intent;
-import android.content.IntentFilter;
 import android.content.SharedPreferences;
 import android.database.Cursor;
 import android.database.sqlite.SQLiteDatabase;
 import android.media.MediaScanner;
 import android.net.Uri;
-import android.os.BatteryManager;
+import android.os.Environment;
 import android.os.RemoteException;
 import android.provider.MediaStore;
 import android.provider.MediaStore.Audio;
 import android.provider.MediaStore.Files;
+import android.provider.MediaStore.Images;
 import android.provider.MediaStore.MediaColumns;
 import android.util.Log;
 import android.view.Display;
 import android.view.WindowManager;
 
-import dalvik.system.CloseGuard;
-
 import java.io.File;
-import java.io.IOException;
 import java.util.HashMap;
 import java.util.Locale;
-import java.util.concurrent.atomic.AtomicBoolean;
 
 /**
  * {@hide}
  */
-public class MtpDatabase implements AutoCloseable {
+public class MtpDatabase {
+
     private static final String TAG = "MtpDatabase";
 
     private final Context mContext;
     private final String mPackageName;
-    private final ContentProviderClient mMediaProvider;
+    private final IContentProvider mMediaProvider;
     private final String mVolumeName;
     private final Uri mObjectsUri;
-    private final MediaScanner mMediaScanner;
-
-    private final AtomicBoolean mClosed = new AtomicBoolean();
-    private final CloseGuard mCloseGuard = CloseGuard.get();
-
     // path to primary storage
     private final String mMediaStoragePath;
     // if not null, restrict all queries to these subdirectories
@@ -94,10 +85,6 @@ public class MtpDatabase implements AutoCloseable {
             Files.FileColumns._ID, // 0
             Files.FileColumns.DATA, // 1
     };
-    private static final String[] FORMAT_PROJECTION = new String[] {
-            Files.FileColumns._ID, // 0
-            Files.FileColumns.FORMAT, // 1
-    };
     private static final String[] PATH_FORMAT_PROJECTION = new String[] {
             Files.FileColumns._ID, // 0
             Files.FileColumns.DATA, // 1
@@ -127,34 +114,11 @@ public class MtpDatabase implements AutoCloseable {
     private static final String STORAGE_FORMAT_PARENT_WHERE = STORAGE_FORMAT_WHERE + " AND "
                                             + Files.FileColumns.PARENT + "=?";
 
-    private MtpServer mServer;
-
-    // read from native code
-    private int mBatteryLevel;
-    private int mBatteryScale;
+    private final MediaScanner mMediaScanner;
 
     static {
         System.loadLibrary("media_jni");
     }
-
-    private BroadcastReceiver mBatteryReceiver = new BroadcastReceiver() {
-          @Override
-        public void onReceive(Context context, Intent intent) {
-            String action = intent.getAction();
-            if (action.equals(Intent.ACTION_BATTERY_CHANGED)) {
-                mBatteryScale = intent.getIntExtra(BatteryManager.EXTRA_SCALE, 0);
-                int newLevel = intent.getIntExtra(BatteryManager.EXTRA_LEVEL, 0);
-                if (newLevel != mBatteryLevel) {
-                    mBatteryLevel = newLevel;
-                    if (mServer != null) {
-                        // send device property changed event
-                        mServer.sendDevicePropertyChanged(
-                                MtpConstants.DEVICE_PROPERTY_BATTERY_LEVEL);
-                    }
-                }
-            }
-        }
-    };
 
     public MtpDatabase(Context context, String volumeName, String storagePath,
             String[] subDirectories) {
@@ -162,12 +126,11 @@ public class MtpDatabase implements AutoCloseable {
 
         mContext = context;
         mPackageName = context.getPackageName();
-        mMediaProvider = context.getContentResolver()
-                .acquireContentProviderClient(MediaStore.AUTHORITY);
+        mMediaProvider = context.getContentResolver().acquireProvider("media");
         mVolumeName = volumeName;
         mMediaStoragePath = storagePath;
         mObjectsUri = Files.getMtpObjectsUri(volumeName);
-        mMediaScanner = new MediaScanner(context, mVolumeName);
+        mMediaScanner = new MediaScanner(context);
 
         mSubDirectories = subDirectories;
         if (subDirectories != null) {
@@ -194,43 +157,26 @@ public class MtpDatabase implements AutoCloseable {
             }
         }
 
+        // Set locale to MediaScanner.
+        Locale locale = context.getResources().getConfiguration().locale;
+        if (locale != null) {
+            String language = locale.getLanguage();
+            String country = locale.getCountry();
+            if (language != null) {
+                if (country != null) {
+                    mMediaScanner.setLocale(language + "_" + country);
+                } else {
+                    mMediaScanner.setLocale(language);
+                }
+            }
+        }
         initDeviceProperties(context);
-
-        mCloseGuard.open("close");
-    }
-
-    public void setServer(MtpServer server) {
-        mServer = server;
-
-        // always unregister before registering
-        try {
-            mContext.unregisterReceiver(mBatteryReceiver);
-        } catch (IllegalArgumentException e) {
-            // wasn't previously registered, ignore
-        }
-
-        // register for battery notifications when we are connected
-        if (server != null) {
-            mContext.registerReceiver(mBatteryReceiver,
-                    new IntentFilter(Intent.ACTION_BATTERY_CHANGED));
-        }
-    }
-
-    @Override
-    public void close() {
-        mCloseGuard.close();
-        if (mClosed.compareAndSet(false, true)) {
-            mMediaScanner.close();
-            mMediaProvider.close();
-            native_finalize();
-        }
     }
 
     @Override
     protected void finalize() throws Throwable {
         try {
-            mCloseGuard.warnIfOpen();
-            close();
+            native_finalize();
         } finally {
             super.finalize();
         }
@@ -311,29 +257,8 @@ public class MtpDatabase implements AutoCloseable {
         return false;
     }
 
-    // returns true if the path is in the storage root
-    private boolean inStorageRoot(String path) {
-        try {
-            File f = new File(path);
-            String canonical = f.getCanonicalPath();
-            for (String root: mStorageMap.keySet()) {
-                if (canonical.startsWith(root)) {
-                    return true;
-                }
-            }
-        } catch (IOException e) {
-            // ignore
-        }
-        return false;
-    }
-
     private int beginSendObject(String path, int format, int parent,
                          int storageId, long size, long modified) {
-        // if the path is outside of the storage root, do not allow access
-        if (!inStorageRoot(path)) {
-            Log.e(TAG, "attempt to put file outside of storage area: " + path);
-            return -1;
-        }
         // if mSubDirectories is not null, do not allow copying files to any other locations
         if (!inStorageSubDirectory(path)) return -1;
 
@@ -341,7 +266,7 @@ public class MtpDatabase implements AutoCloseable {
         if (path != null) {
             Cursor c = null;
             try {
-                c = mMediaProvider.query(mObjectsUri, ID_PROJECTION, PATH_WHERE,
+                c = mMediaProvider.query(mPackageName, mObjectsUri, ID_PROJECTION, PATH_WHERE,
                         new String[] { path }, null, null);
                 if (c != null && c.getCount() > 0) {
                     Log.w(TAG, "file already exists in beginSendObject: " + path);
@@ -366,7 +291,7 @@ public class MtpDatabase implements AutoCloseable {
         values.put(Files.FileColumns.DATE_MODIFIED, modified);
 
         try {
-            Uri uri = mMediaProvider.insert(mObjectsUri, values);
+            Uri uri = mMediaProvider.insert(mPackageName, mObjectsUri, values);
             if (uri != null) {
                 return Integer.parseInt(uri.getPathSegments().get(2));
             } else {
@@ -401,13 +326,13 @@ public class MtpDatabase implements AutoCloseable {
                 values.put(Files.FileColumns.DATE_MODIFIED, System.currentTimeMillis() / 1000);
                 values.put(MediaColumns.MEDIA_SCANNER_NEW_OBJECT_ID, handle);
                 try {
-                    Uri uri = mMediaProvider.insert(
+                    Uri uri = mMediaProvider.insert(mPackageName,
                             Audio.Playlists.EXTERNAL_CONTENT_URI, values);
                 } catch (RemoteException e) {
                     Log.e(TAG, "RemoteException in endSendObject", e);
                 }
             } else {
-                mMediaScanner.scanMtpFile(path, handle, format);
+                mMediaScanner.scanMtpFile(path, mVolumeName, handle, format);
             }
         } else {
             deleteFile(handle);
@@ -510,7 +435,7 @@ public class MtpDatabase implements AutoCloseable {
             }
         }
 
-        return mMediaProvider.query(mObjectsUri, ID_PROJECTION, where,
+        return mMediaProvider.query(mPackageName, mObjectsUri, ID_PROJECTION, where,
                 whereArgs, null, null);
     }
 
@@ -587,7 +512,6 @@ public class MtpDatabase implements AutoCloseable {
             MtpConstants.FORMAT_PLS_PLAYLIST,
             MtpConstants.FORMAT_XML_DOCUMENT,
             MtpConstants.FORMAT_FLAC,
-            MtpConstants.FORMAT_DNG,
         };
     }
 
@@ -608,7 +532,6 @@ public class MtpDatabase implements AutoCloseable {
             MtpConstants.PROPERTY_PARENT_OBJECT,
             MtpConstants.PROPERTY_PERSISTENT_UID,
             MtpConstants.PROPERTY_NAME,
-            MtpConstants.PROPERTY_DISPLAY_NAME,
             MtpConstants.PROPERTY_DATE_ADDED,
     };
 
@@ -635,11 +558,6 @@ public class MtpDatabase implements AutoCloseable {
             MtpConstants.PROPERTY_DURATION,
             MtpConstants.PROPERTY_GENRE,
             MtpConstants.PROPERTY_COMPOSER,
-            MtpConstants.PROPERTY_AUDIO_WAVE_CODEC,
-            MtpConstants.PROPERTY_BITRATE_TYPE,
-            MtpConstants.PROPERTY_AUDIO_BITRATE,
-            MtpConstants.PROPERTY_NUMBER_OF_CHANNELS,
-            MtpConstants.PROPERTY_SAMPLE_RATE,
     };
 
     static final int[] VIDEO_PROPERTIES = {
@@ -681,6 +599,43 @@ public class MtpDatabase implements AutoCloseable {
             MtpConstants.PROPERTY_DESCRIPTION,
     };
 
+    static final int[] ALL_PROPERTIES = {
+            // NOTE must match FILE_PROPERTIES above
+            MtpConstants.PROPERTY_STORAGE_ID,
+            MtpConstants.PROPERTY_OBJECT_FORMAT,
+            MtpConstants.PROPERTY_PROTECTION_STATUS,
+            MtpConstants.PROPERTY_OBJECT_SIZE,
+            MtpConstants.PROPERTY_OBJECT_FILE_NAME,
+            MtpConstants.PROPERTY_DATE_MODIFIED,
+            MtpConstants.PROPERTY_PARENT_OBJECT,
+            MtpConstants.PROPERTY_PERSISTENT_UID,
+            MtpConstants.PROPERTY_NAME,
+            MtpConstants.PROPERTY_DISPLAY_NAME,
+            MtpConstants.PROPERTY_DATE_ADDED,
+
+            // image specific properties
+            MtpConstants.PROPERTY_DESCRIPTION,
+
+            // audio specific properties
+            MtpConstants.PROPERTY_ARTIST,
+            MtpConstants.PROPERTY_ALBUM_NAME,
+            MtpConstants.PROPERTY_ALBUM_ARTIST,
+            MtpConstants.PROPERTY_TRACK,
+            MtpConstants.PROPERTY_ORIGINAL_RELEASE_DATE,
+            MtpConstants.PROPERTY_DURATION,
+            MtpConstants.PROPERTY_GENRE,
+            MtpConstants.PROPERTY_COMPOSER,
+
+            // video specific properties
+            MtpConstants.PROPERTY_ARTIST,
+            MtpConstants.PROPERTY_ALBUM_NAME,
+            MtpConstants.PROPERTY_DURATION,
+            MtpConstants.PROPERTY_DESCRIPTION,
+
+            // image specific properties
+            MtpConstants.PROPERTY_DESCRIPTION,
+    };
+
     private int[] getSupportedObjectProperties(int format) {
         switch (format) {
             case MtpConstants.FORMAT_MP3:
@@ -697,8 +652,9 @@ public class MtpDatabase implements AutoCloseable {
             case MtpConstants.FORMAT_GIF:
             case MtpConstants.FORMAT_PNG:
             case MtpConstants.FORMAT_BMP:
-            case MtpConstants.FORMAT_DNG:
                 return IMAGE_PROPERTIES;
+            case 0:
+                return ALL_PROPERTIES;
             default:
                 return FILE_PROPERTIES;
         }
@@ -709,11 +665,11 @@ public class MtpDatabase implements AutoCloseable {
             MtpConstants.DEVICE_PROPERTY_SYNCHRONIZATION_PARTNER,
             MtpConstants.DEVICE_PROPERTY_DEVICE_FRIENDLY_NAME,
             MtpConstants.DEVICE_PROPERTY_IMAGE_SIZE,
-            MtpConstants.DEVICE_PROPERTY_BATTERY_LEVEL,
         };
     }
 
-    private MtpPropertyList getObjectPropertyList(int handle, int format, int property,
+
+    private MtpPropertyList getObjectPropertyList(long handle, int format, long property,
                         int groupCode, int depth) {
         // FIXME - implement group support
         if (groupCode != 0) {
@@ -721,29 +677,25 @@ public class MtpDatabase implements AutoCloseable {
         }
 
         MtpPropertyGroup propertyGroup;
-        if (property == 0xffffffff) {
-            if (format == 0 && handle != 0 && handle != 0xffffffff) {
-                // return properties based on the object's format
-                format = getObjectFormat(handle);
-            }
-            propertyGroup = mPropertyGroupsByFormat.get(format);
-            if (propertyGroup == null) {
+        if (property == 0xFFFFFFFFL) {
+             propertyGroup = mPropertyGroupsByFormat.get(format);
+             if (propertyGroup == null) {
                 int[] propertyList = getSupportedObjectProperties(format);
-                propertyGroup = new MtpPropertyGroup(this, mMediaProvider,
+                propertyGroup = new MtpPropertyGroup(this, mMediaProvider, mPackageName,
                         mVolumeName, propertyList);
-                mPropertyGroupsByFormat.put(format, propertyGroup);
+                mPropertyGroupsByFormat.put(new Integer(format), propertyGroup);
             }
         } else {
-            propertyGroup = mPropertyGroupsByProperty.get(property);
-            if (propertyGroup == null) {
-                final int[] propertyList = new int[] { property };
-                propertyGroup = new MtpPropertyGroup(
-                        this, mMediaProvider, mVolumeName, propertyList);
-                mPropertyGroupsByProperty.put(property, propertyGroup);
+              propertyGroup = mPropertyGroupsByProperty.get(property);
+             if (propertyGroup == null) {
+                int[] propertyList = new int[] { (int)property };
+                propertyGroup = new MtpPropertyGroup(this, mMediaProvider, mPackageName,
+                        mVolumeName, propertyList);
+                mPropertyGroupsByProperty.put(new Integer((int)property), propertyGroup);
             }
         }
 
-        return propertyGroup.getPropertyList(handle, format, depth);
+        return propertyGroup.getPropertyList((int)handle, format, depth);
     }
 
     private int renameFile(int handle, String newName) {
@@ -753,7 +705,7 @@ public class MtpDatabase implements AutoCloseable {
         String path = null;
         String[] whereArgs = new String[] {  Integer.toString(handle) };
         try {
-            c = mMediaProvider.query(mObjectsUri, PATH_PROJECTION, ID_WHERE,
+            c = mMediaProvider.query(mPackageName, mObjectsUri, PATH_PROJECTION, ID_WHERE,
                     whereArgs, null, null);
             if (c != null && c.moveToNext()) {
                 path = c.getString(1);
@@ -796,7 +748,7 @@ public class MtpDatabase implements AutoCloseable {
         try {
             // note - we are relying on a special case in MediaProvider.update() to update
             // the paths for all children in the case where this is a directory.
-            updated = mMediaProvider.update(mObjectsUri, values, ID_WHERE, whereArgs);
+            updated = mMediaProvider.update(mPackageName, mObjectsUri, values, ID_WHERE, whereArgs);
         } catch (RemoteException e) {
             Log.e(TAG, "RemoteException in mMediaProvider.update", e);
         }
@@ -813,7 +765,7 @@ public class MtpDatabase implements AutoCloseable {
             if (oldFile.getName().startsWith(".") && !newPath.startsWith(".")) {
                 // directory was unhidden
                 try {
-                    mMediaProvider.call(MediaStore.UNHIDE_CALL, newPath, null);
+                    mMediaProvider.call(mPackageName, MediaStore.UNHIDE_CALL, newPath, null);
                 } catch (RemoteException e) {
                     Log.e(TAG, "failed to unhide/rescan for " + newPath);
                 }
@@ -823,7 +775,7 @@ public class MtpDatabase implements AutoCloseable {
             if (oldFile.getName().toLowerCase(Locale.US).equals(".nomedia")
                     && !newPath.toLowerCase(Locale.US).equals(".nomedia")) {
                 try {
-                    mMediaProvider.call(MediaStore.UNHIDE_CALL, oldFile.getParent(), null);
+                    mMediaProvider.call(mPackageName, MediaStore.UNHIDE_CALL, oldFile.getParent(), null);
                 } catch (RemoteException e) {
                     Log.e(TAG, "failed to unhide/rescan for " + newPath);
                 }
@@ -869,8 +821,6 @@ public class MtpDatabase implements AutoCloseable {
                 outStringValue[imageSize.length()] = 0;
                 return MtpConstants.RESPONSE_OK;
 
-            // DEVICE_PROPERTY_BATTERY_LEVEL is implemented in the JNI code
-
             default:
                 return MtpConstants.RESPONSE_DEVICE_PROP_NOT_SUPPORTED;
         }
@@ -894,7 +844,7 @@ public class MtpDatabase implements AutoCloseable {
                         char[] outName, long[] outCreatedModified) {
         Cursor c = null;
         try {
-            c = mMediaProvider.query(mObjectsUri, OBJECT_INFO_PROJECTION,
+            c = mMediaProvider.query(mPackageName, mObjectsUri, OBJECT_INFO_PROJECTION,
                             ID_WHERE, new String[] {  Integer.toString(handle) }, null, null);
             if (c != null && c.moveToNext()) {
                 outStorageFormatParent[0] = c.getInt(1);
@@ -941,7 +891,7 @@ public class MtpDatabase implements AutoCloseable {
         }
         Cursor c = null;
         try {
-            c = mMediaProvider.query(mObjectsUri, PATH_FORMAT_PROJECTION,
+            c = mMediaProvider.query(mPackageName, mObjectsUri, PATH_FORMAT_PROJECTION,
                             ID_WHERE, new String[] {  Integer.toString(handle) }, null, null);
             if (c != null && c.moveToNext()) {
                 String path = c.getString(1);
@@ -965,26 +915,6 @@ public class MtpDatabase implements AutoCloseable {
         }
     }
 
-    private int getObjectFormat(int handle) {
-        Cursor c = null;
-        try {
-            c = mMediaProvider.query(mObjectsUri, FORMAT_PROJECTION,
-                            ID_WHERE, new String[] { Integer.toString(handle) }, null, null);
-            if (c != null && c.moveToNext()) {
-                return c.getInt(1);
-            } else {
-                return -1;
-            }
-        } catch (RemoteException e) {
-            Log.e(TAG, "RemoteException in getObjectFilePath", e);
-            return -1;
-        } finally {
-            if (c != null) {
-                c.close();
-            }
-        }
-    }
-
     private int deleteFile(int handle) {
         mDatabaseModified = true;
         String path = null;
@@ -992,7 +922,7 @@ public class MtpDatabase implements AutoCloseable {
 
         Cursor c = null;
         try {
-            c = mMediaProvider.query(mObjectsUri, PATH_FORMAT_PROJECTION,
+            c = mMediaProvider.query(mPackageName, mObjectsUri, PATH_FORMAT_PROJECTION,
                             ID_WHERE, new String[] {  Integer.toString(handle) }, null, null);
             if (c != null && c.moveToNext()) {
                 // don't convert to media path here, since we will be matching
@@ -1015,7 +945,7 @@ public class MtpDatabase implements AutoCloseable {
             if (format == MtpConstants.FORMAT_ASSOCIATION) {
                 // recursive case - delete all children first
                 Uri uri = Files.getMtpObjectsUri(mVolumeName);
-                int count = mMediaProvider.delete(uri,
+                int count = mMediaProvider.delete(mPackageName, uri,
                     // the 'like' makes it use the index, the 'lower()' makes it correct
                     // when the path contains sqlite wildcard characters
                     "_data LIKE ?1 AND lower(substr(_data,1,?2))=lower(?3)",
@@ -1023,12 +953,12 @@ public class MtpDatabase implements AutoCloseable {
             }
 
             Uri uri = Files.getMtpObjectsUri(mVolumeName, handle);
-            if (mMediaProvider.delete(uri, null, null) > 0) {
+            if (mMediaProvider.delete(mPackageName, uri, null, null) > 0) {
                 if (format != MtpConstants.FORMAT_ASSOCIATION
                         && path.toLowerCase(Locale.US).endsWith("/.nomedia")) {
                     try {
                         String parentPath = path.substring(0, path.lastIndexOf("/"));
-                        mMediaProvider.call(MediaStore.UNHIDE_CALL, parentPath, null);
+                        mMediaProvider.call(mPackageName, MediaStore.UNHIDE_CALL, parentPath, null);
                     } catch (RemoteException e) {
                         Log.e(TAG, "failed to unhide/rescan for " + path);
                     }
@@ -1051,7 +981,7 @@ public class MtpDatabase implements AutoCloseable {
         Uri uri = Files.getMtpReferencesUri(mVolumeName, handle);
         Cursor c = null;
         try {
-            c = mMediaProvider.query(uri, ID_PROJECTION, null, null, null, null);
+            c = mMediaProvider.query(mPackageName, uri, ID_PROJECTION, null, null, null, null);
             if (c == null) {
                 return null;
             }
@@ -1085,7 +1015,7 @@ public class MtpDatabase implements AutoCloseable {
             valuesList[i] = values;
         }
         try {
-            if (mMediaProvider.bulkInsert(uri, valuesList) > 0) {
+            if (mMediaProvider.bulkInsert(mPackageName, uri, valuesList) > 0) {
                 return MtpConstants.RESPONSE_OK;
             }
         } catch (RemoteException e) {

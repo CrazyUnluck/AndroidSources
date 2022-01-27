@@ -16,7 +16,6 @@
 
 package android.text.style;
 
-import android.annotation.ColorInt;
 import android.os.Parcel;
 import android.text.ParcelableSpan;
 import android.text.TextPaint;
@@ -27,43 +26,32 @@ public class ForegroundColorSpan extends CharacterStyle
 
     private final int mColor;
 
-    public ForegroundColorSpan(@ColorInt int color) {
-        mColor = color;
-    }
+	public ForegroundColorSpan(int color) {
+		mColor = color;
+	}
 
     public ForegroundColorSpan(Parcel src) {
         mColor = src.readInt();
     }
     
     public int getSpanTypeId() {
-        return getSpanTypeIdInternal();
-    }
-
-    /** @hide */
-    public int getSpanTypeIdInternal() {
         return TextUtils.FOREGROUND_COLOR_SPAN;
     }
-
+    
     public int describeContents() {
         return 0;
     }
 
     public void writeToParcel(Parcel dest, int flags) {
-        writeToParcelInternal(dest, flags);
-    }
-
-    /** @hide */
-    public void writeToParcelInternal(Parcel dest, int flags) {
         dest.writeInt(mColor);
     }
 
-    @ColorInt
-    public int getForegroundColor() {
-        return mColor;
-    }
+	public int getForegroundColor() {
+		return mColor;
+	}
 
-    @Override
-    public void updateDrawState(TextPaint ds) {
-        ds.setColor(mColor);
-    }
+	@Override
+	public void updateDrawState(TextPaint ds) {
+		ds.setColor(mColor);
+	}
 }

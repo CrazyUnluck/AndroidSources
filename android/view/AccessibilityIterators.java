@@ -17,6 +17,8 @@
 package android.view;
 
 import android.content.ComponentCallbacks;
+import android.content.Context;
+import android.content.pm.ActivityInfo;
 import android.content.res.Configuration;
 
 import java.text.BreakIterator;

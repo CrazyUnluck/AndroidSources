@@ -17,14 +17,11 @@
 package android.support.rastermill;
 
 import android.graphics.Bitmap;
-import android.graphics.BitmapShader;
 import android.graphics.Canvas;
 import android.graphics.ColorFilter;
 import android.graphics.Paint;
 import android.graphics.PixelFormat;
 import android.graphics.Rect;
-import android.graphics.RectF;
-import android.graphics.Shader;
 import android.graphics.drawable.Animatable;
 import android.graphics.drawable.Drawable;
 import android.os.Handler;
@@ -33,15 +30,6 @@ import android.os.Process;
 import android.os.SystemClock;
 
 public class FrameSequenceDrawable extends Drawable implements Animatable, Runnable {
-    /**
-     * These constants are chosen to imitate common browser behavior for WebP/GIF.
-     * If other decoders are added, this behavior should be moved into the WebP/GIF decoders.
-     *
-     * Note that 0 delay is undefined behavior in the GIF standard.
-     */
-    private static final long MIN_DELAY_MS = 20;
-    private static final long DEFAULT_DELAY_MS = 100;
-
     private static final Object sLock = new Object();
     private static HandlerThread sDecodingThread;
     private static Handler sDecodingThreadHandler;
@@ -88,7 +76,9 @@ public class FrameSequenceDrawable extends Drawable implements Animatable, Runna
         }
 
         @Override
-        public void releaseBitmap(Bitmap bitmap) {}
+        public void releaseBitmap(Bitmap bitmap) {
+            bitmap.recycle();
+        }
     };
 
     /**
@@ -128,10 +118,7 @@ public class FrameSequenceDrawable extends Drawable implements Animatable, Runna
     private final FrameSequence.State mFrameSequenceState;
 
     private final Paint mPaint;
-    private BitmapShader mFrontBitmapShader;
-    private BitmapShader mBackBitmapShader;
-     private final Rect mSrcRect;
-    private boolean mCircleMaskEnabled;
+    private final Rect mSrcRect;
 
     //Protects the fields below
     private final Object mLock = new Object();
@@ -176,30 +163,13 @@ public class FrameSequenceDrawable extends Drawable implements Animatable, Runna
             int lastFrame = nextFrame - 2;
             long invalidateTimeMs = mFrameSequenceState.getFrame(nextFrame, bitmap, lastFrame);
 
-            if (invalidateTimeMs < MIN_DELAY_MS) {
-                invalidateTimeMs = DEFAULT_DELAY_MS;
-            }
-
-            boolean schedule = false;
-            Bitmap bitmapToRelease = null;
             synchronized (mLock) {
-                if (mDestroyed) {
-                    bitmapToRelease = mBackBitmap;
-                    mBackBitmap = null;
-                } else if (mNextFrameToDecode >= 0 && mState == STATE_DECODING) {
-                    schedule = true;
-                    mNextSwap = invalidateTimeMs + mLastSwap;
-                    mState = STATE_WAITING_TO_SWAP;
-                }
+                if (mNextFrameToDecode < 0 || mState != STATE_DECODING) return;
+                mNextSwap = invalidateTimeMs + mLastSwap;
+
+                mState = STATE_WAITING_TO_SWAP;
             }
-            if (schedule) {
-                scheduleSelf(FrameSequenceDrawable.this, mNextSwap);
-            }
-            if (bitmapToRelease != null) {
-                // destroy the bitmap here, since there's no safe way to get back to
-                // drawable thread - drawable is likely detached, so schedule is noop.
-                mBitmapProvider.releaseBitmap(bitmapToRelease);
-            }
+            scheduleSelf(FrameSequenceDrawable.this, mNextSwap);
         }
     };
 
@@ -244,28 +214,11 @@ public class FrameSequenceDrawable extends Drawable implements Animatable, Runna
         mPaint = new Paint();
         mPaint.setFilterBitmap(true);
 
-        mFrontBitmapShader
-            = new BitmapShader(mFrontBitmap, Shader.TileMode.CLAMP, Shader.TileMode.CLAMP);
-        mBackBitmapShader
-            = new BitmapShader(mBackBitmap, Shader.TileMode.CLAMP, Shader.TileMode.CLAMP);
-
         mLastSwap = 0;
 
         mNextFrameToDecode = -1;
         mFrameSequenceState.getFrame(0, mFrontBitmap, -1);
         initializeDecodingThread();
-    }
-
-    /**
-     * Pass true to mask the shape of the animated drawing content to a circle.
-     *
-     * <p> The masking circle will be the largest circle contained in the Drawable's bounds.
-     * Masking is done with BitmapShader, incurring minimal additional draw cost.
-     */
-    public final void setCircleMaskEnabled(boolean circleMaskEnabled) {
-        mCircleMaskEnabled = circleMaskEnabled;
-        // Anti alias only necessary when using circular mask
-        mPaint.setAntiAlias(circleMaskEnabled);
     }
 
     private void checkDestroyedLocked() {
@@ -287,37 +240,39 @@ public class FrameSequenceDrawable extends Drawable implements Animatable, Runna
      * If no BitmapProvider is attached to the drawable, recycle() is called on the Bitmaps.
      */
     public void destroy() {
-        if (mBitmapProvider == null) {
+        destroy(mBitmapProvider);
+    }
+
+    private void destroy(BitmapProvider bitmapProvider) {
+        if (bitmapProvider == null) {
             throw new IllegalStateException("BitmapProvider must be non-null");
         }
 
         Bitmap bitmapToReleaseA;
-        Bitmap bitmapToReleaseB = null;
+        Bitmap bitmapToReleaseB;
         synchronized (mLock) {
             checkDestroyedLocked();
 
             bitmapToReleaseA = mFrontBitmap;
+            bitmapToReleaseB = mBackBitmap;
+
             mFrontBitmap = null;
-
-            if (mState != STATE_DECODING) {
-                bitmapToReleaseB = mBackBitmap;
-                mBackBitmap = null;
-            }
-
+            mBackBitmap = null;
             mDestroyed = true;
         }
 
         // For simplicity and safety, we don't destroy the state object here
-        mBitmapProvider.releaseBitmap(bitmapToReleaseA);
-        if (bitmapToReleaseB != null) {
-            mBitmapProvider.releaseBitmap(bitmapToReleaseB);
-        }
+        bitmapProvider.releaseBitmap(bitmapToReleaseA);
+        bitmapProvider.releaseBitmap(bitmapToReleaseB);
     }
 
     @Override
     protected void finalize() throws Throwable {
         try {
             mFrameSequenceState.destroy();
+            if (!mDestroyed) {
+                destroy();
+            }
         } finally {
             super.finalize();
         }
@@ -342,10 +297,6 @@ public class FrameSequenceDrawable extends Drawable implements Animatable, Runna
                 mBackBitmap = mFrontBitmap;
                 mFrontBitmap = tmp;
 
-                BitmapShader tmpShader = mBackBitmapShader;
-                mBackBitmapShader = mFrontBitmapShader;
-                mFrontBitmapShader = tmpShader;
-
                 mLastSwap = SystemClock.uptimeMillis();
 
                 boolean continueLooping = true;
@@ -365,17 +316,7 @@ public class FrameSequenceDrawable extends Drawable implements Animatable, Runna
             }
         }
 
-        if (mCircleMaskEnabled) {
-            Rect bounds = getBounds();
-            mPaint.setShader(mFrontBitmapShader);
-            float width = bounds.width();
-            float height = bounds.height();
-            float circleRadius = (Math.min(width, height)) / 2f;
-            canvas.drawCircle(width / 2f, height / 2f, circleRadius, mPaint);
-        } else {
-            mPaint.setShader(null);
-            canvas.drawBitmap(mFrontBitmap, mSrcRect, getBounds(), mPaint);
-        }
+        canvas.drawBitmap(mFrontBitmap, mSrcRect, getBounds(), mPaint);
     }
 
     private void scheduleDecodeLocked() {
@@ -386,17 +327,12 @@ public class FrameSequenceDrawable extends Drawable implements Animatable, Runna
 
     @Override
     public void run() {
-        // set ready to swap as necessary
-        boolean invalidate = false;
+        // set ready to swap
         synchronized (mLock) {
-            if (mNextFrameToDecode >= 0 && mState == STATE_WAITING_TO_SWAP) {
-                mState = STATE_READY_TO_SWAP;
-                invalidate = true;
-            }
+            if (mState != STATE_WAITING_TO_SWAP || mNextFrameToDecode < 0) return;
+            mState = STATE_READY_TO_SWAP;
         }
-        if (invalidate) {
-            invalidateSelf();
-        }
+        invalidateSelf();
     }
 
     @Override
@@ -429,7 +365,6 @@ public class FrameSequenceDrawable extends Drawable implements Animatable, Runna
     public void unscheduleSelf(Runnable what) {
         synchronized (mLock) {
             mNextFrameToDecode = -1;
-            mState = 0;
         }
         super.unscheduleSelf(what);
     }

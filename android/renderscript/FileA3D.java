@@ -17,10 +17,15 @@
 package android.renderscript;
 
 import java.io.File;
+import java.io.IOException;
 import java.io.InputStream;
 
 import android.content.res.AssetManager;
 import android.content.res.Resources;
+import android.graphics.Bitmap;
+import android.graphics.BitmapFactory;
+import android.util.Log;
+import android.util.TypedValue;
 
 /**
  * @hide
@@ -75,7 +80,7 @@ public class FileA3D extends BaseObj {
     public static class IndexEntry {
         RenderScript mRS;
         int mIndex;
-        long mID;
+        int mID;
         String mName;
         EntryType mEntryType;
         BaseObj mLoadedObj;
@@ -136,7 +141,7 @@ public class FileA3D extends BaseObj {
                 return null;
             }
 
-            long objectID = rs.nFileA3DGetEntryByIndex(entry.mID, entry.mIndex);
+            int objectID = rs.nFileA3DGetEntryByIndex(entry.mID, entry.mIndex);
             if(objectID == 0) {
                 return null;
             }
@@ -145,16 +150,13 @@ public class FileA3D extends BaseObj {
             case MESH:
                 entry.mLoadedObj = new Mesh(objectID, rs);
                 break;
-
-            default:
-                throw new RSRuntimeException("Unrecognized object type in file.");
             }
 
             entry.mLoadedObj.updateFromNative();
             return entry.mLoadedObj;
         }
 
-        IndexEntry(RenderScript rs, int index, long id, String name, EntryType type) {
+        IndexEntry(RenderScript rs, int index, int id, String name, EntryType type) {
             mRS = rs;
             mIndex = index;
             mID = id;
@@ -167,10 +169,9 @@ public class FileA3D extends BaseObj {
     IndexEntry[] mFileEntries;
     InputStream mInputStream;
 
-    FileA3D(long id, RenderScript rs, InputStream stream) {
+    FileA3D(int id, RenderScript rs, InputStream stream) {
         super(id, rs);
         mInputStream = stream;
-        guard.open("destroy");
     }
 
     private void initEntries() {
@@ -231,7 +232,7 @@ public class FileA3D extends BaseObj {
     */
     static public FileA3D createFromAsset(RenderScript rs, AssetManager mgr, String path) {
         rs.validate();
-        long fileId = rs.nFileA3DCreateFromAsset(mgr, path);
+        int fileId = rs.nFileA3DCreateFromAsset(mgr, path);
 
         if(fileId == 0) {
             throw new RSRuntimeException("Unable to create a3d file from asset " + path);
@@ -251,7 +252,7 @@ public class FileA3D extends BaseObj {
     * @return a3d file containing renderscript objects
     */
     static public FileA3D createFromFile(RenderScript rs, String path) {
-        long fileId = rs.nFileA3DCreateFromFile(path);
+        int fileId = rs.nFileA3DCreateFromFile(path);
 
         if(fileId == 0) {
             throw new RSRuntimeException("Unable to create a3d file from " + path);
@@ -294,9 +295,9 @@ public class FileA3D extends BaseObj {
             throw new RSRuntimeException("Unable to open resource " + id);
         }
 
-        long fileId = 0;
+        int fileId = 0;
         if (is instanceof AssetManager.AssetInputStream) {
-            long asset = ((AssetManager.AssetInputStream) is).getNativeAsset();
+            int asset = ((AssetManager.AssetInputStream) is).getAssetInt();
             fileId = rs.nFileA3DCreateFromAssetStream(asset);
         } else {
             throw new RSRuntimeException("Unsupported asset stream");

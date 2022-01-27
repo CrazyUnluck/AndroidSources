@@ -21,10 +21,8 @@ import com.android.internal.view.menu.MenuItemImpl;
 import org.xmlpull.v1.XmlPullParser;
 import org.xmlpull.v1.XmlPullParserException;
 
-import android.annotation.MenuRes;
 import android.app.Activity;
 import android.content.Context;
-import android.content.ContextWrapper;
 import android.content.res.TypedArray;
 import android.content.res.XmlResourceParser;
 import android.util.AttributeSet;
@@ -76,6 +74,7 @@ public class MenuInflater {
      */
     public MenuInflater(Context context) {
         mContext = context;
+        mRealOwner = context;
         mActionViewConstructorArguments = new Object[] {context};
         mActionProviderConstructorArguments = mActionViewConstructorArguments;
     }
@@ -102,7 +101,7 @@ public class MenuInflater {
      * @param menu The Menu to inflate into. The items and submenus will be
      *            added to this Menu.
      */
-    public void inflate(@MenuRes int menuRes, Menu menu) {
+    public void inflate(int menuRes, Menu menu) {
         XmlResourceParser parser = null;
         try {
             parser = mContext.getResources().getLayout(menuRes);
@@ -259,23 +258,6 @@ public class MenuInflater {
                 throw new RuntimeException(e);
             }
         }
-    }
-
-    private Object getRealOwner() {
-        if (mRealOwner == null) {
-            mRealOwner = findRealOwner(mContext);
-        }
-        return mRealOwner;
-    }
-
-    private Object findRealOwner(Object owner) {
-        if (owner instanceof Activity) {
-            return owner;
-        }
-        if (owner instanceof ContextWrapper) {
-            return findRealOwner(((ContextWrapper) owner).getBaseContext());
-        }
-        return owner;
     }
     
     /**
@@ -457,7 +439,7 @@ public class MenuInflater {
                             + "be used within a restricted context");
                 }
                 item.setOnMenuItemClickListener(
-                        new InflatedOnMenuItemClickListener(getRealOwner(), itemListenerMethodName));
+                        new InflatedOnMenuItemClickListener(mRealOwner, itemListenerMethodName));
             }
 
             if (item instanceof MenuItemImpl) {
@@ -512,7 +494,6 @@ public class MenuInflater {
             try {
                 Class<?> clazz = mContext.getClassLoader().loadClass(className);
                 Constructor<?> constructor = clazz.getConstructor(constructorSignature);
-                constructor.setAccessible(true);
                 return (T) constructor.newInstance(arguments);
             } catch (Exception e) {
                 Log.w(LOG_TAG, "Cannot instantiate class: " + className, e);

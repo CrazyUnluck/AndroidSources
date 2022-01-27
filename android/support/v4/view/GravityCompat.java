@@ -24,7 +24,7 @@ import android.view.Gravity;
 /**
  * Compatibility shim for accessing newer functionality from {@link android.view.Gravity}.
  */
-public final class GravityCompat {
+public class GravityCompat {
     interface GravityCompatImpl {
         int getAbsoluteGravity(int gravity, int layoutDirection);
         void apply(int gravity, int w, int h, Rect container, Rect outRect, int layoutDirection);
@@ -200,6 +200,4 @@ public final class GravityCompat {
     public static int getAbsoluteGravity(int gravity, int layoutDirection) {
         return IMPL.getAbsoluteGravity(gravity, layoutDirection);
     }
-
-    private GravityCompat() {}
 }

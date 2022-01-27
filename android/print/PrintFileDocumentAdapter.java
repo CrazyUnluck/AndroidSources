@@ -46,7 +46,7 @@ import java.io.OutputStream;
  */
 public class PrintFileDocumentAdapter extends PrintDocumentAdapter {
 
-    private static final String LOG_TAG = "PrintedFileDocAdapter";
+    private static final String LOG_TAG = "PrintedFileDocumentAdapter";
 
     private final Context mContext;
 

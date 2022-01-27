@@ -21,7 +21,6 @@ import android.graphics.Canvas;
 import android.graphics.Paint;
 import android.graphics.Rect;
 import android.graphics.drawable.Drawable;
-import android.support.annotation.ColorInt;
 import android.support.annotation.ColorRes;
 import android.support.annotation.DrawableRes;
 import android.util.AttributeSet;
@@ -128,7 +127,7 @@ public class PagerTabStrip extends PagerTitleStrip {
      *
      * @param color Color to set as an 0xRRGGBB value. The high byte (alpha) is ignored.
      */
-    public void setTabIndicatorColor(@ColorInt int color) {
+    public void setTabIndicatorColor(int color) {
         mIndicatorColor = color;
         mTabPaint.setColor(mIndicatorColor);
         invalidate();
@@ -146,7 +145,6 @@ public class PagerTabStrip extends PagerTitleStrip {
     /**
      * @return The current tab indicator color as an 0xRRGGBB value.
      */
-    @ColorInt
     public int getTabIndicatorColor() {
         return mIndicatorColor;
     }
@@ -176,7 +174,7 @@ public class PagerTabStrip extends PagerTitleStrip {
     }
 
     @Override
-    public void setBackgroundColor(@ColorInt int color) {
+    public void setBackgroundColor(int color) {
         super.setBackgroundColor(color);
         if (!mDrawFullUnderlineSet) {
             mDrawFullUnderline = (color & 0xFF000000) == 0;

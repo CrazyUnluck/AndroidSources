@@ -87,10 +87,6 @@ public abstract class FragmentStatePagerAdapter extends PagerAdapter {
 
     @Override
     public void startUpdate(ViewGroup container) {
-        if (container.getId() == View.NO_ID) {
-            throw new IllegalStateException("ViewPager with adapter " + this
-                    + " requires a view id");
-        }
     }
 
     @Override
@@ -131,7 +127,7 @@ public abstract class FragmentStatePagerAdapter extends PagerAdapter {
 
     @Override
     public void destroyItem(ViewGroup container, int position, Object object) {
-        Fragment fragment = (Fragment) object;
+        Fragment fragment = (Fragment)object;
 
         if (mCurTransaction == null) {
             mCurTransaction = mFragmentManager.beginTransaction();
@@ -141,8 +137,7 @@ public abstract class FragmentStatePagerAdapter extends PagerAdapter {
         while (mSavedState.size() <= position) {
             mSavedState.add(null);
         }
-        mSavedState.set(position, fragment.isAdded()
-                ? mFragmentManager.saveFragmentInstanceState(fragment) : null);
+        mSavedState.set(position, mFragmentManager.saveFragmentInstanceState(fragment));
         mFragments.set(position, null);
 
         mCurTransaction.remove(fragment);
@@ -189,7 +184,7 @@ public abstract class FragmentStatePagerAdapter extends PagerAdapter {
         }
         for (int i=0; i<mFragments.size(); i++) {
             Fragment f = mFragments.get(i);
-            if (f != null && f.isAdded()) {
+            if (f != null) {
                 if (state == null) {
                     state = new Bundle();
                 }

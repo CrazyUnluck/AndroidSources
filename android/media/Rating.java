@@ -16,13 +16,10 @@
 
 package android.media;
 
-import android.annotation.IntDef;
+import android.graphics.Bitmap;
 import android.os.Parcel;
 import android.os.Parcelable;
 import android.util.Log;
-
-import java.lang.annotation.Retention;
-import java.lang.annotation.RetentionPolicy;
 
 /**
  * A class to encapsulate rating information used as content metadata.
@@ -33,29 +30,8 @@ import java.lang.annotation.RetentionPolicy;
  * through one of the factory methods.
  */
 public final class Rating implements Parcelable {
+
     private final static String TAG = "Rating";
-
-    /**
-     * @hide
-     */
-    @IntDef({RATING_NONE, RATING_HEART, RATING_THUMB_UP_DOWN, RATING_3_STARS, RATING_4_STARS,
-            RATING_5_STARS, RATING_PERCENTAGE})
-    @Retention(RetentionPolicy.SOURCE)
-    public @interface Style {}
-
-    /**
-     * @hide
-     */
-    @IntDef({RATING_3_STARS, RATING_4_STARS, RATING_5_STARS})
-    @Retention(RetentionPolicy.SOURCE)
-    public @interface StarStyle {}
-
-    /**
-     * Indicates a rating style is not supported. A Rating will never have this
-     * type, but can be used by other classes to indicate they do not support
-     * Rating.
-     */
-    public final static int RATING_NONE = 0;
 
     /**
      * A rating style with a single degree of rating, "heart" vs "no heart". Can be used to
@@ -94,13 +70,17 @@ public final class Rating implements Parcelable {
 
     private final float mRatingValue;
 
-    private Rating(@Style int ratingStyle, float rating) {
+    private Rating(int ratingStyle, float rating) {
         mRatingStyle = ratingStyle;
         mRatingValue = rating;
     }
 
+
+    /**
+     * @hide
+     */
     @Override
-    public String toString() {
+    public String toString () {
         return "Rating:style=" + mRatingStyle + " rating="
                 + (mRatingValue < 0.0f ? "unrated" : String.valueOf(mRatingValue));
     }
@@ -123,12 +103,9 @@ public final class Rating implements Parcelable {
          * @param p    Parcel object to read the Rating from
          * @return a new Rating created from the data in the parcel
          */
-        @Override
         public Rating createFromParcel(Parcel p) {
             return new Rating(p.readInt(), p.readFloat());
         }
-
-        @Override
         public Rating[] newArray(int size) {
             return new Rating[size];
         }
@@ -143,7 +120,7 @@ public final class Rating implements Parcelable {
      *    or {@link #RATING_PERCENTAGE}.
      * @return null if an invalid rating style is passed, a new Rating instance otherwise.
      */
-    public static Rating newUnratedRating(@Style int ratingStyle) {
+    public static Rating newUnratedRating(int ratingStyle) {
         switch(ratingStyle) {
             case RATING_HEART:
             case RATING_THUMB_UP_DOWN:
@@ -191,7 +168,7 @@ public final class Rating implements Parcelable {
      * @return null if the rating style is invalid, or the rating is out of range,
      *     a new Rating instance otherwise.
      */
-    public static Rating newStarRating(@StarStyle int starRatingStyle, float starRating) {
+    public static Rating newStarRating(int starRatingStyle, float starRating) {
         float maxRating = -1.0f;
         switch(starRatingStyle) {
             case RATING_3_STARS:
@@ -244,7 +221,6 @@ public final class Rating implements Parcelable {
      *    {@link #RATING_3_STARS}, {@link #RATING_4_STARS}, {@link #RATING_5_STARS},
      *    or {@link #RATING_PERCENTAGE}.
      */
-    @Style
     public int getRatingStyle() {
         return mRatingStyle;
     }

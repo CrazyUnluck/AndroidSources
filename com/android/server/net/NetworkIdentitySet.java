@@ -23,20 +23,16 @@ import java.io.DataOutputStream;
 import java.io.IOException;
 import java.util.HashSet;
 
-import static android.net.ConnectivityManager.TYPE_MOBILE;
-
 /**
  * Identity of a {@code iface}, defined by the set of {@link NetworkIdentity}
  * active on that interface.
  *
  * @hide
  */
-public class NetworkIdentitySet extends HashSet<NetworkIdentity> implements
-        Comparable<NetworkIdentitySet> {
+public class NetworkIdentitySet extends HashSet<NetworkIdentity> {
     private static final int VERSION_INIT = 1;
     private static final int VERSION_ADD_ROAMING = 2;
     private static final int VERSION_ADD_NETWORK_ID = 3;
-    private static final int VERSION_ADD_METERED = 4;
 
     public NetworkIdentitySet() {
     }
@@ -64,22 +60,12 @@ public class NetworkIdentitySet extends HashSet<NetworkIdentity> implements
                 roaming = false;
             }
 
-            final boolean metered;
-            if (version >= VERSION_ADD_METERED) {
-                metered = in.readBoolean();
-            } else {
-                // If this is the old data and the type is mobile, treat it as metered. (Note that
-                // if this is a mobile network, TYPE_MOBILE is the only possible type that could be
-                // used.)
-                metered = (type == TYPE_MOBILE);
-            }
-
-            add(new NetworkIdentity(type, subType, subscriberId, networkId, roaming, metered));
+            add(new NetworkIdentity(type, subType, subscriberId, networkId, false));
         }
     }
 
     public void writeToStream(DataOutputStream out) throws IOException {
-        out.writeInt(VERSION_ADD_METERED);
+        out.writeInt(VERSION_ADD_NETWORK_ID);
         out.writeInt(size());
         for (NetworkIdentity ident : this) {
             out.writeInt(ident.getType());
@@ -87,21 +73,7 @@ public class NetworkIdentitySet extends HashSet<NetworkIdentity> implements
             writeOptionalString(out, ident.getSubscriberId());
             writeOptionalString(out, ident.getNetworkId());
             out.writeBoolean(ident.getRoaming());
-            out.writeBoolean(ident.getMetered());
         }
-    }
-
-    /** @return whether any {@link NetworkIdentity} in this set is considered roaming. */
-    public boolean isAnyMemberRoaming() {
-        if (isEmpty()) {
-            return false;
-        }
-        for (NetworkIdentity ident : this) {
-            if (ident.getRoaming()) {
-                return true;
-            }
-        }
-        return false;
     }
 
     private static void writeOptionalString(DataOutputStream out, String value) throws IOException {
@@ -119,15 +91,5 @@ public class NetworkIdentitySet extends HashSet<NetworkIdentity> implements
         } else {
             return null;
         }
-    }
-
-    @Override
-    public int compareTo(NetworkIdentitySet another) {
-        if (isEmpty()) return -1;
-        if (another.isEmpty()) return 1;
-
-        final NetworkIdentity ident = iterator().next();
-        final NetworkIdentity anotherIdent = another.iterator().next();
-        return ident.compareTo(anotherIdent);
     }
 }

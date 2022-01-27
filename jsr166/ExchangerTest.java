@@ -8,26 +8,14 @@
 
 package jsr166;
 
-import static java.util.concurrent.TimeUnit.MILLISECONDS;
-
+import junit.framework.*;
+import java.util.*;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.Exchanger;
 import java.util.concurrent.TimeoutException;
-
-import junit.framework.Test;
-import junit.framework.TestSuite;
+import static java.util.concurrent.TimeUnit.MILLISECONDS;
 
 public class ExchangerTest extends JSR166TestCase {
-
-    // android-note: Removed because the CTS runner does a bad job of
-    // retrying tests that have suite() declarations.
-    //
-    // public static void main(String[] args) {
-    //     main(suite(), args);
-    // }
-    // public static Test suite() {
-    //     return new TestSuite(ExchangerTest.class);
-    // }
 
     /**
      * exchange exchanges objects across two threads

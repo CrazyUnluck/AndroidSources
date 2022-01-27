@@ -17,22 +17,14 @@
 package android.view.animation;
 
 import android.content.Context;
-import android.content.res.Resources;
-import android.content.res.Resources.Theme;
 import android.content.res.TypedArray;
 import android.util.AttributeSet;
-
-import com.android.internal.R;
-import com.android.internal.view.animation.HasNativeInterpolator;
-import com.android.internal.view.animation.NativeInterpolatorFactory;
-import com.android.internal.view.animation.NativeInterpolatorFactoryHelper;
 
 /**
  * An interpolator where the change flings forward and overshoots the last value
  * then comes back.
  */
-@HasNativeInterpolator
-public class OvershootInterpolator extends BaseInterpolator implements NativeInterpolatorFactory {
+public class OvershootInterpolator implements Interpolator {
     private final float mTension;
 
     public OvershootInterpolator() {
@@ -49,20 +41,12 @@ public class OvershootInterpolator extends BaseInterpolator implements NativeInt
     }
 
     public OvershootInterpolator(Context context, AttributeSet attrs) {
-        this(context.getResources(), context.getTheme(), attrs);
-    }
+        TypedArray a = context.obtainStyledAttributes(attrs,
+                com.android.internal.R.styleable.OvershootInterpolator);
 
-    /** @hide */
-    public OvershootInterpolator(Resources res, Theme theme, AttributeSet attrs) {
-        TypedArray a;
-        if (theme != null) {
-            a = theme.obtainStyledAttributes(attrs, R.styleable.OvershootInterpolator, 0, 0);
-        } else {
-            a = res.obtainAttributes(attrs, R.styleable.OvershootInterpolator);
-        }
+        mTension =
+                a.getFloat(com.android.internal.R.styleable.OvershootInterpolator_tension, 2.0f);
 
-        mTension = a.getFloat(R.styleable.OvershootInterpolator_tension, 2.0f);
-        setChangingConfiguration(a.getChangingConfigurations());
         a.recycle();
     }
 
@@ -71,11 +55,5 @@ public class OvershootInterpolator extends BaseInterpolator implements NativeInt
         // o(t) = _o(t - 1) + 1
         t -= 1.0f;
         return t * t * ((mTension + 1) * t + mTension) + 1.0f;
-    }
-
-    /** @hide */
-    @Override
-    public long createNativeInterpolator() {
-        return NativeInterpolatorFactoryHelper.createOvershootInterpolator(mTension);
     }
 }

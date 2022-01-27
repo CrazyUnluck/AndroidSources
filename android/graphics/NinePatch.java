@@ -16,6 +16,7 @@
 
 package android.graphics;
 
+
 /**
  * The NinePatch class permits drawing a bitmap in nine or more sections.
  * Essentially, it allows the creation of custom graphics that will scale the
@@ -31,52 +32,6 @@ package android.graphics;
  * </p>
  */
 public class NinePatch {
-    /**
-     * Struct of inset information attached to a 9 patch bitmap.
-     *
-     * Present on a 9 patch bitmap if it optical insets were manually included,
-     * or if outline insets were automatically included by aapt.
-     *
-     * @hide
-     */
-    public static class InsetStruct {
-        @SuppressWarnings({"UnusedDeclaration"}) // called from JNI
-        InsetStruct(int opticalLeft, int opticalTop, int opticalRight, int opticalBottom,
-                int outlineLeft, int outlineTop, int outlineRight, int outlineBottom,
-                float outlineRadius, int outlineAlpha, float decodeScale) {
-            opticalRect = new Rect(opticalLeft, opticalTop, opticalRight, opticalBottom);
-            opticalRect.scale(decodeScale);
-
-            outlineRect = scaleInsets(outlineLeft, outlineTop,
-                    outlineRight, outlineBottom, decodeScale);
-
-            this.outlineRadius = outlineRadius * decodeScale;
-            this.outlineAlpha = outlineAlpha / 255.0f;
-        }
-
-        public final Rect opticalRect;
-        public final Rect outlineRect;
-        public final float outlineRadius;
-        public final float outlineAlpha;
-
-        /**
-         * Scales up the rect by the given scale, ceiling values, so actual outline Rect
-         * grows toward the inside.
-         */
-        public static Rect scaleInsets(int left, int top, int right, int bottom, float scale) {
-            if (scale == 1.0f) {
-                return new Rect(left, top, right, bottom);
-            }
-
-            Rect result = new Rect();
-            result.left = (int) Math.ceil(left * scale);
-            result.top = (int) Math.ceil(top * scale);
-            result.right = (int) Math.ceil(right * scale);
-            result.bottom = (int) Math.ceil(bottom * scale);
-            return  result;
-        }
-    }
-
     private final Bitmap mBitmap;
 
     /**
@@ -84,7 +39,7 @@ public class NinePatch {
      *
      * @hide
      */
-    public long mNativeChunk;
+    public final long mNativeChunk;
 
     private Paint mPaint;
     private String mSrcName;
@@ -111,7 +66,7 @@ public class NinePatch {
     public NinePatch(Bitmap bitmap, byte[] chunk, String srcName) {
         mBitmap = bitmap;
         mSrcName = srcName;
-        mNativeChunk = validateNinePatchChunk(chunk);
+        mNativeChunk = validateNinePatchChunk(mBitmap.ni(), chunk);
     }
 
     /**
@@ -131,11 +86,7 @@ public class NinePatch {
     @Override
     protected void finalize() throws Throwable {
         try {
-            if (mNativeChunk != 0) {
-                // only attempt to destroy correctly initilized chunks
-                nativeFinalize(mNativeChunk);
-                mNativeChunk = 0;
-            }
+            nativeFinalize(mNativeChunk);
         } finally {
             super.finalize();
         }
@@ -212,6 +163,16 @@ public class NinePatch {
         canvas.drawPatch(this, location, paint);
     }
 
+    void drawSoftware(Canvas canvas, RectF location, Paint paint) {
+        nativeDraw(canvas.mNativeCanvas, location, mBitmap.ni(), mNativeChunk,
+                paint != null ? paint.mNativePaint : 0, canvas.mDensity, mBitmap.mDensity);
+    }
+
+    void drawSoftware(Canvas canvas, Rect location, Paint paint) {
+        nativeDraw(canvas.mNativeCanvas, location, mBitmap.ni(), mNativeChunk,
+                paint != null ? paint.mNativePaint : 0, canvas.mDensity, mBitmap.mDensity);
+    }
+
     /**
      * Return the underlying bitmap's density, as per
      * {@link Bitmap#getDensity() Bitmap.getDensity()}.
@@ -256,7 +217,7 @@ public class NinePatch {
      * that are transparent.
      */
     public final Region getTransparentRegion(Rect bounds) {
-        long r = nativeGetTransparentRegion(mBitmap, mNativeChunk, bounds);
+        long r = nativeGetTransparentRegion(mBitmap.ni(), mNativeChunk, bounds);
         return r != 0 ? new Region(r) : null;
     }
 
@@ -275,7 +236,11 @@ public class NinePatch {
      * If validation is successful, this method returns a native Res_png_9patch*
      * object used by the renderers.
      */
-    private static native long validateNinePatchChunk(byte[] chunk);
+    private static native long validateNinePatchChunk(long bitmap, byte[] chunk);
     private static native void nativeFinalize(long chunk);
-    private static native long nativeGetTransparentRegion(Bitmap bitmap, long chunk, Rect location);
+    private static native void nativeDraw(long canvas_instance, RectF loc, long bitmap_instance,
+            long c, long paint_instance_or_null, int destDensity, int srcDensity);
+    private static native void nativeDraw(long canvas_instance, Rect loc, long bitmap_instance,
+            long c, long paint_instance_or_null, int destDensity, int srcDensity);
+    private static native long nativeGetTransparentRegion(long bitmap, long chunk, Rect location);
 }

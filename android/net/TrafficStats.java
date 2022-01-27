@@ -16,10 +16,8 @@
 
 package android.net;
 
-import android.annotation.SystemApi;
 import android.app.DownloadManager;
 import android.app.backup.BackupManager;
-import android.app.usage.NetworkStatsManager;
 import android.content.Context;
 import android.media.MediaPlayer;
 import android.os.RemoteException;
@@ -29,21 +27,16 @@ import com.android.server.NetworkManagementSocketTagger;
 
 import dalvik.system.SocketTagger;
 
-import java.net.DatagramSocket;
 import java.net.Socket;
 import java.net.SocketException;
 
 /**
- * Class that provides network traffic statistics. These statistics include
+ * Class that provides network traffic statistics.  These statistics include
  * bytes transmitted and received and network packets transmitted and received,
  * over all interfaces, over the mobile interface, and on a per-UID basis.
  * <p>
- * These statistics may not be available on all platforms. If the statistics are
- * not supported by this device, {@link #UNSUPPORTED} will be returned.
- * <p>
- * Note that the statistics returned by this class reset and start from zero
- * after every reboot. To access more robust historical network statistics data,
- * use {@link NetworkStatsManager} instead.
+ * These statistics may not be available on all platforms.  If the statistics
+ * are not supported by this device, {@link #UNSUPPORTED} will be returned.
  */
 public class TrafficStats {
     /**
@@ -57,10 +50,6 @@ public class TrafficStats {
     public static final long MB_IN_BYTES = KB_IN_BYTES * 1024;
     /** @hide */
     public static final long GB_IN_BYTES = MB_IN_BYTES * 1024;
-    /** @hide */
-    public static final long TB_IN_BYTES = GB_IN_BYTES * 1024;
-    /** @hide */
-    public static final long PB_IN_BYTES = TB_IN_BYTES * 1024;
 
     /**
      * Special UID value used when collecting {@link NetworkStatsHistory} for
@@ -93,20 +82,11 @@ public class TrafficStats {
     public static final int TAG_SYSTEM_MEDIA = 0xFFFFFF02;
 
     /**
-     * Default tag value for {@link BackupManager} backup traffic; that is,
-     * traffic from the device to the storage backend.
+     * Default tag value for {@link BackupManager} traffic.
      *
      * @hide
      */
     public static final int TAG_SYSTEM_BACKUP = 0xFFFFFF03;
-
-    /**
-     * Default tag value for {@link BackupManager} restore traffic; that is,
-     * app data retrieved from the storage backend at install time.
-     *
-     * @hide
-     */
-    public static final int TAG_SYSTEM_RESTORE = 0xFFFFFF04;
 
     private static INetworkStatsService sStatsService;
 
@@ -147,30 +127,6 @@ public class TrafficStats {
     }
 
     /**
-     * Set active tag to use when accounting {@link Socket} traffic originating
-     * from the current thread. The tag used internally is well-defined to
-     * distinguish all backup-related traffic.
-     *
-     * @hide
-     */
-    @SystemApi
-    public static void setThreadStatsTagBackup() {
-        setThreadStatsTag(TAG_SYSTEM_BACKUP);
-    }
-
-    /**
-     * Set active tag to use when accounting {@link Socket} traffic originating
-     * from the current thread. The tag used internally is well-defined to
-     * distinguish all restore-related traffic.
-     *
-     * @hide
-     */
-    @SystemApi
-    public static void setThreadStatsTagRestore() {
-        setThreadStatsTag(TAG_SYSTEM_RESTORE);
-    }
-
-    /**
      * Get the active tag used when accounting {@link Socket} traffic originating
      * from the current thread. Only one active tag per thread is supported.
      * {@link #tagSocket(Socket)}.
@@ -204,19 +160,11 @@ public class TrafficStats {
      *
      * @hide
      */
-    @SystemApi
     public static void setThreadStatsUid(int uid) {
         NetworkManagementSocketTagger.setThreadSocketStatsUid(uid);
     }
 
-    /**
-     * Clear any active UID set to account {@link Socket} traffic originating
-     * from the current thread.
-     *
-     * @see #setThreadStatsUid(int)
-     * @hide
-     */
-    @SystemApi
+    /** {@hide} */
     public static void clearThreadStatsUid() {
         NetworkManagementSocketTagger.setThreadSocketStatsUid(-1);
     }
@@ -228,6 +176,7 @@ public class TrafficStats {
      * statistics parameters.
      *
      * @see #setThreadStatsTag(int)
+     * @see #setThreadStatsUid(int)
      */
     public static void tagSocket(Socket socket) throws SocketException {
         SocketTagger.get().tag(socket);
@@ -237,26 +186,6 @@ public class TrafficStats {
      * Remove any statistics parameters from the given {@link Socket}.
      */
     public static void untagSocket(Socket socket) throws SocketException {
-        SocketTagger.get().untag(socket);
-    }
-
-    /**
-     * Tag the given {@link DatagramSocket} with any statistics parameters
-     * active for the current thread. Subsequent calls always replace any
-     * existing parameters. When finished, call
-     * {@link #untagDatagramSocket(DatagramSocket)} to remove statistics
-     * parameters.
-     *
-     * @see #setThreadStatsTag(int)
-     */
-    public static void tagDatagramSocket(DatagramSocket socket) throws SocketException {
-        SocketTagger.get().tag(socket);
-    }
-
-    /**
-     * Remove any statistics parameters from the given {@link DatagramSocket}.
-     */
-    public static void untagDatagramSocket(DatagramSocket socket) throws SocketException {
         SocketTagger.get().untag(socket);
     }
 
@@ -323,7 +252,7 @@ public class TrafficStats {
         try {
             getStatsService().incrementOperationCount(uid, tag, operationCount);
         } catch (RemoteException e) {
-            throw e.rethrowFromSystemServer();
+            throw new RuntimeException(e);
         }
     }
 
@@ -510,27 +439,14 @@ public class TrafficStats {
      * monotonically since device boot. Statistics are measured at the network
      * layer, so they include both TCP and UDP usage.
      * <p>
-     * Before {@link android.os.Build.VERSION_CODES#JELLY_BEAN_MR2}, this may
-     * return {@link #UNSUPPORTED} on devices where statistics aren't available.
-     * <p>
-     * Starting in {@link android.os.Build.VERSION_CODES#N} this will only
-     * report traffic statistics for the calling UID. It will return
-     * {@link #UNSUPPORTED} for all other UIDs for privacy reasons. To access
-     * historical network statistics belonging to other UIDs, use
-     * {@link NetworkStatsManager}.
+     * Before {@link android.os.Build.VERSION_CODES#JELLY_BEAN_MR2}, this may return
+     * {@link #UNSUPPORTED} on devices where statistics aren't available.
      *
      * @see android.os.Process#myUid()
      * @see android.content.pm.ApplicationInfo#uid
      */
     public static long getUidTxBytes(int uid) {
-        // This isn't actually enforcing any security; it just returns the
-        // unsupported value. The real filtering is done at the kernel level.
-        final int callingUid = android.os.Process.myUid();
-        if (callingUid == android.os.Process.SYSTEM_UID || callingUid == uid) {
-            return nativeGetUidStat(uid, TYPE_TX_BYTES);
-        } else {
-            return UNSUPPORTED;
-        }
+        return nativeGetUidStat(uid, TYPE_TX_BYTES);
     }
 
     /**
@@ -541,25 +457,12 @@ public class TrafficStats {
      * <p>
      * Before {@link android.os.Build.VERSION_CODES#JELLY_BEAN_MR2}, this may return
      * {@link #UNSUPPORTED} on devices where statistics aren't available.
-     * <p>
-     * Starting in {@link android.os.Build.VERSION_CODES#N} this will only
-     * report traffic statistics for the calling UID. It will return
-     * {@link #UNSUPPORTED} for all other UIDs for privacy reasons. To access
-     * historical network statistics belonging to other UIDs, use
-     * {@link NetworkStatsManager}.
      *
      * @see android.os.Process#myUid()
      * @see android.content.pm.ApplicationInfo#uid
      */
     public static long getUidRxBytes(int uid) {
-        // This isn't actually enforcing any security; it just returns the
-        // unsupported value. The real filtering is done at the kernel level.
-        final int callingUid = android.os.Process.myUid();
-        if (callingUid == android.os.Process.SYSTEM_UID || callingUid == uid) {
-            return nativeGetUidStat(uid, TYPE_RX_BYTES);
-        } else {
-            return UNSUPPORTED;
-        }
+        return nativeGetUidStat(uid, TYPE_RX_BYTES);
     }
 
     /**
@@ -570,25 +473,12 @@ public class TrafficStats {
      * <p>
      * Before {@link android.os.Build.VERSION_CODES#JELLY_BEAN_MR2}, this may return
      * {@link #UNSUPPORTED} on devices where statistics aren't available.
-     * <p>
-     * Starting in {@link android.os.Build.VERSION_CODES#N} this will only
-     * report traffic statistics for the calling UID. It will return
-     * {@link #UNSUPPORTED} for all other UIDs for privacy reasons. To access
-     * historical network statistics belonging to other UIDs, use
-     * {@link NetworkStatsManager}.
      *
      * @see android.os.Process#myUid()
      * @see android.content.pm.ApplicationInfo#uid
      */
     public static long getUidTxPackets(int uid) {
-        // This isn't actually enforcing any security; it just returns the
-        // unsupported value. The real filtering is done at the kernel level.
-        final int callingUid = android.os.Process.myUid();
-        if (callingUid == android.os.Process.SYSTEM_UID || callingUid == uid) {
-            return nativeGetUidStat(uid, TYPE_TX_PACKETS);
-        } else {
-            return UNSUPPORTED;
-        }
+        return nativeGetUidStat(uid, TYPE_TX_PACKETS);
     }
 
     /**
@@ -599,25 +489,12 @@ public class TrafficStats {
      * <p>
      * Before {@link android.os.Build.VERSION_CODES#JELLY_BEAN_MR2}, this may return
      * {@link #UNSUPPORTED} on devices where statistics aren't available.
-     * <p>
-     * Starting in {@link android.os.Build.VERSION_CODES#N} this will only
-     * report traffic statistics for the calling UID. It will return
-     * {@link #UNSUPPORTED} for all other UIDs for privacy reasons. To access
-     * historical network statistics belonging to other UIDs, use
-     * {@link NetworkStatsManager}.
      *
      * @see android.os.Process#myUid()
      * @see android.content.pm.ApplicationInfo#uid
      */
     public static long getUidRxPackets(int uid) {
-        // This isn't actually enforcing any security; it just returns the
-        // unsupported value. The real filtering is done at the kernel level.
-        final int callingUid = android.os.Process.myUid();
-        if (callingUid == android.os.Process.SYSTEM_UID || callingUid == uid) {
-            return nativeGetUidStat(uid, TYPE_RX_PACKETS);
-        } else {
-            return UNSUPPORTED;
-        }
+        return nativeGetUidStat(uid, TYPE_RX_PACKETS);
     }
 
     /**
@@ -718,7 +595,7 @@ public class TrafficStats {
         try {
             return getStatsService().getDataLayerSnapshotForUid(uid);
         } catch (RemoteException e) {
-            throw e.rethrowFromSystemServer();
+            throw new RuntimeException(e);
         }
     }
 
@@ -731,7 +608,7 @@ public class TrafficStats {
         try {
             return getStatsService().getMobileIfaces();
         } catch (RemoteException e) {
-            throw e.rethrowFromSystemServer();
+            throw new RuntimeException(e);
         }
     }
 

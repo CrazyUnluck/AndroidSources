@@ -8,38 +8,20 @@
 
 package jsr166;
 
-import static java.util.concurrent.TimeUnit.MILLISECONDS;
-import static java.util.concurrent.TimeUnit.NANOSECONDS;
-import static java.util.concurrent.TimeUnit.SECONDS;
-
-import java.util.ArrayList;
-import java.util.List;
-import java.util.NoSuchElementException;
+import junit.framework.*;
 import java.util.concurrent.Callable;
 import java.util.concurrent.CancellationException;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.ExecutionException;
-import java.util.concurrent.Executors;
-import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Future;
 import java.util.concurrent.FutureTask;
 import java.util.concurrent.TimeoutException;
 import java.util.concurrent.atomic.AtomicInteger;
-
-import junit.framework.Test;
-import junit.framework.TestSuite;
+import static java.util.concurrent.TimeUnit.MILLISECONDS;
+import static java.util.concurrent.TimeUnit.SECONDS;
+import java.util.*;
 
 public class FutureTaskTest extends JSR166TestCase {
-
-    // android-note: Removed because the CTS runner does a bad job of
-    // retrying tests that have suite() declarations.
-    //
-    // public static void main(String[] args) {
-    //     main(suite(), args);
-    // }
-    // public static Test suite() {
-    //     return new TestSuite(FutureTaskTest.class);
-    // }
 
     void checkIsDone(Future<?> f) {
         assertTrue(f.isDone());
@@ -140,7 +122,7 @@ public class FutureTaskTest extends JSR166TestCase {
         pf.set(new Object());
         pf.setException(new Error());
         for (boolean mayInterruptIfRunning : new boolean[] { true, false }) {
-            pf.cancel(mayInterruptIfRunning);
+            pf.cancel(true);
         }
     }
 
@@ -272,8 +254,8 @@ public class FutureTaskTest extends JSR166TestCase {
         for (int i = 0; i < 3; i++) {
             assertTrue(task.runAndReset());
             checkNotDone(task);
-            assertEquals(i + 1, task.runCount());
-            assertEquals(i + 1, task.runAndResetCount());
+            assertEquals(i+1, task.runCount());
+            assertEquals(i+1, task.runAndResetCount());
             assertEquals(0, task.setCount());
             assertEquals(0, task.setExceptionCount());
         }
@@ -289,7 +271,7 @@ public class FutureTaskTest extends JSR166TestCase {
             for (int i = 0; i < 3; i++) {
                 assertFalse(task.runAndReset());
                 assertEquals(0, task.runCount());
-                assertEquals(i + 1, task.runAndResetCount());
+                assertEquals(i+1, task.runAndResetCount());
                 assertEquals(0, task.setCount());
                 assertEquals(0, task.setExceptionCount());
             }
@@ -491,8 +473,8 @@ public class FutureTaskTest extends JSR166TestCase {
         final PublicFutureTask task =
             new PublicFutureTask(new Runnable() {
                 public void run() {
-                    pleaseCancel.countDown();
                     try {
+                        pleaseCancel.countDown();
                         delay(LONG_DELAY_MS);
                         threadShouldThrow();
                     } catch (InterruptedException success) {
@@ -811,33 +793,6 @@ public class FutureTaskTest extends JSR166TestCase {
                 task.get(timeout, null);
                 shouldThrow();
             } catch (NullPointerException success) {}
-        }
-    }
-
-    /**
-     * timed get with most negative timeout works correctly (i.e. no
-     * underflow bug)
-     */
-    public void testGet_NegativeInfinityTimeout() throws Exception {
-        final ExecutorService pool = Executors.newFixedThreadPool(10);
-        final Runnable nop = new Runnable() { public void run() {}};
-        final FutureTask<Void> task = new FutureTask<>(nop, null);
-        final List<Future<?>> futures = new ArrayList<>();
-        Runnable r = new Runnable() { public void run() {
-            for (long timeout : new long[] { 0L, -1L, Long.MIN_VALUE }) {
-                try {
-                    task.get(timeout, NANOSECONDS);
-                    shouldThrow();
-                } catch (TimeoutException success) {
-                } catch (Throwable fail) {threadUnexpectedException(fail);}}}};
-        for (int i = 0; i < 10; i++)
-            futures.add(pool.submit(r));
-        try {
-            joinPool(pool);
-            for (Future<?> future : futures)
-                checkCompletedNormally(future, null);
-        } finally {
-            task.run();         // last resort to help terminate
         }
     }
 

@@ -16,9 +16,9 @@
 
 package com.android.server.am;
 
-import android.util.ArraySet;
-
 import java.io.PrintWriter;
+import java.util.HashSet;
+import java.util.Iterator;
 
 /**
  * An association between a service and one of its client applications.
@@ -28,7 +28,7 @@ final class AppBindRecord {
     final IntentBindRecord intent;  // The intent we are bound to.
     final ProcessRecord client;     // Who has started/bound the service.
 
-    final ArraySet<ConnectionRecord> connections = new ArraySet<>();
+    final HashSet<ConnectionRecord> connections = new HashSet<ConnectionRecord>();
                                     // All ConnectionRecord for this client.
 
     void dump(PrintWriter pw, String prefix) {
@@ -38,11 +38,11 @@ final class AppBindRecord {
     }
 
     void dumpInIntentBind(PrintWriter pw, String prefix) {
-        final int N = connections.size();
-        if (N > 0) {
+        if (connections.size() > 0) {
             pw.println(prefix + "Per-process Connections:");
-            for (int i=0; i<N; i++) {
-                ConnectionRecord c = connections.valueAt(i);
+            Iterator<ConnectionRecord> it = connections.iterator();
+            while (it.hasNext()) {
+                ConnectionRecord c = it.next();
                 pw.println(prefix + "  " + c);
             }
         }

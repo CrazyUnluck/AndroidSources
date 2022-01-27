@@ -16,23 +16,13 @@
 
 package android.support.v4.graphics.drawable;
 
-import android.content.res.ColorStateList;
-import android.graphics.PorterDuff;
 import android.graphics.drawable.Drawable;
 
 /**
  * Implementation of drawable compatibility that can call Honeycomb APIs.
  */
 class DrawableCompatHoneycomb {
-
     public static void jumpToCurrentState(Drawable drawable) {
         drawable.jumpToCurrentState();
-    }
-
-    public static Drawable wrapForTinting(Drawable drawable) {
-        if (!(drawable instanceof TintAwareDrawable)) {
-            return new DrawableWrapperHoneycomb(drawable);
-        }
-        return drawable;
     }
 }

@@ -21,6 +21,7 @@ import com.android.internal.R;
 import android.app.AlertDialog;
 import android.content.Context;
 import android.content.DialogInterface;
+import android.webkit.WebView;
 
 /**
  * Represents a plugin (Java equivalent of the PluginPackageAndroid

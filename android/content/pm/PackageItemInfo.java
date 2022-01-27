@@ -16,22 +16,14 @@
 
 package android.content.pm;
 
-import android.annotation.NonNull;
-import android.annotation.SystemApi;
 import android.content.res.XmlResourceParser;
 
 import android.graphics.drawable.Drawable;
 import android.os.Bundle;
 import android.os.Parcel;
-import android.os.UserHandle;
-import android.text.BidiFormatter;
-import android.text.Html;
-import android.text.TextPaint;
 import android.text.TextUtils;
 import android.util.Printer;
-import android.text.BidiFormatter;
-import android.text.TextPaint;
-import android.text.Html;
+
 import java.text.Collator;
 import java.util.Comparator;
 
@@ -45,7 +37,6 @@ import java.util.Comparator;
  * in the implementation of Parcelable in subclasses.
  */
 public class PackageItemInfo {
-    private static final float MAX_LABEL_SIZE_PX = 500f;
     /**
      * Public name of this item. From the "android:name" attribute.
      */
@@ -95,15 +86,8 @@ public class PackageItemInfo {
      * {@link PackageManager#GET_META_DATA} flag when requesting the info.
      */
     public Bundle metaData;
-
-    /**
-     * If different of UserHandle.USER_NULL, The icon of this item will be the one of that user.
-     * @hide
-     */
-    public int showUserIcon;
-
+    
     public PackageItemInfo() {
-        showUserIcon = UserHandle.USER_NULL;
     }
 
     public PackageItemInfo(PackageItemInfo orig) {
@@ -117,7 +101,6 @@ public class PackageItemInfo {
         banner = orig.banner;
         logo = orig.logo;
         metaData = orig.metaData;
-        showUserIcon = orig.showUserIcon;
     }
 
     /**
@@ -146,63 +129,7 @@ public class PackageItemInfo {
         }
         return packageName;
     }
- 
-    /**
-     * Same as {@link #loadLabel(PackageManager)} with the addition that
-     * the returned label is safe for being presented in the UI since it
-     * will not contain new lines and the length will be limited to a
-     * reasonable amount. This prevents a malicious party to influence UI
-     * layout via the app label misleading the user into performing a
-     * detrimental for them action. If the label is too long it will be
-     * truncated and ellipsized at the end.
-     *
-     * @param pm A PackageManager from which the label can be loaded; usually
-     * the PackageManager from which you originally retrieved this item
-     * @return Returns a CharSequence containing the item's label. If the
-     * item does not have a label, its name is returned.
-     *
-     * @hide
-     */
-    @SystemApi
-    public @NonNull CharSequence loadSafeLabel(@NonNull PackageManager pm) {
-        // loadLabel() always returns non-null
-        String label = loadLabel(pm).toString();
-        // strip HTML tags to avoid <br> and other tags overwriting original message
-        String labelStr = Html.fromHtml(label).toString();
-
-        // If the label contains new line characters it may push the UI
-        // down to hide a part of it. Labels shouldn't have new line
-        // characters, so just truncate at the first time one is seen.
-        final int labelLength = labelStr.length();
-        int offset = 0;
-        while (offset < labelLength) {
-            final int codePoint = labelStr.codePointAt(offset);
-            final int type = Character.getType(codePoint);
-            if (type == Character.LINE_SEPARATOR
-                    || type == Character.CONTROL
-                    || type == Character.PARAGRAPH_SEPARATOR) {
-                labelStr = labelStr.substring(0, offset);
-                break;
-            }
-            // replace all non-break space to " " in order to be trimmed
-            if (type == Character.SPACE_SEPARATOR) {
-                labelStr = labelStr.substring(0, offset) + " " + labelStr.substring(offset +
-                        Character.charCount(codePoint));
-            }
-            offset += Character.charCount(codePoint);
-        }
-
-        labelStr = labelStr.trim();
-        if (labelStr.isEmpty()) {
-            return packageName;
-        }
-        TextPaint paint = new TextPaint();
-        paint.setTextSize(42);
-
-        return TextUtils.ellipsize(labelStr, paint, MAX_LABEL_SIZE_PX,
-                TextUtils.TruncateAt.END);
-    }
-
+    
     /**
      * Retrieve the current graphical icon associated with this item.  This
      * will call back on the given PackageManager to load the icon from
@@ -216,26 +143,15 @@ public class PackageItemInfo {
      * such as the default activity icon.
      */
     public Drawable loadIcon(PackageManager pm) {
-        return pm.loadItemIcon(this, getApplicationInfo());
+        if (icon != 0) {
+            Drawable dr = pm.getDrawable(packageName, icon, getApplicationInfo());
+            if (dr != null) {
+                return dr;
+            }
+        }
+        return loadDefaultIcon(pm);
     }
-
-    /**
-     * Retrieve the current graphical icon associated with this item without
-     * the addition of a work badge if applicable.
-     * This will call back on the given PackageManager to load the icon from
-     * the application.
-     *
-     * @param pm A PackageManager from which the icon can be loaded; usually
-     * the PackageManager from which you originally retrieved this item.
-     *
-     * @return Returns a Drawable containing the item's icon.  If the
-     * item does not have an icon, the item's default icon is returned
-     * such as the default activity icon.
-     */
-    public Drawable loadUnbadgedIcon(PackageManager pm) {
-        return pm.loadUnbadgedItemIcon(this, getApplicationInfo());
-    }
-
+    
     /**
      * Retrieve the current graphical banner associated with this item.  This
      * will call back on the given PackageManager to load the banner from
@@ -268,7 +184,7 @@ public class PackageItemInfo {
      * 
      * @hide
      */
-    public Drawable loadDefaultIcon(PackageManager pm) {
+    protected Drawable loadDefaultIcon(PackageManager pm) {
         return pm.getDefaultActivityIcon();
     }
 
@@ -346,21 +262,6 @@ public class PackageItemInfo {
         return null;
     }
 
-    /**
-     * @hide Flag for dumping: include all details.
-     */
-    public static final int DUMP_FLAG_DETAILS = 1<<0;
-
-    /**
-     * @hide Flag for dumping: include nested ApplicationInfo.
-     */
-    public static final int DUMP_FLAG_APPLICATION = 1<<1;
-
-    /**
-     * @hide Flag for dumping: all flags to dump everything.
-     */
-    public static final int DUMP_FLAG_ALL = DUMP_FLAG_DETAILS | DUMP_FLAG_APPLICATION;
-
     protected void dumpFront(Printer pw, String prefix) {
         if (name != null) {
             pw.println(prefix + "name=" + name);
@@ -387,7 +288,6 @@ public class PackageItemInfo {
         dest.writeInt(logo);
         dest.writeBundle(metaData);
         dest.writeInt(banner);
-        dest.writeInt(showUserIcon);
     }
     
     protected PackageItemInfo(Parcel source) {
@@ -400,7 +300,6 @@ public class PackageItemInfo {
         logo = source.readInt();
         metaData = source.readBundle();
         banner = source.readInt();
-        showUserIcon = source.readInt();
     }
 
     /**

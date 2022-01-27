@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2010-2014 The Android Open Source Project
+ * Copyright (C) 2010 The Android Open Source Project
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -16,9 +16,6 @@
 
 
 package android.bluetooth;
-
-import android.Manifest;
-import android.annotation.RequiresPermission;
 
 import java.util.List;
 
@@ -106,36 +103,6 @@ public interface BluetoothProfile {
      */
     public static final int MAP = 9;
 
-    /*
-     * SAP Profile
-     * @hide
-     */
-    public static final int SAP = 10;
-
-    /**
-     * A2DP Sink Profile
-     * @hide
-     */
-    public static final int A2DP_SINK = 11;
-
-    /**
-     * AVRCP Controller Profile
-     * @hide
-     */
-    public static final int AVRCP_CONTROLLER = 12;
-
-    /**
-     * Headset Client - HFP HF Role
-     * @hide
-     */
-    public static final int HEADSET_CLIENT = 16;
-
-    /**
-     * PBAP Client
-     * @hide
-     */
-    public static final int PBAP_CLIENT = 17;
-
     /**
      * Default priority for devices that we try to auto-connect to and
      * and allow incoming connections for the profile
@@ -172,7 +139,6 @@ public interface BluetoothProfile {
      *
      * @return List of devices. The list will be empty on error.
      */
-    @RequiresPermission(Manifest.permission.BLUETOOTH)
     public List<BluetoothDevice> getConnectedDevices();
 
     /**
@@ -189,7 +155,6 @@ public interface BluetoothProfile {
      *              {@link #STATE_DISCONNECTED}, {@link #STATE_DISCONNECTING},
      * @return List of devices. The list will be empty on error.
      */
-    @RequiresPermission(Manifest.permission.BLUETOOTH)
     public List<BluetoothDevice> getDevicesMatchingConnectionStates(int[] states);
 
     /**
@@ -202,7 +167,6 @@ public interface BluetoothProfile {
      *               {@link #STATE_CONNECTED}, {@link #STATE_CONNECTING},
      *               {@link #STATE_DISCONNECTED}, {@link #STATE_DISCONNECTING}
      */
-    @RequiresPermission(Manifest.permission.BLUETOOTH)
     public int getConnectionState(BluetoothDevice device);
 
     /**

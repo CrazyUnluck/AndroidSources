@@ -25,17 +25,14 @@ package android.graphics;
 public class Shader {
     /**
      * This is set by subclasses, but don't make it public.
+     * 
+     * @hide 
      */
-    private long native_instance;
-
+    public long native_instance;
     /**
-     * Initialization step that should be called by subclasses in their
-     * constructors. Calling again may result in memory leaks.
      * @hide
      */
-    protected void init(long ni) {
-        native_instance = ni;
-    }
+    public long native_shader;
 
     private Matrix mLocalMatrix;
 
@@ -76,13 +73,12 @@ public class Shader {
 
     /**
      * Set the shader's local matrix. Passing null will reset the shader's
-     * matrix to identity.
-     *
+     * matrix to identity
      * @param localM The shader's new local matrix, or null to specify identity
      */
     public void setLocalMatrix(Matrix localM) {
         mLocalMatrix = localM;
-        native_instance = nativeSetLocalMatrix(native_instance,
+        nativeSetLocalMatrix(native_instance, native_shader,
                 localM == null ? 0 : localM.native_instance);
     }
 
@@ -90,8 +86,7 @@ public class Shader {
         try {
             super.finalize();
         } finally {
-            nativeDestructor(native_instance);
-            native_instance = 0;  // Other finalizers can still call us.
+            nativeDestructor(native_instance, native_shader);
         }
     }
 
@@ -117,13 +112,7 @@ public class Shader {
         }
     }
 
-    /**
-     * @hide
-     */
-    public long getNativeInstance() {
-        return native_instance;
-    }
-
-    private static native void nativeDestructor(long native_shader);
-    private static native long nativeSetLocalMatrix(long native_shader, long matrix_instance);
+    private static native void nativeDestructor(long native_shader, long native_skiaShader);
+    private static native void nativeSetLocalMatrix(long native_shader,
+            long native_skiaShader, long matrix_instance);
 }

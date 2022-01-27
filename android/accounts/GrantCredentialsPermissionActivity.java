@@ -16,6 +16,7 @@
 package android.accounts;
 
 import android.app.Activity;
+import android.content.pm.RegisteredServicesCache;
 import android.content.res.Resources;
 import android.os.Bundle;
 import android.widget.TextView;
@@ -29,6 +30,7 @@ import android.text.TextUtils;
 import com.android.internal.R;
 
 import java.io.IOException;
+import java.net.Authenticator;
 
 /**
  * @hide

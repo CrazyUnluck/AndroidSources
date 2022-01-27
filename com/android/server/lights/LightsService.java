@@ -17,26 +17,22 @@
 package com.android.server.lights;
 
 import com.android.server.SystemService;
-import com.android.server.vr.VrManagerService;
 
-import android.app.ActivityManager;
 import android.content.Context;
+import android.content.pm.PackageManager;
 import android.os.Handler;
+import android.os.IHardwareService;
 import android.os.Message;
-import android.os.RemoteException;
-import android.os.Trace;
-import android.os.UserHandle;
-import android.provider.Settings;
-import android.service.vr.IVrManager;
-import android.service.vr.IVrStateCallbacks;
 import android.util.Slog;
+
+import java.io.FileInputStream;
+import java.io.FileOutputStream;
 
 public class LightsService extends SystemService {
     static final String TAG = "LightsService";
     static final boolean DEBUG = false;
 
     final LightImpl mLights[] = new LightImpl[LightsManager.LIGHT_ID_COUNT];
-    private boolean mVrModeEnabled;
 
     private final class LightImpl extends Light {
 
@@ -80,12 +76,8 @@ public class LightsService extends SystemService {
         @Override
         public void pulse(int color, int onMS) {
             synchronized (this) {
-                if (mBrightnessMode == BRIGHTNESS_MODE_LOW_PERSISTENCE) {
-                    return;
-                }
                 if (mColor == 0 && !mFlashing) {
                     setLightLocked(color, LIGHT_FLASH_HARDWARE, onMS, 1000, BRIGHTNESS_MODE_USER);
-                    mColor = 0;
                     mH.sendMessageDelayed(Message.obtain(mH, 1, this), onMS);
                 }
             }
@@ -98,20 +90,6 @@ public class LightsService extends SystemService {
             }
         }
 
-        void enableLowPersistence() {
-            synchronized(this) {
-                setLightLocked(0, LIGHT_FLASH_NONE, 0, 0, BRIGHTNESS_MODE_LOW_PERSISTENCE);
-                mLocked = true;
-            }
-        }
-
-        void disableLowPersistence() {
-            synchronized(this) {
-                mLocked = false;
-                setLightLocked(mLastColor, LIGHT_FLASH_NONE, 0, 0, mLastBrightnessMode);
-            }
-        }
-
         private void stopFlashing() {
             synchronized (this) {
                 setLightLocked(mColor, LIGHT_FLASH_NONE, 0, 0, BRIGHTNESS_MODE_USER);
@@ -119,24 +97,14 @@ public class LightsService extends SystemService {
         }
 
         private void setLightLocked(int color, int mode, int onMS, int offMS, int brightnessMode) {
-            if (!mLocked && (color != mColor || mode != mMode || onMS != mOnMS || offMS != mOffMS ||
-                    mBrightnessMode != brightnessMode)) {
+            if (color != mColor || mode != mMode || onMS != mOnMS || offMS != mOffMS) {
                 if (DEBUG) Slog.v(TAG, "setLight #" + mId + ": color=#"
-                        + Integer.toHexString(color) + ": brightnessMode=" + brightnessMode);
-                mLastColor = mColor;
+                        + Integer.toHexString(color));
                 mColor = color;
                 mMode = mode;
                 mOnMS = onMS;
                 mOffMS = offMS;
-                mLastBrightnessMode = mBrightnessMode;
-                mBrightnessMode = brightnessMode;
-                Trace.traceBegin(Trace.TRACE_TAG_POWER, "setLight(" + mId + ", 0x"
-                        + Integer.toHexString(color) + ")");
-                try {
-                    setLight_native(mNativePointer, mId, color, mode, onMS, offMS, brightnessMode);
-                } finally {
-                    Trace.traceEnd(Trace.TRACE_TAG_POWER);
-                }
+                setLight_native(mNativePointer, mId, color, mode, onMS, offMS, brightnessMode);
             }
         }
 
@@ -146,11 +114,47 @@ public class LightsService extends SystemService {
         private int mOnMS;
         private int mOffMS;
         private boolean mFlashing;
-        private int mBrightnessMode;
-        private int mLastBrightnessMode;
-        private int mLastColor;
-        private boolean mLocked;
     }
+
+    /* This class implements an obsolete API that was removed after eclair and re-added during the
+     * final moments of the froyo release to support flashlight apps that had been using the private
+     * IHardwareService API. This is expected to go away in the next release.
+     */
+    private final IHardwareService.Stub mLegacyFlashlightHack = new IHardwareService.Stub() {
+
+        private static final String FLASHLIGHT_FILE = "/sys/class/leds/spotlight/brightness";
+
+        public boolean getFlashlightEnabled() {
+            try {
+                FileInputStream fis = new FileInputStream(FLASHLIGHT_FILE);
+                int result = fis.read();
+                fis.close();
+                return (result != '0');
+            } catch (Exception e) {
+                return false;
+            }
+        }
+
+        public void setFlashlightEnabled(boolean on) {
+            final Context context = getContext();
+            if (context.checkCallingOrSelfPermission(android.Manifest.permission.FLASHLIGHT)
+                    != PackageManager.PERMISSION_GRANTED &&
+                    context.checkCallingOrSelfPermission(android.Manifest.permission.HARDWARE_TEST)
+                    != PackageManager.PERMISSION_GRANTED) {
+                throw new SecurityException("Requires FLASHLIGHT or HARDWARE_TEST permission");
+            }
+            try {
+                FileOutputStream fos = new FileOutputStream(FLASHLIGHT_FILE);
+                byte[] bytes = new byte[2];
+                bytes[0] = (byte)(on ? '1' : '0');
+                bytes[1] = '\n';
+                fos.write(bytes);
+                fos.close();
+            } catch (Exception e) {
+                // fail silently
+            }
+        }
+    };
 
     public LightsService(Context context) {
         super(context);
@@ -164,57 +168,13 @@ public class LightsService extends SystemService {
 
     @Override
     public void onStart() {
+        publishBinderService("hardware", mLegacyFlashlightHack);
         publishLocalService(LightsManager.class, mService);
     }
 
-    @Override
-    public void onBootPhase(int phase) {
-        if (phase == PHASE_SYSTEM_SERVICES_READY) {
-            IVrManager vrManager =
-                    (IVrManager) getBinderService(VrManagerService.VR_MANAGER_BINDER_SERVICE);
-            try {
-                vrManager.registerListener(mVrStateCallbacks);
-            } catch (RemoteException e) {
-                Slog.e(TAG, "Failed to register VR mode state listener: " + e);
-            }
-        }
-    }
-
-    private int getVrDisplayMode() {
-        int currentUser = ActivityManager.getCurrentUser();
-        return Settings.Secure.getIntForUser(getContext().getContentResolver(),
-                Settings.Secure.VR_DISPLAY_MODE,
-                /*default*/Settings.Secure.VR_DISPLAY_MODE_LOW_PERSISTENCE,
-                currentUser);
-    }
-
-    private final IVrStateCallbacks mVrStateCallbacks = new IVrStateCallbacks.Stub() {
-        @Override
-        public void onVrStateChanged(boolean enabled) throws RemoteException {
-            LightImpl l = mLights[LightsManager.LIGHT_ID_BACKLIGHT];
-            int vrDisplayMode = getVrDisplayMode();
-
-            // User leaves VR mode before altering display settings.
-            if (enabled && vrDisplayMode == Settings.Secure.VR_DISPLAY_MODE_LOW_PERSISTENCE) {
-                if (!mVrModeEnabled) {
-                    if (DEBUG)
-                        Slog.v(TAG, "VR mode enabled, setting brightness to low persistence");
-                    l.enableLowPersistence();
-                    mVrModeEnabled = true;
-                }
-            } else {
-                if (mVrModeEnabled) {
-                    if (DEBUG) Slog.v(TAG, "VR mode disabled, resetting brightnes");
-                    l.disableLowPersistence();
-                    mVrModeEnabled = false;
-                }
-            }
-        }
-    };
-
     private final LightsManager mService = new LightsManager() {
         @Override
-        public Light getLight(int id) {
+        public com.android.server.lights.Light getLight(int id) {
             if (id < LIGHT_ID_COUNT) {
                 return mLights[id];
             } else {

@@ -6,29 +6,10 @@
 
 package jsr166;
 
-import java.util.ArrayList;
-import java.util.Arrays;
-import java.util.Collection;
-import java.util.Iterator;
-import java.util.Map;
-import java.util.NavigableMap;
-import java.util.Set;
-import java.util.SortedMap;
-import java.util.TreeMap;
-
-import junit.framework.Test;
-import junit.framework.TestSuite;
+import junit.framework.*;
+import java.util.*;
 
 public class TreeSubMapTest extends JSR166TestCase {
-    // android-note: Removed because the CTS runner does a bad job of
-    // retrying tests that have suite() declarations.
-    //
-    // public static void main(String[] args) {
-    //     main(suite(), args);
-    // }
-    // public static Test suite() {
-    //     return new TestSuite(TreeSubMapTest.class);
-    // }
 
     /**
      * Returns a new map from Integers 1-5 to Strings "A"-"E".
@@ -397,8 +378,8 @@ public class TreeSubMapTest extends JSR166TestCase {
      * get(null) of nonempty map throws NPE
      */
     public void testGet_NullPointerException() {
-        NavigableMap c = map5();
         try {
+            NavigableMap c = map5();
             c.get(null);
             shouldThrow();
         } catch (NullPointerException success) {}
@@ -408,8 +389,8 @@ public class TreeSubMapTest extends JSR166TestCase {
      * containsKey(null) of nonempty map throws NPE
      */
     public void testContainsKey_NullPointerException() {
-        NavigableMap c = map5();
         try {
+            NavigableMap c = map5();
             c.containsKey(null);
             shouldThrow();
         } catch (NullPointerException success) {}
@@ -419,8 +400,8 @@ public class TreeSubMapTest extends JSR166TestCase {
      * put(null,x) throws NPE
      */
     public void testPut1_NullPointerException() {
-        NavigableMap c = map5();
         try {
+            NavigableMap c = map5();
             c.put(null, "whatever");
             shouldThrow();
         } catch (NullPointerException success) {}
@@ -430,8 +411,8 @@ public class TreeSubMapTest extends JSR166TestCase {
      * remove(null) throws NPE
      */
     public void testRemove1_NullPointerException() {
-        NavigableMap c = map5();
         try {
+            NavigableMap c = map5();
             c.remove(null);
             shouldThrow();
         } catch (NullPointerException success) {}
@@ -946,8 +927,8 @@ public class TreeSubMapTest extends JSR166TestCase {
      * get(null) of nonempty map throws NPE
      */
     public void testDescendingGet_NullPointerException() {
-        NavigableMap c = dmap5();
         try {
+            NavigableMap c = dmap5();
             c.get(null);
             shouldThrow();
         } catch (NullPointerException success) {}
@@ -957,8 +938,8 @@ public class TreeSubMapTest extends JSR166TestCase {
      * put(null,x) throws NPE
      */
     public void testDescendingPut1_NullPointerException() {
-        NavigableMap c = dmap5();
         try {
+            NavigableMap c = dmap5();
             c.put(null, "whatever");
             shouldThrow();
         } catch (NullPointerException success) {}

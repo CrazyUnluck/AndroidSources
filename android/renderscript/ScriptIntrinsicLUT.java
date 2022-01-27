@@ -16,6 +16,8 @@
 
 package android.renderscript;
 
+import android.util.Log;
+
 /**
  * Intrinsic for applying a per-channel lookup table. Each
  * channel of the input has an independant lookup table. The
@@ -28,7 +30,7 @@ public final class ScriptIntrinsicLUT extends ScriptIntrinsic {
     private final byte mCache[] = new byte[1024];
     private boolean mDirty = true;
 
-    private ScriptIntrinsicLUT(long id, RenderScript rs) {
+    private ScriptIntrinsicLUT(int id, RenderScript rs) {
         super(id, rs);
         mTables = Allocation.createSized(rs, Element.U8(rs), 1024);
         for (int ct=0; ct < 256; ct++) {
@@ -51,7 +53,7 @@ public final class ScriptIntrinsicLUT extends ScriptIntrinsic {
      * @return ScriptIntrinsicLUT
      */
     public static ScriptIntrinsicLUT create(RenderScript rs, Element e) {
-        long id = rs.nScriptIntrinsicCreate(3, e.getID(rs));
+        int id = rs.nScriptIntrinsicCreate(3, e.getID(rs));
         return new ScriptIntrinsicLUT(id, rs);
 
     }
@@ -114,6 +116,7 @@ public final class ScriptIntrinsicLUT extends ScriptIntrinsic {
         mDirty = true;
     }
 
+
     /**
      * Invoke the kernel and apply the lookup to each cell of ain
      * and copy to aout.
@@ -122,23 +125,11 @@ public final class ScriptIntrinsicLUT extends ScriptIntrinsic {
      * @param aout Output allocation
      */
     public void forEach(Allocation ain, Allocation aout) {
-        forEach(ain, aout, null);
-    }
-
-    /**
-     * Invoke the kernel and apply the lookup to each cell of ain
-     * and copy to aout.
-     *
-     * @param ain Input allocation
-     * @param aout Output allocation
-     * @param opt Options for clipping
-     */
-    public void forEach(Allocation ain, Allocation aout, Script.LaunchOptions opt) {
         if (mDirty) {
             mDirty = false;
             mTables.copyFromUnchecked(mCache);
         }
-        forEach(0, ain, aout, null, opt);
+        forEach(0, ain, aout, null);
     }
 
     /**

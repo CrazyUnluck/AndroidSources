@@ -22,16 +22,6 @@ abstract class PlaybackQueueItem implements Runnable {
         return mDispatcher;
     }
 
-    @Override
     public abstract void run();
-
-    /**
-     * Stop the playback.
-     *
-     * @param errorCode Cause of the stop. Can be either one of the error codes from
-     *         {@link android.speech.tts.TextToSpeech} or
-     *         {@link android.speech.tts.TextToSpeech#STOPPED}
-     *         if stopped on a client request.
-     */
-    abstract void stop(int errorCode);
+    abstract void stop(boolean isError);
 }

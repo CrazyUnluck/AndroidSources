@@ -16,18 +16,12 @@
 
 package com.android.server;
 
-import android.app.ProgressDialog;
 import android.content.BroadcastReceiver;
 import android.content.Context;
 import android.content.Intent;
-import android.os.AsyncTask;
 import android.os.RecoverySystem;
-import android.os.storage.StorageManager;
 import android.util.Log;
 import android.util.Slog;
-import android.view.WindowManager;
-
-import com.android.internal.R;
 
 import java.io.IOException;
 
@@ -44,9 +38,6 @@ public class MasterClearReceiver extends BroadcastReceiver {
         }
 
         final boolean shutdown = intent.getBooleanExtra("shutdown", false);
-        final String reason = intent.getStringExtra(Intent.EXTRA_REASON);
-        final boolean wipeExternalStorage = intent.getBooleanExtra(
-                Intent.EXTRA_WIPE_EXTERNAL_STORAGE, false);
 
         Slog.w(TAG, "!!! FACTORY RESET !!!");
         // The reboot call is blocking, so we need to do it on another thread.
@@ -54,57 +45,13 @@ public class MasterClearReceiver extends BroadcastReceiver {
             @Override
             public void run() {
                 try {
-                    RecoverySystem.rebootWipeUserData(context, shutdown, reason);
+                    RecoverySystem.rebootWipeUserData(context, shutdown);
                     Log.wtf(TAG, "Still running after master clear?!");
                 } catch (IOException e) {
-                    Slog.e(TAG, "Can't perform master clear/factory reset", e);
-                } catch (SecurityException e) {
                     Slog.e(TAG, "Can't perform master clear/factory reset", e);
                 }
             }
         };
-
-        if (wipeExternalStorage) {
-            // thr will be started at the end of this task.
-            new WipeAdoptableDisksTask(context, thr).execute();
-        } else {
-            thr.start();
-        }
-    }
-
-    private class WipeAdoptableDisksTask extends AsyncTask<Void, Void, Void> {
-        private final Thread mChainedTask;
-        private final Context mContext;
-        private final ProgressDialog mProgressDialog;
-
-        public WipeAdoptableDisksTask(Context context, Thread chainedTask) {
-            mContext = context;
-            mChainedTask = chainedTask;
-            mProgressDialog = new ProgressDialog(context);
-        }
-
-        @Override
-        protected void onPreExecute() {
-            mProgressDialog.setIndeterminate(true);
-            mProgressDialog.getWindow().setType(WindowManager.LayoutParams.TYPE_SYSTEM_ALERT);
-            mProgressDialog.setMessage(mContext.getText(R.string.progress_erasing));
-            mProgressDialog.show();
-        }
-
-        @Override
-        protected Void doInBackground(Void... params) {
-            Slog.w(TAG, "Wiping adoptable disks");
-            StorageManager sm = (StorageManager) mContext.getSystemService(
-                    Context.STORAGE_SERVICE);
-            sm.wipeAdoptableDisks();
-            return null;
-        }
-
-        @Override
-        protected void onPostExecute(Void result) {
-            mProgressDialog.dismiss();
-            mChainedTask.start();
-        }
-
+        thr.start();
     }
 }

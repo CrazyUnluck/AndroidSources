@@ -20,22 +20,18 @@ import android.app.PendingIntent;
 import android.content.ComponentName;
 import android.content.Context;
 import android.content.Intent;
-import android.content.pm.PackageManager;
-import android.content.pm.PackageManager.NameNotFoundException;
-import android.content.pm.ResolveInfo;
 import android.content.res.Resources;
-import android.net.IpPrefix;
-import android.net.LinkAddress;
-import android.net.Network;
-import android.net.RouteInfo;
 import android.os.Parcel;
 import android.os.Parcelable;
 import android.os.UserHandle;
+import android.net.RouteInfo;
+import android.net.LinkAddress;
 
-import java.net.Inet4Address;
+import com.android.internal.util.Preconditions;
+
 import java.net.InetAddress;
-import java.util.ArrayList;
 import java.util.List;
+import java.util.ArrayList;
 
 /**
  * A simple container used to carry information in VpnBuilder, VpnDialogs,
@@ -60,28 +56,12 @@ public class VpnConfig implements Parcelable {
         return intent;
     }
 
-    /** NOTE: This should only be used for legacy VPN. */
     public static PendingIntent getIntentForStatusPanel(Context context) {
         Intent intent = new Intent();
         intent.setClassName(DIALOGS_PACKAGE, DIALOGS_PACKAGE + ".ManageDialog");
         intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_NO_HISTORY |
                 Intent.FLAG_ACTIVITY_EXCLUDE_FROM_RECENTS);
         return PendingIntent.getActivityAsUser(context, 0, intent, 0, null, UserHandle.CURRENT);
-    }
-
-    public static CharSequence getVpnLabel(Context context, String packageName)
-            throws NameNotFoundException {
-        PackageManager pm = context.getPackageManager();
-        Intent intent = new Intent(SERVICE_INTERFACE);
-        intent.setPackage(packageName);
-        List<ResolveInfo> services = pm.queryIntentServices(intent, 0 /* flags */);
-        if (services != null && services.size() == 1) {
-            // This app contains exactly one VPN service. Call loadLabel, which will attempt to
-            // load the service's label, and fall back to the app label if none is present.
-            return services.get(0).loadLabel(pm);
-        } else {
-            return pm.getApplicationInfo(packageName, 0).loadLabel(pm);
-        }
     }
 
     public String user;
@@ -92,24 +72,9 @@ public class VpnConfig implements Parcelable {
     public List<RouteInfo> routes = new ArrayList<RouteInfo>();
     public List<String> dnsServers;
     public List<String> searchDomains;
-    public List<String> allowedApplications;
-    public List<String> disallowedApplications;
     public PendingIntent configureIntent;
     public long startTime = -1;
     public boolean legacy;
-    public boolean blocking;
-    public boolean allowBypass;
-    public boolean allowIPv4;
-    public boolean allowIPv6;
-    public Network[] underlyingNetworks;
-
-    public void updateAllowedFamilies(InetAddress address) {
-        if (address instanceof Inet4Address) {
-            allowIPv4 = true;
-        } else {
-            allowIPv6 = true;
-        }
-    }
 
     public void addLegacyRoutes(String routesStr) {
         if (routesStr.trim().equals("")) {
@@ -118,9 +83,10 @@ public class VpnConfig implements Parcelable {
         String[] routes = routesStr.trim().split(" ");
         for (String route : routes) {
             //each route is ip/prefix
-            RouteInfo info = new RouteInfo(new IpPrefix(route), null);
+            String[] split = route.split("/");
+            RouteInfo info = new RouteInfo(new LinkAddress
+                    (InetAddress.parseNumericAddress(split[0]), Integer.parseInt(split[1])), null);
             this.routes.add(info);
-            updateAllowedFamilies(info.getDestination().getAddress());
         }
     }
 
@@ -131,9 +97,10 @@ public class VpnConfig implements Parcelable {
         String[] addresses = addressesStr.trim().split(" ");
         for (String address : addresses) {
             //each address is ip/prefix
-            LinkAddress addr = new LinkAddress(address);
+            String[] split = address.split("/");
+            LinkAddress addr = new LinkAddress(InetAddress.parseNumericAddress(split[0]),
+                    Integer.parseInt(split[1]));
             this.addresses.add(addr);
-            updateAllowedFamilies(addr.getAddress());
         }
     }
 
@@ -152,16 +119,9 @@ public class VpnConfig implements Parcelable {
         out.writeTypedList(routes);
         out.writeStringList(dnsServers);
         out.writeStringList(searchDomains);
-        out.writeStringList(allowedApplications);
-        out.writeStringList(disallowedApplications);
         out.writeParcelable(configureIntent, flags);
         out.writeLong(startTime);
         out.writeInt(legacy ? 1 : 0);
-        out.writeInt(blocking ? 1 : 0);
-        out.writeInt(allowBypass ? 1 : 0);
-        out.writeInt(allowIPv4 ? 1 : 0);
-        out.writeInt(allowIPv6 ? 1 : 0);
-        out.writeTypedArray(underlyingNetworks, flags);
     }
 
     public static final Parcelable.Creator<VpnConfig> CREATOR =
@@ -177,16 +137,9 @@ public class VpnConfig implements Parcelable {
             in.readTypedList(config.routes, RouteInfo.CREATOR);
             config.dnsServers = in.createStringArrayList();
             config.searchDomains = in.createStringArrayList();
-            config.allowedApplications = in.createStringArrayList();
-            config.disallowedApplications = in.createStringArrayList();
             config.configureIntent = in.readParcelable(null);
             config.startTime = in.readLong();
             config.legacy = in.readInt() != 0;
-            config.blocking = in.readInt() != 0;
-            config.allowBypass = in.readInt() != 0;
-            config.allowIPv4 = in.readInt() != 0;
-            config.allowIPv6 = in.readInt() != 0;
-            config.underlyingNetworks = in.createTypedArray(Network.CREATOR);
             return config;
         }
 

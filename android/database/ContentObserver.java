@@ -18,7 +18,6 @@ package android.database;
 
 import android.net.Uri;
 import android.os.Handler;
-import android.os.UserHandle;
 
 /**
  * Receives call backs for changes to content.
@@ -131,21 +130,6 @@ public abstract class ContentObserver {
     }
 
     /**
-     * Dispatches a change notification to the observer. Includes the changed
-     * content Uri when available and also the user whose content changed.
-     *
-     * @param selfChange True if this is a self-change notification.
-     * @param uri The Uri of the changed content, or null if unknown.
-     * @param userId The user whose content changed. Can be either a specific
-     *         user or {@link UserHandle#USER_ALL}.
-     *
-     * @hide
-     */
-    public void onChange(boolean selfChange, Uri uri, int userId) {
-        onChange(selfChange, uri);
-    }
-
-    /**
      * Dispatches a change notification to the observer.
      * <p>
      * If a {@link Handler} was supplied to the {@link ContentObserver} constructor,
@@ -175,45 +159,25 @@ public abstract class ContentObserver {
      * @param uri The Uri of the changed content, or null if unknown.
      */
     public final void dispatchChange(boolean selfChange, Uri uri) {
-        dispatchChange(selfChange, uri, UserHandle.getCallingUserId());
-    }
-
-    /**
-     * Dispatches a change notification to the observer. Includes the changed
-     * content Uri when available and also the user whose content changed.
-     * <p>
-     * If a {@link Handler} was supplied to the {@link ContentObserver} constructor,
-     * then a call to the {@link #onChange} method is posted to the handler's message queue.
-     * Otherwise, the {@link #onChange} method is invoked immediately on this thread.
-     * </p>
-     *
-     * @param selfChange True if this is a self-change notification.
-     * @param uri The Uri of the changed content, or null if unknown.
-     * @param userId The user whose content changed.
-     */
-    private void dispatchChange(boolean selfChange, Uri uri, int userId) {
         if (mHandler == null) {
-            onChange(selfChange, uri, userId);
+            onChange(selfChange, uri);
         } else {
-            mHandler.post(new NotificationRunnable(selfChange, uri, userId));
+            mHandler.post(new NotificationRunnable(selfChange, uri));
         }
     }
-
 
     private final class NotificationRunnable implements Runnable {
         private final boolean mSelfChange;
         private final Uri mUri;
-        private final int mUserId;
 
-        public NotificationRunnable(boolean selfChange, Uri uri, int userId) {
+        public NotificationRunnable(boolean selfChange, Uri uri) {
             mSelfChange = selfChange;
             mUri = uri;
-            mUserId = userId;
         }
 
         @Override
         public void run() {
-            ContentObserver.this.onChange(mSelfChange, mUri, mUserId);
+            ContentObserver.this.onChange(mSelfChange, mUri);
         }
     }
 
@@ -225,10 +189,10 @@ public abstract class ContentObserver {
         }
 
         @Override
-        public void onChange(boolean selfChange, Uri uri, int userId) {
+        public void onChange(boolean selfChange, Uri uri) {
             ContentObserver contentObserver = mContentObserver;
             if (contentObserver != null) {
-                contentObserver.dispatchChange(selfChange, uri, userId);
+                contentObserver.dispatchChange(selfChange, uri);
             }
         }
 

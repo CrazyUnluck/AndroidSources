@@ -8,23 +8,11 @@
 
 package jsr166;
 
+import junit.framework.*;
 import java.util.Arrays;
 import java.util.concurrent.atomic.AtomicIntegerArray;
 
-import junit.framework.Test;
-import junit.framework.TestSuite;
-
 public class AtomicIntegerArrayTest extends JSR166TestCase {
-
-    // android-note: Removed because the CTS runner does a bad job of
-    // retrying tests that have suite() declarations.
-    //
-    // public static void main(String[] args) {
-    //     main(suite(), args);
-    // }
-    // public static Test suite() {
-    //     return new TestSuite(AtomicIntegerArrayTest.class);
-    // }
 
     /**
      * constructor creates array of given size with all elements zero
@@ -41,7 +29,7 @@ public class AtomicIntegerArrayTest extends JSR166TestCase {
     public void testConstructor2NPE() {
         try {
             int[] a = null;
-            new AtomicIntegerArray(a);
+            AtomicIntegerArray aa = new AtomicIntegerArray(a);
             shouldThrow();
         } catch (NullPointerException success) {}
     }
@@ -169,10 +157,10 @@ public class AtomicIntegerArrayTest extends JSR166TestCase {
         AtomicIntegerArray aa = new AtomicIntegerArray(SIZE);
         for (int i = 0; i < SIZE; i++) {
             aa.set(i, 1);
-            do {} while (!aa.weakCompareAndSet(i, 1, 2));
-            do {} while (!aa.weakCompareAndSet(i, 2, -4));
+            while (!aa.weakCompareAndSet(i, 1, 2));
+            while (!aa.weakCompareAndSet(i, 2, -4));
             assertEquals(-4, aa.get(i));
-            do {} while (!aa.weakCompareAndSet(i, -4, 7));
+            while (!aa.weakCompareAndSet(i, -4, 7));
             assertEquals(7, aa.get(i));
         }
     }
@@ -279,6 +267,8 @@ public class AtomicIntegerArrayTest extends JSR166TestCase {
         }
     }
 
+    static final int COUNTDOWN = 100000;
+
     class Counter extends CheckedRunnable {
         final AtomicIntegerArray aa;
         volatile int counts;
@@ -291,7 +281,7 @@ public class AtomicIntegerArrayTest extends JSR166TestCase {
                     assertTrue(v >= 0);
                     if (v != 0) {
                         done = false;
-                        if (aa.compareAndSet(i, v, v - 1))
+                        if (aa.compareAndSet(i, v, v-1))
                             ++counts;
                     }
                 }
@@ -307,9 +297,8 @@ public class AtomicIntegerArrayTest extends JSR166TestCase {
      */
     public void testCountingInMultipleThreads() throws InterruptedException {
         final AtomicIntegerArray aa = new AtomicIntegerArray(SIZE);
-        int countdown = 10000;
         for (int i = 0; i < SIZE; i++)
-            aa.set(i, countdown);
+            aa.set(i, COUNTDOWN);
         Counter c1 = new Counter(aa);
         Counter c2 = new Counter(aa);
         Thread t1 = new Thread(c1);
@@ -318,7 +307,7 @@ public class AtomicIntegerArrayTest extends JSR166TestCase {
         t2.start();
         t1.join();
         t2.join();
-        assertEquals(c1.counts+c2.counts, SIZE * countdown);
+        assertEquals(c1.counts+c2.counts, SIZE * COUNTDOWN);
     }
 
     /**

@@ -16,41 +16,31 @@
 
 package android.widget;
 
-import android.annotation.DrawableRes;
-import android.annotation.NonNull;
-import android.annotation.Nullable;
 import android.content.ContentResolver;
 import android.content.Context;
-import android.content.res.ColorStateList;
 import android.content.res.Resources;
 import android.content.res.TypedArray;
 import android.graphics.Bitmap;
 import android.graphics.Canvas;
 import android.graphics.ColorFilter;
 import android.graphics.Matrix;
-import android.graphics.PixelFormat;
 import android.graphics.PorterDuff;
 import android.graphics.PorterDuffColorFilter;
-import android.graphics.Rect;
 import android.graphics.RectF;
 import android.graphics.Xfermode;
 import android.graphics.drawable.BitmapDrawable;
 import android.graphics.drawable.Drawable;
-import android.graphics.drawable.Icon;
 import android.net.Uri;
 import android.os.Build;
-import android.os.Handler;
 import android.text.TextUtils;
 import android.util.AttributeSet;
 import android.util.Log;
 import android.view.RemotableViewMethod;
 import android.view.View;
 import android.view.ViewDebug;
-import android.view.ViewHierarchyEncoder;
 import android.view.accessibility.AccessibilityEvent;
+import android.view.accessibility.AccessibilityNodeInfo;
 import android.widget.RemoteViews.RemoteView;
-
-import com.android.internal.R;
 
 import java.io.IOException;
 import java.io.InputStream;
@@ -72,8 +62,6 @@ import java.io.InputStream;
  */
 @RemoteView
 public class ImageView extends View {
-    private static final String LOG_TAG = "ImageView";
-
     // settable by the client
     private Uri mUri;
     private int mResource = 0;
@@ -85,20 +73,13 @@ public class ImageView extends View {
     private int mMaxHeight = Integer.MAX_VALUE;
 
     // these are applied to the drawable
-    private ColorFilter mColorFilter = null;
-    private boolean mHasColorFilter = false;
+    private ColorFilter mColorFilter;
     private Xfermode mXfermode;
     private int mAlpha = 255;
-    private final int mViewAlphaScale = 256;
+    private int mViewAlphaScale = 256;
     private boolean mColorMod = false;
 
     private Drawable mDrawable = null;
-    private BitmapDrawable mRecycleableBitmapDrawable = null;
-    private ColorStateList mDrawableTintList = null;
-    private PorterDuff.Mode mDrawableTintMode = null;
-    private boolean mHasDrawableTint = false;
-    private boolean mHasDrawableTintMode = false;
-
     private int[] mState = null;
     private boolean mMergeState = false;
     private int mLevel = 0;
@@ -107,8 +88,8 @@ public class ImageView extends View {
     private Matrix mDrawMatrix = null;
 
     // Avoid allocations...
-    private final RectF mTempSrc = new RectF();
-    private final RectF mTempDst = new RectF();
+    private RectF mTempSrc = new RectF();
+    private RectF mTempDst = new RectF();
 
     private boolean mCropToPadding;
 
@@ -117,9 +98,6 @@ public class ImageView extends View {
 
     // AdjustViewBounds behavior will be in compatibility mode for older apps.
     private boolean mAdjustViewBoundsCompat = false;
-
-    /** Whether to pass Resources when creating the source from a stream. */
-    private boolean mUseCorrectStreamDensity;
 
     private static final ScaleType[] sScaleTypeArray = {
         ScaleType.MATRIX,
@@ -137,85 +115,73 @@ public class ImageView extends View {
         initImageView();
     }
 
-    public ImageView(Context context, @Nullable AttributeSet attrs) {
+    public ImageView(Context context, AttributeSet attrs) {
         this(context, attrs, 0);
     }
 
-    public ImageView(Context context, @Nullable AttributeSet attrs, int defStyleAttr) {
-        this(context, attrs, defStyleAttr, 0);
-    }
-
-    public ImageView(Context context, @Nullable AttributeSet attrs, int defStyleAttr,
-            int defStyleRes) {
-        super(context, attrs, defStyleAttr, defStyleRes);
-
+    public ImageView(Context context, AttributeSet attrs, int defStyle) {
+        super(context, attrs, defStyle);
         initImageView();
 
-        final TypedArray a = context.obtainStyledAttributes(
-                attrs, R.styleable.ImageView, defStyleAttr, defStyleRes);
+        TypedArray a = context.obtainStyledAttributes(attrs,
+                com.android.internal.R.styleable.ImageView, defStyle, 0);
 
-        final Drawable d = a.getDrawable(R.styleable.ImageView_src);
+        Drawable d = a.getDrawable(com.android.internal.R.styleable.ImageView_src);
         if (d != null) {
             setImageDrawable(d);
         }
 
-        mBaselineAlignBottom = a.getBoolean(R.styleable.ImageView_baselineAlignBottom, false);
-        mBaseline = a.getDimensionPixelSize(R.styleable.ImageView_baseline, -1);
+        mBaselineAlignBottom = a.getBoolean(
+                com.android.internal.R.styleable.ImageView_baselineAlignBottom, false);
 
-        setAdjustViewBounds(a.getBoolean(R.styleable.ImageView_adjustViewBounds, false));
-        setMaxWidth(a.getDimensionPixelSize(R.styleable.ImageView_maxWidth, Integer.MAX_VALUE));
-        setMaxHeight(a.getDimensionPixelSize(R.styleable.ImageView_maxHeight, Integer.MAX_VALUE));
+        mBaseline = a.getDimensionPixelSize(
+                com.android.internal.R.styleable.ImageView_baseline, -1);
 
-        final int index = a.getInt(R.styleable.ImageView_scaleType, -1);
+        setAdjustViewBounds(
+            a.getBoolean(com.android.internal.R.styleable.ImageView_adjustViewBounds,
+            false));
+
+        setMaxWidth(a.getDimensionPixelSize(
+                com.android.internal.R.styleable.ImageView_maxWidth, Integer.MAX_VALUE));
+        
+        setMaxHeight(a.getDimensionPixelSize(
+                com.android.internal.R.styleable.ImageView_maxHeight, Integer.MAX_VALUE));
+        
+        int index = a.getInt(com.android.internal.R.styleable.ImageView_scaleType, -1);
         if (index >= 0) {
             setScaleType(sScaleTypeArray[index]);
         }
 
-        if (a.hasValue(R.styleable.ImageView_tint)) {
-            mDrawableTintList = a.getColorStateList(R.styleable.ImageView_tint);
-            mHasDrawableTint = true;
-
-            // Prior to L, this attribute would always set a color filter with
-            // blending mode SRC_ATOP. Preserve that default behavior.
-            mDrawableTintMode = PorterDuff.Mode.SRC_ATOP;
-            mHasDrawableTintMode = true;
+        int tint = a.getInt(com.android.internal.R.styleable.ImageView_tint, 0);
+        if (tint != 0) {
+            setColorFilter(tint);
         }
-
-        if (a.hasValue(R.styleable.ImageView_tintMode)) {
-            mDrawableTintMode = Drawable.parseTintMode(a.getInt(
-                    R.styleable.ImageView_tintMode, -1), mDrawableTintMode);
-            mHasDrawableTintMode = true;
-        }
-
-        applyImageTint();
-
-        final int alpha = a.getInt(R.styleable.ImageView_drawableAlpha, 255);
+        
+        int alpha = a.getInt(com.android.internal.R.styleable.ImageView_drawableAlpha, 255);
         if (alpha != 255) {
-            setImageAlpha(alpha);
+            setAlpha(alpha);
         }
 
         mCropToPadding = a.getBoolean(
-                R.styleable.ImageView_cropToPadding, false);
-
+                com.android.internal.R.styleable.ImageView_cropToPadding, false);
+        
         a.recycle();
 
         //need inflate syntax/reader for matrix
     }
 
     private void initImageView() {
-        mMatrix = new Matrix();
-        mScaleType = ScaleType.FIT_CENTER;
-
-        final int targetSdkVersion = mContext.getApplicationInfo().targetSdkVersion;
-        mAdjustViewBoundsCompat = targetSdkVersion <= Build.VERSION_CODES.JELLY_BEAN_MR1;
-        mUseCorrectStreamDensity = targetSdkVersion > Build.VERSION_CODES.M;
+        mMatrix     = new Matrix();
+        mScaleType  = ScaleType.FIT_CENTER;
+        mAdjustViewBoundsCompat = mContext.getApplicationInfo().targetSdkVersion <=
+                Build.VERSION_CODES.JELLY_BEAN_MR1;
     }
 
     @Override
-    protected boolean verifyDrawable(@NonNull Drawable dr) {
+    protected boolean verifyDrawable(Drawable dr) {
         return mDrawable == dr || super.verifyDrawable(dr);
     }
-
+    
     @Override
     public void jumpDrawablesToCurrentState() {
         super.jumpDrawablesToCurrentState();
@@ -223,19 +189,8 @@ public class ImageView extends View {
     }
 
     @Override
-    public void invalidateDrawable(@NonNull Drawable dr) {
+    public void invalidateDrawable(Drawable dr) {
         if (dr == mDrawable) {
-            if (dr != null) {
-                // update cached drawable dimensions if they've changed
-                final int w = dr.getIntrinsicWidth();
-                final int h = dr.getIntrinsicHeight();
-                if (w != mDrawableWidth || h != mDrawableHeight) {
-                    mDrawableWidth = w;
-                    mDrawableHeight = h;
-                    // updates the matrix, which is dependent on the bounds
-                    configureBounds();
-                }
-            }
             /* we invalidate the whole view in this case because it's very
              * hard to know where the drawable actually is. This is made
              * complicated because of the offsets and transformations that
@@ -254,12 +209,10 @@ public class ImageView extends View {
         return (getBackground() != null && getBackground().getCurrent() != null);
     }
 
-    /** @hide */
     @Override
-    public void onPopulateAccessibilityEventInternal(AccessibilityEvent event) {
-        super.onPopulateAccessibilityEventInternal(event);
-
-        final CharSequence contentDescription = getContentDescription();
+    public void onPopulateAccessibilityEvent(AccessibilityEvent event) {
+        super.onPopulateAccessibilityEvent(event);
+        CharSequence contentDescription = getContentDescription();
         if (!TextUtils.isEmpty(contentDescription)) {
             event.getText().add(contentDescription);
         }
@@ -270,7 +223,7 @@ public class ImageView extends View {
      * to preserve the aspect ratio of its drawable
      *
      * @return whether to adjust the bounds of this view
-     * to preserve the original aspect ratio of the drawable
+     * to presrve the original aspect ratio of the drawable
      *
      * @see #setAdjustViewBounds(boolean)
      *
@@ -292,7 +245,7 @@ public class ImageView extends View {
      *
      * @param adjustViewBounds Whether to adjust the bounds of this view
      * to preserve the original aspect ratio of the drawable.
-     *
+     * 
      * @see #getAdjustViewBounds()
      *
      * @attr ref android.R.styleable#ImageView_adjustViewBounds
@@ -324,14 +277,14 @@ public class ImageView extends View {
      * of 100 x 100 while preserving the original aspect ratio, do the following: 1) set
      * adjustViewBounds to true 2) set maxWidth and maxHeight to 100 3) set the height and width
      * layout params to WRAP_CONTENT.
-     *
+     * 
      * <p>
      * Note that this view could be still smaller than 100 x 100 using this approach if the original
      * image is small. To set an image to a fixed size, specify that size in the layout params and
      * then use {@link #setScaleType(android.widget.ImageView.ScaleType)} to determine how to fit
      * the image within the bounds.
      * </p>
-     *
+     * 
      * @param maxWidth maximum width for this view
      *
      * @see #getMaxWidth()
@@ -362,14 +315,14 @@ public class ImageView extends View {
      * maximum of 100 x 100 while preserving the original aspect ratio, do the following: 1) set
      * adjustViewBounds to true 2) set maxWidth and maxHeight to 100 3) set the height and width
      * layout params to WRAP_CONTENT.
-     *
+     * 
      * <p>
      * Note that this view could be still smaller than 100 x 100 using this approach if the original
      * image is small. To set an image to a fixed size, specify that size in the layout params and
      * then use {@link #setScaleType(android.widget.ImageView.ScaleType)} to determine how to fit
      * the image within the bounds.
      * </p>
-     *
+     * 
      * @param maxHeight maximum height for this view
      *
      * @see #getMaxHeight()
@@ -385,31 +338,7 @@ public class ImageView extends View {
         assigned.
     */
     public Drawable getDrawable() {
-        if (mDrawable == mRecycleableBitmapDrawable) {
-            // Consider our cached version dirty since app code now has a reference to it
-            mRecycleableBitmapDrawable = null;
-        }
         return mDrawable;
-    }
-
-    private class ImageDrawableCallback implements Runnable {
-
-        private final Drawable drawable;
-        private final Uri uri;
-        private final int resource;
-
-        ImageDrawableCallback(Drawable drawable, Uri uri, int resource) {
-            this.drawable = drawable;
-            this.uri = uri;
-            this.resource = resource;
-        }
-
-        @Override
-        public void run() {
-            setImageDrawable(drawable);
-            mUri = uri;
-            mResource = resource;
-        }
     }
 
     /**
@@ -425,28 +354,23 @@ public class ImageView extends View {
      *
      * @attr ref android.R.styleable#ImageView_src
      */
-    @android.view.RemotableViewMethod(asyncImpl="setImageResourceAsync")
-    public void setImageResource(@DrawableRes int resId) {
-        // The resource configuration may have changed, so we should always
-        // try to load the resource even if the resId hasn't changed.
-        final int oldWidth = mDrawableWidth;
-        final int oldHeight = mDrawableHeight;
+    @android.view.RemotableViewMethod
+    public void setImageResource(int resId) {
+        if (mUri != null || mResource != resId) {
+            updateDrawable(null);
+            mResource = resId;
+            mUri = null;
 
-        updateDrawable(null);
-        mResource = resId;
-        mUri = null;
+            final int oldWidth = mDrawableWidth;
+            final int oldHeight = mDrawableHeight;
 
-        resolveUri();
+            resolveUri();
 
-        if (oldWidth != mDrawableWidth || oldHeight != mDrawableHeight) {
-            requestLayout();
+            if (oldWidth != mDrawableWidth || oldHeight != mDrawableHeight) {
+                requestLayout();
+            }
+            invalidate();
         }
-        invalidate();
-    }
-
-    /** @hide **/
-    public Runnable setImageResourceAsync(@DrawableRes int resId) {
-        return new ImageDrawableCallback(getContext().getDrawable(resId), null, resId);
     }
 
     /**
@@ -454,15 +378,17 @@ public class ImageView extends View {
      *
      * <p class="note">This does Bitmap reading and decoding on the UI
      * thread, which can cause a latency hiccup.  If that's a concern,
-     * consider using {@link #setImageDrawable(Drawable)} or
+     * consider using {@link #setImageDrawable(android.graphics.drawable.Drawable)} or
      * {@link #setImageBitmap(android.graphics.Bitmap)} and
      * {@link android.graphics.BitmapFactory} instead.</p>
      *
-     * @param uri the Uri of an image, or {@code null} to clear the content
+     * @param uri The Uri of an image
      */
-    @android.view.RemotableViewMethod(asyncImpl="setImageURIAsync")
-    public void setImageURI(@Nullable Uri uri) {
-        if (mResource != 0 || (mUri != uri && (uri == null || mUri == null || !uri.equals(mUri)))) {
+    @android.view.RemotableViewMethod
+    public void setImageURI(Uri uri) {
+        if (mResource != 0 ||
+                (mUri != uri &&
+                 (uri == null || mUri == null || !uri.equals(mUri)))) {
             updateDrawable(null);
             mResource = 0;
             mUri = uri;
@@ -479,26 +405,12 @@ public class ImageView extends View {
         }
     }
 
-    /** @hide **/
-    public Runnable setImageURIAsync(@Nullable Uri uri) {
-        if (mResource != 0 || (mUri != uri && (uri == null || mUri == null || !uri.equals(mUri)))) {
-            Drawable d = uri == null ? null : getDrawableFromUri(uri);
-            if (d == null) {
-                // Do not set the URI if the drawable couldn't be loaded.
-                uri = null;
-            }
-            return new ImageDrawableCallback(d, uri, 0);
-        }
-        return null;
-    }
-
     /**
      * Sets a drawable as the content of this ImageView.
-     *
-     * @param drawable the Drawable to set, or {@code null} to clear the
-     *                 content
+     * 
+     * @param drawable The drawable to set
      */
-    public void setImageDrawable(@Nullable Drawable drawable) {
+    public void setImageDrawable(Drawable drawable) {
         if (mDrawable != drawable) {
             mResource = 0;
             mUri = null;
@@ -516,123 +428,15 @@ public class ImageView extends View {
     }
 
     /**
-     * Sets the content of this ImageView to the specified Icon.
-     *
-     * <p class="note">Depending on the Icon type, this may do Bitmap reading
-     * and decoding on the UI thread, which can cause UI jank.  If that's a
-     * concern, consider using
-     * {@link Icon#loadDrawableAsync(Context, Icon.OnDrawableLoadedListener, Handler)}
-     * and then {@link #setImageDrawable(android.graphics.drawable.Drawable)}
-     * instead.</p>
-     *
-     * @param icon an Icon holding the desired image, or {@code null} to clear
-     *             the content
-     */
-    @android.view.RemotableViewMethod(asyncImpl="setImageIconAsync")
-    public void setImageIcon(@Nullable Icon icon) {
-        setImageDrawable(icon == null ? null : icon.loadDrawable(mContext));
-    }
-
-    /** @hide **/
-    public Runnable setImageIconAsync(@Nullable Icon icon) {
-        return new ImageDrawableCallback(icon == null ? null : icon.loadDrawable(mContext), null, 0);
-    }
-
-    /**
-     * Applies a tint to the image drawable. Does not modify the current tint
-     * mode, which is {@link PorterDuff.Mode#SRC_IN} by default.
-     * <p>
-     * Subsequent calls to {@link #setImageDrawable(Drawable)} will automatically
-     * mutate the drawable and apply the specified tint and tint mode using
-     * {@link Drawable#setTintList(ColorStateList)}.
-     *
-     * @param tint the tint to apply, may be {@code null} to clear tint
-     *
-     * @attr ref android.R.styleable#ImageView_tint
-     * @see #getImageTintList()
-     * @see Drawable#setTintList(ColorStateList)
-     */
-    public void setImageTintList(@Nullable ColorStateList tint) {
-        mDrawableTintList = tint;
-        mHasDrawableTint = true;
-
-        applyImageTint();
-    }
-
-    /**
-     * @return the tint applied to the image drawable
-     * @attr ref android.R.styleable#ImageView_tint
-     * @see #setImageTintList(ColorStateList)
-     */
-    @Nullable
-    public ColorStateList getImageTintList() {
-        return mDrawableTintList;
-    }
-
-    /**
-     * Specifies the blending mode used to apply the tint specified by
-     * {@link #setImageTintList(ColorStateList)}} to the image drawable. The default
-     * mode is {@link PorterDuff.Mode#SRC_IN}.
-     *
-     * @param tintMode the blending mode used to apply the tint, may be
-     *                 {@code null} to clear tint
-     * @attr ref android.R.styleable#ImageView_tintMode
-     * @see #getImageTintMode()
-     * @see Drawable#setTintMode(PorterDuff.Mode)
-     */
-    public void setImageTintMode(@Nullable PorterDuff.Mode tintMode) {
-        mDrawableTintMode = tintMode;
-        mHasDrawableTintMode = true;
-
-        applyImageTint();
-    }
-
-    /**
-     * @return the blending mode used to apply the tint to the image drawable
-     * @attr ref android.R.styleable#ImageView_tintMode
-     * @see #setImageTintMode(PorterDuff.Mode)
-     */
-    @Nullable
-    public PorterDuff.Mode getImageTintMode() {
-        return mDrawableTintMode;
-    }
-
-    private void applyImageTint() {
-        if (mDrawable != null && (mHasDrawableTint || mHasDrawableTintMode)) {
-            mDrawable = mDrawable.mutate();
-
-            if (mHasDrawableTint) {
-                mDrawable.setTintList(mDrawableTintList);
-            }
-
-            if (mHasDrawableTintMode) {
-                mDrawable.setTintMode(mDrawableTintMode);
-            }
-
-            // The drawable (or one of its children) may not have been
-            // stateful before applying the tint, so let's try again.
-            if (mDrawable.isStateful()) {
-                mDrawable.setState(getDrawableState());
-            }
-        }
-    }
-
-    /**
      * Sets a Bitmap as the content of this ImageView.
-     *
+     * 
      * @param bm The bitmap to set
      */
     @android.view.RemotableViewMethod
     public void setImageBitmap(Bitmap bm) {
-        // Hacky fix to force setImageDrawable to do a full setImageDrawable
-        // instead of doing an object reference comparison
-        mDrawable = null;
-        if (mRecycleableBitmapDrawable == null) {
-            mRecycleableBitmapDrawable = new BitmapDrawable(mContext.getResources(), bm);
-        } else {
-            mRecycleableBitmapDrawable.setBitmap(bm);
-        }
-        setImageDrawable(mRecycleableBitmapDrawable);
+        // if this is used frequently, may handle bitmaps explicitly
+        // to reduce the intermediate drawable object
+        setImageDrawable(new BitmapDrawable(mContext.getResources(), bm));
     }
 
     public void setImageState(int[] state, boolean merge) {
@@ -651,7 +455,7 @@ public class ImageView extends View {
     }
 
     /**
-     * Sets the image level, when it is constructed from a
+     * Sets the image level, when it is constructed from a 
      * {@link android.graphics.drawable.LevelListDrawable}.
      *
      * @param level The new level for the image.
@@ -717,7 +521,7 @@ public class ImageView extends View {
          * From XML, use this syntax: <code>android:scaleType="centerInside"</code>.
          */
         CENTER_INSIDE (7);
-
+        
         ScaleType(int ni) {
             nativeInt = ni;
         }
@@ -727,9 +531,9 @@ public class ImageView extends View {
     /**
      * Controls how the image should be resized or moved to match the size
      * of this ImageView.
-     *
+     * 
      * @param scaleType The desired scaling mode.
-     *
+     * 
      * @attr ref android.R.styleable#ImageView_scaleType
      */
     public void setScaleType(ScaleType scaleType) {
@@ -740,13 +544,13 @@ public class ImageView extends View {
         if (mScaleType != scaleType) {
             mScaleType = scaleType;
 
-            setWillNotCacheDrawing(mScaleType == ScaleType.CENTER);
+            setWillNotCacheDrawing(mScaleType == ScaleType.CENTER);            
 
             requestLayout();
             invalidate();
         }
     }
-
+    
     /**
      * Return the current scale type in use by this ImageView.
      *
@@ -772,19 +576,12 @@ public class ImageView extends View {
         return mDrawMatrix;
     }
 
-    /**
-     * Adds a transformation {@link Matrix} that is applied
-     * to the view's drawable when it is drawn.  Allows custom scaling,
-     * translation, and perspective distortion.
-     *
-     * @param matrix the transformation parameters in matrix form
-     */
     public void setImageMatrix(Matrix matrix) {
-        // collapse null and identity to just null
+        // collaps null and identity to just null
         if (matrix != null && matrix.isIdentity()) {
             matrix = null;
         }
-
+        
         // don't invalidate unless we're actually changing our matrix
         if (matrix == null && !mMatrix.isIdentity() ||
                 matrix != null && !mMatrix.equals(matrix)) {
@@ -829,7 +626,8 @@ public class ImageView extends View {
             return;
         }
 
-        if (getResources() == null) {
+        Resources rsrc = getResources();
+        if (rsrc == null) {
             return;
         }
 
@@ -837,17 +635,46 @@ public class ImageView extends View {
 
         if (mResource != 0) {
             try {
-                d = mContext.getDrawable(mResource);
+                d = rsrc.getDrawable(mResource);
             } catch (Exception e) {
-                Log.w(LOG_TAG, "Unable to find resource: " + mResource, e);
+                Log.w("ImageView", "Unable to find resource: " + mResource, e);
                 // Don't try again.
                 mUri = null;
             }
         } else if (mUri != null) {
-            d = getDrawableFromUri(mUri);
-
+            String scheme = mUri.getScheme();
+            if (ContentResolver.SCHEME_ANDROID_RESOURCE.equals(scheme)) {
+                try {
+                    // Load drawable through Resources, to get the source density information
+                    ContentResolver.OpenResourceIdResult r =
+                            mContext.getContentResolver().getResourceId(mUri);
+                    d = r.r.getDrawable(r.id);
+                } catch (Exception e) {
+                    Log.w("ImageView", "Unable to open content: " + mUri, e);
+                }
+            } else if (ContentResolver.SCHEME_CONTENT.equals(scheme)
+                    || ContentResolver.SCHEME_FILE.equals(scheme)) {
+                InputStream stream = null;
+                try {
+                    stream = mContext.getContentResolver().openInputStream(mUri);
+                    d = Drawable.createFromStream(stream, null);
+                } catch (Exception e) {
+                    Log.w("ImageView", "Unable to open content: " + mUri, e);
+                } finally {
+                    if (stream != null) {
+                        try {
+                            stream.close();
+                        } catch (IOException e) {
+                            Log.w("ImageView", "Unable to close content: " + mUri, e);
+                        }
+                    }
+                }
+        } else {
+                d = Drawable.createFromPath(mUri.toString());
+            }
+    
             if (d == null) {
-                Log.w(LOG_TAG, "resolveUri failed on bad bitmap uri: " + mUri);
+                System.out.println("resolveUri failed on bad bitmap uri: " + mUri);
                 // Don't try again.
                 mUri = null;
             }
@@ -856,41 +683,6 @@ public class ImageView extends View {
         }
 
         updateDrawable(d);
-    }
-
-    private Drawable getDrawableFromUri(Uri uri) {
-        final String scheme = uri.getScheme();
-        if (ContentResolver.SCHEME_ANDROID_RESOURCE.equals(scheme)) {
-            try {
-                // Load drawable through Resources, to get the source density information
-                ContentResolver.OpenResourceIdResult r =
-                        mContext.getContentResolver().getResourceId(uri);
-                return r.r.getDrawable(r.id, mContext.getTheme());
-            } catch (Exception e) {
-                Log.w(LOG_TAG, "Unable to open content: " + uri, e);
-            }
-        } else if (ContentResolver.SCHEME_CONTENT.equals(scheme)
-                || ContentResolver.SCHEME_FILE.equals(scheme)) {
-            InputStream stream = null;
-            try {
-                stream = mContext.getContentResolver().openInputStream(uri);
-                return Drawable.createFromResourceStream(
-                        mUseCorrectStreamDensity ? getResources() : null, null, stream, null);
-            } catch (Exception e) {
-                Log.w(LOG_TAG, "Unable to open content: " + uri, e);
-            } finally {
-                if (stream != null) {
-                    try {
-                        stream.close();
-                    } catch (IOException e) {
-                        Log.w(LOG_TAG, "Unable to close content: " + uri, e);
-                    }
-                }
-            }
-        } else {
-            return Drawable.createFromPath(uri.toString());
-        }
-        return null;
     }
 
     @Override
@@ -906,35 +698,22 @@ public class ImageView extends View {
     }
 
     private void updateDrawable(Drawable d) {
-        if (d != mRecycleableBitmapDrawable && mRecycleableBitmapDrawable != null) {
-            mRecycleableBitmapDrawable.setBitmap(null);
-        }
-
         if (mDrawable != null) {
             mDrawable.setCallback(null);
             unscheduleDrawable(mDrawable);
-            if (isAttachedToWindow()) {
-                mDrawable.setVisible(false, false);
-            }
         }
-
         mDrawable = d;
-
         if (d != null) {
             d.setCallback(this);
-            d.setLayoutDirection(getLayoutDirection());
             if (d.isStateful()) {
                 d.setState(getDrawableState());
             }
-            if (isAttachedToWindow()) {
-                d.setVisible(getWindowVisibility() == VISIBLE && isShown(), true);
-            }
             d.setLevel(mLevel);
+            d.setLayoutDirection(getLayoutDirection());
+            d.setVisible(getVisibility() == VISIBLE, true);
             mDrawableWidth = d.getIntrinsicWidth();
             mDrawableHeight = d.getIntrinsicHeight();
-            applyImageTint();
             applyColorMod();
-
             configureBounds();
         } else {
             mDrawableWidth = mDrawableHeight = -1;
@@ -942,7 +721,7 @@ public class ImageView extends View {
     }
 
     private void resizeFromDrawable() {
-        final Drawable d = mDrawable;
+        Drawable d = mDrawable;
         if (d != null) {
             int w = d.getIntrinsicWidth();
             if (w < 0) w = mDrawableWidth;
@@ -975,23 +754,23 @@ public class ImageView extends View {
     private static Matrix.ScaleToFit scaleTypeToScaleToFit(ScaleType st)  {
         // ScaleToFit enum to their corresponding Matrix.ScaleToFit values
         return sS2FArray[st.nativeInt - 1];
-    }
+    }    
 
     @Override
     protected void onMeasure(int widthMeasureSpec, int heightMeasureSpec) {
         resolveUri();
         int w;
         int h;
-
+        
         // Desired aspect ratio of the view's contents (not including padding)
         float desiredAspect = 0.0f;
-
+        
         // We are allowed to change the view's width
         boolean resizeWidth = false;
-
+        
         // We are allowed to change the view's height
         boolean resizeHeight = false;
-
+        
         final int widthSpecMode = MeasureSpec.getMode(widthMeasureSpec);
         final int heightSpecMode = MeasureSpec.getMode(heightMeasureSpec);
 
@@ -1011,15 +790,15 @@ public class ImageView extends View {
             if (mAdjustViewBounds) {
                 resizeWidth = widthSpecMode != MeasureSpec.EXACTLY;
                 resizeHeight = heightSpecMode != MeasureSpec.EXACTLY;
-
+                
                 desiredAspect = (float) w / (float) h;
             }
         }
-
-        final int pleft = mPaddingLeft;
-        final int pright = mPaddingRight;
-        final int ptop = mPaddingTop;
-        final int pbottom = mPaddingBottom;
+        
+        int pleft = mPaddingLeft;
+        int pright = mPaddingRight;
+        int ptop = mPaddingTop;
+        int pbottom = mPaddingBottom;
 
         int widthSize;
         int heightSize;
@@ -1027,7 +806,7 @@ public class ImageView extends View {
         if (resizeWidth || resizeHeight) {
             /* If we get here, it means we want to resize to match the
                 drawables aspect ratio, and we have the freedom to change at
-                least one dimension.
+                least one dimension. 
             */
 
             // Get the max possible width given our constraints
@@ -1038,13 +817,13 @@ public class ImageView extends View {
 
             if (desiredAspect != 0.0f) {
                 // See what our actual aspect ratio is
-                final float actualAspect = (float)(widthSize - pleft - pright) /
+                float actualAspect = (float)(widthSize - pleft - pright) /
                                         (heightSize - ptop - pbottom);
-
+                
                 if (Math.abs(actualAspect - desiredAspect) > 0.0000001) {
-
+                    
                     boolean done = false;
-
+                    
                     // Try adjusting width to be proportional to height
                     if (resizeWidth) {
                         int newWidth = (int)(desiredAspect * (heightSize - ptop - pbottom)) +
@@ -1058,9 +837,9 @@ public class ImageView extends View {
                         if (newWidth <= widthSize) {
                             widthSize = newWidth;
                             done = true;
-                        }
+                        } 
                     }
-
+                    
                     // Try adjusting height to be proportional to width
                     if (!done && resizeHeight) {
                         int newHeight = (int)((widthSize - pleft - pright) / desiredAspect) +
@@ -1085,7 +864,7 @@ public class ImageView extends View {
             */
             w += pleft + pright;
             h += ptop + pbottom;
-
+                
             w = Math.max(w, getSuggestedMinimumWidth());
             h = Math.max(h, getSuggestedMinimumHeight());
 
@@ -1099,8 +878,8 @@ public class ImageView extends View {
     private int resolveAdjustedSize(int desiredSize, int maxSize,
                                    int measureSpec) {
         int result = desiredSize;
-        final int specMode = MeasureSpec.getMode(measureSpec);
-        final int specSize =  MeasureSpec.getSize(measureSpec);
+        int specMode = MeasureSpec.getMode(measureSpec);
+        int specSize =  MeasureSpec.getSize(measureSpec);
         switch (specMode) {
             case MeasureSpec.UNSPECIFIED:
                 /* Parent says we can be as big as we want. Just don't be larger
@@ -1109,8 +888,8 @@ public class ImageView extends View {
                 result = Math.min(desiredSize, maxSize);
                 break;
             case MeasureSpec.AT_MOST:
-                // Parent says we can be as big as we want, up to specSize.
-                // Don't be larger than specSize, and don't be larger than
+                // Parent says we can be as big as we want, up to specSize. 
+                // Don't be larger than specSize, and don't be larger than 
                 // the max size imposed on ourselves.
                 result = Math.min(Math.min(desiredSize, specSize), maxSize);
                 break;
@@ -1124,7 +903,7 @@ public class ImageView extends View {
 
     @Override
     protected boolean setFrame(int l, int t, int r, int b) {
-        final boolean changed = super.setFrame(l, t, r, b);
+        boolean changed = super.setFrame(l, t, r, b);
         mHaveFrame = true;
         configureBounds();
         return changed;
@@ -1135,14 +914,14 @@ public class ImageView extends View {
             return;
         }
 
-        final int dwidth = mDrawableWidth;
-        final int dheight = mDrawableHeight;
+        int dwidth = mDrawableWidth;
+        int dheight = mDrawableHeight;
 
-        final int vwidth = getWidth() - mPaddingLeft - mPaddingRight;
-        final int vheight = getHeight() - mPaddingTop - mPaddingBottom;
+        int vwidth = getWidth() - mPaddingLeft - mPaddingRight;
+        int vheight = getHeight() - mPaddingTop - mPaddingBottom;
 
-        final boolean fits = (dwidth < 0 || vwidth == dwidth)
-                && (dheight < 0 || vheight == dheight);
+        boolean fits = (dwidth < 0 || vwidth == dwidth) &&
+                       (dheight < 0 || vheight == dheight);
 
         if (dwidth <= 0 || dheight <= 0 || ScaleType.FIT_XY == mScaleType) {
             /* If the drawable has no intrinsic size, or we're told to
@@ -1168,8 +947,8 @@ public class ImageView extends View {
             } else if (ScaleType.CENTER == mScaleType) {
                 // Center bitmap in view, no scaling.
                 mDrawMatrix = mMatrix;
-                mDrawMatrix.setTranslate(Math.round((vwidth - dwidth) * 0.5f),
-                                         Math.round((vheight - dheight) * 0.5f));
+                mDrawMatrix.setTranslate((int) ((vwidth - dwidth) * 0.5f + 0.5f),
+                                         (int) ((vheight - dheight) * 0.5f + 0.5f));
             } else if (ScaleType.CENTER_CROP == mScaleType) {
                 mDrawMatrix = mMatrix;
 
@@ -1177,7 +956,7 @@ public class ImageView extends View {
                 float dx = 0, dy = 0;
 
                 if (dwidth * vheight > vwidth * dheight) {
-                    scale = (float) vheight / (float) dheight;
+                    scale = (float) vheight / (float) dheight; 
                     dx = (vwidth - dwidth * scale) * 0.5f;
                 } else {
                     scale = (float) vwidth / (float) dwidth;
@@ -1185,22 +964,22 @@ public class ImageView extends View {
                 }
 
                 mDrawMatrix.setScale(scale, scale);
-                mDrawMatrix.postTranslate(Math.round(dx), Math.round(dy));
+                mDrawMatrix.postTranslate((int) (dx + 0.5f), (int) (dy + 0.5f));
             } else if (ScaleType.CENTER_INSIDE == mScaleType) {
                 mDrawMatrix = mMatrix;
                 float scale;
                 float dx;
                 float dy;
-
+                
                 if (dwidth <= vwidth && dheight <= vheight) {
                     scale = 1.0f;
                 } else {
                     scale = Math.min((float) vwidth / (float) dwidth,
                             (float) vheight / (float) dheight);
                 }
-
-                dx = Math.round((vwidth - dwidth * scale) * 0.5f);
-                dy = Math.round((vheight - dheight * scale) * 0.5f);
+                
+                dx = (int) ((vwidth - dwidth * scale) * 0.5f + 0.5f);
+                dy = (int) ((vheight - dheight * scale) * 0.5f + 0.5f);
 
                 mDrawMatrix.setScale(scale, scale);
                 mDrawMatrix.postTranslate(dx, dy);
@@ -1208,7 +987,7 @@ public class ImageView extends View {
                 // Generate the required transform.
                 mTempSrc.set(0, 0, dwidth, dheight);
                 mTempDst.set(0, 0, vwidth, vheight);
-
+                
                 mDrawMatrix = mMatrix;
                 mDrawMatrix.setRectToRect(mTempSrc, mTempDst, scaleTypeToScaleToFit(mScaleType));
             }
@@ -1218,41 +997,13 @@ public class ImageView extends View {
     @Override
     protected void drawableStateChanged() {
         super.drawableStateChanged();
-
-        final Drawable drawable = mDrawable;
-        if (drawable != null && drawable.isStateful()
-                && drawable.setState(getDrawableState())) {
-            invalidateDrawable(drawable);
+        Drawable d = mDrawable;
+        if (d != null && d.isStateful()) {
+            d.setState(getDrawableState());
         }
     }
 
-    @Override
-    public void drawableHotspotChanged(float x, float y) {
-        super.drawableHotspotChanged(x, y);
-
-        if (mDrawable != null) {
-            mDrawable.setHotspot(x, y);
-        }
-    }
-
-    /** @hide */
-    public void animateTransform(Matrix matrix) {
-        if (mDrawable == null) {
-            return;
-        }
-        if (matrix == null) {
-            mDrawable.setBounds(0, 0, getWidth(), getHeight());
-        } else {
-            mDrawable.setBounds(0, 0, mDrawableWidth, mDrawableHeight);
-            if (mDrawMatrix == null) {
-                mDrawMatrix = new Matrix();
-            }
-            mDrawMatrix.set(matrix);
-        }
-        invalidate();
-    }
-
-    @Override
+    @Override 
     protected void onDraw(Canvas canvas) {
         super.onDraw(canvas);
 
@@ -1267,9 +1018,9 @@ public class ImageView extends View {
         if (mDrawMatrix == null && mPaddingTop == 0 && mPaddingLeft == 0) {
             mDrawable.draw(canvas);
         } else {
-            final int saveCount = canvas.getSaveCount();
+            int saveCount = canvas.getSaveCount();
             canvas.save();
-
+            
             if (mCropToPadding) {
                 final int scrollX = mScrollX;
                 final int scrollY = mScrollY;
@@ -1277,7 +1028,7 @@ public class ImageView extends View {
                         scrollX + mRight - mLeft - mPaddingRight,
                         scrollY + mBottom - mTop - mPaddingBottom);
             }
-
+            
             canvas.translate(mPaddingLeft, mPaddingTop);
 
             if (mDrawMatrix != null) {
@@ -1312,7 +1063,7 @@ public class ImageView extends View {
      *
      * @param baseline The baseline to use, or -1 if none is to be provided.
      *
-     * @see #setBaseline(int)
+     * @see #setBaseline(int) 
      * @attr ref android.R.styleable#ImageView_baseline
      */
     public void setBaseline(int baseline) {
@@ -1349,11 +1100,11 @@ public class ImageView extends View {
 
     /**
      * Set a tinting option for the image.
-     *
+     * 
      * @param color Color tint to apply.
      * @param mode How to apply the color.  The standard mode is
      * {@link PorterDuff.Mode#SRC_ATOP}
-     *
+     * 
      * @attr ref android.R.styleable#ImageView_tint
      */
     public final void setColorFilter(int color, PorterDuff.Mode mode) {
@@ -1409,7 +1160,6 @@ public class ImageView extends View {
     public void setColorFilter(ColorFilter cf) {
         if (mColorFilter != cf) {
             mColorFilter = cf;
-            mHasColorFilter = true;
             mColorMod = true;
             applyColorMod();
             invalidate();
@@ -1464,62 +1214,46 @@ public class ImageView extends View {
         // re-applied if the Drawable is changed.
         if (mDrawable != null && mColorMod) {
             mDrawable = mDrawable.mutate();
-            if (mHasColorFilter) {
-                mDrawable.setColorFilter(mColorFilter);
-            }
+            mDrawable.setColorFilter(mColorFilter);
             mDrawable.setXfermode(mXfermode);
             mDrawable.setAlpha(mAlpha * mViewAlphaScale >> 8);
         }
     }
 
+    @RemotableViewMethod
     @Override
-    public boolean isOpaque() {
-        return super.isOpaque() || mDrawable != null && mXfermode == null
-                && mDrawable.getOpacity() == PixelFormat.OPAQUE
-                && mAlpha * mViewAlphaScale >> 8 == 255
-                && isFilledByImage();
-    }
-
-    private boolean isFilledByImage() {
-        if (mDrawable == null) {
-            return false;
-        }
-
-        final Rect bounds = mDrawable.getBounds();
-        final Matrix matrix = mDrawMatrix;
-        if (matrix == null) {
-            return bounds.left <= 0 && bounds.top <= 0 && bounds.right >= getWidth()
-                    && bounds.bottom >= getHeight();
-        } else if (matrix.rectStaysRect()) {
-            final RectF boundsSrc = mTempSrc;
-            final RectF boundsDst = mTempDst;
-            boundsSrc.set(bounds);
-            matrix.mapRect(boundsDst, boundsSrc);
-            return boundsDst.left <= 0 && boundsDst.top <= 0 && boundsDst.right >= getWidth()
-                    && boundsDst.bottom >= getHeight();
-        } else {
-            // If the matrix doesn't map to a rectangle, assume the worst.
-            return false;
-        }
-    }
-
-    @Override
-    public void onVisibilityAggregated(boolean isVisible) {
-        super.onVisibilityAggregated(isVisible);
+    public void setVisibility(int visibility) {
+        super.setVisibility(visibility);
         if (mDrawable != null) {
-            mDrawable.setVisible(isVisible, false);
+            mDrawable.setVisible(visibility == VISIBLE, false);
         }
     }
 
     @Override
-    public CharSequence getAccessibilityClassName() {
-        return ImageView.class.getName();
+    protected void onAttachedToWindow() {
+        super.onAttachedToWindow();
+        if (mDrawable != null) {
+            mDrawable.setVisible(getVisibility() == VISIBLE, false);
+        }
     }
 
-    /** @hide */
     @Override
-    protected void encodeProperties(@NonNull ViewHierarchyEncoder stream) {
-        super.encodeProperties(stream);
-        stream.addProperty("layout:baseline", getBaseline());
+    protected void onDetachedFromWindow() {
+        super.onDetachedFromWindow();
+        if (mDrawable != null) {
+            mDrawable.setVisible(false, false);
+        }
+    }
+
+    @Override
+    public void onInitializeAccessibilityEvent(AccessibilityEvent event) {
+        super.onInitializeAccessibilityEvent(event);
+        event.setClassName(ImageView.class.getName());
+    }
+
+    @Override
+    public void onInitializeAccessibilityNodeInfo(AccessibilityNodeInfo info) {
+        super.onInitializeAccessibilityNodeInfo(info);
+        info.setClassName(ImageView.class.getName());
     }
 }

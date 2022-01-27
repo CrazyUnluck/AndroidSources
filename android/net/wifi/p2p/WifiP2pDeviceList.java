@@ -20,6 +20,7 @@ import android.os.Parcelable;
 import android.os.Parcel;
 import android.net.wifi.p2p.WifiP2pDevice;
 import android.text.TextUtils;
+import android.util.Log;
 
 import java.util.ArrayList;
 import java.util.Collection;
@@ -89,7 +90,7 @@ public class WifiP2pDeviceList implements Parcelable {
     }
 
     /** Only updates details fetched from the supplicant @hide */
-    public void updateSupplicantDetails(WifiP2pDevice device) {
+    void updateSupplicantDetails(WifiP2pDevice device) {
         validateDevice(device);
         WifiP2pDevice d = mDevices.get(device.deviceAddress);
         if (d != null) {
@@ -107,7 +108,7 @@ public class WifiP2pDeviceList implements Parcelable {
     }
 
     /** @hide */
-    public void updateGroupCapability(String deviceAddress, int groupCapab) {
+    void updateGroupCapability(String deviceAddress, int groupCapab) {
         validateDeviceAddress(deviceAddress);
         WifiP2pDevice d = mDevices.get(deviceAddress);
         if (d != null) {
@@ -116,7 +117,7 @@ public class WifiP2pDeviceList implements Parcelable {
     }
 
     /** @hide */
-    public void updateStatus(String deviceAddress, int status) {
+    void updateStatus(String deviceAddress, int status) {
         validateDeviceAddress(deviceAddress);
         WifiP2pDevice d = mDevices.get(deviceAddress);
         if (d != null) {

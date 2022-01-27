@@ -8,19 +8,10 @@
 
 package jsr166;
 
-import junit.framework.Test;
-import junit.framework.TestSuite;
+import junit.framework.*;
+import java.util.concurrent.Semaphore;
 
 public class ThreadLocalTest extends JSR166TestCase {
-    // android-note: Removed because the CTS runner does a bad job of
-    // retrying tests that have suite() declarations.
-    //
-    // public static void main(String[] args) {
-    //     main(suite(), args);
-    // }
-    // public static Test suite() {
-    //     return new TestSuite(ThreadLocalTest.class);
-    // }
 
     static ThreadLocal<Integer> tl = new ThreadLocal<Integer>() {
             public Integer initialValue() {
@@ -94,7 +85,7 @@ public class ThreadLocalTest extends JSR166TestCase {
      */
     public void testGenericITL() throws InterruptedException {
         final int threadCount = 10;
-        final int[] x = new int[threadCount];
+        final int x[] = new int[threadCount];
         Thread progenitor = new ITLThread(x);
         progenitor.start();
         progenitor.join();

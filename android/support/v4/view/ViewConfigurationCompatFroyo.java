@@ -19,7 +19,7 @@ package android.support.v4.view;
 import android.view.ViewConfiguration;
 
 /**
- * Implementation of menu compatibility that can call Froyo APIs.
+ * Implementation of menu compatibility that can call Honeycomb APIs.
  */
 class ViewConfigurationCompatFroyo {
     public static int getScaledPagingTouchSlop(ViewConfiguration config) {

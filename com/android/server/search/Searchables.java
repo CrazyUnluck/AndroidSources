@@ -200,7 +200,7 @@ public class Searchables {
      *
      * TODO: sort the list somehow?  UI choice.
      */
-    public void updateSearchableList() {
+    public void buildSearchableList() {
         // These will become the new values at the end of the method
         HashMap<ComponentName, SearchableInfo> newSearchablesMap
                                 = new HashMap<ComponentName, SearchableInfo>();
@@ -215,13 +215,11 @@ public class Searchables {
 
         long ident = Binder.clearCallingIdentity();
         try {
-            searchList = queryIntentActivities(intent,
-                    PackageManager.GET_META_DATA | PackageManager.MATCH_DEBUG_TRIAGED_MISSING);
+            searchList = queryIntentActivities(intent, PackageManager.GET_META_DATA);
 
             List<ResolveInfo> webSearchInfoList;
             final Intent webSearchIntent = new Intent(Intent.ACTION_WEB_SEARCH);
-            webSearchInfoList = queryIntentActivities(webSearchIntent,
-                    PackageManager.GET_META_DATA | PackageManager.MATCH_DEBUG_TRIAGED_MISSING);
+            webSearchInfoList = queryIntentActivities(webSearchIntent, PackageManager.GET_META_DATA);
 
             // analyze each one, generate a Searchables record, and record
             if (searchList != null || webSearchInfoList != null) {
@@ -284,8 +282,8 @@ public class Searchables {
         // Step 1 : Query the package manager for a list
         // of activities that can handle the GLOBAL_SEARCH intent.
         Intent intent = new Intent(SearchManager.INTENT_ACTION_GLOBAL_SEARCH);
-        List<ResolveInfo> activities = queryIntentActivities(intent,
-                PackageManager.MATCH_DEFAULT_ONLY | PackageManager.MATCH_DEBUG_TRIAGED_MISSING);
+        List<ResolveInfo> activities =
+                    queryIntentActivities(intent, PackageManager.MATCH_DEFAULT_ONLY);
         if (activities != null && !activities.isEmpty()) {
             // Step 2: Rank matching activities according to our heuristics.
             Collections.sort(activities, GLOBAL_SEARCH_RANKER);
@@ -410,7 +408,7 @@ public class Searchables {
             activities =
                     mPm.queryIntentActivities(intent,
                     intent.resolveTypeIfNeeded(mContext.getContentResolver()),
-                    flags, mUserId).getList();
+                    flags, mUserId);
         } catch (RemoteException re) {
             // Local call
         }

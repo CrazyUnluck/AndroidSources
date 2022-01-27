@@ -20,7 +20,6 @@ import org.xmlpull.v1.XmlPullParser;
 import org.xmlpull.v1.XmlPullParserException;
 import org.xmlpull.v1.XmlSerializer;
 
-import android.annotation.NonNull;
 import android.content.ComponentName;
 import android.content.Context;
 import android.content.pm.ActivityInfo;
@@ -51,22 +50,6 @@ import java.util.HashMap;
  */
 public final class DeviceAdminInfo implements Parcelable {
     static final String TAG = "DeviceAdminInfo";
-
-    /**
-     * A type of policy that this device admin can use: device owner meta-policy
-     * for an admin that is designated as owner of the device.
-     *
-     * @hide
-     */
-    public static final int USES_POLICY_DEVICE_OWNER = -2;
-
-    /**
-     * A type of policy that this device admin can use: profile owner meta-policy
-     * for admins that have been installed as owner of some user profile.
-     *
-     * @hide
-     */
-    public static final int USES_POLICY_PROFILE_OWNER = -1;
 
     /**
      * A type of policy that this device admin can use: limit the passwords
@@ -166,24 +149,15 @@ public final class DeviceAdminInfo implements Parcelable {
     /** @hide */
     public static class PolicyInfo {
         public final int ident;
-        public final String tag;
-        public final int label;
-        public final int description;
-        public final int labelForSecondaryUsers;
-        public final int descriptionForSecondaryUsers;
+        final public String tag;
+        final public int label;
+        final public int description;
 
-        public PolicyInfo(int ident, String tag, int label, int description) {
-            this(ident, tag, label, description, label, description);
-        }
-
-        public PolicyInfo(int ident, String tag, int label, int description,
-                int labelForSecondaryUsers, int descriptionForSecondaryUsers) {
-            this.ident = ident;
-            this.tag = tag;
-            this.label = label;
-            this.description = description;
-            this.labelForSecondaryUsers = labelForSecondaryUsers;
-            this.descriptionForSecondaryUsers = descriptionForSecondaryUsers;
+        public PolicyInfo(int identIn, String tagIn, int labelIn, int descriptionIn) {
+            ident = identIn;
+            tag = tagIn;
+            label = labelIn;
+            description = descriptionIn;
         }
     }
 
@@ -194,10 +168,7 @@ public final class DeviceAdminInfo implements Parcelable {
     static {
         sPoliciesDisplayOrder.add(new PolicyInfo(USES_POLICY_WIPE_DATA, "wipe-data",
                 com.android.internal.R.string.policylab_wipeData,
-                com.android.internal.R.string.policydesc_wipeData,
-                com.android.internal.R.string.policylab_wipeData_secondaryUser,
-                com.android.internal.R.string.policydesc_wipeData_secondaryUser
-                ));
+                com.android.internal.R.string.policydesc_wipeData));
         sPoliciesDisplayOrder.add(new PolicyInfo(USES_POLICY_RESET_PASSWORD, "reset-password",
                 com.android.internal.R.string.policylab_resetPassword,
                 com.android.internal.R.string.policydesc_resetPassword));
@@ -206,10 +177,7 @@ public final class DeviceAdminInfo implements Parcelable {
                 com.android.internal.R.string.policydesc_limitPassword));
         sPoliciesDisplayOrder.add(new PolicyInfo(USES_POLICY_WATCH_LOGIN, "watch-login",
                 com.android.internal.R.string.policylab_watchLogin,
-                com.android.internal.R.string.policydesc_watchLogin,
-                com.android.internal.R.string.policylab_watchLogin,
-                com.android.internal.R.string.policydesc_watchLogin_secondaryUser
-        ));
+                com.android.internal.R.string.policydesc_watchLogin));
         sPoliciesDisplayOrder.add(new PolicyInfo(USES_POLICY_FORCE_LOCK, "force-lock",
                 com.android.internal.R.string.policylab_forceLock,
                 com.android.internal.R.string.policydesc_forceLock));
@@ -240,7 +208,7 @@ public final class DeviceAdminInfo implements Parcelable {
     /**
      * The BroadcastReceiver that implements this device admin component.
      */
-    final ActivityInfo mActivityInfo;
+    final ResolveInfo mReceiver;
 
     /**
      * Whether this should be visible to the user.
@@ -252,42 +220,29 @@ public final class DeviceAdminInfo implements Parcelable {
      */
     int mUsesPolicies;
 
-
     /**
      * Constructor.
      *
      * @param context The Context in which we are parsing the device admin.
-     * @param resolveInfo The ResolveInfo returned from the package manager about
+     * @param receiver The ResolveInfo returned from the package manager about
      * this device admin's component.
      */
-    public DeviceAdminInfo(Context context, ResolveInfo resolveInfo)
+    public DeviceAdminInfo(Context context, ResolveInfo receiver)
             throws XmlPullParserException, IOException {
-        this(context, resolveInfo.activityInfo);
-    }
-    /**
-     * Constructor.
-     *
-     * @param context The Context in which we are parsing the device admin.
-     * @param activityInfo The ActivityInfo returned from the package manager about
-     * this device admin's component.
-     *
-     * @hide
-     */
-    public DeviceAdminInfo(Context context, ActivityInfo activityInfo)
-            throws XmlPullParserException, IOException {
-        mActivityInfo = activityInfo;
+        mReceiver = receiver;
+        ActivityInfo ai = receiver.activityInfo;
 
         PackageManager pm = context.getPackageManager();
 
         XmlResourceParser parser = null;
         try {
-            parser = mActivityInfo.loadXmlMetaData(pm, DeviceAdminReceiver.DEVICE_ADMIN_META_DATA);
+            parser = ai.loadXmlMetaData(pm, DeviceAdminReceiver.DEVICE_ADMIN_META_DATA);
             if (parser == null) {
                 throw new XmlPullParserException("No "
                         + DeviceAdminReceiver.DEVICE_ADMIN_META_DATA + " meta-data");
             }
 
-            Resources res = pm.getResourcesForApplication(mActivityInfo.applicationInfo);
+            Resources res = pm.getResourcesForApplication(ai.applicationInfo);
 
             AttributeSet attrs = Xml.asAttributeSet(parser);
 
@@ -337,14 +292,14 @@ public final class DeviceAdminInfo implements Parcelable {
             }
         } catch (NameNotFoundException e) {
             throw new XmlPullParserException(
-                    "Unable to create context for: " + mActivityInfo.packageName);
+                    "Unable to create context for: " + ai.packageName);
         } finally {
             if (parser != null) parser.close();
         }
     }
 
     DeviceAdminInfo(Parcel source) {
-        mActivityInfo = ActivityInfo.CREATOR.createFromParcel(source);
+        mReceiver = ResolveInfo.CREATOR.createFromParcel(source);
         mUsesPolicies = source.readInt();
     }
 
@@ -352,7 +307,7 @@ public final class DeviceAdminInfo implements Parcelable {
      * Return the .apk package that implements this device admin.
      */
     public String getPackageName() {
-        return mActivityInfo.packageName;
+        return mReceiver.activityInfo.packageName;
     }
 
     /**
@@ -360,7 +315,7 @@ public final class DeviceAdminInfo implements Parcelable {
      * this device admin.
      */
     public String getReceiverName() {
-        return mActivityInfo.name;
+        return mReceiver.activityInfo.name;
     }
 
     /**
@@ -368,16 +323,15 @@ public final class DeviceAdminInfo implements Parcelable {
      * device admin.  Do not modify the returned object.
      */
     public ActivityInfo getActivityInfo() {
-        return mActivityInfo;
+        return mReceiver.activityInfo;
     }
 
     /**
      * Return the component of the receiver that implements this device admin.
      */
-    @NonNull
     public ComponentName getComponent() {
-        return new ComponentName(mActivityInfo.packageName,
-                mActivityInfo.name);
+        return new ComponentName(mReceiver.activityInfo.packageName,
+                mReceiver.activityInfo.name);
     }
 
     /**
@@ -387,7 +341,7 @@ public final class DeviceAdminInfo implements Parcelable {
      * resources.
      */
     public CharSequence loadLabel(PackageManager pm) {
-        return mActivityInfo.loadLabel(pm);
+        return mReceiver.loadLabel(pm);
     }
 
     /**
@@ -397,9 +351,15 @@ public final class DeviceAdminInfo implements Parcelable {
      * resources.
      */
     public CharSequence loadDescription(PackageManager pm) throws NotFoundException {
-        if (mActivityInfo.descriptionRes != 0) {
-            return pm.getText(mActivityInfo.packageName,
-                    mActivityInfo.descriptionRes, mActivityInfo.applicationInfo);
+        if (mReceiver.activityInfo.descriptionRes != 0) {
+            String packageName = mReceiver.resolvePackageName;
+            ApplicationInfo applicationInfo = null;
+            if (packageName == null) {
+                packageName = mReceiver.activityInfo.packageName;
+                applicationInfo = mReceiver.activityInfo.applicationInfo;
+            }
+            return pm.getText(packageName,
+                    mReceiver.activityInfo.descriptionRes, applicationInfo);
         }
         throw new NotFoundException();
     }
@@ -411,7 +371,7 @@ public final class DeviceAdminInfo implements Parcelable {
      * resources.
      */
     public Drawable loadIcon(PackageManager pm) {
-        return mActivityInfo.loadIcon(pm);
+        return mReceiver.loadIcon(pm);
     }
 
     /**
@@ -471,12 +431,12 @@ public final class DeviceAdminInfo implements Parcelable {
 
     public void dump(Printer pw, String prefix) {
         pw.println(prefix + "Receiver:");
-        mActivityInfo.dump(pw, prefix + "  ");
+        mReceiver.dump(pw, prefix + "  ");
     }
 
     @Override
     public String toString() {
-        return "DeviceAdminInfo{" + mActivityInfo.name + "}";
+        return "DeviceAdminInfo{" + mReceiver.activityInfo.name + "}";
     }
 
     /**
@@ -486,7 +446,7 @@ public final class DeviceAdminInfo implements Parcelable {
      * @param flags The flags used for parceling.
      */
     public void writeToParcel(Parcel dest, int flags) {
-        mActivityInfo.writeToParcel(dest, flags);
+        mReceiver.writeToParcel(dest, flags);
         dest.writeInt(mUsesPolicies);
     }
 

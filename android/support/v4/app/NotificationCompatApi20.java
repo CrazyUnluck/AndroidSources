@@ -31,21 +31,16 @@ class NotificationCompatApi20 {
     public static class Builder implements NotificationBuilderWithBuilderAccessor,
             NotificationBuilderWithActions {
         private Notification.Builder b;
-        private Bundle mExtras;
-        private RemoteViews mContentView;
-        private RemoteViews mBigContentView;
 
         public Builder(Context context, Notification n,
                 CharSequence contentTitle, CharSequence contentText, CharSequence contentInfo,
                 RemoteViews tickerView, int number,
                 PendingIntent contentIntent, PendingIntent fullScreenIntent, Bitmap largeIcon,
-                int progressMax, int progress, boolean progressIndeterminate, boolean showWhen,
+                int mProgressMax, int mProgress, boolean mProgressIndeterminate,
                 boolean useChronometer, int priority, CharSequence subText, boolean localOnly,
-                ArrayList<String> people, Bundle extras, String groupKey, boolean groupSummary,
-                String sortKey, RemoteViews contentView, RemoteViews bigContentView) {
+                Bundle extras, String groupKey, boolean groupSummary, String sortKey) {
             b = new Notification.Builder(context)
                 .setWhen(n.when)
-                .setShowWhen(showWhen)
                 .setSmallIcon(n.icon, n.iconLevel)
                 .setContent(n.contentView)
                 .setTicker(n.tickerText, tickerView)
@@ -68,26 +63,28 @@ class NotificationCompatApi20 {
                 .setNumber(number)
                 .setUsesChronometer(useChronometer)
                 .setPriority(priority)
-                .setProgress(progressMax, progress, progressIndeterminate)
+                .setProgress(mProgressMax, mProgress, mProgressIndeterminate)
                 .setLocalOnly(localOnly)
+                .setExtras(extras)
                 .setGroup(groupKey)
                 .setGroupSummary(groupSummary)
                 .setSortKey(sortKey);
-            mExtras = new Bundle();
-            if (extras != null) {
-                mExtras.putAll(extras);
-            }
-            if (people != null && !people.isEmpty()) {
-                mExtras.putStringArray(Notification.EXTRA_PEOPLE,
-                        people.toArray(new String[people.size()]));
-            }
-            mContentView = contentView;
-            mBigContentView = bigContentView;
         }
 
         @Override
         public void addAction(NotificationCompatBase.Action action) {
-            NotificationCompatApi20.addAction(b, action);
+            Notification.Action.Builder actionBuilder = new Notification.Action.Builder(
+                    action.getIcon(), action.getTitle(), action.getActionIntent());
+            if (action.getRemoteInputs() != null) {
+                for (RemoteInput remoteInput : RemoteInputCompatApi20.fromCompat(
+                        action.getRemoteInputs())) {
+                    actionBuilder.addRemoteInput(remoteInput);
+                }
+            }
+            if (action.getExtras() != null) {
+                actionBuilder.addExtras(action.getExtras());
+            }
+            b.addAction(actionBuilder.build());
         }
 
         @Override
@@ -95,39 +92,9 @@ class NotificationCompatApi20 {
             return b;
         }
 
-        @Override
         public Notification build() {
-            b.setExtras(mExtras);
-            Notification notification = b.build();
-            if (mContentView != null) {
-                notification.contentView = mContentView;
-            }
-            if (mBigContentView != null) {
-                notification.bigContentView = mBigContentView;
-            }
-            return notification;
+            return b.build();
         }
-    }
-
-    public static void addAction(Notification.Builder b, NotificationCompatBase.Action action) {
-        Notification.Action.Builder actionBuilder = new Notification.Action.Builder(
-                action.getIcon(), action.getTitle(), action.getActionIntent());
-        if (action.getRemoteInputs() != null) {
-            for (RemoteInput remoteInput : RemoteInputCompatApi20.fromCompat(
-                    action.getRemoteInputs())) {
-                actionBuilder.addRemoteInput(remoteInput);
-            }
-        }
-        Bundle actionExtras;
-        if (action.getExtras() != null) {
-            actionExtras = new Bundle(action.getExtras());
-        } else {
-            actionExtras = new Bundle();
-        }
-        actionExtras.putBoolean(NotificationCompatJellybean.EXTRA_ALLOW_GENERATED_REPLIES,
-                action.getAllowGeneratedReplies());
-        actionBuilder.addExtras(actionExtras);
-        b.addAction(actionBuilder.build());
     }
 
     public static NotificationCompatBase.Action getAction(Notification notif,
@@ -141,10 +108,8 @@ class NotificationCompatApi20 {
             RemoteInputCompatBase.RemoteInput.Factory remoteInputFactory) {
         RemoteInputCompatBase.RemoteInput[] remoteInputs = RemoteInputCompatApi20.toCompat(
                 action.getRemoteInputs(), remoteInputFactory);
-        boolean allowGeneratedReplies = action.getExtras().getBoolean(
-                NotificationCompatJellybean.EXTRA_ALLOW_GENERATED_REPLIES);
         return actionFactory.build(action.icon, action.title, action.actionIntent,
-                action.getExtras(), remoteInputs, allowGeneratedReplies);
+                action.getExtras(), remoteInputs);
     }
 
     private static Notification.Action getActionFromActionCompat(

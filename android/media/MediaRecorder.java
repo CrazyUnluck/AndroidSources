@@ -16,8 +16,6 @@
 
 package android.media;
 
-import android.annotation.NonNull;
-import android.annotation.SystemApi;
 import android.app.ActivityThread;
 import android.hardware.Camera;
 import android.os.Handler;
@@ -27,8 +25,8 @@ import android.util.Log;
 import android.view.Surface;
 
 import java.io.FileDescriptor;
+import java.io.FileOutputStream;
 import java.io.IOException;
-import java.io.RandomAccessFile;
 import java.lang.ref.WeakReference;
 
 /**
@@ -112,58 +110,18 @@ public class MediaRecorder
         /* Native setup requires a weak reference to our object.
          * It's easier to create it here than in C++.
          */
-        native_setup(new WeakReference<MediaRecorder>(this), packageName,
-                ActivityThread.currentOpPackageName());
+        native_setup(new WeakReference<MediaRecorder>(this), packageName);
     }
 
     /**
-     * Sets a {@link android.hardware.Camera} to use for recording.
-     *
-     * <p>Use this function to switch quickly between preview and capture mode without a teardown of
-     * the camera object. {@link android.hardware.Camera#unlock()} should be called before
-     * this. Must call before {@link #prepare}.</p>
+     * Sets a Camera to use for recording. Use this function to switch
+     * quickly between preview and capture mode without a teardown of
+     * the camera object. {@link android.hardware.Camera#unlock()} should be
+     * called before this. Must call before prepare().
      *
      * @param c the Camera to use for recording
-     * @deprecated Use {@link #getSurface} and the {@link android.hardware.camera2} API instead.
      */
-    @Deprecated
     public native void setCamera(Camera c);
-
-    /**
-     * Gets the surface to record from when using SURFACE video source.
-     *
-     * <p> May only be called after {@link #prepare}. Frames rendered to the Surface before
-     * {@link #start} will be discarded.</p>
-     *
-     * @throws IllegalStateException if it is called before {@link #prepare}, after
-     * {@link #stop}, or is called when VideoSource is not set to SURFACE.
-     * @see android.media.MediaRecorder.VideoSource
-     */
-    public native Surface getSurface();
-
-    /**
-     * Configures the recorder to use a persistent surface when using SURFACE video source.
-     * <p> May only be called before {@link #prepare}. If called, {@link #getSurface} should
-     * not be used and will throw IllegalStateException. Frames rendered to the Surface
-     * before {@link #start} will be discarded.</p>
-
-     * @param surface a persistent input surface created by
-     *           {@link MediaCodec#createPersistentInputSurface}
-     * @throws IllegalStateException if it is called after {@link #prepare} and before
-     * {@link #stop}.
-     * @throws IllegalArgumentException if the surface was not created by
-     *           {@link MediaCodec#createPersistentInputSurface}.
-     * @see MediaCodec#createPersistentInputSurface
-     * @see MediaRecorder.VideoSource
-     */
-    public void setInputSurface(@NonNull Surface surface) {
-        if (!(surface instanceof MediaCodec.PersistentSurface)) {
-            throw new IllegalArgumentException("not a PersistentSurface");
-        }
-        native_setInputSurface(surface);
-    }
-
-    private native final void native_setInputSurface(@NonNull Surface surface);
 
     /**
      * Sets a Surface to show a preview of recorded media (video). Calls this
@@ -183,22 +141,14 @@ public class MediaRecorder
     }
 
     /**
-     * Defines the audio source.
-     * An audio source defines both a default physical source of audio signal, and a recording
-     * configuration. These constants are for instance used
-     * in {@link MediaRecorder#setAudioSource(int)} or
-     * {@link AudioRecord.Builder#setAudioSource(int)}.
+     * Defines the audio source. These constants are used with
+     * {@link MediaRecorder#setAudioSource(int)}.
      */
     public final class AudioSource {
-
-        private AudioSource() {}
-
-        /** @hide */
-        public final static int AUDIO_SOURCE_INVALID = -1;
-
       /* Do not change these values without updating their counterparts
-       * in system/media/audio/include/system/audio.h!
+       * in system/core/include/system/audio.h!
        */
+        private AudioSource() {}
 
         /** Default audio source **/
         public static final int DEFAULT = 0;
@@ -206,34 +156,13 @@ public class MediaRecorder
         /** Microphone audio source */
         public static final int MIC = 1;
 
-        /** Voice call uplink (Tx) audio source.
-         * <p>
-         * Capturing from <code>VOICE_UPLINK</code> source requires the
-         * {@link android.Manifest.permission#CAPTURE_AUDIO_OUTPUT} permission.
-         * This permission is reserved for use by system components and is not available to
-         * third-party applications.
-         * </p>
-         */
+        /** Voice call uplink (Tx) audio source */
         public static final int VOICE_UPLINK = 2;
 
-        /** Voice call downlink (Rx) audio source.
-         * <p>
-         * Capturing from <code>VOICE_DOWNLINK</code> source requires the
-         * {@link android.Manifest.permission#CAPTURE_AUDIO_OUTPUT} permission.
-         * This permission is reserved for use by system components and is not available to
-         * third-party applications.
-         * </p>
-         */
+        /** Voice call downlink (Rx) audio source */
         public static final int VOICE_DOWNLINK = 3;
 
-        /** Voice call uplink + downlink audio source
-         * <p>
-         * Capturing from <code>VOICE_CALL</code> source requires the
-         * {@link android.Manifest.permission#CAPTURE_AUDIO_OUTPUT} permission.
-         * This permission is reserved for use by system components and is not available to
-         * third-party applications.
-         * </p>
-         */
+        /** Voice call uplink + downlink audio source */
         public static final int VOICE_CALL = 4;
 
         /** Microphone audio source with same orientation as camera if available, the main
@@ -272,17 +201,6 @@ public class MediaRecorder
          */
         public static final int REMOTE_SUBMIX = 8;
 
-        /** Microphone audio source tuned for unprocessed (raw) sound if available, behaves like
-         *  {@link #DEFAULT} otherwise. */
-        public static final int UNPROCESSED = 9;
-
-        /**
-         * Audio source for capturing broadcast radio tuner output.
-         * @hide
-         */
-        @SystemApi
-        public static final int RADIO_TUNER = 1998;
-
         /**
          * Audio source for preemptible, low-priority software hotword detection
          * It presents the same gain and pre processing tuning as {@link #VOICE_RECOGNITION}.
@@ -294,32 +212,7 @@ public class MediaRecorder
          * This is a hidden audio source.
          * @hide
          */
-        @SystemApi
-        public static final int HOTWORD = 1999;
-    }
-
-    // TODO make AudioSource static (API change) and move this method inside the AudioSource class
-    /**
-     * @hide
-     * @param source An audio source to test
-     * @return true if the source is only visible to system components
-     */
-    public static boolean isSystemOnlyAudioSource(int source) {
-        switch(source) {
-        case AudioSource.DEFAULT:
-        case AudioSource.MIC:
-        case AudioSource.VOICE_UPLINK:
-        case AudioSource.VOICE_DOWNLINK:
-        case AudioSource.VOICE_CALL:
-        case AudioSource.CAMCORDER:
-        case AudioSource.VOICE_RECOGNITION:
-        case AudioSource.VOICE_COMMUNICATION:
-        //case REMOTE_SUBMIX:  considered "system" as it requires system permissions
-        case AudioSource.UNPROCESSED:
-            return false;
-        default:
-            return true;
-        }
+        protected static final int HOTWORD = 1999;
     }
 
     /**
@@ -332,23 +225,10 @@ public class MediaRecorder
        */
         private VideoSource() {}
         public static final int DEFAULT = 0;
-        /** Camera video source
-         * <p>
-         * Using the {@link android.hardware.Camera} API as video source.
-         * </p>
-         */
+        /** Camera video source */
         public static final int CAMERA = 1;
-        /** Surface video source
-         * <p>
-         * Using a Surface as video source.
-         * </p><p>
-         * This flag must be used when recording from an
-         * {@link android.hardware.camera2} API source.
-         * </p><p>
-         * When using this video source type, use {@link MediaRecorder#getSurface()}
-         * to retrieve the surface created by MediaRecorder.
-         */
-        public static final int SURFACE = 2;
+        /** @hide */
+        public static final int GRALLOC_BUFFER = 2;
     }
 
     /**
@@ -391,9 +271,6 @@ public class MediaRecorder
 
         /** @hide H.264/AAC data encapsulated in MPEG2/TS */
         public static final int OUTPUT_FORMAT_MPEG2TS = 8;
-
-        /** VP8/VORBIS data in a WEBM container */
-        public static final int WEBM = 9;
     };
 
     /**
@@ -416,8 +293,6 @@ public class MediaRecorder
         public static final int HE_AAC = 4;
         /** Enhanced Low Delay AAC (AAC-ELD) audio codec */
         public static final int AAC_ELD = 5;
-        /** Ogg Vorbis audio codec */
-        public static final int VORBIS = 6;
     }
 
     /**
@@ -433,8 +308,6 @@ public class MediaRecorder
         public static final int H263 = 1;
         public static final int H264 = 2;
         public static final int MPEG_4_SP = 3;
-        public static final int VP8 = 4;
-        public static final int HEVC = 5;
     }
 
     /**
@@ -455,7 +328,7 @@ public class MediaRecorder
      * @see android.media.MediaRecorder.AudioSource
      */
     public static final int getAudioSourceMax() {
-        return AudioSource.UNPROCESSED;
+        return AudioSource.REMOTE_SUBMIX;
     }
 
     /**
@@ -517,7 +390,10 @@ public class MediaRecorder
     public void setCaptureRate(double fps) {
         // Make sure that time lapse is enabled when this method is called.
         setParameter("time-lapse-enable=1");
-        setParameter("time-lapse-fps=" + fps);
+
+        double timeBetweenFrameCapture = 1 / fps;
+        int timeBetweenFrameCaptureMs = (int) (1000 * timeBetweenFrameCapture);
+        setParameter("time-between-time-lapse-frame-capture=" + timeBetweenFrameCaptureMs);
     }
 
     /**
@@ -812,11 +688,11 @@ public class MediaRecorder
     public void prepare() throws IllegalStateException, IOException
     {
         if (mPath != null) {
-            RandomAccessFile file = new RandomAccessFile(mPath, "rws");
+            FileOutputStream fos = new FileOutputStream(mPath);
             try {
-                _setOutputFile(file.getFD(), 0, 0);
+                _setOutputFile(fos.getFD(), 0, 0);
             } finally {
-                file.close();
+                fos.close();
             }
         } else if (mFd != null) {
             _setOutputFile(mFd, 0, 0);
@@ -855,30 +731,6 @@ public class MediaRecorder
      * @throws IllegalStateException if it is called before start()
      */
     public native void stop() throws IllegalStateException;
-
-    /**
-     * Pauses recording. Call this after start(). You may resume recording
-     * with resume() without reconfiguration, as opposed to stop(). It does
-     * nothing if the recording is already paused.
-     *
-     * When the recording is paused and resumed, the resulting output would
-     * be as if nothing happend during paused period, immediately switching
-     * to the resumed scene.
-     *
-     * @throws IllegalStateException if it is called before start() or after
-     * stop()
-     */
-    public native void pause() throws IllegalStateException;
-
-    /**
-     * Resumes recording. Call this after start(). It does nothing if the
-     * recording is not paused.
-     *
-     * @throws IllegalStateException if it is called before start() or after
-     * stop()
-     * @see android.media.MediaRecorder#pause
-     */
-    public native void resume() throws IllegalStateException;
 
     /**
      * Restarts the MediaRecorder to its idle state. After calling
@@ -1162,7 +1014,7 @@ public class MediaRecorder
     private static native final void native_init();
 
     private native final void native_setup(Object mediarecorder_this,
-            String clientName, String opPackageName) throws IllegalStateException;
+            String clientName) throws IllegalStateException;
 
     private native final void native_finalize();
 

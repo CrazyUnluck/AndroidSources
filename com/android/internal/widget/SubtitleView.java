@@ -18,6 +18,7 @@ package com.android.internal.widget;
 
 import android.content.ContentResolver;
 import android.content.Context;
+import android.content.res.Resources.Theme;
 import android.content.res.Resources;
 import android.content.res.TypedArray;
 import android.graphics.Canvas;
@@ -28,22 +29,17 @@ import android.graphics.Paint.Style;
 import android.graphics.RectF;
 import android.graphics.Typeface;
 import android.text.Layout.Alignment;
-import android.text.SpannableStringBuilder;
 import android.text.StaticLayout;
 import android.text.TextPaint;
 import android.util.AttributeSet;
+import android.util.DisplayMetrics;
+import android.util.TypedValue;
 import android.view.View;
 import android.view.accessibility.CaptioningManager.CaptionStyle;
 
 public class SubtitleView extends View {
     // Ratio of inner padding to font size.
     private static final float INNER_PADDING_RATIO = 0.125f;
-
-    /** Color used for the shadowed edge of a bevel. */
-    private static final int COLOR_BEVEL_DARK = 0x80000000;
-
-    /** Color used for the illuminated edge of a bevel. */
-    private static final int COLOR_BEVEL_LIGHT = 0x80FFFFFF;
 
     // Styled dimensions.
     private final float mCornerRadius;
@@ -55,8 +51,8 @@ public class SubtitleView extends View {
     /** Temporary rectangle used for computing line bounds. */
     private final RectF mLineBounds = new RectF();
 
-    /** Reusable spannable string builder used for holding text. */
-    private final SpannableStringBuilder mText = new SpannableStringBuilder();
+    /** Reusable string builder used for holding text. */
+    private final StringBuilder mText = new StringBuilder();
 
     private Alignment mAlignment;
     private TextPaint mTextPaint;
@@ -83,15 +79,12 @@ public class SubtitleView extends View {
         this(context, attrs, 0);
     }
 
-    public SubtitleView(Context context, AttributeSet attrs, int defStyleAttr) {
-        this(context, attrs, defStyleAttr, 0);
-    }
-
-    public SubtitleView(Context context, AttributeSet attrs, int defStyleAttr, int defStyleRes) {
+    public SubtitleView(Context context, AttributeSet attrs, int defStyle) {
         super(context, attrs);
 
-        final TypedArray a = context.obtainStyledAttributes(
-                    attrs, android.R.styleable.TextView, defStyleAttr, defStyleRes);
+        final Theme theme = context.getTheme();
+        final TypedArray a = theme.obtainStyledAttributes(
+                    attrs, android.R.styleable.TextView, defStyle, 0);
 
         CharSequence text = "";
         int textSize = 15;
@@ -119,6 +112,7 @@ public class SubtitleView extends View {
         // Set up density-dependent properties.
         // TODO: Move these to a default style.
         final Resources res = getContext().getResources();
+        final DisplayMetrics m = res.getDisplayMetrics();
         mCornerRadius = res.getDimensionPixelSize(com.android.internal.R.dimen.subtitle_corner_radius);
         mOutlineWidth = res.getDimensionPixelSize(com.android.internal.R.dimen.subtitle_outline_width);
         mShadowRadius = res.getDimensionPixelSize(com.android.internal.R.dimen.subtitle_shadow_radius);
@@ -142,13 +136,12 @@ public class SubtitleView extends View {
     }
 
     public void setText(CharSequence text) {
-        mText.clear();
+        mText.setLength(0);
         mText.append(text);
 
         mHasMeasurements = false;
 
         requestLayout();
-        invalidate();
     }
 
     public void setForegroundColor(int color) {
@@ -272,13 +265,10 @@ public class SubtitleView extends View {
             style = CaptionStyle.PRESETS[styleId];
         }
 
-        final CaptionStyle defStyle = CaptionStyle.DEFAULT;
-        mForegroundColor = style.hasForegroundColor() ?
-                style.foregroundColor : defStyle.foregroundColor;
-        mBackgroundColor = style.hasBackgroundColor() ?
-                style.backgroundColor : defStyle.backgroundColor;
-        mEdgeType = style.hasEdgeType() ? style.edgeType : defStyle.edgeType;
-        mEdgeColor = style.hasEdgeColor() ? style.edgeColor : defStyle.edgeColor;
+        mForegroundColor = style.foregroundColor;
+        mBackgroundColor = style.backgroundColor;
+        mEdgeType = style.edgeType;
+        mEdgeColor = style.edgeColor;
         mHasMeasurements = false;
 
         final Typeface typeface = style.getTypeface();
@@ -321,8 +311,7 @@ public class SubtitleView extends View {
             }
         }
 
-        final int edgeType = mEdgeType;
-        if (edgeType == CaptionStyle.EDGE_TYPE_OUTLINE) {
+        if (mEdgeType == CaptionStyle.EDGE_TYPE_OUTLINE) {
             textPaint.setStrokeJoin(Join.ROUND);
             textPaint.setStrokeWidth(mOutlineWidth);
             textPaint.setColor(mEdgeColor);
@@ -331,24 +320,8 @@ public class SubtitleView extends View {
             for (int i = 0; i < lineCount; i++) {
                 layout.drawText(c, i, i);
             }
-        } else if (edgeType == CaptionStyle.EDGE_TYPE_DROP_SHADOW) {
+        } else if (mEdgeType == CaptionStyle.EDGE_TYPE_DROP_SHADOW) {
             textPaint.setShadowLayer(mShadowRadius, mShadowOffsetX, mShadowOffsetY, mEdgeColor);
-        } else if (edgeType == CaptionStyle.EDGE_TYPE_RAISED
-                || edgeType == CaptionStyle.EDGE_TYPE_DEPRESSED) {
-            final boolean raised = edgeType == CaptionStyle.EDGE_TYPE_RAISED;
-            final int colorUp = raised ? Color.WHITE : mEdgeColor;
-            final int colorDown = raised ? mEdgeColor : Color.WHITE;
-            final float offset = mShadowRadius / 2f;
-
-            textPaint.setColor(mForegroundColor);
-            textPaint.setStyle(Style.FILL);
-            textPaint.setShadowLayer(mShadowRadius, -offset, -offset, colorUp);
-
-            for (int i = 0; i < lineCount; i++) {
-                layout.drawText(c, i, i);
-            }
-
-            textPaint.setShadowLayer(mShadowRadius, offset, offset, colorDown);
         }
 
         textPaint.setColor(mForegroundColor);

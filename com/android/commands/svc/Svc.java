@@ -95,7 +95,6 @@ public class Svc {
             new PowerCommand(),
             new DataCommand(),
             new WifiCommand(),
-            new UsbCommand(),
-            new NfcCommand(),
+            new UsbCommand()
     };
 }

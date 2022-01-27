@@ -34,8 +34,6 @@ package javax.obex;
 
 import java.io.IOException;
 
-import android.util.Log;
-
 /**
  * The <code>ObexSession</code> interface characterizes the term
  * "OBEX Connection" as defined in the IrDA Object Exchange Protocol v1.2, which
@@ -48,9 +46,6 @@ import android.util.Log;
  * @hide
  */
 public class ObexSession {
-
-    private static final String TAG = "ObexSession";
-    private static final boolean V = ObexHelper.VDBG;
 
     protected Authenticator mAuthenticator;
 
@@ -130,7 +125,6 @@ public class ObexSession {
             result = mAuthenticator
                     .onAuthenticationChallenge(realm, isUserIDRequired, isFullAccess);
         } catch (Exception e) {
-            if (V) Log.d(TAG, "Exception occured - returning false", e);
             return false;
         }
 

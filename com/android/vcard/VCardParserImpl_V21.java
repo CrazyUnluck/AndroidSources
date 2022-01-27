@@ -450,7 +450,7 @@ import java.util.Set;
             } else if (paramName.equals("VALUE")) {
                 handleValue(propertyData, paramValue);
             } else if (paramName.equals("ENCODING")) {
-                handleEncoding(propertyData, paramValue.toUpperCase());
+                handleEncoding(propertyData, paramValue);
             } else if (paramName.equals("CHARSET")) {
                 handleCharset(propertyData, paramValue);
             } else if (paramName.equals("LANGUAGE")) {
@@ -685,8 +685,8 @@ import java.util.Set;
             }
 
             ArrayList<String> propertyValueList = new ArrayList<String>();
-            String value = maybeUnescapeText(VCardUtils.convertStringCharset(
-                    propertyRawValue, sourceCharset, targetCharset));
+            String value = VCardUtils.convertStringCharset(
+                    maybeUnescapeText(propertyRawValue), sourceCharset, targetCharset);
             propertyValueList.add(value);
             property.setValues(propertyValueList);
             for (VCardInterpreter interpreter : mInterpreterList) {
@@ -720,12 +720,12 @@ import java.util.Set;
                 encodedValueList.add(encoded);
             }
         } else {
-            final String propertyValue = VCardUtils.convertStringCharset(
-                    getPotentialMultiline(propertyRawValue), sourceCharset, targetCharset);
-            final List<String> valueList =
+            final String propertyValue = getPotentialMultiline(propertyRawValue);
+            final List<String> rawValueList =
                     VCardUtils.constructListFromValue(propertyValue, getVersion());
-            for (String value : valueList) {
-                encodedValueList.add(value);
+            for (String rawValue : rawValueList) {
+                encodedValueList.add(VCardUtils.convertStringCharset(
+                        rawValue, sourceCharset, targetCharset));
             }
         }
 
@@ -862,10 +862,7 @@ import java.util.Set;
             if (line.length() == 0) {
                 break;
             }
-            // Trim off any extraneous whitespace to handle 2.1 implementations
-            // that use 3.0 style line continuations. This is safe because space
-            // isn't a Base64 encoding value.
-            builder.append(line.trim());
+            builder.append(line);
         }
 
         return builder.toString();

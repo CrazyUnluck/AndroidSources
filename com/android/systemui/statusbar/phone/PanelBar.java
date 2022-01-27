@@ -23,11 +23,11 @@ import android.view.MotionEvent;
 import android.view.View;
 import android.widget.FrameLayout;
 
-public abstract class PanelBar extends FrameLayout {
+import java.util.ArrayList;
+
+public class PanelBar extends FrameLayout {
     public static final boolean DEBUG = false;
     public static final String TAG = PanelBar.class.getSimpleName();
-    private static final boolean SPEW = false;
-
     public static final void LOG(String fmt, Object... args) {
         if (!DEBUG) return;
         Log.v(TAG, String.format(fmt, args));
@@ -37,9 +37,13 @@ public abstract class PanelBar extends FrameLayout {
     public static final int STATE_OPENING = 1;
     public static final int STATE_OPEN = 2;
 
-    PanelView mPanel;
+    PanelHolder mPanelHolder;
+    ArrayList<PanelView> mPanels = new ArrayList<PanelView>();
+    PanelView mTouchingPanel;
     private int mState = STATE_CLOSED;
     private boolean mTracking;
+
+    float mPanelExpandedFractionSum;
 
     public void go(int state) {
         if (DEBUG) LOG("go state: %d -> %d", mState, state);
@@ -55,28 +59,44 @@ public abstract class PanelBar extends FrameLayout {
         super.onFinishInflate();
     }
 
-    public void setPanel(PanelView pv) {
-        mPanel = pv;
+    public void addPanel(PanelView pv) {
+        mPanels.add(pv);
         pv.setBar(this);
     }
 
-    public void setBouncerShowing(boolean showing) {
-        int important = showing ? IMPORTANT_FOR_ACCESSIBILITY_NO_HIDE_DESCENDANTS
-                : IMPORTANT_FOR_ACCESSIBILITY_AUTO;
-
-        setImportantForAccessibility(important);
-
-        if (mPanel != null) mPanel.setImportantForAccessibility(important);
+    public void setPanelHolder(PanelHolder ph) {
+        if (ph == null) {
+            Log.e(TAG, "setPanelHolder: null PanelHolder", new Throwable());
+            return;
+        }
+        ph.setBar(this);
+        mPanelHolder = ph;
+        final int N = ph.getChildCount();
+        for (int i=0; i<N; i++) {
+            final View v = ph.getChildAt(i);
+            if (v != null && v instanceof PanelView) {
+                addPanel((PanelView) v);
+            }
+        }
     }
 
-    public boolean panelEnabled() {
+    public float getBarHeight() {
+        return getMeasuredHeight();
+    }
+
+    public PanelView selectPanelForTouch(MotionEvent touch) {
+        final int N = mPanels.size();
+        return mPanels.get((int)(N * touch.getX() / getMeasuredWidth()));
+    }
+
+    public boolean panelsEnabled() {
         return true;
     }
 
     @Override
     public boolean onTouchEvent(MotionEvent event) {
         // Allow subclasses to implement enable/disable semantics
-        if (!panelEnabled()) {
+        if (!panelsEnabled()) {
             if (event.getAction() == MotionEvent.ACTION_DOWN) {
                 Log.v(TAG, String.format("onTouch: all panels disabled, ignoring touch at (%d,%d)",
                         (int) event.getX(), (int) event.getY()));
@@ -84,12 +104,14 @@ public abstract class PanelBar extends FrameLayout {
             return false;
         }
 
+        // figure out which panel needs to be talked to here
         if (event.getAction() == MotionEvent.ACTION_DOWN) {
-            final PanelView panel = mPanel;
+            final PanelView panel = selectPanelForTouch(event);
             if (panel == null) {
                 // panel is not there, so we'll eat the gesture
                 Log.v(TAG, String.format("onTouch: no panel for touch at (%d,%d)",
                         (int) event.getX(), (int) event.getY()));
+                mTouchingPanel = null;
                 return true;
             }
             boolean enabled = panel.isEnabled();
@@ -100,65 +122,87 @@ public abstract class PanelBar extends FrameLayout {
                 Log.v(TAG, String.format(
                         "onTouch: panel (%s) is disabled, ignoring touch at (%d,%d)",
                         panel, (int) event.getX(), (int) event.getY()));
+                mTouchingPanel = null;
                 return true;
             }
+            startOpeningPanel(panel);
         }
-        return mPanel == null || mPanel.onTouchEvent(event);
+        final boolean result = mTouchingPanel != null
+                ? mTouchingPanel.onTouchEvent(event)
+                : true;
+        return result;
     }
 
-    public abstract void panelScrimMinFractionChanged(float minFraction);
-
-    /**
-     * @param frac the fraction from the expansion in [0, 1]
-     * @param expanded whether the panel is currently expanded; this is independent from the
-     *                 fraction as the panel also might be expanded if the fraction is 0
-     */
-    public void panelExpansionChanged(float frac, boolean expanded) {
-        boolean fullyClosed = true;
-        boolean fullyOpened = false;
-        if (SPEW) LOG("panelExpansionChanged: start state=%d", mState);
-        PanelView pv = mPanel;
-        pv.setVisibility(expanded ? View.VISIBLE : View.INVISIBLE);
-        // adjust any other panels that may be partially visible
-        if (expanded) {
-            if (mState == STATE_CLOSED) {
-                go(STATE_OPENING);
-                onPanelPeeked();
+    // called from PanelView when self-expanding, too
+    public void startOpeningPanel(PanelView panel) {
+        if (DEBUG) LOG("startOpeningPanel: " + panel);
+        mTouchingPanel = panel;
+        mPanelHolder.setSelectedPanel(mTouchingPanel);
+        for (PanelView pv : mPanels) {
+            if (pv != panel) {
+                pv.collapse();
             }
-            fullyClosed = false;
-            final float thisFrac = pv.getExpandedFraction();
-            if (SPEW) LOG("panelExpansionChanged:  -> %s: f=%.1f", pv.getName(), thisFrac);
-            fullyOpened = thisFrac >= 1f;
         }
-        if (fullyOpened && !mTracking) {
+    }
+
+    public void panelExpansionChanged(PanelView panel, float frac) {
+        boolean fullyClosed = true;
+        PanelView fullyOpenedPanel = null;
+        if (DEBUG) LOG("panelExpansionChanged: start state=%d panel=%s", mState, panel.getName());
+        mPanelExpandedFractionSum = 0f;
+        for (PanelView pv : mPanels) {
+            final boolean visible = pv.getVisibility() == View.VISIBLE;
+            // adjust any other panels that may be partially visible
+            if (pv.getExpandedHeight() > 0f) {
+                if (mState == STATE_CLOSED) {
+                    go(STATE_OPENING);
+                    onPanelPeeked();
+                }
+                fullyClosed = false;
+                final float thisFrac = pv.getExpandedFraction();
+                mPanelExpandedFractionSum += (visible ? thisFrac : 0);
+                if (DEBUG) LOG("panelExpansionChanged:  -> %s: f=%.1f", pv.getName(), thisFrac);
+                if (panel == pv) {
+                    if (thisFrac == 1f) fullyOpenedPanel = panel;
+                }
+            }
+            if (pv.getExpandedHeight() > 0f) {
+                if (!visible) pv.setVisibility(View.VISIBLE);
+            } else {
+                if (visible) pv.setVisibility(View.GONE);
+            }
+        }
+        mPanelExpandedFractionSum /= mPanels.size();
+        if (fullyOpenedPanel != null && !mTracking) {
             go(STATE_OPEN);
-            onPanelFullyOpened();
+            onPanelFullyOpened(fullyOpenedPanel);
         } else if (fullyClosed && !mTracking && mState != STATE_CLOSED) {
             go(STATE_CLOSED);
-            onPanelCollapsed();
+            onAllPanelsCollapsed();
         }
 
-        if (SPEW) LOG("panelExpansionChanged: end state=%d [%s%s ]", mState,
-                fullyOpened?" fullyOpened":"", fullyClosed?" fullyClosed":"");
+        if (DEBUG) LOG("panelExpansionChanged: end state=%d [%s%s ]", mState,
+                (fullyOpenedPanel!=null)?" fullyOpened":"", fullyClosed?" fullyClosed":"");
     }
 
-    public void collapsePanel(boolean animate, boolean delayed, float speedUpFactor) {
+    public void collapseAllPanels(boolean animate) {
         boolean waiting = false;
-        PanelView pv = mPanel;
-        if (animate && !pv.isFullyCollapsed()) {
-            pv.collapse(delayed, speedUpFactor);
-            waiting = true;
-        } else {
-            pv.resetViews();
-            pv.setExpandedFraction(0); // just in case
-            pv.cancelPeek();
+        for (PanelView pv : mPanels) {
+            if (animate && !pv.isFullyCollapsed()) {
+                pv.collapse();
+                waiting = true;
+            } else {
+                pv.setExpandedFraction(0); // just in case
+                pv.setVisibility(View.GONE);
+                pv.cancelPeek();
+            }
         }
-        if (DEBUG) LOG("collapsePanel: animate=%s waiting=%s", animate, waiting);
+        if (DEBUG) LOG("collapseAllPanels: animate=%s waiting=%s", animate, waiting);
         if (!waiting && mState != STATE_CLOSED) {
             // it's possible that nothing animated, so we replicate the termination
             // conditions of panelExpansionChanged here
             go(STATE_CLOSED);
-            onPanelCollapsed();
+            onAllPanelsCollapsed();
         }
     }
 
@@ -166,27 +210,24 @@ public abstract class PanelBar extends FrameLayout {
         if (DEBUG) LOG("onPanelPeeked");
     }
 
-    public void onPanelCollapsed() {
-        if (DEBUG) LOG("onPanelCollapsed");
+    public void onAllPanelsCollapsed() {
+        if (DEBUG) LOG("onAllPanelsCollapsed");
     }
 
-    public void onPanelFullyOpened() {
+    public void onPanelFullyOpened(PanelView openPanel) {
         if (DEBUG) LOG("onPanelFullyOpened");
     }
 
-    public void onTrackingStarted() {
+    public void onTrackingStarted(PanelView panel) {
         mTracking = true;
+        if (DEBUG && panel != mTouchingPanel) {
+            LOG("shouldn't happen: onTrackingStarted(%s) != mTouchingPanel(%s)",
+                    panel, mTouchingPanel);
+        }
     }
 
-    public void onTrackingStopped(boolean expand) {
+    public void onTrackingStopped(PanelView panel) {
         mTracking = false;
-    }
-
-    public void onExpandingFinished() {
-        if (DEBUG) LOG("onExpandingFinished");
-    }
-
-    public void onClosingFinished() {
-
+        panelExpansionChanged(panel, panel.getExpandedFraction());
     }
 }

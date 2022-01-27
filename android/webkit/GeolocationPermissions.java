@@ -16,8 +16,6 @@
 
 package android.webkit;
 
-import android.annotation.SystemApi;
-
 import java.util.Set;
 
 /**
@@ -138,6 +136,5 @@ public class GeolocationPermissions {
      * way to call createHandler() and createUIHandler(), so it would not work).
      * @hide Only for use by WebViewProvider implementations
      */
-    @SystemApi
     public GeolocationPermissions() {}
 }

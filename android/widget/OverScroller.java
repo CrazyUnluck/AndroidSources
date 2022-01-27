@@ -18,6 +18,7 @@ package android.widget;
 
 import android.content.Context;
 import android.hardware.SensorManager;
+import android.util.FloatMath;
 import android.util.Log;
 import android.view.ViewConfiguration;
 import android.view.animation.AnimationUtils;
@@ -69,11 +70,7 @@ public class OverScroller {
      * @hide
      */
     public OverScroller(Context context, Interpolator interpolator, boolean flywheel) {
-        if (interpolator == null) {
-            mInterpolator = new Scroller.ViscousFluidInterpolator();
-        } else {
-            mInterpolator = interpolator;
-        }
+        mInterpolator = interpolator;
         mFlywheel = flywheel;
         mScrollerX = new SplineOverScroller(context);
         mScrollerY = new SplineOverScroller(context);
@@ -115,11 +112,7 @@ public class OverScroller {
     }
 
     void setInterpolator(Interpolator interpolator) {
-        if (interpolator == null) {
-            mInterpolator = new Scroller.ViscousFluidInterpolator();
-        } else {
-            mInterpolator = interpolator;
-        }
+        mInterpolator = interpolator;
     }
 
     /**
@@ -180,7 +173,9 @@ public class OverScroller {
      * @return The original velocity less the deceleration, norm of the X and Y velocity vector.
      */
     public float getCurrVelocity() {
-        return (float) Math.hypot(mScrollerX.mCurrVelocity, mScrollerY.mCurrVelocity);
+        float squaredNorm = mScrollerX.mCurrVelocity * mScrollerX.mCurrVelocity;
+        squaredNorm += mScrollerY.mCurrVelocity * mScrollerY.mCurrVelocity;
+        return FloatMath.sqrt(squaredNorm);
     }
 
     /**
@@ -307,7 +302,14 @@ public class OverScroller {
 
                 final int duration = mScrollerX.mDuration;
                 if (elapsedTime < duration) {
-                    final float q = mInterpolator.getInterpolation(elapsedTime / (float) duration);
+                    float q = (float) (elapsedTime) / duration;
+
+                    if (mInterpolator == null) {
+                        q = Scroller.viscousFluid(q);
+                    } else {
+                        q = mInterpolator.getInterpolation(q);
+                    }
+
                     mScrollerX.updateScroll(q);
                     mScrollerY.updateScroll(q);
                 } else {
@@ -678,7 +680,7 @@ public class OverScroller {
         void startScroll(int start, int distance, int duration) {
             mFinished = false;
 
-            mCurrentPosition = mStart = start;
+            mStart = start;
             mFinal = start + distance;
 
             mStartTime = AnimationUtils.currentAnimationTimeMillis();
@@ -712,7 +714,7 @@ public class OverScroller {
         boolean springback(int start, int min, int max) {
             mFinished = true;
 
-            mCurrentPosition = mStart = mFinal = start;
+            mStart = mFinal = start;
             mVelocity = 0;
 
             mStartTime = AnimationUtils.currentAnimationTimeMillis();
@@ -731,7 +733,7 @@ public class OverScroller {
             // mStartTime has been set
             mFinished = false;
             mState = CUBIC;
-            mCurrentPosition = mStart = start;
+            mStart = start;
             mFinal = end;
             final int delta = start - end;
             mDeceleration = getDeceleration(delta);
@@ -797,14 +799,12 @@ public class OverScroller {
         private void fitOnBounceCurve(int start, int end, int velocity) {
             // Simulate a bounce that started from edge
             final float durationToApex = - velocity / mDeceleration;
-            // The float cast below is necessary to avoid integer overflow.
-            final float velocitySquared = (float) velocity * velocity;
-            final float distanceToApex = velocitySquared / 2.0f / Math.abs(mDeceleration);
+            final float distanceToApex = velocity * velocity / 2.0f / Math.abs(mDeceleration);
             final float distanceToEdge = Math.abs(end - start);
             final float totalDuration = (float) Math.sqrt(
                     2.0 * (distanceToApex + distanceToEdge) / Math.abs(mDeceleration));
             mStartTime -= (int) (1000.0f * (totalDuration - durationToApex));
-            mCurrentPosition = mStart = end;
+            mStart = end;
             mVelocity = (int) (- mDeceleration * totalDuration);
         }
 
@@ -850,14 +850,12 @@ public class OverScroller {
 
         private void onEdgeReached() {
             // mStart, mVelocity and mStartTime were adjusted to their values when edge was reached.
-            // The float cast below is necessary to avoid integer overflow.
-            final float velocitySquared = (float) mVelocity * mVelocity;
-            float distance = velocitySquared / (2.0f * Math.abs(mDeceleration));
+            float distance = mVelocity * mVelocity / (2.0f * Math.abs(mDeceleration));
             final float sign = Math.signum(mVelocity);
 
             if (distance > mOver) {
                 // Default deceleration is not sufficient to slow us down before boundary
-                 mDeceleration = - sign * velocitySquared / (2.0f * mOver);
+                 mDeceleration = - sign * mVelocity * mVelocity / (2.0f * mOver);
                  distance = mOver;
             }
 
@@ -873,7 +871,7 @@ public class OverScroller {
                     // Duration from start to null velocity
                     if (mDuration < mSplineDuration) {
                         // If the animation was clamped, we reached the edge
-                        mCurrentPosition = mStart = mFinal;
+                        mStart = mFinal;
                         // TODO Better compute speed when edge was reached
                         mVelocity = (int) mCurrVelocity;
                         mDeceleration = getDeceleration(mVelocity);
@@ -905,10 +903,6 @@ public class OverScroller {
             final long time = AnimationUtils.currentAnimationTimeMillis();
             final long currentTime = time - mStartTime;
 
-            if (currentTime == 0) {
-                // Skip work but report that we're still going if we have a nonzero duration.
-                return mDuration > 0;
-            }
             if (currentTime > mDuration) {
                 return false;
             }

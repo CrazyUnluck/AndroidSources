@@ -20,9 +20,10 @@ import android.content.Context;
 import android.content.Intent;
 import android.os.IBinder;
 import android.util.ArrayMap;
-import android.util.ArraySet;
 
 import java.io.PrintWriter;
+import java.util.HashMap;
+import java.util.Iterator;
 
 /**
  * A particular Intent that has been bound to a Service.
@@ -79,9 +80,11 @@ final class IntentBindRecord {
     int collectFlags() {
         int flags = 0;
         for (int i=apps.size()-1; i>=0; i--) {
-            final ArraySet<ConnectionRecord> connections = apps.valueAt(i).connections;
-            for (int j=connections.size()-1; j>=0; j--) {
-                flags |= connections.valueAt(j).flags;
+            AppBindRecord app = apps.valueAt(i);
+            if (app.connections.size() > 0) {
+                for (ConnectionRecord conn : app.connections) {
+                    flags |= conn.flags;
+                }
             }
         }
         return flags;

@@ -17,9 +17,8 @@
 package android.widget;
 
 import com.android.internal.R;
-import com.android.internal.view.menu.ShowableListMenu;
 
-import android.annotation.StringRes;
+import android.content.ActivityNotFoundException;
 import android.content.Context;
 import android.content.Intent;
 import android.content.pm.PackageManager;
@@ -32,12 +31,14 @@ import android.util.AttributeSet;
 import android.util.Log;
 import android.view.ActionProvider;
 import android.view.LayoutInflater;
+import android.view.MotionEvent;
 import android.view.View;
 import android.view.ViewGroup;
 import android.view.ViewTreeObserver;
 import android.view.ViewTreeObserver.OnGlobalLayoutListener;
 import android.view.accessibility.AccessibilityNodeInfo;
 import android.widget.ActivityChooserModel.ActivityChooserModelClient;
+import android.widget.ListPopupWindow.ForwardingListener;
 
 /**
  * This class is a view for choosing an activity for handling a given {@link Intent}.
@@ -203,32 +204,13 @@ public class ActivityChooserView extends ViewGroup implements ActivityChooserMod
      *
      * @param context The application environment.
      * @param attrs A collection of attributes.
-     * @param defStyleAttr An attribute in the current theme that contains a
-     *        reference to a style resource that supplies default values for
-     *        the view. Can be 0 to not look for defaults.
+     * @param defStyle The default style to apply to this view.
      */
-    public ActivityChooserView(Context context, AttributeSet attrs, int defStyleAttr) {
-        this(context, attrs, defStyleAttr, 0);
-    }
-
-    /**
-     * Create a new instance.
-     *
-     * @param context The application environment.
-     * @param attrs A collection of attributes.
-     * @param defStyleAttr An attribute in the current theme that contains a
-     *        reference to a style resource that supplies default values for
-     *        the view. Can be 0 to not look for defaults.
-     * @param defStyleRes A resource identifier of a style resource that
-     *        supplies default values for the view, used only if
-     *        defStyleAttr is 0 or can not be found in the theme. Can be 0
-     *        to not look for defaults.
-     */
-    public ActivityChooserView(Context context, AttributeSet attrs, int defStyleAttr, int defStyleRes) {
-        super(context, attrs, defStyleAttr, defStyleRes);
+    public ActivityChooserView(Context context, AttributeSet attrs, int defStyle) {
+        super(context, attrs, defStyle);
 
         TypedArray attributesArray = context.obtainStyledAttributes(attrs,
-                R.styleable.ActivityChooserView, defStyleAttr, defStyleRes);
+                R.styleable.ActivityChooserView, defStyle, 0);
 
         mInitialActivityCount = attributesArray.getInt(
                 R.styleable.ActivityChooserView_initialActivityCount,
@@ -263,7 +245,7 @@ public class ActivityChooserView extends ViewGroup implements ActivityChooserMod
         });
         expandButton.setOnTouchListener(new ForwardingListener(expandButton) {
             @Override
-            public ShowableListMenu getPopup() {
+            public ListPopupWindow getPopup() {
                 return getListPopupWindow();
             }
 
@@ -335,7 +317,7 @@ public class ActivityChooserView extends ViewGroup implements ActivityChooserMod
      *
      * @param resourceId The content description resource id.
      */
-    public void setExpandActivityOverflowButtonContentDescription(@StringRes int resourceId) {
+    public void setExpandActivityOverflowButtonContentDescription(int resourceId) {
         CharSequence contentDescription = mContext.getString(resourceId);
         mExpandActivityOverflowButtonImage.setContentDescription(contentDescription);
     }
@@ -515,7 +497,7 @@ public class ActivityChooserView extends ViewGroup implements ActivityChooserMod
      *
      * @param resourceId The resource id.
      */
-    public void setDefaultActionButtonContentDescription(@StringRes int resourceId) {
+    public void setDefaultActionButtonContentDescription(int resourceId) {
         mDefaultActionButtonContentDescription = resourceId;
     }
 

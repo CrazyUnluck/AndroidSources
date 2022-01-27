@@ -13,10 +13,7 @@
  */
 package android.support.v17.leanback.widget;
 
-import android.content.Context;
 import android.support.v17.leanback.R;
-import android.support.v17.leanback.system.Settings;
-import android.support.v17.leanback.transition.TransitionHelper;
 import android.view.LayoutInflater;
 import android.view.View;
 import android.view.ViewGroup;
@@ -24,60 +21,15 @@ import android.view.ViewGroup.LayoutParams;
 import android.util.Log;
 
 /**
- * A presenter that renders objects in a {@link VerticalGridView}.
+ * A presenter that renders objects in a vertical grid.
+ *
  */
 public class VerticalGridPresenter extends Presenter {
     private static final String TAG = "GridPresenter";
     private static final boolean DEBUG = false;
 
-    class VerticalGridItemBridgeAdapter extends ItemBridgeAdapter {
-        @Override
-        protected void onCreate(ItemBridgeAdapter.ViewHolder viewHolder) {
-            if (viewHolder.itemView instanceof ViewGroup) {
-                TransitionHelper.setTransitionGroup((ViewGroup) viewHolder.itemView,
-                        true);
-            }
-            if (mShadowOverlayHelper != null) {
-                mShadowOverlayHelper.onViewCreated(viewHolder.itemView);
-            }
-        }
-
-        @Override
-        public void onBind(final ItemBridgeAdapter.ViewHolder itemViewHolder) {
-            // Only when having an OnItemClickListner, we attach the OnClickListener.
-            if (getOnItemViewClickedListener() != null) {
-                final View itemView = itemViewHolder.mHolder.view;
-                itemView.setOnClickListener(new View.OnClickListener() {
-                    @Override
-                    public void onClick(View view) {
-                        if (getOnItemViewClickedListener() != null) {
-                            // Row is always null
-                            getOnItemViewClickedListener().onItemClicked(
-                                    itemViewHolder.mHolder, itemViewHolder.mItem, null, null);
-                        }
-                    }
-                });
-            }
-        }
-
-        @Override
-        public void onUnbind(ItemBridgeAdapter.ViewHolder viewHolder) {
-            if (getOnItemViewClickedListener() != null) {
-                viewHolder.mHolder.view.setOnClickListener(null);
-            }
-        }
-
-        @Override
-        public void onAttachedToWindow(ItemBridgeAdapter.ViewHolder viewHolder) {
-            viewHolder.itemView.setActivated(true);
-        }
-    }
-
-    /**
-     * ViewHolder for the VerticalGridPresenter.
-     */
     public static class ViewHolder extends Presenter.ViewHolder {
-        ItemBridgeAdapter mItemBridgeAdapter;
+        final ItemBridgeAdapter mItemBridgeAdapter = new ItemBridgeAdapter();
         final VerticalGridView mGridView;
         boolean mInitialized;
 
@@ -92,54 +44,17 @@ public class VerticalGridPresenter extends Presenter {
     }
 
     private int mNumColumns = -1;
-    private int mFocusZoomFactor;
-    private boolean mUseFocusDimmer;
+    private int mZoomFactor;
     private boolean mShadowEnabled = true;
-    private boolean mKeepChildForeground = true;
-    private OnItemViewSelectedListener mOnItemViewSelectedListener;
-    private OnItemViewClickedListener mOnItemViewClickedListener;
-    private boolean mRoundedCornersEnabled = true;
-    private ShadowOverlayHelper mShadowOverlayHelper;
-    private ItemBridgeAdapter.Wrapper mShadowOverlayWrapper;
+    private OnItemSelectedListener mOnItemSelectedListener;
+    private OnItemClickedListener mOnItemClickedListener;
 
-    /**
-     * Constructs a VerticalGridPresenter with defaults.
-     * Uses {@link FocusHighlight#ZOOM_FACTOR_MEDIUM} for focus zooming and
-     * enabled dimming on focus.
-     */
     public VerticalGridPresenter() {
-        this(FocusHighlight.ZOOM_FACTOR_LARGE);
+        this(FocusHighlight.ZOOM_FACTOR_MEDIUM);
     }
 
-    /**
-     * Constructs a VerticalGridPresenter with the given parameters.
-     *
-     * @param focusZoomFactor Controls the zoom factor used when an item view is focused. One of
-     *         {@link FocusHighlight#ZOOM_FACTOR_NONE},
-     *         {@link FocusHighlight#ZOOM_FACTOR_SMALL},
-     *         {@link FocusHighlight#ZOOM_FACTOR_XSMALL},
-     *         {@link FocusHighlight#ZOOM_FACTOR_MEDIUM},
-     *         {@link FocusHighlight#ZOOM_FACTOR_LARGE}
-     * enabled dimming on focus.
-     */
-    public VerticalGridPresenter(int focusZoomFactor) {
-        this(focusZoomFactor, true);
-    }
-
-    /**
-     * Constructs a VerticalGridPresenter with the given parameters.
-     *
-     * @param focusZoomFactor Controls the zoom factor used when an item view is focused. One of
-     *         {@link FocusHighlight#ZOOM_FACTOR_NONE},
-     *         {@link FocusHighlight#ZOOM_FACTOR_SMALL},
-     *         {@link FocusHighlight#ZOOM_FACTOR_XSMALL},
-     *         {@link FocusHighlight#ZOOM_FACTOR_MEDIUM},
-     *         {@link FocusHighlight#ZOOM_FACTOR_LARGE}
-     * @param useFocusDimmer determines if the FocusHighlighter will use the dimmer
-     */
-    public VerticalGridPresenter(int focusZoomFactor, boolean useFocusDimmer) {
-        mFocusZoomFactor = focusZoomFactor;
-        mUseFocusDimmer = useFocusDimmer;
+    public VerticalGridPresenter(int zoomFactor) {
+        mZoomFactor = zoomFactor;
     }
 
     /**
@@ -185,56 +100,17 @@ public class VerticalGridPresenter extends Presenter {
      * Subclass may return false to disable.
      */
     public boolean isUsingDefaultShadow() {
-        return ShadowOverlayHelper.supportsShadow();
-    }
-
-    /**
-     * Enables or disabled rounded corners on children of this row.
-     * Supported on Android SDK >= L.
-     */
-    public final void enableChildRoundedCorners(boolean enable) {
-        mRoundedCornersEnabled = enable;
-    }
-
-    /**
-     * Returns true if rounded corners are enabled for children of this row.
-     */
-    public final boolean areChildRoundedCornersEnabled() {
-        return mRoundedCornersEnabled;
-    }
-
-    /**
-     * Returns true if SDK >= L, where Z shadow is enabled so that Z order is enabled
-     * on each child of vertical grid.   If subclass returns false in isUsingDefaultShadow()
-     * and does not use Z-shadow on SDK >= L, it should override isUsingZOrder() return false.
-     */
-    public boolean isUsingZOrder(Context context) {
-        return !Settings.getInstance(context).preferStaticShadows();
+        return ShadowOverlayContainer.supportsShadow();
     }
 
     final boolean needsDefaultShadow() {
         return isUsingDefaultShadow() && getShadowEnabled();
     }
 
-    /**
-     * Returns the zoom factor used for focus highlighting.
-     */
-    public final int getFocusZoomFactor() {
-        return mFocusZoomFactor;
-    }
-
-    /**
-     * Returns true if the focus dimmer is used for focus highlighting; false otherwise.
-     */
-    public final boolean isFocusDimmerUsed() {
-        return mUseFocusDimmer;
-    }
-
     @Override
     public final ViewHolder onCreateViewHolder(ViewGroup parent) {
         ViewHolder vh = createGridViewHolder(parent);
         vh.mInitialized = false;
-        vh.mItemBridgeAdapter = new VerticalGridItemBridgeAdapter();
         initializeGridViewHolder(vh);
         if (!vh.mInitialized) {
             throw new RuntimeException("super.initializeGridViewHolder() must be called");
@@ -251,13 +127,21 @@ public class VerticalGridPresenter extends Presenter {
         return new ViewHolder((VerticalGridView) root.findViewById(R.id.browse_grid));
     }
 
-    /**
-     * Called after a {@link VerticalGridPresenter.ViewHolder} is created.
-     * Subclasses may override this method and start by calling
-     * super.initializeGridViewHolder(ViewHolder).
-     *
-     * @param vh The ViewHolder to initialize for the vertical grid.
-     */
+    private ItemBridgeAdapter.Wrapper mWrapper = new ItemBridgeAdapter.Wrapper() {
+        @Override
+        public View createWrapper(View root) {
+            ShadowOverlayContainer wrapper = new ShadowOverlayContainer(root.getContext());
+            wrapper.setLayoutParams(
+                    new LayoutParams(LayoutParams.WRAP_CONTENT, LayoutParams.WRAP_CONTENT));
+            wrapper.initialize(needsDefaultShadow(), false);
+            return wrapper;
+        }
+        @Override
+        public void wrap(View wrapper, View wrapped) {
+            ((ShadowOverlayContainer) wrapper).wrap(wrapped);
+        }
+    };
+
     protected void initializeGridViewHolder(ViewHolder vh) {
         if (mNumColumns == -1) {
             throw new IllegalStateException("Number of columns must be set");
@@ -266,27 +150,12 @@ public class VerticalGridPresenter extends Presenter {
         vh.getGridView().setNumColumns(mNumColumns);
         vh.mInitialized = true;
 
-        Context context = vh.mGridView.getContext();
-        if (mShadowOverlayHelper == null) {
-            mShadowOverlayHelper = new ShadowOverlayHelper.Builder()
-                    .needsOverlay(mUseFocusDimmer)
-                    .needsShadow(needsDefaultShadow())
-                    .needsRoundedCorner(areChildRoundedCornersEnabled())
-                    .preferZOrder(isUsingZOrder(context))
-                    .keepForegroundDrawable(mKeepChildForeground)
-                    .options(createShadowOverlayOptions())
-                    .build(context);
-            if (mShadowOverlayHelper.needsWrapper()) {
-                mShadowOverlayWrapper = new ItemBridgeAdapterShadowOverlayWrapper(
-                        mShadowOverlayHelper);
-            }
+        if (needsDefaultShadow()) {
+            vh.mItemBridgeAdapter.setWrapper(mWrapper);
+            ShadowOverlayContainer.prepareParentForShadow(vh.getGridView());
+            ((ViewGroup) vh.view).setClipChildren(false);
         }
-        vh.mItemBridgeAdapter.setWrapper(mShadowOverlayWrapper);
-        mShadowOverlayHelper.prepareParentForShadow(vh.mGridView);
-        vh.getGridView().setFocusDrawingOrderEnabled(mShadowOverlayHelper.getShadowType()
-                == ShadowOverlayHelper.SHADOW_STATIC);
-        FocusHighlightHelper.setupBrowseItemFocusHighlight(vh.mItemBridgeAdapter,
-                mFocusZoomFactor, mUseFocusDimmer);
+        FocusHighlightHelper.setupBrowseItemFocusHighlight(vh.mItemBridgeAdapter, mZoomFactor);
 
         final ViewHolder gridViewHolder = vh;
         vh.getGridView().setOnChildSelectedListener(new OnChildSelectedListener() {
@@ -295,39 +164,25 @@ public class VerticalGridPresenter extends Presenter {
                 selectChildView(gridViewHolder, view);
             }
         });
-    }
 
-    /**
-     * Set if keeps foreground of child of this grid, the foreground will not
-     * be used for overlay color.  Default value is true.
-     *
-     * @param keep   True if keep foreground of child of this grid.
-     */
-    public final void setKeepChildForeground(boolean keep) {
-        mKeepChildForeground = keep;
-    }
-
-    /**
-     * Returns true if keeps foreground of child of this grid, the foreground will not
-     * be used for overlay color.  Default value is true.
-     *
-     * @return   True if keeps foreground of child of this grid.
-     */
-    public final boolean getKeepChildForeground() {
-        return mKeepChildForeground;
-    }
-
-    /**
-     * Create ShadowOverlayHelper Options.  Subclass may override.
-     * e.g.
-     * <code>
-     * return new ShadowOverlayHelper.Options().roundedCornerRadius(10);
-     * </code>
-     *
-     * @return   The options to be used for shadow, overlay and rouded corner.
-     */
-    protected ShadowOverlayHelper.Options createShadowOverlayOptions() {
-        return ShadowOverlayHelper.Options.DEFAULT;
+        vh.mItemBridgeAdapter.setAdapterListener(new ItemBridgeAdapter.AdapterListener() {
+            @Override
+            public void onCreate(final ItemBridgeAdapter.ViewHolder itemViewHolder) {
+                // Only when having an OnItemClickListner, we attach the OnClickListener.
+                if (getOnItemClickedListener() != null) {
+                    final View itemView = itemViewHolder.getViewHolder().view;
+                    itemView.setOnClickListener(new View.OnClickListener() {
+                        @Override
+                        public void onClick(View view) {
+                            if (getOnItemClickedListener() != null) {
+                                // Row is always null
+                                getOnItemClickedListener().onItemClicked(itemViewHolder.mItem, null);
+                            }
+                        }
+                    });
+                }
+            }
+        });
     }
 
     @Override
@@ -350,57 +205,40 @@ public class VerticalGridPresenter extends Presenter {
      * Sets the item selected listener.
      * Since this is a grid the row parameter is always null.
      */
-    public final void setOnItemViewSelectedListener(OnItemViewSelectedListener listener) {
-        mOnItemViewSelectedListener = listener;
+    public final void setOnItemSelectedListener(OnItemSelectedListener listener) {
+        mOnItemSelectedListener = listener;
     }
 
     /**
      * Returns the item selected listener.
      */
-    public final OnItemViewSelectedListener getOnItemViewSelectedListener() {
-        return mOnItemViewSelectedListener;
+    public final OnItemSelectedListener getOnItemSelectedListener() {
+        return mOnItemSelectedListener;
     }
 
     /**
      * Sets the item clicked listener.
-     * OnItemViewClickedListener will override {@link View.OnClickListener} that
+     * OnItemClickedListener will override {@link View.OnClickListener} that
      * item presenter sets during {@link Presenter#onCreateViewHolder(ViewGroup)}.
      * So in general, developer should choose one of the listeners but not both.
      */
-    public final void setOnItemViewClickedListener(OnItemViewClickedListener listener) {
-        mOnItemViewClickedListener = listener;
+    public final void setOnItemClickedListener(OnItemClickedListener listener) {
+        mOnItemClickedListener = listener;
     }
 
     /**
      * Returns the item clicked listener.
      */
-    public final OnItemViewClickedListener getOnItemViewClickedListener() {
-        return mOnItemViewClickedListener;
+    public final OnItemClickedListener getOnItemClickedListener() {
+        return mOnItemClickedListener;
     }
 
     private void selectChildView(ViewHolder vh, View view) {
-        if (getOnItemViewSelectedListener() != null) {
+        if (getOnItemSelectedListener() != null) {
             ItemBridgeAdapter.ViewHolder ibh = (view == null) ? null :
-                    (ItemBridgeAdapter.ViewHolder) vh.getGridView().getChildViewHolder(view);
-            if (ibh == null) {
-                getOnItemViewSelectedListener().onItemSelected(null, null, null, null);
-            } else {
-                getOnItemViewSelectedListener().onItemSelected(ibh.mHolder, ibh.mItem, null, null);
-            }
-        }
-    }
+                (ItemBridgeAdapter.ViewHolder) vh.getGridView().getChildViewHolder(view);
 
-    /**
-     * Changes the visibility of views.  The entrance transition will be run against the views that
-     * change visibilities.  This method is called by the fragment, it should not be called
-     * directly by the application.
-     *
-     * @param holder         The ViewHolder for the vertical grid.
-     * @param afterEntrance  true if children of vertical grid participating in entrance transition
-     *                       should be set to visible, false otherwise.
-     */
-    public void setEntranceTransitionState(VerticalGridPresenter.ViewHolder holder,
-            boolean afterEntrance) {
-        holder.mGridView.setChildrenVisibility(afterEntrance? View.VISIBLE : View.INVISIBLE);
-    }
+            getOnItemSelectedListener().onItemSelected(ibh == null ? null : ibh.mItem, null);
+        }
+    };
 }

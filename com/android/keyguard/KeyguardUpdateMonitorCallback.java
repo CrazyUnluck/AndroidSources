@@ -15,12 +15,11 @@
  */
 package com.android.keyguard;
 
+import android.app.PendingIntent;
 import android.app.admin.DevicePolicyManager;
 import android.graphics.Bitmap;
 import android.media.AudioManager;
 import android.os.SystemClock;
-import android.hardware.fingerprint.FingerprintManager;
-import android.telephony.TelephonyManager;
 import android.view.WindowManagerPolicy;
 
 import com.android.internal.telephony.IccCardConstants;
@@ -28,7 +27,7 @@ import com.android.internal.telephony.IccCardConstants;
 /**
  * Callback for general information relevant to lock screen.
  */
-public class KeyguardUpdateMonitorCallback {
+class KeyguardUpdateMonitorCallback {
 
     private static final long VISIBILITY_CHANGED_COLLAPSE_MS = 1000;
     private long mVisibilityChangedCalled;
@@ -40,24 +39,28 @@ public class KeyguardUpdateMonitorCallback {
      *
      * @param status current battery status
      */
-    public void onRefreshBatteryInfo(KeyguardUpdateMonitor.BatteryStatus status) { }
+    void onRefreshBatteryInfo(KeyguardUpdateMonitor.BatteryStatus status) { }
 
     /**
      * Called once per minute or when the time changes.
      */
-    public void onTimeChanged() { }
+    void onTimeChanged() { }
 
     /**
      * Called when the carrier PLMN or SPN changes.
+     *
+     * @param plmn The operator name of the registered network.  May be null if it shouldn't
+     *   be displayed.
+     * @param spn The service provider name.  May be null if it shouldn't be displayed.
      */
-    public void onRefreshCarrierInfo() { }
+    void onRefreshCarrierInfo(CharSequence plmn, CharSequence spn) { }
 
     /**
      * Called when the ringer mode changes.
      * @param state the current ringer state, as defined in
      * {@link AudioManager#RINGER_MODE_CHANGED_ACTION}
      */
-    public void onRingerModeChanged(int state) { }
+    void onRingerModeChanged(int state) { }
 
     /**
      * Called when the phone state changes. String will be one of:
@@ -65,15 +68,15 @@ public class KeyguardUpdateMonitorCallback {
      * {@link TelephonyManager@EXTRA_STATE_RINGING}
      * {@link TelephonyManager#EXTRA_STATE_OFFHOOK
      */
-    public void onPhoneStateChanged(int phoneState) { }
+    void onPhoneStateChanged(int phoneState) { }
 
     /**
      * Called when the visibility of the keyguard changes.
      * @param showing Indicates if the keyguard is now visible.
      */
-    public void onKeyguardVisibilityChanged(boolean showing) { }
+    void onKeyguardVisibilityChanged(boolean showing) { }
 
-    public void onKeyguardVisibilityChangedRaw(boolean showing) {
+    void onKeyguardVisibilityChangedRaw(boolean showing) {
         final long now = SystemClock.elapsedRealtime();
         if (showing == mShowing
                 && (now - mVisibilityChangedCalled) < VISIBILITY_CHANGED_COLLAPSE_MS) return;
@@ -83,49 +86,47 @@ public class KeyguardUpdateMonitorCallback {
     }
 
     /**
-     * Called when the keyguard enters or leaves bouncer mode.
-     * @param bouncer if true, keyguard is now in bouncer mode.
-     */
-    public void onKeyguardBouncerChanged(boolean bouncer) { }
-
-    /**
      * Called when visibility of lockscreen clock changes, such as when
      * obscured by a widget.
      */
-    public void onClockVisibilityChanged() { }
+    void onClockVisibilityChanged() { }
 
     /**
      * Called when the device becomes provisioned
      */
-    public void onDeviceProvisioned() { }
+    void onDeviceProvisioned() { }
 
     /**
      * Called when the device policy changes.
      * See {@link DevicePolicyManager#ACTION_DEVICE_POLICY_MANAGER_STATE_CHANGED}
      */
-    public void onDevicePolicyManagerStateChanged() { }
+    void onDevicePolicyManagerStateChanged() { }
 
     /**
      * Called when the user change begins.
      */
-    public void onUserSwitching(int userId) { }
+    void onUserSwitching(int userId) { }
 
     /**
      * Called when the user change is complete.
      */
-    public void onUserSwitchComplete(int userId) { }
+    void onUserSwitchComplete(int userId) { }
 
     /**
      * Called when the SIM state changes.
-     * @param slotId
      * @param simState
      */
-    public void onSimStateChanged(int subId, int slotId, IccCardConstants.State simState) { }
+    void onSimStateChanged(IccCardConstants.State simState) { }
+
+    /**
+     * Called when a user is removed.
+     */
+    void onUserRemoved(int userId) { }
 
     /**
      * Called when the user's info changed.
      */
-    public void onUserInfoChanged(int userId) { }
+    void onUserInfoChanged(int userId) { }
 
     /**
      * Called when boot completed.
@@ -133,12 +134,24 @@ public class KeyguardUpdateMonitorCallback {
      * Note, this callback will only be received if boot complete occurs after registering with
      * KeyguardUpdateMonitor.
      */
-    public void onBootCompleted() { }
+    void onBootCompleted() { }
+
+    /**
+     * Called when audio client attaches or detaches from AudioManager.
+     */
+    void onMusicClientIdChanged(int clientGeneration, boolean clearing, PendingIntent intent) { }
+
+    /**
+     * Called when the audio playback state changes.
+     * @param playbackState
+     * @param eventTime
+     */
+    public void onMusicPlaybackStateChanged(int playbackState, long eventTime) { }
 
     /**
      * Called when the emergency call button is pressed.
      */
-    public void onEmergencyCallAction() { }
+    void onEmergencyCallAction() { }
 
     /**
      * Called when the transport background changes.
@@ -148,96 +161,15 @@ public class KeyguardUpdateMonitorCallback {
     }
 
     /**
-     * Called when the device has started waking up.
-     */
-    public void onStartedWakingUp() { }
-
-    /**
-     * Called when the device has started going to sleep.
-     * @param why see {@link #onFinishedGoingToSleep(int)}
-     */
-    public void onStartedGoingToSleep(int why) { }
-
-    /**
-     * Called when the device has finished going to sleep.
-     * @param why either {@link WindowManagerPolicy#OFF_BECAUSE_OF_ADMIN},
-     * {@link WindowManagerPolicy#OFF_BECAUSE_OF_USER}, or
-     * {@link WindowManagerPolicy#OFF_BECAUSE_OF_TIMEOUT}.
-     */
-    public void onFinishedGoingToSleep(int why) { }
-
-    /**
-     * Called when the screen has been turned on.
+     * Called when the screen turns on
      */
     public void onScreenTurnedOn() { }
 
     /**
-     * Called when the screen has been turned off.
+     * Called when the screen turns off
+     * @param why either {@link WindowManagerPolicy#OFF_BECAUSE_OF_ADMIN},
+     * {@link WindowManagerPolicy#OFF_BECAUSE_OF_USER}, or
+     * {@link WindowManagerPolicy#OFF_BECAUSE_OF_TIMEOUT}.
      */
-    public void onScreenTurnedOff() { }
-
-    /**
-     * Called when trust changes for a user.
-     */
-    public void onTrustChanged(int userId) { }
-
-    /**
-     * Called when trust being managed changes for a user.
-     */
-    public void onTrustManagedChanged(int userId) { }
-
-    /**
-     * Called after trust was granted with non-zero flags.
-     */
-    public void onTrustGrantedWithFlags(int flags, int userId) { }
-
-    /**
-     * Called when a finger has been acquired.
-     * <p>
-     * It is guaranteed that either {@link #onFingerprintAuthenticated} or
-     * {@link #onFingerprintAuthFailed()} is called after this method eventually.
-     */
-    public void onFingerprintAcquired() { }
-
-    /**
-     * Called when a fingerprint couldn't be authenticated.
-     */
-    public void onFingerprintAuthFailed() { }
-
-    /**
-     * Called when a fingerprint is recognized.
-     * @param userId the user id for which the fingerprint was authenticated
-     */
-    public void onFingerprintAuthenticated(int userId) { }
-
-    /**
-     * Called when fingerprint provides help string (e.g. "Try again")
-     * @param msgId
-     * @param helpString
-     */
-    public void onFingerprintHelp(int msgId, String helpString) { }
-
-    /**
-     * Called when fingerprint provides an semi-permanent error message
-     * (e.g. "Hardware not available").
-     * @param msgId one of the error messages listed in {@link FingerprintManager}
-     * @param errString
-     */
-    public void onFingerprintError(int msgId, String errString) { }
-
-    /**
-     * Called when the state of face unlock changed.
-     */
-    public void onFaceUnlockStateChanged(boolean running, int userId) { }
-
-    /**
-     * Called when the fingerprint running state changed.
-     */
-    public void onFingerprintRunningStateChanged(boolean running) { }
-
-    /**
-     * Called when the state that the user hasn't used strong authentication since quite some time
-     * has changed.
-     */
-    public void onStrongAuthStateChanged(int userId) { }
+    public void onScreenTurnedOff(int why) { }
 }

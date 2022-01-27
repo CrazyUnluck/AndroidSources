@@ -16,16 +16,12 @@
 
 package com.android.server.am;
 
-import static com.android.server.am.ActivityManagerDebugConfig.TAG_AM;
-import static com.android.server.am.ActivityManagerDebugConfig.TAG_WITH_CLASS_NAME;
-
+import java.io.FileOutputStream;
 import java.io.IOException;
 import java.io.OutputStream;
 import java.nio.ByteBuffer;
 
 import android.app.ActivityManager;
-import android.os.Build;
-import android.os.SystemClock;
 import com.android.internal.util.MemInfoReader;
 import com.android.server.wm.WindowManagerService;
 
@@ -41,30 +37,25 @@ import android.view.Display;
  * Activity manager code dealing with processes.
  */
 final class ProcessList {
-    private static final String TAG = TAG_WITH_CLASS_NAME ? "ProcessList" : TAG_AM;
-
     // The minimum time we allow between crashes, for us to consider this
     // application to be bad and stop and its services and reject broadcasts.
     static final int MIN_CRASH_INTERVAL = 60*1000;
 
     // OOM adjustments for processes in various states:
 
-    // Uninitialized value for any major or minor adj fields
-    static final int INVALID_ADJ = -10000;
-
     // Adjustment used in certain places where we don't know it yet.
     // (Generally this is something that is going to be cached, but we
     // don't know the exact value in the cached range to assign yet.)
-    static final int UNKNOWN_ADJ = 1001;
+    static final int UNKNOWN_ADJ = 16;
 
     // This is a process only hosting activities that are not visible,
     // so it can be killed without any disruption.
-    static final int CACHED_APP_MAX_ADJ = 906;
-    static final int CACHED_APP_MIN_ADJ = 900;
+    static final int CACHED_APP_MAX_ADJ = 15;
+    static final int CACHED_APP_MIN_ADJ = 9;
 
     // The B list of SERVICE_ADJ -- these are the old and decrepit
     // services that aren't as shiny and interesting as the ones in the A list.
-    static final int SERVICE_B_ADJ = 800;
+    static final int SERVICE_B_ADJ = 8;
 
     // This is the process of the previous application that the user was in.
     // This process is kept above other things, because it is very common to
@@ -72,64 +63,52 @@ final class ProcessList {
     // task switch (toggling between the two top recent apps) as well as normal
     // UI flow such as clicking on a URI in the e-mail app to view in the browser,
     // and then pressing back to return to e-mail.
-    static final int PREVIOUS_APP_ADJ = 700;
+    static final int PREVIOUS_APP_ADJ = 7;
 
     // This is a process holding the home application -- we want to try
     // avoiding killing it, even if it would normally be in the background,
     // because the user interacts with it so much.
-    static final int HOME_APP_ADJ = 600;
+    static final int HOME_APP_ADJ = 6;
 
     // This is a process holding an application service -- killing it will not
     // have much of an impact as far as the user is concerned.
-    static final int SERVICE_ADJ = 500;
+    static final int SERVICE_ADJ = 5;
 
     // This is a process with a heavy-weight application.  It is in the
     // background, but we want to try to avoid killing it.  Value set in
     // system/rootdir/init.rc on startup.
-    static final int HEAVY_WEIGHT_APP_ADJ = 400;
+    static final int HEAVY_WEIGHT_APP_ADJ = 4;
 
     // This is a process currently hosting a backup operation.  Killing it
     // is not entirely fatal but is generally a bad idea.
-    static final int BACKUP_APP_ADJ = 300;
+    static final int BACKUP_APP_ADJ = 3;
 
     // This is a process only hosting components that are perceptible to the
     // user, and we really want to avoid killing them, but they are not
     // immediately visible. An example is background music playback.
-    static final int PERCEPTIBLE_APP_ADJ = 200;
+    static final int PERCEPTIBLE_APP_ADJ = 2;
 
     // This is a process only hosting activities that are visible to the
     // user, so we'd prefer they don't disappear.
-    static final int VISIBLE_APP_ADJ = 100;
-    static final int VISIBLE_APP_LAYER_MAX = PERCEPTIBLE_APP_ADJ - VISIBLE_APP_ADJ - 1;
+    static final int VISIBLE_APP_ADJ = 1;
 
     // This is the process running the current foreground app.  We'd really
     // rather not kill it!
     static final int FOREGROUND_APP_ADJ = 0;
 
-    // This is a process that the system or a persistent process has bound to,
-    // and indicated it is important.
-    static final int PERSISTENT_SERVICE_ADJ = -700;
-
     // This is a system persistent process, such as telephony.  Definitely
     // don't want to kill it, but doing so is not completely fatal.
-    static final int PERSISTENT_PROC_ADJ = -800;
+    static final int PERSISTENT_PROC_ADJ = -12;
 
     // The system process runs at the default adjustment.
-    static final int SYSTEM_ADJ = -900;
+    static final int SYSTEM_ADJ = -16;
 
     // Special code for native processes that are not being managed by the system (so
     // don't have an oom adj assigned by the system).
-    static final int NATIVE_ADJ = -1000;
+    static final int NATIVE_ADJ = -17;
 
     // Memory pages are 4K.
     static final int PAGE_SIZE = 4*1024;
-
-    // Activity manager's version of Process.THREAD_GROUP_BG_NONINTERACTIVE
-    static final int SCHED_GROUP_BACKGROUND = 0;
-    // Activity manager's version of Process.THREAD_GROUP_DEFAULT
-    static final int SCHED_GROUP_DEFAULT = 1;
-    // Activity manager's version of Process.THREAD_GROUP_TOP_APP
-    static final int SCHED_GROUP_TOP_APP = 2;
 
     // The minimum number of cached apps we want to be able to keep around,
     // without empty apps being able to push them out of memory.
@@ -144,7 +123,7 @@ final class ProcessList {
     // we have no limit on the number of service, visible, foreground, or other such
     // processes and the number of those processes does not count against the cached
     // process limit.
-    static final int MAX_CACHED_APPS = 32;
+    static final int MAX_CACHED_APPS = 24;
 
     // We allow empty processes to stick around for at most 30 minutes.
     static final long MAX_EMPTY_TIME = 30*60*1000;
@@ -158,7 +137,7 @@ final class ProcessList {
 
     // The number of cached at which we don't consider it necessary to do
     // memory trimming.
-    static final int TRIM_CACHED_APPS = (MAX_CACHED_APPS-MAX_EMPTY_APPS)/3;
+    static final int TRIM_CACHED_APPS = ((MAX_CACHED_APPS-MAX_EMPTY_APPS)*2)/3;
 
     // Threshold of number of cached+empty where we consider memory critical.
     static final int TRIM_CRITICAL_THRESHOLD = 3;
@@ -170,7 +149,7 @@ final class ProcessList {
     // These must be kept in sync with the definitions in lmkd.c
     //
     // LMK_TARGET <minfree> <minkillprio> ... (up to 6 pairs)
-    // LMK_PROCPRIO <pid> <uid> <prio>
+    // LMK_PROCPRIO <pid> <prio>
     // LMK_PROCREMOVE <pid>
     static final byte LMK_TARGET = 0;
     static final byte LMK_PROCPRIO = 1;
@@ -186,14 +165,14 @@ final class ProcessList {
     // These are the low-end OOM level limits.  This is appropriate for an
     // HVGA or smaller phone with less than 512MB.  Values are in KB.
     private final int[] mOomMinFreeLow = new int[] {
-            12288, 18432, 24576,
-            36864, 43008, 49152
+            8192, 12288, 16384,
+            24576, 28672, 32768
     };
     // These are the high-end OOM level limits.  This is appropriate for a
     // 1280x800 or larger screen with around 1GB RAM.  Values are in KB.
     private final int[] mOomMinFreeHigh = new int[] {
-            73728, 92160, 110592,
-            129024, 147456, 184320
+            49152, 61440, 73728,
+            86016, 98304, 122880
     };
     // The actual OOM killer memory levels we are using.
     private final int[] mOomMinFree = new int[mOomAdj.length];
@@ -228,7 +207,7 @@ final class ProcessList {
     private void updateOomLevels(int displayWidth, int displayHeight, boolean write) {
         // Scale buckets from avail memory: at 300MB we use the lowest values to
         // 700MB or more for the top values.
-        float scaleMem = ((float)(mTotalMemMb-350))/(700-350);
+        float scaleMem = ((float)(mTotalMemMb-300))/(700-300);
 
         // Scale buckets from screen size.
         int minSize = 480*800;  //  384000
@@ -251,30 +230,21 @@ final class ProcessList {
             Slog.i("XXXXXX", "minfree_adj=" + minfree_adj + " minfree_abs=" + minfree_abs);
         }
 
-        final boolean is64bit = Build.SUPPORTED_64_BIT_ABIS.length > 0;
-
         for (int i=0; i<mOomAdj.length; i++) {
             int low = mOomMinFreeLow[i];
             int high = mOomMinFreeHigh[i];
-            if (is64bit) {
-                // Increase the high min-free levels for cached processes for 64-bit
-                if (i == 4) high = (high*3)/2;
-                else if (i == 5) high = (high*7)/4;
-            }
             mOomMinFree[i] = (int)(low + ((high-low)*scale));
         }
 
         if (minfree_abs >= 0) {
             for (int i=0; i<mOomAdj.length; i++) {
-                mOomMinFree[i] = (int)((float)minfree_abs * mOomMinFree[i]
-                        / mOomMinFree[mOomAdj.length - 1]);
+                mOomMinFree[i] = (int)((float)minfree_abs * mOomMinFree[i] / mOomMinFree[mOomAdj.length - 1]);
             }
         }
 
         if (minfree_adj != 0) {
             for (int i=0; i<mOomAdj.length; i++) {
-                mOomMinFree[i] += (int)((float)minfree_adj * mOomMinFree[i]
-                        / mOomMinFree[mOomAdj.length - 1]);
+                mOomMinFree[i] += (int)((float)minfree_adj * mOomMinFree[i] / mOomMinFree[mOomAdj.length - 1]);
                 if (mOomMinFree[i] < 0) {
                     mOomMinFree[i] = 0;
                 }
@@ -319,7 +289,7 @@ final class ProcessList {
     }
 
     public static int computeEmptyProcessLimit(int totalProcessLimit) {
-        return totalProcessLimit/2;
+        return (totalProcessLimit*2)/3;
     }
 
     private static String buildOomTag(String prefix, String space, int val, int base) {
@@ -351,8 +321,6 @@ final class ProcessList {
             return buildOomTag("vis  ", null, setAdj, ProcessList.VISIBLE_APP_ADJ);
         } else if (setAdj >= ProcessList.FOREGROUND_APP_ADJ) {
             return buildOomTag("fore ", null, setAdj, ProcessList.FOREGROUND_APP_ADJ);
-        } else if (setAdj >= ProcessList.PERSISTENT_SERVICE_ADJ) {
-            return buildOomTag("psvc ", null, setAdj, ProcessList.PERSISTENT_SERVICE_ADJ);
         } else if (setAdj >= ProcessList.PERSISTENT_PROC_ADJ) {
             return buildOomTag("pers ", null, setAdj, ProcessList.PERSISTENT_PROC_ADJ);
         } else if (setAdj >= ProcessList.SYSTEM_ADJ) {
@@ -378,15 +346,6 @@ final class ProcessList {
                 break;
             case ActivityManager.PROCESS_STATE_TOP:
                 procState = "T ";
-                break;
-            case ActivityManager.PROCESS_STATE_BOUND_FOREGROUND_SERVICE:
-                procState = "SB";
-                break;
-            case ActivityManager.PROCESS_STATE_FOREGROUND_SERVICE:
-                procState = "SF";
-                break;
-            case ActivityManager.PROCESS_STATE_TOP_SLEEPING:
-                procState = "TS";
                 break;
             case ActivityManager.PROCESS_STATE_IMPORTANT_FOREGROUND:
                 procState = "IF";
@@ -437,10 +396,7 @@ final class ProcessList {
         sb.append(ramKb);
     }
 
-    // How long after a state change that it is safe to collect PSS without it being dirty.
-    public static final int PSS_SAFE_TIME_FROM_STATE_CHANGE = 1000;
-
-    // The minimum time interval after a state change it is safe to collect PSS.
+    // The minimum amount of time after a state change it is safe ro collect PSS.
     public static final int PSS_MIN_TIME_FROM_STATE_CHANGE = 15*1000;
 
     // The maximum amount of time we want to go between PSS collections.
@@ -470,21 +426,6 @@ final class ProcessList {
     // The amount of time until PSS when a cached process stays in the same state.
     private static final int PSS_SAME_CACHED_INTERVAL = 30*60*1000;
 
-    // The minimum time interval after a state change it is safe to collect PSS.
-    public static final int PSS_TEST_MIN_TIME_FROM_STATE_CHANGE = 10*1000;
-
-    // The amount of time during testing until PSS when a process first becomes top.
-    private static final int PSS_TEST_FIRST_TOP_INTERVAL = 3*1000;
-
-    // The amount of time during testing until PSS when a process first goes into the background.
-    private static final int PSS_TEST_FIRST_BACKGROUND_INTERVAL = 5*1000;
-
-    // The amount of time during testing until PSS when an important process stays in same state.
-    private static final int PSS_TEST_SAME_IMPORTANT_INTERVAL = 10*1000;
-
-    // The amount of time during testing until PSS when a background process stays in same state.
-    private static final int PSS_TEST_SAME_BACKGROUND_INTERVAL = 15*1000;
-
     public static final int PROC_MEM_PERSISTENT = 0;
     public static final int PROC_MEM_TOP = 1;
     public static final int PROC_MEM_IMPORTANT = 2;
@@ -495,9 +436,6 @@ final class ProcessList {
         PROC_MEM_PERSISTENT,            // ActivityManager.PROCESS_STATE_PERSISTENT
         PROC_MEM_PERSISTENT,            // ActivityManager.PROCESS_STATE_PERSISTENT_UI
         PROC_MEM_TOP,                   // ActivityManager.PROCESS_STATE_TOP
-        PROC_MEM_IMPORTANT,             // ActivityManager.PROCESS_STATE_BOUND_FOREGROUND_SERVICE
-        PROC_MEM_IMPORTANT,             // ActivityManager.PROCESS_STATE_FOREGROUND_SERVICE
-        PROC_MEM_TOP,                   // ActivityManager.PROCESS_STATE_TOP_SLEEPING
         PROC_MEM_IMPORTANT,             // ActivityManager.PROCESS_STATE_IMPORTANT_FOREGROUND
         PROC_MEM_IMPORTANT,             // ActivityManager.PROCESS_STATE_IMPORTANT_BACKGROUND
         PROC_MEM_IMPORTANT,             // ActivityManager.PROCESS_STATE_BACKUP
@@ -515,9 +453,6 @@ final class ProcessList {
         PSS_SHORT_INTERVAL,             // ActivityManager.PROCESS_STATE_PERSISTENT
         PSS_SHORT_INTERVAL,             // ActivityManager.PROCESS_STATE_PERSISTENT_UI
         PSS_FIRST_TOP_INTERVAL,         // ActivityManager.PROCESS_STATE_TOP
-        PSS_FIRST_BACKGROUND_INTERVAL,  // ActivityManager.PROCESS_STATE_BOUND_FOREGROUND_SERVICE
-        PSS_FIRST_BACKGROUND_INTERVAL,  // ActivityManager.PROCESS_STATE_FOREGROUND_SERVICE
-        PSS_FIRST_BACKGROUND_INTERVAL,  // ActivityManager.PROCESS_STATE_TOP_SLEEPING
         PSS_FIRST_BACKGROUND_INTERVAL,  // ActivityManager.PROCESS_STATE_IMPORTANT_FOREGROUND
         PSS_FIRST_BACKGROUND_INTERVAL,  // ActivityManager.PROCESS_STATE_IMPORTANT_BACKGROUND
         PSS_FIRST_BACKGROUND_INTERVAL,  // ActivityManager.PROCESS_STATE_BACKUP
@@ -535,9 +470,6 @@ final class ProcessList {
         PSS_SAME_IMPORTANT_INTERVAL,    // ActivityManager.PROCESS_STATE_PERSISTENT
         PSS_SAME_IMPORTANT_INTERVAL,    // ActivityManager.PROCESS_STATE_PERSISTENT_UI
         PSS_SHORT_INTERVAL,             // ActivityManager.PROCESS_STATE_TOP
-        PSS_SAME_IMPORTANT_INTERVAL,    // ActivityManager.PROCESS_STATE_BOUND_FOREGROUND_SERVICE
-        PSS_SAME_IMPORTANT_INTERVAL,    // ActivityManager.PROCESS_STATE_FOREGROUND_SERVICE
-        PSS_SAME_IMPORTANT_INTERVAL,    // ActivityManager.PROCESS_STATE_TOP_SLEEPING
         PSS_SAME_IMPORTANT_INTERVAL,    // ActivityManager.PROCESS_STATE_IMPORTANT_FOREGROUND
         PSS_SAME_IMPORTANT_INTERVAL,    // ActivityManager.PROCESS_STATE_IMPORTANT_BACKGROUND
         PSS_SAME_IMPORTANT_INTERVAL,    // ActivityManager.PROCESS_STATE_BACKUP
@@ -551,60 +483,16 @@ final class ProcessList {
         PSS_SAME_CACHED_INTERVAL,       // ActivityManager.PROCESS_STATE_CACHED_EMPTY
     };
 
-    private static final long[] sTestFirstAwakePssTimes = new long[] {
-        PSS_TEST_FIRST_TOP_INTERVAL,        // ActivityManager.PROCESS_STATE_PERSISTENT
-        PSS_TEST_FIRST_TOP_INTERVAL,        // ActivityManager.PROCESS_STATE_PERSISTENT_UI
-        PSS_TEST_FIRST_TOP_INTERVAL,        // ActivityManager.PROCESS_STATE_TOP
-        PSS_FIRST_BACKGROUND_INTERVAL,      // ActivityManager.PROCESS_STATE_BOUND_FOREGROUND_SERVICE
-        PSS_FIRST_BACKGROUND_INTERVAL,      // ActivityManager.PROCESS_STATE_FOREGROUND_SERVICE
-        PSS_FIRST_BACKGROUND_INTERVAL,      // ActivityManager.PROCESS_STATE_TOP_SLEEPING
-        PSS_TEST_FIRST_BACKGROUND_INTERVAL, // ActivityManager.PROCESS_STATE_IMPORTANT_FOREGROUND
-        PSS_TEST_FIRST_BACKGROUND_INTERVAL, // ActivityManager.PROCESS_STATE_IMPORTANT_BACKGROUND
-        PSS_TEST_FIRST_BACKGROUND_INTERVAL, // ActivityManager.PROCESS_STATE_BACKUP
-        PSS_TEST_FIRST_BACKGROUND_INTERVAL, // ActivityManager.PROCESS_STATE_HEAVY_WEIGHT
-        PSS_TEST_FIRST_BACKGROUND_INTERVAL, // ActivityManager.PROCESS_STATE_SERVICE
-        PSS_TEST_FIRST_BACKGROUND_INTERVAL, // ActivityManager.PROCESS_STATE_RECEIVER
-        PSS_TEST_FIRST_BACKGROUND_INTERVAL, // ActivityManager.PROCESS_STATE_HOME
-        PSS_TEST_FIRST_BACKGROUND_INTERVAL, // ActivityManager.PROCESS_STATE_LAST_ACTIVITY
-        PSS_TEST_FIRST_BACKGROUND_INTERVAL, // ActivityManager.PROCESS_STATE_CACHED_ACTIVITY
-        PSS_TEST_FIRST_BACKGROUND_INTERVAL, // ActivityManager.PROCESS_STATE_CACHED_ACTIVITY_CLIENT
-        PSS_TEST_FIRST_BACKGROUND_INTERVAL, // ActivityManager.PROCESS_STATE_CACHED_EMPTY
-    };
-
-    private static final long[] sTestSameAwakePssTimes = new long[] {
-        PSS_TEST_SAME_BACKGROUND_INTERVAL,  // ActivityManager.PROCESS_STATE_PERSISTENT
-        PSS_TEST_SAME_BACKGROUND_INTERVAL,  // ActivityManager.PROCESS_STATE_PERSISTENT_UI
-        PSS_TEST_SAME_IMPORTANT_INTERVAL,   // ActivityManager.PROCESS_STATE_TOP
-        PSS_TEST_SAME_IMPORTANT_INTERVAL,   // ActivityManager.PROCESS_STATE_BOUND_FOREGROUND_SERVICE
-        PSS_TEST_SAME_IMPORTANT_INTERVAL,   // ActivityManager.PROCESS_STATE_FOREGROUND_SERVICE
-        PSS_TEST_SAME_IMPORTANT_INTERVAL,   // ActivityManager.PROCESS_STATE_TOP_SLEEPING
-        PSS_TEST_SAME_IMPORTANT_INTERVAL,   // ActivityManager.PROCESS_STATE_IMPORTANT_FOREGROUND
-        PSS_TEST_SAME_IMPORTANT_INTERVAL,   // ActivityManager.PROCESS_STATE_IMPORTANT_BACKGROUND
-        PSS_TEST_SAME_IMPORTANT_INTERVAL,   // ActivityManager.PROCESS_STATE_BACKUP
-        PSS_TEST_SAME_IMPORTANT_INTERVAL,   // ActivityManager.PROCESS_STATE_HEAVY_WEIGHT
-        PSS_TEST_SAME_BACKGROUND_INTERVAL,  // ActivityManager.PROCESS_STATE_SERVICE
-        PSS_TEST_SAME_BACKGROUND_INTERVAL,  // ActivityManager.PROCESS_STATE_RECEIVER
-        PSS_TEST_SAME_BACKGROUND_INTERVAL,  // ActivityManager.PROCESS_STATE_HOME
-        PSS_TEST_SAME_BACKGROUND_INTERVAL,  // ActivityManager.PROCESS_STATE_LAST_ACTIVITY
-        PSS_TEST_SAME_BACKGROUND_INTERVAL,  // ActivityManager.PROCESS_STATE_CACHED_ACTIVITY
-        PSS_TEST_SAME_BACKGROUND_INTERVAL,  // ActivityManager.PROCESS_STATE_CACHED_ACTIVITY_CLIENT
-        PSS_TEST_SAME_BACKGROUND_INTERVAL,  // ActivityManager.PROCESS_STATE_CACHED_EMPTY
-    };
-
     public static boolean procStatesDifferForMem(int procState1, int procState2) {
         return sProcStateToProcMem[procState1] != sProcStateToProcMem[procState2];
     }
 
-    public static long minTimeFromStateChange(boolean test) {
-        return test ? PSS_TEST_MIN_TIME_FROM_STATE_CHANGE : PSS_MIN_TIME_FROM_STATE_CHANGE;
-    }
-
-    public static long computeNextPssTime(int procState, boolean first, boolean test,
-            boolean sleeping, long now) {
-        final long[] table = test
+    public static long computeNextPssTime(int procState, boolean first, boolean sleeping,
+            long now) {
+        final long[] table = sleeping
                 ? (first
-                        ? sTestFirstAwakePssTimes
-                        : sTestSameAwakePssTimes)
+                        ? sFirstAwakePssTimes
+                        : sSameAwakePssTimes)
                 : (first
                         ? sFirstAwakePssTimes
                         : sSameAwakePssTimes);
@@ -632,27 +520,19 @@ final class ProcessList {
      * Set the out-of-memory badness adjustment for a process.
      *
      * @param pid The process identifier to set.
-     * @param uid The uid of the app
      * @param amt Adjustment value -- lmkd allows -16 to +15.
      *
      * {@hide}
      */
-    public static final void setOomAdj(int pid, int uid, int amt) {
+    public static final void setOomAdj(int pid, int amt) {
         if (amt == UNKNOWN_ADJ)
             return;
 
-        long start = SystemClock.elapsedRealtime();
-        ByteBuffer buf = ByteBuffer.allocate(4 * 4);
+        ByteBuffer buf = ByteBuffer.allocate(4 * 3);
         buf.putInt(LMK_PROCPRIO);
         buf.putInt(pid);
-        buf.putInt(uid);
         buf.putInt(amt);
         writeLmkd(buf);
-        long now = SystemClock.elapsedRealtime();
-        if ((now-start) > 250) {
-            Slog.w("ActivityManager", "SLOW OOM ADJ: " + (now-start) + "ms for pid " + pid
-                    + " = " + amt);
-        }
     }
 
     /*
@@ -673,7 +553,8 @@ final class ProcessList {
                         LocalSocketAddress.Namespace.RESERVED));
             sLmkdOutputStream = sLmkdSocket.getOutputStream();
         } catch (IOException ex) {
-            Slog.w(TAG, "lowmemorykiller daemon socket open failed");
+            Slog.w(ActivityManagerService.TAG,
+                   "lowmemorykiller daemon socket open failed");
             sLmkdSocket = null;
             return false;
         }
@@ -698,7 +579,8 @@ final class ProcessList {
                 sLmkdOutputStream.write(buf.array(), 0, buf.position());
                 return;
             } catch (IOException ex) {
-                Slog.w(TAG, "Error writing to lowmemorykiller socket");
+                Slog.w(ActivityManagerService.TAG,
+                       "Error writing to lowmemorykiller socket");
 
                 try {
                     sLmkdSocket.close();

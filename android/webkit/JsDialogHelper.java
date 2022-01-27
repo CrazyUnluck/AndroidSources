@@ -16,7 +16,6 @@
 
 package android.webkit;
 
-import android.annotation.SystemApi;
 import android.app.Activity;
 import android.app.AlertDialog;
 import android.content.Context;
@@ -35,9 +34,8 @@ import java.net.URL;
  * Helper class to create JavaScript dialogs. It is used by
  * different WebView implementations.
  *
- * @hide
+ * @hide Helper class for internal use
  */
-@SystemApi
 public class JsDialogHelper {
 
     private static final String TAG = "JsDialogHelper";

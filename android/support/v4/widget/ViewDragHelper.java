@@ -21,7 +21,6 @@ import android.content.Context;
 import android.support.v4.view.MotionEventCompat;
 import android.support.v4.view.VelocityTrackerCompat;
 import android.support.v4.view.ViewCompat;
-import android.util.Log;
 import android.view.MotionEvent;
 import android.view.VelocityTracker;
 import android.view.View;
@@ -540,14 +539,7 @@ public class ViewDragHelper {
         mCapturedView = child;
         mActivePointerId = INVALID_POINTER;
 
-        boolean continueSliding = forceSettleCapturedViewAt(finalLeft, finalTop, 0, 0);
-        if (!continueSliding && mDragState == STATE_IDLE && mCapturedView != null) {
-            // If we're in an IDLE state to begin with and aren't moving anywhere, we
-            // end up having a non-null capturedView with an IDLE dragState
-            mCapturedView = null;
-        }
-
-        return continueSliding;
+        return forceSettleCapturedViewAt(finalLeft, finalTop, 0, 0);
     }
 
     /**
@@ -728,10 +720,10 @@ public class ViewDragHelper {
             final int dy = y - mCapturedView.getTop();
 
             if (dx != 0) {
-                ViewCompat.offsetLeftAndRight(mCapturedView, dx);
+                mCapturedView.offsetLeftAndRight(dx);
             }
             if (dy != 0) {
-                ViewCompat.offsetTopAndBottom(mCapturedView, dy);
+                mCapturedView.offsetTopAndBottom(dy);
             }
 
             if (dx != 0 || dy != 0) {
@@ -742,7 +734,7 @@ public class ViewDragHelper {
                 // Close enough. The interpolator/scroller might think we're still moving
                 // but the user sure doesn't.
                 mScroller.abortAnimation();
-                keepGoing = false;
+                keepGoing = mScroller.isFinished();
             }
 
             if (!keepGoing) {
@@ -789,7 +781,7 @@ public class ViewDragHelper {
     }
 
     private void clearMotionHistory(int pointerId) {
-        if (mInitialMotionX == null || !isPointerDown(pointerId)) {
+        if (mInitialMotionX == null) {
             return;
         }
         mInitialMotionX[pointerId] = 0;
@@ -844,10 +836,6 @@ public class ViewDragHelper {
         final int pointerCount = MotionEventCompat.getPointerCount(ev);
         for (int i = 0; i < pointerCount; i++) {
             final int pointerId = MotionEventCompat.getPointerId(ev, i);
-            // If pointer is invalid then skip saving on ACTION_MOVE.
-            if (!isValidPointerForActionMove(pointerId)) {
-                continue;
-            }
             final float x = MotionEventCompat.getX(ev, i);
             final float y = MotionEventCompat.getY(ev, i);
             mLastMotionX[pointerId] = x;
@@ -873,11 +861,10 @@ public class ViewDragHelper {
     }
 
     void setDragState(int state) {
-        mParentView.removeCallbacks(mSetIdleRunnable);
         if (mDragState != state) {
             mDragState = state;
             mCallback.onViewDragStateChanged(state);
-            if (mDragState == STATE_IDLE) {
+            if (state == STATE_IDLE) {
                 mCapturedView = null;
             }
         }
@@ -1008,53 +995,24 @@ public class ViewDragHelper {
             }
 
             case MotionEvent.ACTION_MOVE: {
-                if (mInitialMotionX == null || mInitialMotionY == null) break;
-
                 // First to cross a touch slop over a draggable view wins. Also report edge drags.
                 final int pointerCount = MotionEventCompat.getPointerCount(ev);
                 for (int i = 0; i < pointerCount; i++) {
                     final int pointerId = MotionEventCompat.getPointerId(ev, i);
-
-                    // If pointer is invalid then skip the ACTION_MOVE.
-                    if (!isValidPointerForActionMove(pointerId)) continue;
-
                     final float x = MotionEventCompat.getX(ev, i);
                     final float y = MotionEventCompat.getY(ev, i);
                     final float dx = x - mInitialMotionX[pointerId];
                     final float dy = y - mInitialMotionY[pointerId];
 
-                    final View toCapture = findTopChildUnder((int) x, (int) y);
-                    final boolean pastSlop = toCapture != null && checkTouchSlop(toCapture, dx, dy);
-                    if (pastSlop) {
-                        // check the callback's
-                        // getView[Horizontal|Vertical]DragRange methods to know
-                        // if you can move at all along an axis, then see if it
-                        // would clamp to the same value. If you can't move at
-                        // all in every dimension with a nonzero range, bail.
-                        final int oldLeft = toCapture.getLeft();
-                        final int targetLeft = oldLeft + (int) dx;
-                        final int newLeft = mCallback.clampViewPositionHorizontal(toCapture,
-                                targetLeft, (int) dx);
-                        final int oldTop = toCapture.getTop();
-                        final int targetTop = oldTop + (int) dy;
-                        final int newTop = mCallback.clampViewPositionVertical(toCapture, targetTop,
-                                (int) dy);
-                        final int horizontalDragRange = mCallback.getViewHorizontalDragRange(
-                                toCapture);
-                        final int verticalDragRange = mCallback.getViewVerticalDragRange(toCapture);
-                        if ((horizontalDragRange == 0 || horizontalDragRange > 0
-                                && newLeft == oldLeft) && (verticalDragRange == 0
-                                || verticalDragRange > 0 && newTop == oldTop)) {
-                            break;
-                        }
-                    }
                     reportNewEdgeDrags(dx, dy, pointerId);
                     if (mDragState == STATE_DRAGGING) {
                         // Callback might have started an edge drag
                         break;
                     }
 
-                    if (pastSlop && tryCaptureViewForDrag(toCapture, pointerId)) {
+                    final View toCapture = findTopChildUnder((int) x, (int) y);
+                    if (toCapture != null && checkTouchSlop(toCapture, dx, dy) &&
+                            tryCaptureViewForDrag(toCapture, pointerId)) {
                         break;
                     }
                 }
@@ -1150,9 +1108,6 @@ public class ViewDragHelper {
 
             case MotionEvent.ACTION_MOVE: {
                 if (mDragState == STATE_DRAGGING) {
-                    // If pointer is invalid then skip the ACTION_MOVE.
-                    if (!isValidPointerForActionMove(mActivePointerId)) break;
-
                     final int index = MotionEventCompat.findPointerIndex(ev, mActivePointerId);
                     final float x = MotionEventCompat.getX(ev, index);
                     final float y = MotionEventCompat.getY(ev, index);
@@ -1167,10 +1122,6 @@ public class ViewDragHelper {
                     final int pointerCount = MotionEventCompat.getPointerCount(ev);
                     for (int i = 0; i < pointerCount; i++) {
                         final int pointerId = MotionEventCompat.getPointerId(ev, i);
-
-                        // If pointer is invalid then skip the ACTION_MOVE.
-                        if (!isValidPointerForActionMove(pointerId)) continue;
-
                         final float x = MotionEventCompat.getX(ev, i);
                         final float y = MotionEventCompat.getY(ev, i);
                         final float dx = x - mInitialMotionX[pointerId];
@@ -1418,11 +1369,11 @@ public class ViewDragHelper {
         final int oldTop = mCapturedView.getTop();
         if (dx != 0) {
             clampedX = mCallback.clampViewPositionHorizontal(mCapturedView, left, dx);
-            ViewCompat.offsetLeftAndRight(mCapturedView, clampedX - oldLeft);
+            mCapturedView.offsetLeftAndRight(clampedX - oldLeft);
         }
         if (dy != 0) {
             clampedY = mCallback.clampViewPositionVertical(mCapturedView, top, dy);
-            ViewCompat.offsetTopAndBottom(mCapturedView, clampedY - oldTop);
+            mCapturedView.offsetTopAndBottom(clampedY - oldTop);
         }
 
         if (dx != 0 || dy != 0) {
@@ -1494,15 +1445,5 @@ public class ViewDragHelper {
         if (y > mParentView.getBottom() - mEdgeSize) result |= EDGE_BOTTOM;
 
         return result;
-    }
-
-    private boolean isValidPointerForActionMove(int pointerId) {
-        if (!isPointerDown(pointerId)) {
-            Log.e(TAG, "Ignoring pointerId=" + pointerId + " because ACTION_DOWN was not received "
-                    + "for this pointer before ACTION_MOVE. It likely happened because "
-                    + " ViewDragHelper did not receive all the events in the event stream.");
-            return false;
-        }
-        return true;
     }
 }

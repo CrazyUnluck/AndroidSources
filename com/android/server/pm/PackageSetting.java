@@ -17,11 +17,9 @@
 package com.android.server.pm;
 
 import android.content.pm.ApplicationInfo;
-import android.content.pm.PackageManager;
 import android.content.pm.PackageParser;
 
 import java.io.File;
-import java.util.List;
 
 /**
  * Settings data for a particular package we know about.
@@ -32,13 +30,9 @@ final class PackageSetting extends PackageSettingBase {
     SharedUserSetting sharedUser;
 
     PackageSetting(String name, String realName, File codePath, File resourcePath,
-            String legacyNativeLibraryPathString, String primaryCpuAbiString,
-            String secondaryCpuAbiString, String cpuAbiOverrideString,
-            int pVersionCode, int pkgFlags, int privateFlags, String parentPackageName,
-            List<String> childPackageNames) {
-        super(name, realName, codePath, resourcePath, legacyNativeLibraryPathString,
-                primaryCpuAbiString, secondaryCpuAbiString, cpuAbiOverrideString,
-                pVersionCode, pkgFlags, privateFlags, parentPackageName, childPackageNames);
+            String nativeLibraryPathString, int pVersionCode, int pkgFlags) {
+        super(name, realName, codePath, resourcePath, nativeLibraryPathString, pVersionCode,
+                pkgFlags);
     }
 
     /**
@@ -60,32 +54,11 @@ final class PackageSetting extends PackageSettingBase {
             + " " + name + "/" + appId + "}";
     }
 
-    public PermissionsState getPermissionsState() {
-        return (sharedUser != null)
-                ? sharedUser.getPermissionsState()
-                : super.getPermissionsState();
+    public int[] getGids() {
+        return sharedUser != null ? sharedUser.gids : gids;
     }
 
     public boolean isPrivileged() {
-        return (pkgPrivateFlags & ApplicationInfo.PRIVATE_FLAG_PRIVILEGED) != 0;
-    }
-
-    public boolean isForwardLocked() {
-        return (pkgPrivateFlags & ApplicationInfo.PRIVATE_FLAG_FORWARD_LOCK) != 0;
-    }
-
-    public boolean isSystem() {
-        return (pkgFlags & ApplicationInfo.FLAG_SYSTEM) != 0;
-    }
-
-    public boolean isSharedUser() {
-        return sharedUser != null;
-    }
-
-    public boolean isMatch(int flags) {
-        if ((flags & PackageManager.MATCH_SYSTEM_ONLY) != 0) {
-            return isSystem();
-        }
-        return true;
+        return (pkgFlags & ApplicationInfo.FLAG_PRIVILEGED) != 0;
     }
 }

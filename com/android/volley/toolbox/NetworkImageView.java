@@ -100,20 +100,15 @@ public class NetworkImageView extends ImageView {
      * Loads the image for the view if it isn't already loaded.
      * @param isInLayoutPass True if this was invoked from a layout pass, false otherwise.
      */
-    void loadImageIfNecessary(final boolean isInLayoutPass) {
+    private void loadImageIfNecessary(final boolean isInLayoutPass) {
         int width = getWidth();
         int height = getHeight();
-        ScaleType scaleType = getScaleType();
 
-        boolean wrapWidth = false, wrapHeight = false;
-        if (getLayoutParams() != null) {
-            wrapWidth = getLayoutParams().width == LayoutParams.WRAP_CONTENT;
-            wrapHeight = getLayoutParams().height == LayoutParams.WRAP_CONTENT;
-        }
-
+        boolean isFullyWrapContent = getLayoutParams() != null
+                && getLayoutParams().height == LayoutParams.WRAP_CONTENT
+                && getLayoutParams().width == LayoutParams.WRAP_CONTENT;
         // if the view's bounds aren't known yet, and this is not a wrap-content/wrap-content
         // view, hold off on loading the image.
-        boolean isFullyWrapContent = wrapWidth && wrapHeight;
         if (width == 0 && height == 0 && !isFullyWrapContent) {
             return;
         }
@@ -140,10 +135,6 @@ public class NetworkImageView extends ImageView {
                 setDefaultImageOrNull();
             }
         }
-
-        // Calculate the max image width / height to use while ignoring WRAP_CONTENT dimens.
-        int maxWidth = wrapWidth ? 0 : width;
-        int maxHeight = wrapHeight ? 0 : height;
 
         // The pre-existing content of this view didn't match the current URL. Load the new image
         // from the network.
@@ -178,7 +169,7 @@ public class NetworkImageView extends ImageView {
                             setImageResource(mDefaultImageId);
                         }
                     }
-                }, maxWidth, maxHeight, scaleType);
+                });
 
         // update the ImageContainer to be the new bitmap container.
         mImageContainer = newContainer;

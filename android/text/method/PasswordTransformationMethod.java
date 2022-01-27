@@ -25,6 +25,7 @@ import android.text.GetChars;
 import android.text.NoCopySpan;
 import android.text.TextUtils;
 import android.text.TextWatcher;
+import android.text.Selection;
 import android.text.Spanned;
 import android.text.Spannable;
 import android.text.style.UpdateLayout;

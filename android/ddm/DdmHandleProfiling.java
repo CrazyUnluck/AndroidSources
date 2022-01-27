@@ -21,6 +21,7 @@ import org.apache.harmony.dalvik.ddmc.ChunkHandler;
 import org.apache.harmony.dalvik.ddmc.DdmServer;
 import android.os.Debug;
 import android.util.Log;
+import java.io.IOException;
 import java.nio.ByteBuffer;
 
 /**

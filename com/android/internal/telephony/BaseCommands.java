@@ -1,4 +1,3 @@
-
 /*
  * Copyright (C) 2006 The Android Open Source Project
  *
@@ -17,16 +16,13 @@
 
 package com.android.internal.telephony;
 
+
 import android.content.Context;
-import android.os.Message;
 import android.os.RegistrantList;
 import android.os.Registrant;
 import android.os.Handler;
 import android.os.AsyncResult;
-import android.telephony.RadioAccessFamily;
 import android.telephony.TelephonyManager;
-
-import com.android.internal.telephony.RadioCapability;
 
 /**
  * {@hide}
@@ -68,11 +64,6 @@ public abstract class BaseCommands implements CommandsInterface {
     protected RegistrantList mRilConnectedRegistrants = new RegistrantList();
     protected RegistrantList mIccRefreshRegistrants = new RegistrantList();
     protected RegistrantList mRilCellInfoListRegistrants = new RegistrantList();
-    protected RegistrantList mSubscriptionStatusRegistrants = new RegistrantList();
-    protected RegistrantList mSrvccStateRegistrants = new RegistrantList();
-    protected RegistrantList mHardwareConfigChangeRegistrants = new RegistrantList();
-    protected RegistrantList mPhoneRadioCapabilityChangedRegistrants =
-            new RegistrantList();
 
     protected Registrant mGsmSmsRegistrant;
     protected Registrant mCdmaSmsRegistrant;
@@ -91,9 +82,6 @@ public abstract class BaseCommands implements CommandsInterface {
     protected Registrant mRingRegistrant;
     protected Registrant mRestrictedStateRegistrant;
     protected Registrant mGsmBroadcastSmsRegistrant;
-    protected Registrant mCatCcAlphaRegistrant;
-    protected Registrant mSsRegistrant;
-    protected Registrant mLceInfoRegistrant;
 
     // Preferred network type received from PhoneFactory.
     // This is used when establishing a connection to the
@@ -101,7 +89,7 @@ public abstract class BaseCommands implements CommandsInterface {
     protected int mPreferredNetworkType;
     // CDMA subscription received from PhoneFactory
     protected int mCdmaSubscription;
-    // Type of Phone, GSM or CDMA. Set by GsmCdmaPhone.
+    // Type of Phone, GSM or CDMA. Set by CDMAPhone or GSMPhone.
     protected int mPhoneType;
     // RIL Version
     protected int mRilVersion = -1;
@@ -287,10 +275,7 @@ public abstract class BaseCommands implements CommandsInterface {
 
     @Override
     public void unSetOnNewGsmSms(Handler h) {
-        if (mGsmSmsRegistrant != null && mGsmSmsRegistrant.getHandler() == h) {
-            mGsmSmsRegistrant.clear();
-            mGsmSmsRegistrant = null;
-        }
+        mGsmSmsRegistrant.clear();
     }
 
     @Override
@@ -300,10 +285,7 @@ public abstract class BaseCommands implements CommandsInterface {
 
     @Override
     public void unSetOnNewCdmaSms(Handler h) {
-        if (mCdmaSmsRegistrant != null && mCdmaSmsRegistrant.getHandler() == h) {
-            mCdmaSmsRegistrant.clear();
-            mCdmaSmsRegistrant = null;
-        }
+        mCdmaSmsRegistrant.clear();
     }
 
     @Override
@@ -313,10 +295,7 @@ public abstract class BaseCommands implements CommandsInterface {
 
     @Override
     public void unSetOnNewGsmBroadcastSms(Handler h) {
-        if (mGsmBroadcastSmsRegistrant != null && mGsmBroadcastSmsRegistrant.getHandler() == h) {
-            mGsmBroadcastSmsRegistrant.clear();
-            mGsmBroadcastSmsRegistrant = null;
-        }
+        mGsmBroadcastSmsRegistrant.clear();
     }
 
     @Override
@@ -326,10 +305,7 @@ public abstract class BaseCommands implements CommandsInterface {
 
     @Override
     public void unSetOnSmsOnSim(Handler h) {
-        if (mSmsOnSimRegistrant != null && mSmsOnSimRegistrant.getHandler() == h) {
-            mSmsOnSimRegistrant.clear();
-            mSmsOnSimRegistrant = null;
-        }
+        mSmsOnSimRegistrant.clear();
     }
 
     @Override
@@ -339,10 +315,7 @@ public abstract class BaseCommands implements CommandsInterface {
 
     @Override
     public void unSetOnSmsStatus(Handler h) {
-        if (mSmsStatusRegistrant != null && mSmsStatusRegistrant.getHandler() == h) {
-            mSmsStatusRegistrant.clear();
-            mSmsStatusRegistrant = null;
-        }
+        mSmsStatusRegistrant.clear();
     }
 
     @Override
@@ -352,10 +325,7 @@ public abstract class BaseCommands implements CommandsInterface {
 
     @Override
     public void unSetOnSignalStrengthUpdate(Handler h) {
-        if (mSignalStrengthRegistrant != null && mSignalStrengthRegistrant.getHandler() == h) {
-            mSignalStrengthRegistrant.clear();
-            mSignalStrengthRegistrant = null;
-        }
+        mSignalStrengthRegistrant.clear();
     }
 
     @Override
@@ -365,10 +335,7 @@ public abstract class BaseCommands implements CommandsInterface {
 
     @Override
     public void unSetOnNITZTime(Handler h) {
-        if (mNITZTimeRegistrant != null && mNITZTimeRegistrant.getHandler() == h) {
-            mNITZTimeRegistrant.clear();
-            mNITZTimeRegistrant = null;
-        }
+        mNITZTimeRegistrant.clear();
     }
 
     @Override
@@ -378,10 +345,7 @@ public abstract class BaseCommands implements CommandsInterface {
 
     @Override
     public void unSetOnUSSD(Handler h) {
-        if (mUSSDRegistrant != null && mUSSDRegistrant.getHandler() == h) {
-            mUSSDRegistrant.clear();
-            mUSSDRegistrant = null;
-        }
+        mUSSDRegistrant.clear();
     }
 
     @Override
@@ -391,10 +355,7 @@ public abstract class BaseCommands implements CommandsInterface {
 
     @Override
     public void unSetOnSuppServiceNotification(Handler h) {
-        if (mSsnRegistrant != null && mSsnRegistrant.getHandler() == h) {
-            mSsnRegistrant.clear();
-            mSsnRegistrant = null;
-        }
+        mSsnRegistrant.clear();
     }
 
     @Override
@@ -404,10 +365,7 @@ public abstract class BaseCommands implements CommandsInterface {
 
     @Override
     public void unSetOnCatSessionEnd(Handler h) {
-        if (mCatSessionEndRegistrant != null && mCatSessionEndRegistrant.getHandler() == h) {
-            mCatSessionEndRegistrant.clear();
-            mCatSessionEndRegistrant = null;
-        }
+        mCatSessionEndRegistrant.clear();
     }
 
     @Override
@@ -417,10 +375,7 @@ public abstract class BaseCommands implements CommandsInterface {
 
     @Override
     public void unSetOnCatProactiveCmd(Handler h) {
-        if (mCatProCmdRegistrant != null && mCatProCmdRegistrant.getHandler() == h) {
-            mCatProCmdRegistrant.clear();
-            mCatProCmdRegistrant = null;
-        }
+        mCatProCmdRegistrant.clear();
     }
 
     @Override
@@ -430,10 +385,7 @@ public abstract class BaseCommands implements CommandsInterface {
 
     @Override
     public void unSetOnCatEvent(Handler h) {
-        if (mCatEventRegistrant != null && mCatEventRegistrant.getHandler() == h) {
-            mCatEventRegistrant.clear();
-            mCatEventRegistrant = null;
-        }
+        mCatEventRegistrant.clear();
     }
 
     @Override
@@ -443,10 +395,7 @@ public abstract class BaseCommands implements CommandsInterface {
 
     @Override
     public void unSetOnCatCallSetUp(Handler h) {
-        if (mCatCallSetUpRegistrant != null && mCatCallSetUpRegistrant.getHandler() == h) {
-            mCatCallSetUpRegistrant.clear();
-            mCatCallSetUpRegistrant = null;
-        }
+        mCatCallSetUpRegistrant.clear();
     }
 
     @Override
@@ -456,10 +405,7 @@ public abstract class BaseCommands implements CommandsInterface {
 
     @Override
     public void unSetOnIccSmsFull(Handler h) {
-        if (mIccSmsFullRegistrant != null && mIccSmsFullRegistrant.getHandler() == h) {
-            mIccSmsFullRegistrant.clear();
-            mIccSmsFullRegistrant = null;
-        }
+        mIccSmsFullRegistrant.clear();
     }
 
     @Override
@@ -493,30 +439,7 @@ public abstract class BaseCommands implements CommandsInterface {
 
     @Override
     public void unSetOnCallRing(Handler h) {
-        if (mRingRegistrant != null && mRingRegistrant.getHandler() == h) {
-            mRingRegistrant.clear();
-            mRingRegistrant = null;
-        }
-    }
-
-    @Override
-    public void setOnSs(Handler h, int what, Object obj) {
-        mSsRegistrant = new Registrant (h, what, obj);
-    }
-
-    @Override
-    public void unSetOnSs(Handler h) {
-        mSsRegistrant.clear();
-    }
-
-    @Override
-    public void setOnCatCcAlphaNotify(Handler h, int what, Object obj) {
-        mCatCcAlphaRegistrant = new Registrant (h, what, obj);
-    }
-
-    @Override
-    public void unSetOnCatCcAlphaNotify(Handler h) {
-        mCatCcAlphaRegistrant.clear();
+        mRingRegistrant.clear();
     }
 
     @Override
@@ -548,10 +471,7 @@ public abstract class BaseCommands implements CommandsInterface {
 
     @Override
     public void unSetOnRestrictedStateChanged(Handler h) {
-        if (mRestrictedStateRegistrant != null && mRestrictedStateRegistrant.getHandler() == h) {
-            mRestrictedStateRegistrant.clear();
-            mRestrictedStateRegistrant = null;
-        }
+        mRestrictedStateRegistrant.clear();
     }
 
     @Override
@@ -587,10 +507,7 @@ public abstract class BaseCommands implements CommandsInterface {
     }
 
     public void unSetOnUnsolOemHookRaw(Handler h) {
-        if (mUnsolOemHookRawRegistrant != null && mUnsolOemHookRawRegistrant.getHandler() == h) {
-            mUnsolOemHookRawRegistrant.clear();
-            mUnsolOemHookRawRegistrant = null;
-        }
+        mUnsolOemHookRawRegistrant.clear();
     }
 
     @Override
@@ -719,17 +636,6 @@ public abstract class BaseCommands implements CommandsInterface {
         mExitEmergencyCallbackModeRegistrants.remove(h);
     }
 
-    @Override
-    public void registerForHardwareConfigChanged(Handler h, int what, Object obj) {
-        Registrant r = new Registrant (h, what, obj);
-        mHardwareConfigChangeRegistrants.add(r);
-    }
-
-    @Override
-    public void unregisterForHardwareConfigChanged(Handler h) {
-        mHardwareConfigChangeRegistrants.remove(h);
-    }
-
     /**
      * {@inheritDoc}
      */
@@ -747,13 +653,11 @@ public abstract class BaseCommands implements CommandsInterface {
         mRilConnectedRegistrants.remove(h);
     }
 
-    public void registerForSubscriptionStatusChanged(Handler h, int what, Object obj) {
-        Registrant r = new Registrant (h, what, obj);
-        mSubscriptionStatusRegistrants.add(r);
-    }
-
-    public void unregisterForSubscriptionStatusChanged(Handler h) {
-        mSubscriptionStatusRegistrants.remove(h);
+    /**
+     * {@inheritDoc}
+     */
+    @Override
+    public void setCurrentPreferredNetworkType() {
     }
 
     //***** Protected Methods
@@ -827,77 +731,10 @@ public abstract class BaseCommands implements CommandsInterface {
     }
 
     @Override
-    public void registerForSrvccStateChanged(Handler h, int what, Object obj) {
-        Registrant r = new Registrant (h, what, obj);
-
-        mSrvccStateRegistrants.add(r);
-    }
-
-    @Override
-    public void unregisterForSrvccStateChanged(Handler h) {
-        mSrvccStateRegistrants.remove(h);
-    }
-
-    @Override
     public void testingEmergencyCall() {}
 
     @Override
     public int getRilVersion() {
         return mRilVersion;
-    }
-
-    public void setUiccSubscription(int slotId, int appIndex, int subId, int subStatus,
-            Message response) {
-    }
-
-    public void setDataAllowed(boolean allowed, Message response) {
-    }
-
-    @Override
-    public void requestShutdown(Message result) {
-    }
-
-    @Override
-    public void getRadioCapability(Message result) {
-    }
-
-    @Override
-    public void setRadioCapability(RadioCapability rc, Message response) {
-    }
-
-    @Override
-    public void registerForRadioCapabilityChanged(Handler h, int what, Object obj) {
-        Registrant r = new Registrant(h, what, obj);
-        mPhoneRadioCapabilityChangedRegistrants.add(r);
-    }
-
-    @Override
-    public void unregisterForRadioCapabilityChanged(Handler h) {
-        mPhoneRadioCapabilityChangedRegistrants.remove(h);
-    }
-
-    @Override
-    public void startLceService(int reportIntervalMs, boolean pullMode, Message result) {
-    }
-
-    @Override
-    public void stopLceService(Message result) {
-    }
-
-    @Override
-    public void pullLceData(Message result) {
-    }
-
-    @Override
-    public void registerForLceInfo(Handler h, int what, Object obj) {
-      mLceInfoRegistrant = new Registrant(h, what, obj);
-    }
-
-    @Override
-    public void unregisterForLceInfo(Handler h) {
-      if (mLceInfoRegistrant != null && mLceInfoRegistrant.getHandler() == h) {
-          mLceInfoRegistrant.clear();
-          mLceInfoRegistrant = null;
-      }
     }
 }

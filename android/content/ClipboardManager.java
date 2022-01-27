@@ -22,6 +22,8 @@ import android.os.RemoteException;
 import android.os.Handler;
 import android.os.IBinder;
 import android.os.ServiceManager;
+import android.os.StrictMode;
+import android.util.Log;
 
 import java.util.ArrayList;
 
@@ -118,11 +120,10 @@ public class ClipboardManager extends android.text.ClipboardManager {
     public void setPrimaryClip(ClipData clip) {
         try {
             if (clip != null) {
-                clip.prepareToLeaveProcess(true);
+                clip.prepareToLeaveProcess();
             }
             getService().setPrimaryClip(clip, mContext.getOpPackageName());
         } catch (RemoteException e) {
-            throw e.rethrowFromSystemServer();
         }
     }
 
@@ -133,7 +134,7 @@ public class ClipboardManager extends android.text.ClipboardManager {
         try {
             return getService().getPrimaryClip(mContext.getOpPackageName());
         } catch (RemoteException e) {
-            throw e.rethrowFromSystemServer();
+            return null;
         }
     }
 
@@ -145,7 +146,7 @@ public class ClipboardManager extends android.text.ClipboardManager {
         try {
             return getService().getPrimaryClipDescription(mContext.getOpPackageName());
         } catch (RemoteException e) {
-            throw e.rethrowFromSystemServer();
+            return null;
         }
     }
 
@@ -156,7 +157,7 @@ public class ClipboardManager extends android.text.ClipboardManager {
         try {
             return getService().hasPrimaryClip(mContext.getOpPackageName());
         } catch (RemoteException e) {
-            throw e.rethrowFromSystemServer();
+            return false;
         }
     }
 
@@ -167,7 +168,6 @@ public class ClipboardManager extends android.text.ClipboardManager {
                     getService().addPrimaryClipChangedListener(
                             mPrimaryClipChangedServiceListener, mContext.getOpPackageName());
                 } catch (RemoteException e) {
-                    throw e.rethrowFromSystemServer();
                 }
             }
             mPrimaryClipChangedListeners.add(what);
@@ -182,7 +182,6 @@ public class ClipboardManager extends android.text.ClipboardManager {
                     getService().removePrimaryClipChangedListener(
                             mPrimaryClipChangedServiceListener);
                 } catch (RemoteException e) {
-                    throw e.rethrowFromSystemServer();
                 }
             }
         }
@@ -216,7 +215,7 @@ public class ClipboardManager extends android.text.ClipboardManager {
         try {
             return getService().hasClipboardText(mContext.getOpPackageName());
         } catch (RemoteException e) {
-            throw e.rethrowFromSystemServer();
+            return false;
         }
     }
 

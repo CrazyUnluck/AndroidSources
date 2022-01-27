@@ -4,6 +4,10 @@
  * http://creativecommons.org/publicdomain/zero/1.0/
  */
 
+// BEGIN android-note
+// omit links to ForkJoinPool, ForkJoinTask, LinkedTransferQueue, Phaser, TransferQueue
+// END android-note
+
 /**
  * Utility classes commonly useful in concurrent programming.  This
  * package includes a few small standardized extensible frameworks, as
@@ -63,20 +67,11 @@
  * assists in coordinating the processing of groups of
  * asynchronous tasks.
  *
- * <p>Class {@link java.util.concurrent.ForkJoinPool} provides an
- * Executor primarily designed for processing instances of {@link
- * java.util.concurrent.ForkJoinTask} and its subclasses.  These
- * classes employ a work-stealing scheduler that attains high
- * throughput for tasks conforming to restrictions that often hold in
- * computation-intensive parallel processing.
- *
  * <h2>Queues</h2>
  *
  * The {@link java.util.concurrent.ConcurrentLinkedQueue} class
- * supplies an efficient scalable thread-safe non-blocking FIFO queue.
- * The {@link java.util.concurrent.ConcurrentLinkedDeque} class is
- * similar, but additionally supports the {@link java.util.Deque}
- * interface.
+ * supplies an efficient scalable thread-safe non-blocking FIFO
+ * queue.
  *
  * <p>Five implementations in {@code java.util.concurrent} support
  * the extended {@link java.util.concurrent.BlockingQueue}
@@ -89,12 +84,6 @@
  * The different classes cover the most common usage contexts
  * for producer-consumer, messaging, parallel tasking, and
  * related concurrent designs.
- *
- * <p>Extended interface {@link java.util.concurrent.TransferQueue},
- * and implementation {@link java.util.concurrent.LinkedTransferQueue}
- * introduce a synchronous {@code transfer} method (along with related
- * features) in which a producer may optionally block awaiting its
- * consumer.
  *
  * <p>The {@link java.util.concurrent.BlockingDeque} interface
  * extends {@code BlockingQueue} to support both FIFO and LIFO
@@ -122,7 +111,7 @@
  *
  * <h2>Synchronizers</h2>
  *
- * Five classes aid common special-purpose synchronization idioms.
+ * Four classes aid common special-purpose synchronization idioms.
  * <ul>
  *
  * <li>{@link java.util.concurrent.Semaphore} is a classic concurrency tool.
@@ -134,10 +123,6 @@
  * <li>A {@link java.util.concurrent.CyclicBarrier} is a resettable
  * multiway synchronization point useful in some styles of parallel
  * programming.
- *
- * <li>A {@link java.util.concurrent.Phaser} provides
- * a more flexible form of barrier that may be used to control phased
- * computation among multiple threads.
  *
  * <li>An {@link java.util.concurrent.Exchanger} allows two threads to
  * exchange objects at a rendezvous point, and is useful in several
@@ -181,25 +166,18 @@
  * collections are unshared, or are accessible only when
  * holding other locks.
  *
- * <p id="Weakly">Most concurrent Collection implementations
- * (including most Queues) also differ from the usual {@code java.util}
- * conventions in that their {@linkplain java.util.Iterator Iterators}
- * and {@linkplain java.util.Spliterator Spliterators} provide
- * <em>weakly consistent</em> rather than fast-fail traversal:
- * <ul>
- * <li>they may proceed concurrently with other operations
- * <li>they will never throw {@link java.util.ConcurrentModificationException
- * ConcurrentModificationException}
- * <li>they are guaranteed to traverse elements as they existed upon
- * construction exactly once, and may (but are not guaranteed to)
- * reflect any modifications subsequent to construction.
- * </ul>
+ * <p>Most concurrent Collection implementations (including most
+ * Queues) also differ from the usual java.util conventions in that
+ * their Iterators provide <em>weakly consistent</em> rather than
+ * fast-fail traversal.  A weakly consistent iterator is thread-safe,
+ * but does not necessarily freeze the collection while iterating, so
+ * it may (or may not) reflect any updates since the iterator was
+ * created.
  *
  * <h2 id="MemoryVisibility">Memory Consistency Properties</h2>
  *
- * <a href="https://docs.oracle.com/javase/specs/jls/se8/html/jls-17.html#jls-17.4.5">
- * Chapter 17 of
- * <cite>The Java&trade; Language Specification</cite></a> defines the
+ * <a href="http://java.sun.com/docs/books/jls/third_edition/html/memory.html">
+ * Chapter 17 of the Java Language Specification</a> defines the
  * <i>happens-before</i> relation on memory operations such as reads and
  * writes of shared variables.  The results of a write by one thread are
  * guaranteed to be visible to a read by another thread only if the write
@@ -265,8 +243,7 @@
  *   in each thread <i>happen-before</i> those subsequent to the
  *   corresponding {@code exchange()} in another thread.
  *
- *   <li>Actions prior to calling {@code CyclicBarrier.await} and
- *   {@code Phaser.awaitAdvance} (as well as its variants)
+ *   <li>Actions prior to calling {@code CyclicBarrier.await}
  *   <i>happen-before</i> actions performed by the barrier action, and
  *   actions performed by the barrier action <i>happen-before</i> actions
  *   subsequent to a successful return from the corresponding {@code await}

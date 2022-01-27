@@ -16,14 +16,12 @@
 
 package android.media;
 
-import android.annotation.Nullable;
-
 /**
- * Exception thrown if MediaCrypto object could not be instantiated or
- * if unable to perform an operation on the MediaCrypto object.
+ * Exception thrown if MediaCrypto object could not be instantiated for
+ * whatever reason.
  */
 public final class MediaCryptoException extends Exception {
-    public MediaCryptoException(@Nullable String detailMessage) {
+    public MediaCryptoException(String detailMessage) {
         super(detailMessage);
     }
 }

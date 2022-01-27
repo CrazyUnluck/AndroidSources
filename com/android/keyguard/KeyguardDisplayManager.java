@@ -30,18 +30,18 @@ import android.view.WindowManager;
 
 public class KeyguardDisplayManager {
     protected static final String TAG = "KeyguardDisplayManager";
-    private static boolean DEBUG = KeyguardConstants.DEBUG;
+    private static boolean DEBUG = KeyguardViewMediator.DEBUG;
     Presentation mPresentation;
     private MediaRouter mMediaRouter;
     private Context mContext;
     private boolean mShowing;
 
-    public KeyguardDisplayManager(Context context) {
+    KeyguardDisplayManager(Context context) {
         mContext = context;
         mMediaRouter = (MediaRouter) mContext.getSystemService(Context.MEDIA_ROUTER_SERVICE);
     }
 
-    public void show() {
+    void show() {
         if (!mShowing) {
             if (DEBUG) Slog.v(TAG, "show");
             mMediaRouter.addCallback(MediaRouter.ROUTE_TYPE_REMOTE_DISPLAY,
@@ -51,7 +51,7 @@ public class KeyguardDisplayManager {
         mShowing = true;
     }
 
-    public void hide() {
+    void hide() {
         if (mShowing) {
             if (DEBUG) Slog.v(TAG, "hide");
             mMediaRouter.removeCallback(mMediaRouterCallback);
@@ -105,8 +105,7 @@ public class KeyguardDisplayManager {
 
             if (mPresentation == null && presentationDisplay != null) {
                 if (DEBUG) Slog.i(TAG, "Keyguard enabled on display: " + presentationDisplay);
-                mPresentation = new KeyguardPresentation(mContext, presentationDisplay,
-                        R.style.keyguard_presentation_theme);
+                mPresentation = new KeyguardPresentation(mContext, presentationDisplay);
                 mPresentation.setOnDismissListener(mOnDismissListener);
                 try {
                     mPresentation.show();
@@ -142,12 +141,11 @@ public class KeyguardDisplayManager {
             }
         };
 
-        public KeyguardPresentation(Context context, Display display, int theme) {
-            super(context, display, theme);
+        public KeyguardPresentation(Context context, Display display) {
+            super(context, display);
             getWindow().setType(WindowManager.LayoutParams.TYPE_KEYGUARD_DIALOG);
         }
 
-        @Override
         public void onDetachedFromWindow() {
             mClock.removeCallbacks(mMoveTextRunnable);
         }

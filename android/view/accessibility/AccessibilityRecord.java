@@ -78,7 +78,7 @@ public class AccessibilityRecord {
     private boolean mIsInPool;
 
     boolean mSealed;
-    int mBooleanProperties = 0;
+    int mBooleanProperties = PROPERTY_IMPORTANT_FOR_ACCESSIBILITY;
     int mCurrentItemIndex = UNDEFINED;
     int mItemCount = UNDEFINED;
     int mFromIndex = UNDEFINED;
@@ -90,7 +90,7 @@ public class AccessibilityRecord {
 
     int mAddedCount= UNDEFINED;
     int mRemovedCount = UNDEFINED;
-    AccessibilityNodeInfo mSourceNode;
+    long mSourceNodeId = AccessibilityNodeInfo.makeNodeId(UNDEFINED, UNDEFINED);
     int mSourceWindowId = UNDEFINED;
 
     CharSequence mClassName;
@@ -135,24 +135,16 @@ public class AccessibilityRecord {
      */
     public void setSource(View root, int virtualDescendantId) {
         enforceNotSealed();
-        boolean important = true;
-        mSourceWindowId = UNDEFINED;
-        clearSourceNode();
-        if (root != null) {
-            if (virtualDescendantId == UNDEFINED ||
-                    virtualDescendantId == AccessibilityNodeInfo.UNDEFINED_ITEM_ID) {
-                important = root.isImportantForAccessibility();
-                mSourceNode = root.createAccessibilityNodeInfo();
-            } else {
-                AccessibilityNodeProvider provider = root.getAccessibilityNodeProvider();
-                if (provider != null) {
-                    mSourceNode = provider.createAccessibilityNodeInfo(virtualDescendantId);
-                }
-            }
-
-            mSourceWindowId = root.getAccessibilityWindowId();
+        final boolean important;
+        if (virtualDescendantId == UNDEFINED) {
+            important = (root != null) ? root.isImportantForAccessibility() : true;
+        } else {
+            important = true;
         }
         setBooleanProperty(PROPERTY_IMPORTANT_FOR_ACCESSIBILITY, important);
+        mSourceWindowId = (root != null) ? root.getAccessibilityWindowId() : UNDEFINED;
+        final int rootViewId = (root != null) ? root.getAccessibilityViewId() : UNDEFINED;
+        mSourceNodeId = AccessibilityNodeInfo.makeNodeId(rootViewId, virtualDescendantId);
     }
 
     /**
@@ -166,11 +158,13 @@ public class AccessibilityRecord {
      */
     public AccessibilityNodeInfo getSource() {
         enforceSealed();
-        if (mSourceNode != null) {
-            return AccessibilityNodeInfo.obtain(mSourceNode);
+        if (mConnectionId == UNDEFINED || mSourceWindowId == UNDEFINED
+                || AccessibilityNodeInfo.getAccessibilityViewId(mSourceNodeId) == UNDEFINED) {
+            return null;
         }
-
-        return null;
+        AccessibilityInteractionClient client = AccessibilityInteractionClient.getInstance();
+        return client.findAccessibilityNodeInfoByAccessibilityId(mConnectionId, mSourceWindowId,
+                mSourceNodeId, false, GET_SOURCE_PREFETCH_FLAGS);
     }
 
     /**
@@ -625,7 +619,7 @@ public class AccessibilityRecord {
      * @hide
      */
     public long getSourceNodeId() {
-        return mSourceNode != null ? mSourceNode.getSourceNodeId() : UNDEFINED;
+        return mSourceNodeId;
     }
 
     /**
@@ -639,9 +633,6 @@ public class AccessibilityRecord {
     public void setConnectionId(int connectionId) {
         enforceNotSealed();
         mConnectionId = connectionId;
-        if (mSourceNode != null) {
-            mSourceNode.setConnectionId(mConnectionId);
-        }
     }
 
     /**
@@ -653,9 +644,6 @@ public class AccessibilityRecord {
      */
     public void setSealed(boolean sealed) {
         mSealed = sealed;
-        if (mSourceNode != null) {
-            mSourceNode.setSealed(sealed);
-        }
     }
 
     /**
@@ -794,9 +782,7 @@ public class AccessibilityRecord {
         mParcelableData = record.mParcelableData;
         mText.addAll(record.mText);
         mSourceWindowId = record.mSourceWindowId;
-        if (record.mSourceNode != null) {
-            mSourceNode = AccessibilityNodeInfo.obtain(record.mSourceNode);
-        }
+        mSourceNodeId = record.mSourceNodeId;
         mConnectionId = record.mConnectionId;
     }
 
@@ -805,7 +791,7 @@ public class AccessibilityRecord {
      */
     void clear() {
         mSealed = false;
-        mBooleanProperties = 0;
+        mBooleanProperties = PROPERTY_IMPORTANT_FOR_ACCESSIBILITY;
         mCurrentItemIndex = UNDEFINED;
         mItemCount = UNDEFINED;
         mFromIndex = UNDEFINED;
@@ -821,16 +807,9 @@ public class AccessibilityRecord {
         mBeforeText = null;
         mParcelableData = null;
         mText.clear();
-        clearSourceNode();
+        mSourceNodeId = AccessibilityNodeInfo.makeNodeId(UNDEFINED, UNDEFINED);
         mSourceWindowId = UNDEFINED;
         mConnectionId = UNDEFINED;
-    }
-
-    private void clearSourceNode() {
-        if (mSourceNode != null) {
-            mSourceNode.recycle();
-            mSourceNode = null;
-        }
     }
 
     @Override

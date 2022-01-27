@@ -20,7 +20,7 @@ import java.net.Inet4Address;
 import java.net.Inet6Address;
 import java.net.InetSocketAddress;
 import java.util.Locale;
-import static android.system.OsConstants.*;
+import static libcore.io.OsConstants.*;
 
 class CommonTimeUtils {
     /**

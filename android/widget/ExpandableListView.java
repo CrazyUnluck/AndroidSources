@@ -30,6 +30,8 @@ import android.view.ContextMenu;
 import android.view.SoundEffectConstants;
 import android.view.View;
 import android.view.ContextMenu.ContextMenuInfo;
+import android.view.accessibility.AccessibilityEvent;
+import android.view.accessibility.AccessibilityNodeInfo;
 import android.widget.ExpandableListConnector.PositionMetadata;
 
 import java.util.ArrayList;
@@ -225,16 +227,12 @@ public class ExpandableListView extends ListView {
         this(context, attrs, com.android.internal.R.attr.expandableListViewStyle);
     }
 
-    public ExpandableListView(Context context, AttributeSet attrs, int defStyleAttr) {
-        this(context, attrs, defStyleAttr, 0);
-    }
+    public ExpandableListView(Context context, AttributeSet attrs, int defStyle) {
+        super(context, attrs, defStyle);
 
-    public ExpandableListView(
-            Context context, AttributeSet attrs, int defStyleAttr, int defStyleRes) {
-        super(context, attrs, defStyleAttr, defStyleRes);
-
-        final TypedArray a = context.obtainStyledAttributes(attrs,
-                com.android.internal.R.styleable.ExpandableListView, defStyleAttr, defStyleRes);
+        TypedArray a =
+            context.obtainStyledAttributes(attrs,
+                    com.android.internal.R.styleable.ExpandableListView, defStyle, 0);
 
         mGroupIndicator = a.getDrawable(
                 com.android.internal.R.styleable.ExpandableListView_groupIndicator);
@@ -1340,7 +1338,14 @@ public class ExpandableListView extends ListView {
     }
 
     @Override
-    public CharSequence getAccessibilityClassName() {
-        return ExpandableListView.class.getName();
+    public void onInitializeAccessibilityEvent(AccessibilityEvent event) {
+        super.onInitializeAccessibilityEvent(event);
+        event.setClassName(ExpandableListView.class.getName());
+    }
+
+    @Override
+    public void onInitializeAccessibilityNodeInfo(AccessibilityNodeInfo info) {
+        super.onInitializeAccessibilityNodeInfo(info);
+        info.setClassName(ExpandableListView.class.getName());
     }
 }

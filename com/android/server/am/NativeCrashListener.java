@@ -17,20 +17,20 @@
 package com.android.server.am;
 
 import android.app.ApplicationErrorReport.CrashInfo;
-import android.system.ErrnoException;
-import android.system.Os;
-import android.system.StructTimeval;
-import android.system.StructUcred;
-import android.system.UnixSocketAddress;
 import android.util.Slog;
 
-import static android.system.OsConstants.*;
+import libcore.io.ErrnoException;
+import libcore.io.Libcore;
+import libcore.io.StructTimeval;
+import libcore.io.StructUcred;
+
+import static libcore.io.OsConstants.*;
 
 import java.io.ByteArrayOutputStream;
 import java.io.File;
 import java.io.FileDescriptor;
-import java.io.InterruptedIOException;
 import java.net.InetSocketAddress;
+import java.net.InetUnixAddress;
 
 /**
  * Set up a Unix domain socket that debuggerd will connect() to in
@@ -49,8 +49,8 @@ final class NativeCrashListener extends Thread {
     static final String DEBUGGERD_SOCKET_PATH = "/data/system/ndebugsocket";
 
     // Use a short timeout on socket operations and abandon the connection
-    // on hard errors, just in case debuggerd goes out to lunch.
-    static final long SOCKET_TIMEOUT_MILLIS = 10000;  // 10 seconds
+    // on hard errors
+    static final long SOCKET_TIMEOUT_MILLIS = 2000;  // 2 seconds
 
     final ActivityManagerService mAm;
 
@@ -76,7 +76,7 @@ final class NativeCrashListener extends Thread {
             try {
                 CrashInfo ci = new CrashInfo();
                 ci.exceptionClassName = "Native crash";
-                ci.exceptionMessage = Os.strsignal(mSignal);
+                ci.exceptionMessage = Libcore.os.strsignal(mSignal);
                 ci.throwFileName = "unknown";
                 ci.throwClassName = "unknown";
                 ci.throwMethodName = "unknown";
@@ -116,22 +116,22 @@ final class NativeCrashListener extends Thread {
         }
 
         try {
-            FileDescriptor serverFd = Os.socket(AF_UNIX, SOCK_STREAM, 0);
-            final UnixSocketAddress sockAddr = UnixSocketAddress.createFileSystem(
-                    DEBUGGERD_SOCKET_PATH);
-            Os.bind(serverFd, sockAddr);
-            Os.listen(serverFd, 1);
+            FileDescriptor serverFd = Libcore.os.socket(AF_UNIX, SOCK_STREAM, 0);
+            final InetUnixAddress sockAddr = new InetUnixAddress(DEBUGGERD_SOCKET_PATH);
+            Libcore.os.bind(serverFd, sockAddr, 0);
+            Libcore.os.listen(serverFd, 1);
 
             while (true) {
+                InetSocketAddress peer = new InetSocketAddress();
                 FileDescriptor peerFd = null;
                 try {
                     if (MORE_DEBUG) Slog.v(TAG, "Waiting for debuggerd connection");
-                    peerFd = Os.accept(serverFd, null /* peerAddress */);
+                    peerFd = Libcore.os.accept(serverFd, peer);
                     if (MORE_DEBUG) Slog.v(TAG, "Got debuggerd socket " + peerFd);
                     if (peerFd != null) {
                         // Only the superuser is allowed to talk to us over this socket
                         StructUcred credentials =
-                                Os.getsockoptUcred(peerFd, SOL_SOCKET, SO_PEERCRED);
+                                Libcore.os.getsockoptUcred(peerFd, SOL_SOCKET, SO_PEERCRED);
                         if (credentials.uid == 0) {
                             // the reporting thread may take responsibility for
                             // acking the debugger; make sure we play along.
@@ -145,7 +145,7 @@ final class NativeCrashListener extends Thread {
                     // byte written is irrelevant.
                     if (peerFd != null) {
                         try {
-                            Os.write(peerFd, ackSignal, 0, 1);
+                            Libcore.os.write(peerFd, ackSignal, 0, 1);
                         } catch (Exception e) {
                             /* we don't care about failures here */
                             if (MORE_DEBUG) {
@@ -153,7 +153,7 @@ final class NativeCrashListener extends Thread {
                             }
                         }
                         try {
-                            Os.close(peerFd);
+                            Libcore.os.close(peerFd);
                         } catch (ErrnoException e) {
                             if (MORE_DEBUG) {
                                 Slog.d(TAG, "Exception closing socket: " + e.getMessage());
@@ -178,10 +178,10 @@ final class NativeCrashListener extends Thread {
     }
 
     static int readExactly(FileDescriptor fd, byte[] buffer, int offset, int numBytes)
-            throws ErrnoException, InterruptedIOException {
+            throws ErrnoException {
         int totalRead = 0;
         while (numBytes > 0) {
-            int n = Os.read(fd, buffer, offset + totalRead, numBytes);
+            int n = Libcore.os.read(fd, buffer, offset + totalRead, numBytes);
             if (n <= 0) {
                 if (DEBUG) {
                     Slog.w(TAG, "Needed " + numBytes + " but saw " + n);
@@ -202,8 +202,8 @@ final class NativeCrashListener extends Thread {
 
         try {
             StructTimeval timeout = StructTimeval.fromMillis(SOCKET_TIMEOUT_MILLIS);
-            Os.setsockoptTimeval(fd, SOL_SOCKET, SO_RCVTIMEO, timeout);
-            Os.setsockoptTimeval(fd, SOL_SOCKET, SO_SNDTIMEO, timeout);
+            Libcore.os.setsockoptTimeval(fd, SOL_SOCKET, SO_RCVTIMEO, timeout);
+            Libcore.os.setsockoptTimeval(fd, SOL_SOCKET, SO_SNDTIMEO, timeout);
 
             // first, the pid and signal number
             int headerBytes = readExactly(fd, buf, 0, 8);
@@ -237,7 +237,7 @@ final class NativeCrashListener extends Thread {
                     int bytes;
                     do {
                         // get some data
-                        bytes = Os.read(fd, buf, 0, buf.length);
+                        bytes = Libcore.os.read(fd, buf, 0, buf.length);
                         if (bytes > 0) {
                             if (MORE_DEBUG) {
                                 String s = new String(buf, 0, bytes, "UTF-8");

@@ -24,15 +24,18 @@ import android.content.Context;
 import android.content.Intent;
 import android.content.IntentFilter;
 import android.content.ServiceConnection;
-import android.net.ProxyInfo;
-import android.net.Uri;
+import android.net.Proxy;
+import android.net.ProxyProperties;
+import android.os.Binder;
 import android.os.Handler;
 import android.os.IBinder;
 import android.os.RemoteException;
 import android.os.ServiceManager;
 import android.os.SystemClock;
 import android.os.SystemProperties;
+import android.os.UserHandle;
 import android.provider.Settings;
+import android.text.TextUtils;
 import android.util.Log;
 
 import com.android.internal.annotations.GuardedBy;
@@ -71,7 +74,7 @@ public class PacManager {
     public static final String KEY_PROXY = "keyProxy";
     private String mCurrentPac;
     @GuardedBy("mProxyLock")
-    private Uri mPacUrl = Uri.EMPTY;
+    private String mPacUrl;
 
     private AlarmManager mAlarmManager;
     @GuardedBy("mProxyLock")
@@ -100,7 +103,7 @@ public class PacManager {
         public void run() {
             String file;
             synchronized (mProxyLock) {
-                if (Uri.EMPTY.equals(mPacUrl)) return;
+                if (mPacUrl == null) return;
                 try {
                     file = get(mPacUrl);
                 } catch (IOException ioe) {
@@ -157,8 +160,8 @@ public class PacManager {
      * @param proxy Proxy information that is about to be broadcast.
      * @return Returns true when the broadcast should not be sent
      */
-    public synchronized boolean setCurrentProxyScriptUrl(ProxyInfo proxy) {
-        if (!Uri.EMPTY.equals(proxy.getPacFileUrl())) {
+    public synchronized boolean setCurrentProxyScriptUrl(ProxyProperties proxy) {
+        if (!TextUtils.isEmpty(proxy.getPacFileUrl())) {
             if (proxy.getPacFileUrl().equals(mPacUrl) && (proxy.getPort() > 0)) {
                 // Allow to send broadcast, nothing to do.
                 return false;
@@ -175,7 +178,7 @@ public class PacManager {
         } else {
             getAlarmManager().cancel(mPacRefreshIntent);
             synchronized (mProxyLock) {
-                mPacUrl = Uri.EMPTY;
+                mPacUrl = null;
                 mCurrentPac = null;
                 if (mProxyService != null) {
                     try {
@@ -196,8 +199,8 @@ public class PacManager {
      *
      * @throws IOException
      */
-    private static String get(Uri pacUri) throws IOException {
-        URL url = new URL(pacUri.toString());
+    private static String get(String urlString) throws IOException {
+        URL url = new URL(urlString);
         URLConnection urlConnection = url.openConnection(java.net.Proxy.NO_PROXY);
         return new String(Streams.readFully(urlConnection.getInputStream()));
     }
@@ -265,9 +268,14 @@ public class PacManager {
         }
         Intent intent = new Intent();
         intent.setClassName(PAC_PACKAGE, PAC_SERVICE);
+        // Already bound no need to bind again.
         if ((mProxyConnection != null) && (mConnection != null)) {
-            // Already bound no need to bind again, just download the new file.
-            IoThread.getHandler().post(mPacDownloader);
+            if (mLastPort != -1) {
+                sendPacBroadcast(new ProxyProperties(mPacUrl, mLastPort));
+            } else {
+                Log.e(TAG, "Received invalid port from Local Proxy,"
+                        + " PAC will not be operational");
+            }
             return;
         }
         mConnection = new ServiceConnection() {
@@ -357,7 +365,7 @@ public class PacManager {
         mLastPort = -1;
     }
 
-    private void sendPacBroadcast(ProxyInfo proxy) {
+    private void sendPacBroadcast(ProxyProperties proxy) {
         mConnectivityHandler.sendMessage(mConnectivityHandler.obtainMessage(mProxyMessage, proxy));
     }
 
@@ -366,7 +374,7 @@ public class PacManager {
             return;
         }
         if (!mHasSentBroadcast) {
-            sendPacBroadcast(new ProxyInfo(mPacUrl, mLastPort));
+            sendPacBroadcast(new ProxyProperties(mPacUrl, mLastPort));
             mHasSentBroadcast = true;
         }
     }

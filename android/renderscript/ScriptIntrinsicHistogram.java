@@ -16,6 +16,10 @@
 
 package android.renderscript;
 
+import android.content.Context;
+import android.content.res.Resources;
+import android.util.Log;
+
 /**
  * Intrinsic Histogram filter.
  *
@@ -24,7 +28,7 @@ package android.renderscript;
 public final class ScriptIntrinsicHistogram extends ScriptIntrinsic {
     private Allocation mOut;
 
-    private ScriptIntrinsicHistogram(long id, RenderScript rs) {
+    private ScriptIntrinsicHistogram(int id, RenderScript rs) {
         super(id, rs);
     }
 
@@ -48,7 +52,7 @@ public final class ScriptIntrinsicHistogram extends ScriptIntrinsic {
             (!e.isCompatible(Element.U8(rs)))) {
             throw new RSIllegalArgumentException("Unsuported element type.");
         }
-        long id = rs.nScriptIntrinsicCreate(9, e.getID(rs));
+        int id = rs.nScriptIntrinsicCreate(9, e.getID(rs));
         ScriptIntrinsicHistogram sib = new ScriptIntrinsicHistogram(id, rs);
         return sib;
     }
@@ -67,41 +71,19 @@ public final class ScriptIntrinsicHistogram extends ScriptIntrinsic {
      * @param ain The input image
      */
     public void forEach(Allocation ain) {
-        forEach(ain, null);
-    }
-
-    /**
-     * Process an input buffer and place the histogram into the
-     * output allocation. The output allocation may be a narrower
-     * vector size than the input. In this case the vector size of
-     * the output is used to determine how many of the input
-     * channels are used in the computation. This is useful if you
-     * have an RGBA input buffer but only want the histogram for
-     * RGB.
-     *
-     * 1D and 2D input allocations are supported.
-     *
-     * @param ain The input image
-     * @param opt LaunchOptions for clipping
-     */
-    public void forEach(Allocation ain, Script.LaunchOptions opt) {
         if (ain.getType().getElement().getVectorSize() <
             mOut.getType().getElement().getVectorSize()) {
 
             throw new RSIllegalArgumentException(
                 "Input vector size must be >= output vector size.");
         }
-        if (!ain.getType().getElement().isCompatible(Element.U8(mRS)) &&
-            !ain.getType().getElement().isCompatible(Element.U8_2(mRS)) &&
-            !ain.getType().getElement().isCompatible(Element.U8_3(mRS)) &&
-            !ain.getType().getElement().isCompatible(Element.U8_4(mRS))) {
-            throw new RSIllegalArgumentException("Input type must be U8, U8_1, U8_2 or U8_4.");
+        if (ain.getType().getElement().isCompatible(Element.U8(mRS)) &&
+            ain.getType().getElement().isCompatible(Element.U8_4(mRS))) {
+            throw new RSIllegalArgumentException("Output type must be U32 or I32.");
         }
 
-        forEach(0, ain, null, null, opt);
+        forEach(0, ain, null, null);
     }
-
-
 
     /**
      * Set the coefficients used for the RGBA to Luminocity
@@ -159,7 +141,6 @@ public final class ScriptIntrinsicHistogram extends ScriptIntrinsic {
         setVar(1, aout);
     }
 
-
     /**
      * Process an input buffer and place the histogram into the
      * output allocation. The dot product of the input channel and
@@ -171,32 +152,15 @@ public final class ScriptIntrinsicHistogram extends ScriptIntrinsic {
      * @param ain The input image
      */
     public void forEach_Dot(Allocation ain) {
-        forEach_Dot(ain, null);
-    }
-
-    /**
-     * Process an input buffer and place the histogram into the
-     * output allocation. The dot product of the input channel and
-     * the coefficients from 'setDotCoefficients' are used to
-     * calculate the output values.
-     *
-     * 1D and 2D input allocations are supported.
-     *
-     * @param ain The input image
-     * @param opt LaunchOptions for clipping
-     */
-    public void forEach_Dot(Allocation ain, Script.LaunchOptions opt) {
         if (mOut.getType().getElement().getVectorSize() != 1) {
             throw new RSIllegalArgumentException("Output vector size must be one.");
         }
-        if (!ain.getType().getElement().isCompatible(Element.U8(mRS)) &&
-            !ain.getType().getElement().isCompatible(Element.U8_2(mRS)) &&
-            !ain.getType().getElement().isCompatible(Element.U8_3(mRS)) &&
-            !ain.getType().getElement().isCompatible(Element.U8_4(mRS))) {
-            throw new RSIllegalArgumentException("Input type must be U8, U8_1, U8_2 or U8_4.");
+        if (ain.getType().getElement().isCompatible(Element.U8(mRS)) &&
+            ain.getType().getElement().isCompatible(Element.U8_4(mRS))) {
+            throw new RSIllegalArgumentException("Output type must be U32 or I32.");
         }
 
-        forEach(1, ain, null, null, opt);
+        forEach(1, ain, null, null);
     }
 
 

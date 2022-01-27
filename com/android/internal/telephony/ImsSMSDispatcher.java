@@ -17,25 +17,25 @@
 package com.android.internal.telephony;
 
 import static android.telephony.SmsManager.RESULT_ERROR_GENERIC_FAILURE;
+
+import java.util.ArrayList;
+import java.util.HashMap;
+
 import android.app.PendingIntent;
 import android.app.PendingIntent.CanceledException;
-import android.net.Uri;
 import android.os.AsyncResult;
 import android.os.Message;
 import android.provider.Telephony.Sms.Intents;
 import android.telephony.Rlog;
 
-import com.android.internal.telephony.cdma.CdmaInboundSmsHandler;
 import com.android.internal.telephony.cdma.CdmaSMSDispatcher;
-import com.android.internal.telephony.gsm.GsmInboundSmsHandler;
 import com.android.internal.telephony.gsm.GsmSMSDispatcher;
+import com.android.internal.telephony.InboundSmsHandler;
+import com.android.internal.telephony.gsm.GsmInboundSmsHandler;
+import com.android.internal.telephony.cdma.CdmaInboundSmsHandler;
+import com.android.internal.telephony.SmsBroadcastUndelivered;
 
-import java.util.ArrayList;
-import java.util.HashMap;
-import java.util.concurrent.atomic.AtomicBoolean;
-import java.util.concurrent.atomic.AtomicInteger;
-
-public class ImsSMSDispatcher extends SMSDispatcher {
+public final class ImsSMSDispatcher extends SMSDispatcher {
     private static final String TAG = "RIL_ImsSms";
 
     private SMSDispatcher mCdmaDispatcher;
@@ -49,7 +49,7 @@ public class ImsSMSDispatcher extends SMSDispatcher {
     private boolean mIms = false;
     private String mImsSmsFormat = SmsConstants.FORMAT_UNKNOWN;
 
-    public ImsSMSDispatcher(Phone phone, SmsStorageMonitor storageMonitor,
+    public ImsSMSDispatcher(PhoneBase phone, SmsStorageMonitor storageMonitor,
             SmsUsageMonitor usageMonitor) {
         super(phone, usageMonitor, null);
         Rlog.d(TAG, "ImsSMSDispatcher created");
@@ -62,8 +62,9 @@ public class ImsSMSDispatcher extends SMSDispatcher {
         mCdmaInboundSmsHandler = CdmaInboundSmsHandler.makeInboundSmsHandler(phone.getContext(),
                 storageMonitor, phone, (CdmaSMSDispatcher) mCdmaDispatcher);
         mGsmDispatcher = new GsmSMSDispatcher(phone, usageMonitor, this, mGsmInboundSmsHandler);
-        SmsBroadcastUndelivered.initialize(phone.getContext(),
-            mGsmInboundSmsHandler, mCdmaInboundSmsHandler);
+        Thread broadcastThread = new Thread(new SmsBroadcastUndelivered(phone.getContext(),
+                mGsmInboundSmsHandler, mCdmaInboundSmsHandler));
+        broadcastThread.start();
 
         mCi.registerForOn(this, EVENT_RADIO_ON, null);
         mCi.registerForImsNetworkStateChanged(this, EVENT_IMS_STATE_CHANGED, null);
@@ -71,7 +72,7 @@ public class ImsSMSDispatcher extends SMSDispatcher {
 
     /* Updates the phone object when there is a change */
     @Override
-    protected void updatePhoneObject(Phone phone) {
+    protected void updatePhoneObject(PhoneBase phone) {
         Rlog.d(TAG, "In IMS updatePhoneObject ");
         super.updatePhoneObject(phone);
         mCdmaDispatcher.updatePhoneObject(phone);
@@ -156,7 +157,7 @@ public class ImsSMSDispatcher extends SMSDispatcher {
     }
 
     @Override
-    public void sendData(String destAddr, String scAddr, int destPort,
+    protected void sendData(String destAddr, String scAddr, int destPort,
             byte[] data, PendingIntent sentIntent, PendingIntent deliveryIntent) {
         if (isCdmaMo()) {
             mCdmaDispatcher.sendData(destAddr, scAddr, destPort,
@@ -168,16 +169,15 @@ public class ImsSMSDispatcher extends SMSDispatcher {
     }
 
     @Override
-    public void sendMultipartText(String destAddr, String scAddr,
+    protected void sendMultipartText(String destAddr, String scAddr,
             ArrayList<String> parts, ArrayList<PendingIntent> sentIntents,
-            ArrayList<PendingIntent> deliveryIntents, Uri messageUri, String callingPkg,
-            boolean persistMessage) {
+            ArrayList<PendingIntent> deliveryIntents) {
         if (isCdmaMo()) {
             mCdmaDispatcher.sendMultipartText(destAddr, scAddr,
-                    parts, sentIntents, deliveryIntents, messageUri, callingPkg, persistMessage);
+                    parts, sentIntents, deliveryIntents);
         } else {
             mGsmDispatcher.sendMultipartText(destAddr, scAddr,
-                    parts, sentIntents, deliveryIntents, messageUri, callingPkg, persistMessage);
+                    parts, sentIntents, deliveryIntents);
         }
     }
 
@@ -189,63 +189,15 @@ public class ImsSMSDispatcher extends SMSDispatcher {
     }
 
     @Override
-    protected void sendSmsByPstn(SmsTracker tracker) {
-        // This function should be defined in Gsm/CdmaDispatcher.
-        Rlog.e(TAG, "sendSmsByPstn should never be called from here!");
-    }
-
-    @Override
-    public void sendText(String destAddr, String scAddr, String text, PendingIntent sentIntent,
-            PendingIntent deliveryIntent, Uri messageUri, String callingPkg,
-            boolean persistMessage) {
+    protected void sendText(String destAddr, String scAddr, String text,
+            PendingIntent sentIntent, PendingIntent deliveryIntent) {
         Rlog.d(TAG, "sendText");
         if (isCdmaMo()) {
             mCdmaDispatcher.sendText(destAddr, scAddr,
-                    text, sentIntent, deliveryIntent, messageUri, callingPkg, persistMessage);
+                    text, sentIntent, deliveryIntent);
         } else {
             mGsmDispatcher.sendText(destAddr, scAddr,
-                    text, sentIntent, deliveryIntent, messageUri, callingPkg, persistMessage);
-        }
-    }
-
-    @Override
-    protected void injectSmsPdu(byte[] pdu, String format, PendingIntent receivedIntent) {
-        Rlog.d(TAG, "ImsSMSDispatcher:injectSmsPdu");
-        try {
-            // TODO We need to decide whether we should allow injecting GSM(3gpp)
-            // SMS pdus when the phone is camping on CDMA(3gpp2) network and vice versa.
-            android.telephony.SmsMessage msg =
-                    android.telephony.SmsMessage.createFromPdu(pdu, format);
-
-            // Only class 1 SMS are allowed to be injected.
-            if (msg.getMessageClass() != android.telephony.SmsMessage.MessageClass.CLASS_1) {
-                if (receivedIntent != null)
-                    receivedIntent.send(Intents.RESULT_SMS_GENERIC_ERROR);
-                return;
-            }
-
-            AsyncResult ar = new AsyncResult(receivedIntent, msg, null);
-
-            if (format.equals(SmsConstants.FORMAT_3GPP)) {
-                Rlog.i(TAG, "ImsSMSDispatcher:injectSmsText Sending msg=" + msg +
-                        ", format=" + format + "to mGsmInboundSmsHandler");
-                mGsmInboundSmsHandler.sendMessage(InboundSmsHandler.EVENT_INJECT_SMS, ar);
-            } else if (format.equals(SmsConstants.FORMAT_3GPP2)) {
-                Rlog.i(TAG, "ImsSMSDispatcher:injectSmsText Sending msg=" + msg +
-                        ", format=" + format + "to mCdmaInboundSmsHandler");
-                mCdmaInboundSmsHandler.sendMessage(InboundSmsHandler.EVENT_INJECT_SMS, ar);
-            } else {
-                // Invalid pdu format.
-                Rlog.e(TAG, "Invalid pdu format: " + format);
-                if (receivedIntent != null)
-                    receivedIntent.send(Intents.RESULT_SMS_GENERIC_ERROR);
-            }
-        } catch (Exception e) {
-            Rlog.e(TAG, "injectSmsPdu failed: ", e);
-            try {
-                if (receivedIntent != null)
-                    receivedIntent.send(Intents.RESULT_SMS_GENERIC_ERROR);
-            } catch (CanceledException ex) {}
+                    text, sentIntent, deliveryIntent);
         }
     }
 
@@ -273,7 +225,7 @@ public class ImsSMSDispatcher extends SMSDispatcher {
         }
 
         // format didn't match, need to re-encode.
-        HashMap map = tracker.getData();
+        HashMap map = tracker.mData;
 
         // to re-encode, fields needed are:  scAddr, destAddr, and
         //   text if originally sent as sendText or
@@ -283,7 +235,13 @@ public class ImsSMSDispatcher extends SMSDispatcher {
                        (map.containsKey("data") && map.containsKey("destPort"))))) {
             // should never come here...
             Rlog.e(TAG, "sendRetrySms failed to re-encode per missing fields!");
-            tracker.onFailed(mContext, RESULT_ERROR_GENERIC_FAILURE, 0/*errorCode*/);
+            if (tracker.mSentIntent != null) {
+                int error = RESULT_ERROR_GENERIC_FAILURE;
+                // Done retrying; return an error to the app.
+                try {
+                    tracker.mSentIntent.send(mContext, error, null);
+                } catch (CanceledException ex) {}
+            }
             return;
         }
         String scAddr = (String)map.get("scAddr");
@@ -334,11 +292,6 @@ public class ImsSMSDispatcher extends SMSDispatcher {
     }
 
     @Override
-    protected void sendSubmitPdu(SmsTracker tracker) {
-        sendRawPdu(tracker);
-    }
-
-    @Override
     protected String getFormat() {
         // this function should be defined in Gsm/CdmaDispatcher.
         Rlog.e(TAG, "getFormat should never be called from here!");
@@ -353,13 +306,10 @@ public class ImsSMSDispatcher extends SMSDispatcher {
     }
 
     @Override
-    protected SmsTracker getNewSubmitPduTracker(String destinationAddress, String scAddress,
-            String message, SmsHeader smsHeader, int format, PendingIntent sentIntent,
-            PendingIntent deliveryIntent, boolean lastPart,
-            AtomicInteger unsentPartCount, AtomicBoolean anyPartFailed, Uri messageUri,
-            String fullMessageText) {
+    protected void sendNewSubmitPdu(String destinationAddress, String scAddress, String message,
+            SmsHeader smsHeader, int format, PendingIntent sentIntent,
+            PendingIntent deliveryIntent, boolean lastPart) {
         Rlog.e(TAG, "Error! Not implemented for IMS.");
-        return null;
     }
 
     @Override

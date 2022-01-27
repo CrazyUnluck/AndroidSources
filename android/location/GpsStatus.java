@@ -16,55 +16,42 @@
 
 package android.location;
 
-import android.util.SparseArray;
-
 import java.util.Iterator;
 import java.util.NoSuchElementException;
 
 
 /**
  * This class represents the current state of the GPS engine.
- *
- * <p>This class is used in conjunction with the {@link Listener} interface.
- *
- * @deprecated use {@link GnssStatus} and {@link GnssStatus.Callback}.
+ * This class is used in conjunction with the {@link Listener} interface.
  */
-@Deprecated
 public final class GpsStatus {
     private static final int NUM_SATELLITES = 255;
-    private static final int GLONASS_SVID_OFFSET = 64;
-    private static final int BEIDOU_SVID_OFFSET = 200;
-    private static final int SBAS_SVID_OFFSET = -87;
 
     /* These package private values are modified by the LocationManager class */
     private int mTimeToFirstFix;
-    private final SparseArray<GpsSatellite> mSatellites = new SparseArray<>();
+    private GpsSatellite mSatellites[] = new GpsSatellite[NUM_SATELLITES];
 
     private final class SatelliteIterator implements Iterator<GpsSatellite> {
-        private final int mSatellitesCount;
 
-        private int mIndex = 0;
+        private GpsSatellite[] mSatellites;
+        int mIndex = 0;
 
-        SatelliteIterator() {
-            mSatellitesCount = mSatellites.size();
+        SatelliteIterator(GpsSatellite[] satellites) {
+            mSatellites = satellites;
         }
 
-        @Override
         public boolean hasNext() {
-            for (; mIndex < mSatellitesCount; ++mIndex) {
-                GpsSatellite satellite = mSatellites.valueAt(mIndex);
-                if (satellite.mValid) {
+            for (int i = mIndex; i < mSatellites.length; i++) {
+                if (mSatellites[i].mValid) {
                     return true;
                 }
             }
             return false;
         }
 
-        @Override
         public GpsSatellite next() {
-            while (mIndex < mSatellitesCount) {
-                GpsSatellite satellite = mSatellites.valueAt(mIndex);
-                ++mIndex;
+            while (mIndex < mSatellites.length) {
+                GpsSatellite satellite = mSatellites[mIndex++];
                 if (satellite.mValid) {
                     return satellite;
                 }
@@ -72,16 +59,14 @@ public final class GpsStatus {
             throw new NoSuchElementException();
         }
 
-        @Override
         public void remove() {
             throw new UnsupportedOperationException();
         }
     }
 
     private Iterable<GpsSatellite> mSatelliteList = new Iterable<GpsSatellite>() {
-        @Override
         public Iterator<GpsSatellite> iterator() {
-            return new SatelliteIterator();
+            return new SatelliteIterator(mSatellites);
         }
     };
 
@@ -109,9 +94,7 @@ public final class GpsStatus {
 
     /**
      * Used for receiving notifications when GPS status has changed.
-     * @deprecated use {@link GnssStatus.Callback} instead.
      */
-    @Deprecated
     public interface Listener {
         /**
          * Called to report changes in the GPS status.
@@ -123,7 +106,7 @@ public final class GpsStatus {
          * <li> {@link GpsStatus#GPS_EVENT_SATELLITE_STATUS}
          * </ul>
          *
-         * When this method is called, the client should call
+         * When this method is called, the client should call 
          * {@link LocationManager#getGpsStatus} to get additional
          * status information.
          *
@@ -139,71 +122,60 @@ public final class GpsStatus {
      * See <a href="http://en.wikipedia.org/wiki/NMEA_0183">NMEA 0183</a> for more details.
      * You can implement this interface and call {@link LocationManager#addNmeaListener}
      * to receive NMEA data from the GPS engine.
-     * @deprecated use {@link OnNmeaMessageListener} instead.
      */
-    @Deprecated
     public interface NmeaListener {
         void onNmeaReceived(long timestamp, String nmea);
     }
 
-    // For API-compat a public ctor() is not available
-    GpsStatus() {}
+    GpsStatus() {
+        for (int i = 0; i < mSatellites.length; i++) {
+            mSatellites[i] = new GpsSatellite(i + 1);
+        }
+    }
 
-    private void setStatus(int svCount, int[] svidWithFlags, float[] cn0s, float[] elevations,
-            float[] azimuths) {
-        clearSatellites();
-        for (int i = 0; i < svCount; i++) {
-            final int constellationType =
-                    (svidWithFlags[i] >> GnssStatus.CONSTELLATION_TYPE_SHIFT_WIDTH)
-                    & GnssStatus.CONSTELLATION_TYPE_MASK;
-            int prn = svidWithFlags[i] >> GnssStatus.SVID_SHIFT_WIDTH;
-            // Other satellites passed through these APIs before GnssSvStatus was availble.
-            // GPS, SBAS & QZSS can pass through at their nominally
-            // assigned prn number (as long as it fits in the valid 0-255 range below.)
-            // Glonass, and Beidou are passed through with the defacto standard offsets
-            // Other future constellation reporting (e.g. Galileo) needs to use
-            // GnssSvStatus on (N level) HAL & Java layers.
-            if (constellationType == GnssStatus.CONSTELLATION_GLONASS) {
-                prn += GLONASS_SVID_OFFSET;
-            } else if (constellationType == GnssStatus.CONSTELLATION_BEIDOU) {
-                prn += BEIDOU_SVID_OFFSET;
-            } else if (constellationType == GnssStatus.CONSTELLATION_SBAS) {
-                prn += SBAS_SVID_OFFSET;
-            } else if ((constellationType != GnssStatus.CONSTELLATION_GPS) &&
-                    (constellationType != GnssStatus.CONSTELLATION_QZSS)) {
-                continue;
-            }
-            if (prn > 0 && prn <= NUM_SATELLITES) {
-                GpsSatellite satellite = mSatellites.get(prn);
-                if (satellite == null) {
-                    satellite = new GpsSatellite(prn);
-                    mSatellites.put(prn, satellite);
-                }
+    /**
+     * Used internally within {@link LocationManager} to copy GPS status
+     * data from the Location Manager Service to its cached GpsStatus instance.
+     * Is synchronized to ensure that GPS status updates are atomic.
+     */
+    synchronized void setStatus(int svCount, int[] prns, float[] snrs,
+            float[] elevations, float[] azimuths, int ephemerisMask,
+            int almanacMask, int usedInFixMask) {
+        int i;
 
+        for (i = 0; i < mSatellites.length; i++) {
+            mSatellites[i].mValid = false;
+        }
+        
+        for (i = 0; i < svCount; i++) {
+            int prn = prns[i] - 1;
+            int prnShift = (1 << prn);
+            if (prn >= 0 && prn < mSatellites.length) {
+                GpsSatellite satellite = mSatellites[prn];
+    
                 satellite.mValid = true;
-                satellite.mSnr = cn0s[i];
+                satellite.mSnr = snrs[i];
                 satellite.mElevation = elevations[i];
                 satellite.mAzimuth = azimuths[i];
-                satellite.mHasEphemeris =
-                        (svidWithFlags[i] & GnssStatus.GNSS_SV_FLAGS_HAS_EPHEMERIS_DATA) != 0;
-                satellite.mHasAlmanac =
-                        (svidWithFlags[i] & GnssStatus.GNSS_SV_FLAGS_HAS_ALMANAC_DATA) != 0;
-                satellite.mUsedInFix =
-                        (svidWithFlags[i] & GnssStatus.GNSS_SV_FLAGS_USED_IN_FIX) != 0;
+                satellite.mHasEphemeris = ((ephemerisMask & prnShift) != 0);
+                satellite.mHasAlmanac = ((almanacMask & prnShift) != 0);
+                satellite.mUsedInFix = ((usedInFixMask & prnShift) != 0);
             }
         }
     }
 
     /**
-     * Copies GPS satellites information from GnssStatus object.
+     * Used by {@link LocationManager#getGpsStatus} to copy LocationManager's
+     * cached GpsStatus instance to the client's copy.
      * Since this method is only used within {@link LocationManager#getGpsStatus},
      * it does not need to be synchronized.
-     * @hide
      */
-    void setStatus(GnssStatus status, int timeToFirstFix) {
-        mTimeToFirstFix = timeToFirstFix;
-        setStatus(status.mSvCount, status.mSvidWithFlags, status.mCn0DbHz, status.mElevations,
-                status.mAzimuths);
+    void setStatus(GpsStatus status) {
+        mTimeToFirstFix = status.getTimeToFirstFix();
+
+        for (int i = 0; i < mSatellites.length; i++) {
+            mSatellites[i].setStatus(status.mSatellites[i]);
+        } 
     }
 
     void setTimeToFirstFix(int ttff) {
@@ -211,7 +183,7 @@ public final class GpsStatus {
     }
 
     /**
-     * Returns the time required to receive the first fix since the most recent
+     * Returns the time required to receive the first fix since the most recent 
      * restart of the GPS engine.
      *
      * @return time to first fix in milliseconds
@@ -238,13 +210,5 @@ public final class GpsStatus {
      */
     public int getMaxSatellites() {
         return NUM_SATELLITES;
-    }
-
-    private void clearSatellites() {
-        int satellitesCount = mSatellites.size();
-        for (int i = 0; i < satellitesCount; i++) {
-            GpsSatellite satellite = mSatellites.valueAt(i);
-            satellite.mValid = false;
-        }
     }
 }

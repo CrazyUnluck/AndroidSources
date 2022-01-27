@@ -27,7 +27,6 @@ import com.android.internal.R;
  * Just shows an error message about the account restrictions for the limited user.
  */
 public class CantAddAccountActivity extends Activity {
-    public static final String EXTRA_ERROR_CODE = "android.accounts.extra.ERROR_CODE";
 
     @Override
     public void onCreate(Bundle savedInstanceState) {

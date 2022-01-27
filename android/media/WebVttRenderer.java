@@ -433,9 +433,7 @@ class TextTrackCue extends SubtitleTrack.Cue {
                     mRegionId.equals(cue.mRegionId) &&
                     mSnapToLines == cue.mSnapToLines &&
                     mAutoLinePosition == cue.mAutoLinePosition &&
-                    (mAutoLinePosition ||
-                            ((mLinePosition != null && mLinePosition.equals(cue.mLinePosition)) ||
-                             (mLinePosition == null && cue.mLinePosition == null))) &&
+                    (mAutoLinePosition || mLinePosition == cue.mLinePosition) &&
                     mTextPosition == cue.mTextPosition &&
                     mSize == cue.mSize &&
                     mAlignment == cue.mAlignment &&
@@ -560,11 +558,7 @@ class TextTrackCue extends SubtitleTrack.Cue {
     }
 }
 
-/**
- *  Supporting July 10 2013 draft version
- *
- *  @hide
- */
+/** @hide */
 class WebVttParser {
     private static final String TAG = "WebVttParser";
     private Phase mPhase;
@@ -732,15 +726,15 @@ class WebVttParser {
                                 "has invalid value", e.getMessage(), value);
                     }
                 } else if (name.equals("lines")) {
-                    if (value.matches(".*[^0-9].*")) {
-                        log_warning("lines", name, "contains an invalid character", value);
-                    } else {
-                        try {
-                            region.mLines = Integer.parseInt(value);
-                            assert(region.mLines >= 0); // lines contains only digits
-                        } catch (NumberFormatException e) {
-                            log_warning("region setting", name, "is not numeric", value);
+                    try {
+                        int lines = Integer.parseInt(value);
+                        if (lines >= 0) {
+                            region.mLines = lines;
+                        } else {
+                            log_warning("region setting", name, "is negative", value);
                         }
+                    } catch (NumberFormatException e) {
+                        log_warning("region setting", name, "is not numeric", value);
                     }
                 } else if (name.equals("regionanchor") ||
                            name.equals("viewportanchor")) {
@@ -878,23 +872,26 @@ class WebVttParser {
                     }
                 } else if (name.equals("line")) {
                     try {
+                        int linePosition;
                         /* TRICKY: we know that there are no spaces in value */
                         assert(value.indexOf(' ') < 0);
                         if (value.endsWith("%")) {
+                            linePosition = Integer.parseInt(
+                                    value.substring(0, value.length() - 1));
+                            if (linePosition < 0 || linePosition > 100) {
+                                log_warning("cue setting", name, "is out of range", value);
+                                continue;
+                            }
                             mCue.mSnapToLines = false;
-                            mCue.mLinePosition = parseIntPercentage(value);
-                        } else if (value.matches(".*[^0-9].*")) {
-                            log_warning("cue setting", name,
-                                    "contains an invalid character", value);
+                            mCue.mLinePosition = linePosition;
                         } else {
                             mCue.mSnapToLines = true;
                             mCue.mLinePosition = Integer.parseInt(value);
                         }
                     } catch (NumberFormatException e) {
                         log_warning("cue setting", name,
-                                "is not numeric or percentage", value);
+                               "is not numeric or percentage", value);
                     }
-                    // TODO: add support for optional alignment value [,start|middle|end]
                 } else if (name.equals("position")) {
                     try {
                         mCue.mTextPosition = parseIntPercentage(value);
@@ -1003,28 +1000,22 @@ class WebVttTrack extends SubtitleTrack implements WebVttCueListener {
     }
 
     @Override
-    public void onData(byte[] data, boolean eos, long runID) {
-        try {
-            String str = new String(data, "UTF-8");
-
-            // implement intermixing restriction for WebVTT only for now
-            synchronized(mParser) {
-                if (mCurrentRunID != null && runID != mCurrentRunID) {
-                    throw new IllegalStateException(
-                            "Run #" + mCurrentRunID +
-                            " in progress.  Cannot process run #" + runID);
-                }
-                mCurrentRunID = runID;
-                mParser.parse(str);
-                if (eos) {
-                    finishedRun(runID);
-                    mParser.eos();
-                    mRegions.clear();
-                    mCurrentRunID = null;
-                }
+    public void onData(String data, boolean eos, long runID) {
+        // implement intermixing restriction for WebVTT only for now
+        synchronized(mParser) {
+            if (mCurrentRunID != null && runID != mCurrentRunID) {
+                throw new IllegalStateException(
+                        "Run #" + mCurrentRunID +
+                        " in progress.  Cannot process run #" + runID);
             }
-        } catch (java.io.UnsupportedEncodingException e) {
-            Log.w(TAG, "subtitle data is not UTF-8 encoded: " + e);
+            mCurrentRunID = runID;
+            mParser.parse(data);
+            if (eos) {
+                finishedRun(runID);
+                mParser.eos();
+                mRegions.clear();
+                mCurrentRunID = null;
+            }
         }
     }
 
@@ -1100,9 +1091,7 @@ class WebVttTrack extends SubtitleTrack implements WebVttCueListener {
             }
         }
 
-        if (mRenderingWidget != null) {
-            mRenderingWidget.setActiveCues(activeCues);
-        }
+        mRenderingWidget.setActiveCues(activeCues);
     }
 }
 
@@ -1113,9 +1102,6 @@ class WebVttTrack extends SubtitleTrack implements WebVttCueListener {
  */
 class WebVttRenderingWidget extends ViewGroup implements SubtitleTrack.RenderingWidget {
     private static final boolean DEBUG = false;
-
-    private static final CaptionStyle DEFAULT_CAPTION_STYLE = CaptionStyle.DEFAULT;
-
     private static final int DEBUG_REGION_BACKGROUND = 0x800000FF;
     private static final int DEBUG_CUE_BACKGROUND = 0x80FF0000;
 
@@ -1150,16 +1136,11 @@ class WebVttRenderingWidget extends ViewGroup implements SubtitleTrack.Rendering
     }
 
     public WebVttRenderingWidget(Context context, AttributeSet attrs) {
-        this(context, attrs, 0);
+        this(context, null, 0);
     }
 
-    public WebVttRenderingWidget(Context context, AttributeSet attrs, int defStyleAttr) {
-        this(context, attrs, defStyleAttr, 0);
-    }
-
-    public WebVttRenderingWidget(
-            Context context, AttributeSet attrs, int defStyleAttr, int defStyleRes) {
-        super(context, attrs, defStyleAttr, defStyleRes);
+    public WebVttRenderingWidget(Context context, AttributeSet attrs, int defStyle) {
+        super(context, attrs, defStyle);
 
         // Cannot render text over video when layer type is hardware.
         setLayerType(View.LAYER_TYPE_SOFTWARE, null);
@@ -1273,7 +1254,6 @@ class WebVttRenderingWidget extends ViewGroup implements SubtitleTrack.Rendering
     }
 
     private void setCaptionStyle(CaptionStyle captionStyle, float fontSize) {
-        captionStyle = DEFAULT_CAPTION_STYLE.applyStyle(captionStyle);
         mCaptionStyle = captionStyle;
         mFontSize = fontSize;
 
@@ -1541,8 +1521,6 @@ class WebVttRenderingWidget extends ViewGroup implements SubtitleTrack.Rendering
 
             if (DEBUG) {
                 setBackgroundColor(DEBUG_REGION_BACKGROUND);
-            } else {
-                setBackgroundColor(captionStyle.windowColor);
             }
         }
 
@@ -1555,8 +1533,6 @@ class WebVttRenderingWidget extends ViewGroup implements SubtitleTrack.Rendering
                 final CueLayout cueBox = mRegionCueBoxes.get(i);
                 cueBox.setCaptionStyle(captionStyle, fontSize);
             }
-
-            setBackgroundColor(captionStyle.windowColor);
         }
 
         /**

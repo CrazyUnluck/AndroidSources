@@ -17,8 +17,12 @@ package com.android.proxyhandler;
 
 import android.app.Service;
 import android.content.Intent;
+import android.net.Proxy;
+import android.net.ProxyProperties;
+import android.os.Bundle;
 import android.os.IBinder;
 import android.os.RemoteException;
+import android.text.TextUtils;
 
 import com.android.net.IProxyCallback;
 import com.android.net.IProxyPortListener;
@@ -33,6 +37,8 @@ public class ProxyService extends Service {
     /** Keep these values up-to-date with PacManager.java */
     public static final String KEY_PROXY = "keyProxy";
     public static final String HOST = "localhost";
+    // STOPSHIP This being a static port means it can be hijacked by other apps.
+    public static final int PORT = 8182;
     public static final String EXCL_LIST = "";
 
     @Override

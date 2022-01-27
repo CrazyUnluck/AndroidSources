@@ -16,22 +16,18 @@
 
 package android.preference;
 
-import android.annotation.Nullable;
-import android.annotation.XmlRes;
 import android.app.Activity;
 import android.app.Fragment;
 import android.content.Intent;
 import android.content.SharedPreferences;
-import android.content.res.TypedArray;
-import android.graphics.drawable.Drawable;
 import android.os.Bundle;
 import android.os.Handler;
 import android.os.Message;
 import android.view.KeyEvent;
 import android.view.LayoutInflater;
 import android.view.View;
-import android.view.View.OnKeyListener;
 import android.view.ViewGroup;
+import android.view.View.OnKeyListener;
 import android.widget.ListView;
 
 /**
@@ -114,8 +110,6 @@ public abstract class PreferenceFragment extends Fragment implements
     private boolean mHavePrefs;
     private boolean mInitDone;
 
-    private int mLayoutResId = com.android.internal.R.layout.preference_list_fragment;
-
     /**
      * The starting request code given out to preference framework.
      */
@@ -156,52 +150,21 @@ public abstract class PreferenceFragment extends Fragment implements
     }
 
     @Override
-    public void onCreate(@Nullable Bundle savedInstanceState) {
+    public void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
         mPreferenceManager = new PreferenceManager(getActivity(), FIRST_REQUEST_CODE);
         mPreferenceManager.setFragment(this);
     }
 
     @Override
-    public View onCreateView(LayoutInflater inflater, @Nullable ViewGroup container,
-            @Nullable Bundle savedInstanceState) {
-
-        TypedArray a = getActivity().obtainStyledAttributes(null,
-                com.android.internal.R.styleable.PreferenceFragment,
-                com.android.internal.R.attr.preferenceFragmentStyle,
-                0);
-
-        mLayoutResId = a.getResourceId(com.android.internal.R.styleable.PreferenceFragment_layout,
-                mLayoutResId);
-
-        a.recycle();
-
-        return inflater.inflate(mLayoutResId, container, false);
+    public View onCreateView(LayoutInflater inflater, ViewGroup container,
+            Bundle savedInstanceState) {
+        return inflater.inflate(com.android.internal.R.layout.preference_list_fragment, container,
+                false);
     }
 
     @Override
-    public void onViewCreated(View view, @Nullable Bundle savedInstanceState) {
-        super.onViewCreated(view, savedInstanceState);
-
-        TypedArray a = getActivity().obtainStyledAttributes(null,
-                com.android.internal.R.styleable.PreferenceFragment,
-                com.android.internal.R.attr.preferenceFragmentStyle,
-                0);
-
-        ListView lv = (ListView) view.findViewById(android.R.id.list);
-        if (lv != null) {
-            Drawable divider =
-                    a.getDrawable(com.android.internal.R.styleable.PreferenceFragment_divider);
-            if (divider != null) {
-                lv.setDivider(divider);
-            }
-        }
-
-        a.recycle();
-    }
-
-    @Override
-    public void onActivityCreated(@Nullable Bundle savedInstanceState) {
+    public void onActivityCreated(Bundle savedInstanceState) {
         super.onActivityCreated(savedInstanceState);
 
         if (mHavePrefs) {
@@ -236,9 +199,6 @@ public abstract class PreferenceFragment extends Fragment implements
 
     @Override
     public void onDestroyView() {
-        if (mList != null) {
-            mList.setOnKeyListener(null);
-        }
         mList = null;
         mHandler.removeCallbacks(mRequestFocus);
         mHandler.removeMessages(MSG_BIND_PREFERENCES);
@@ -285,7 +245,6 @@ public abstract class PreferenceFragment extends Fragment implements
      */
     public void setPreferenceScreen(PreferenceScreen preferenceScreen) {
         if (mPreferenceManager.setPreferences(preferenceScreen) && preferenceScreen != null) {
-            onUnbindPreferences();
             mHavePrefs = true;
             if (mInitDone) {
                 postBindPreferences();
@@ -320,7 +279,7 @@ public abstract class PreferenceFragment extends Fragment implements
      *
      * @param preferencesResId The XML resource ID to inflate.
      */
-    public void addPreferencesFromResource(@XmlRes int preferencesResId) {
+    public void addPreferencesFromResource(int preferencesResId) {
         requirePreferenceManager();
 
         setPreferenceScreen(mPreferenceManager.inflateFromResource(getActivity(),
@@ -370,41 +329,12 @@ public abstract class PreferenceFragment extends Fragment implements
         if (preferenceScreen != null) {
             preferenceScreen.bind(getListView());
         }
-        onBindPreferences();
-    }
-
-    /** @hide */
-    protected void onBindPreferences() {
-    }
-
-    /** @hide */
-    protected void onUnbindPreferences() {
     }
 
     /** @hide */
     public ListView getListView() {
         ensureList();
         return mList;
-    }
-
-    /** @hide */
-    public boolean hasListView() {
-        if (mList != null) {
-            return true;
-        }
-        View root = getView();
-        if (root == null) {
-            return false;
-        }
-        View rawListView = root.findViewById(android.R.id.list);
-        if (!(rawListView instanceof ListView)) {
-            return false;
-        }
-        mList = (ListView)rawListView;
-        if (mList == null) {
-            return false;
-        }
-        return true;
     }
 
     private void ensureList() {

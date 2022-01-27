@@ -48,7 +48,6 @@ class IconLoader extends Handler {
     private HashMap<Integer, Bitmap> mIconsCache = null;
 
     private static IconLoader sLoader = null;
-    private static HandlerThread sThread = null;
 
     // Loader state values.
     private static final int STATE_SINGLE_ICON = 1;
@@ -79,9 +78,9 @@ class IconLoader extends Handler {
             return sLoader;
         }
         if (fh != null) {
-            sThread = new HandlerThread("Cat Icon Loader");
-            sThread.start();
-            return new IconLoader(sThread.getLooper(), fh);
+            HandlerThread thread = new HandlerThread("Cat Icon Loader");
+            thread.start();
+            return new IconLoader(thread.getLooper(), fh);
         }
         return null;
     }
@@ -141,7 +140,6 @@ class IconLoader extends Handler {
                 }
                 break;
             case EVENT_READ_ICON_DONE:
-                CatLog.d(this, "load icon done");
                 ar = (AsyncResult) msg.obj;
                 byte[] rawData = ((byte[]) ar.result);
                 if (mId.mCodingScheme == ImageDescriptor.CODING_SCHEME_BASIC) {
@@ -151,9 +149,6 @@ class IconLoader extends Handler {
                 } else if (mId.mCodingScheme == ImageDescriptor.CODING_SCHEME_COLOUR) {
                     mIconData = rawData;
                     readClut();
-                } else {
-                    CatLog.d(this, "else  /postIcon ");
-                    postIcon();
                 }
                 break;
             case EVENT_READ_CLUT_DONE:
@@ -361,14 +356,5 @@ class IconLoader extends Handler {
             break;
         }
         return mask;
-    }
-    public void dispose() {
-        mSimFH = null;
-        if (sThread != null) {
-            sThread.quit();
-            sThread = null;
-        }
-        mIconsCache = null;
-        sLoader = null;
     }
 }

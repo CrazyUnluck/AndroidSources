@@ -17,18 +17,27 @@
 package com.android.server.accessibility;
 
 import android.content.Context;
-import android.graphics.Point;
+import android.gesture.Gesture;
+import android.gesture.GestureLibraries;
+import android.gesture.GestureLibrary;
+import android.gesture.GesturePoint;
+import android.gesture.GestureStore;
+import android.gesture.GestureStroke;
+import android.gesture.Prediction;
+import android.graphics.Rect;
 import android.os.Handler;
+import android.os.SystemClock;
 import android.util.Slog;
-import android.view.InputDevice;
-import android.view.KeyEvent;
 import android.view.MotionEvent;
 import android.view.MotionEvent.PointerCoords;
 import android.view.MotionEvent.PointerProperties;
+import android.view.VelocityTracker;
 import android.view.ViewConfiguration;
 import android.view.WindowManagerPolicy;
 import android.view.accessibility.AccessibilityEvent;
 import android.view.accessibility.AccessibilityManager;
+
+import com.android.internal.R;
 
 import java.util.ArrayList;
 import java.util.Arrays;
@@ -54,7 +63,7 @@ import java.util.List;
  *
  * @hide
  */
-class TouchExplorer implements EventStreamTransformation, AccessibilityGestureDetector.Listener {
+class TouchExplorer implements EventStreamTransformation {
 
     private static final boolean DEBUG = false;
 
@@ -66,10 +75,6 @@ class TouchExplorer implements EventStreamTransformation, AccessibilityGestureDe
     private static final int STATE_DRAGGING = 0x00000002;
     private static final int STATE_DELEGATING = 0x00000004;
     private static final int STATE_GESTURE_DETECTING = 0x00000005;
-
-    private static final int CLICK_LOCATION_NONE = 0;
-    private static final int CLICK_LOCATION_ACCESSIBILITY_FOCUS = 1;
-    private static final int CLICK_LOCATION_LAST_TOUCH_EXPLORED = 2;
 
     // The maximum of the cosine between the vectors of two moving
     // pointers so they can be considered moving in the same direction.
@@ -86,6 +91,9 @@ class TouchExplorer implements EventStreamTransformation, AccessibilityGestureDe
     // Invalid pointer ID.
     private static final int INVALID_POINTER_ID = -1;
 
+    // The velocity above which we detect gestures.
+    private static final int GESTURE_DETECTION_VELOCITY_DIP = 1000;
+
     // The minimal distance before we take the middle of the distance between
     // the two dragging pointers as opposed to use the location of the primary one.
     private static final int MIN_POINTER_DISTANCE_TO_USE_MIDDLE_LOCATION_DIP = 200;
@@ -95,6 +103,15 @@ class TouchExplorer implements EventStreamTransformation, AccessibilityGestureDe
 
     // Timeout before trying to decide what the user is trying to do.
     private final int mDetermineUserIntentTimeout;
+
+    // Timeout within which we try to detect a tap.
+    private final int mTapTimeout;
+
+    // Timeout within which we try to detect a double tap.
+    private final int mDoubleTapTimeout;
+
+    // Slop between the down and up tap to be a tap.
+    private final int mTouchSlop;
 
     // Slop between the first and second tap to be a double tap.
     private final int mDoubleTapSlop;
@@ -120,18 +137,27 @@ class TouchExplorer implements EventStreamTransformation, AccessibilityGestureDe
     // Command for delayed sending of touch interaction end events.
     private final SendAccessibilityEventDelayed mSendTouchInteractionEndDelayed;
 
+    // Command for delayed sending of a long press.
+    private final PerformLongPressDelayed mPerformLongPressDelayed;
+
     // Command for exiting gesture detection mode after a timeout.
     private final ExitGestureDetectionModeDelayed mExitGestureDetectionModeDelayed;
 
-    // Helper to detect gestures.
-    private final AccessibilityGestureDetector mGestureDetector;
+    // Helper to detect and react to double tap in touch explore mode.
+    private final DoubleTapDetector mDoubleTapDetector;
 
     // The scaled minimal distance before we take the middle of the distance between
     // the two dragging pointers as opposed to use the location of the primary one.
     private final int mScaledMinPointerDistanceToUseMiddleLocation;
 
+    // The scaled velocity above which we detect gestures.
+    private final int mScaledGestureDetectionVelocity;
+
     // The handler to which to delegate events.
     private EventStreamTransformation mNext;
+
+    // Helper to track gesture velocity.
+    private final VelocityTracker mVelocityTracker = VelocityTracker.obtain();
 
     // Helper class to track received pointers.
     private final ReceivedPointerTracker mReceivedPointerTracker;
@@ -142,11 +168,29 @@ class TouchExplorer implements EventStreamTransformation, AccessibilityGestureDe
     // Handle to the accessibility manager service.
     private final AccessibilityManagerService mAms;
 
-    // Temporary point to avoid instantiation.
-    private final Point mTempPoint = new Point();
+    // Temporary rectangle to avoid instantiation.
+    private final Rect mTempRect = new Rect();
 
     // Context in which this explorer operates.
     private final Context mContext;
+
+    // The X of the previous event.
+    private float mPreviousX;
+
+    // The Y of the previous event.
+    private float mPreviousY;
+
+    // Buffer for storing points for gesture detection.
+    private final ArrayList<GesturePoint> mStrokeBuffer = new ArrayList<GesturePoint>(100);
+
+    // The minimal delta between moves to add a gesture point.
+    private static final int TOUCH_TOLERANCE = 3;
+
+    // The minimal score for accepting a predicted gesture.
+    private static final float MIN_PREDICTION_SCORE = 2.0f;
+
+    // The library for gesture detection.
+    private GestureLibrary mGestureLibrary;
 
     // The long pressing pointer id if coordinate remapping is needed.
     private int mLongPressingPointerId = -1;
@@ -174,10 +218,18 @@ class TouchExplorer implements EventStreamTransformation, AccessibilityGestureDe
         mAms = service;
         mReceivedPointerTracker = new ReceivedPointerTracker();
         mInjectedPointerTracker = new InjectedPointerTracker();
+        mTapTimeout = ViewConfiguration.getTapTimeout();
         mDetermineUserIntentTimeout = ViewConfiguration.getDoubleTapTimeout();
+        mDoubleTapTimeout = ViewConfiguration.getDoubleTapTimeout();
+        mTouchSlop = ViewConfiguration.get(context).getScaledTouchSlop();
         mDoubleTapSlop = ViewConfiguration.get(context).getScaledDoubleTapSlop();
         mHandler = new Handler(context.getMainLooper());
+        mPerformLongPressDelayed = new PerformLongPressDelayed();
         mExitGestureDetectionModeDelayed = new ExitGestureDetectionModeDelayed();
+        mGestureLibrary = GestureLibraries.fromRawResource(context, R.raw.accessibility_gestures);
+        mGestureLibrary.setOrientationStyle(8);
+        mGestureLibrary.setSequenceType(GestureStore.SEQUENCE_SENSITIVE);
+        mGestureLibrary.load();
         mSendHoverEnterAndMoveDelayed = new SendHoverEnterAndMoveDelayed();
         mSendHoverExitDelayed = new SendHoverExitDelayed();
         mSendTouchExplorationEndDelayed = new SendAccessibilityEventDelayed(
@@ -186,34 +238,24 @@ class TouchExplorer implements EventStreamTransformation, AccessibilityGestureDe
         mSendTouchInteractionEndDelayed = new SendAccessibilityEventDelayed(
                 AccessibilityEvent.TYPE_TOUCH_INTERACTION_END,
                 mDetermineUserIntentTimeout);
-        mGestureDetector = new AccessibilityGestureDetector(context, this);
+        mDoubleTapDetector = new DoubleTapDetector();
         final float density = context.getResources().getDisplayMetrics().density;
         mScaledMinPointerDistanceToUseMiddleLocation =
             (int) (MIN_POINTER_DISTANCE_TO_USE_MIDDLE_LOCATION_DIP * density);
+        mScaledGestureDetectionVelocity = (int) (GESTURE_DETECTION_VELOCITY_DIP * density);
     }
 
-    @Override
-    public void clearEvents(int inputSource) {
-        if (inputSource == InputDevice.SOURCE_TOUCHSCREEN) {
-            clear();
-        }
-        if (mNext != null) {
-            mNext.clearEvents(inputSource);
-        }
-    }
-
-    @Override
-    public void onDestroy() {
-        clear();
-    }
-
-    private void clear() {
+    public void clear() {
         // If we have not received an event then we are in initial
         // state. Therefore, there is not need to clean anything.
         MotionEvent event = mReceivedPointerTracker.getLastReceivedEvent();
         if (event != null) {
             clear(mReceivedPointerTracker.getLastReceivedEvent(), WindowManagerPolicy.FLAG_TRUSTED);
         }
+    }
+
+    public void onDestroy() {
+        // TODO: Implement
     }
 
     private void clear(MotionEvent event, int policyFlags) {
@@ -232,26 +274,31 @@ class TouchExplorer implements EventStreamTransformation, AccessibilityGestureDe
                 sendUpForInjectedDownPointers(event, policyFlags);
             } break;
             case STATE_GESTURE_DETECTING: {
-                // No state specific cleanup required.
+                // Clear the current stroke.
+                mStrokeBuffer.clear();
             } break;
         }
         // Remove all pending callbacks.
         mSendHoverEnterAndMoveDelayed.cancel();
         mSendHoverExitDelayed.cancel();
+        mPerformLongPressDelayed.cancel();
         mExitGestureDetectionModeDelayed.cancel();
         mSendTouchExplorationEndDelayed.cancel();
         mSendTouchInteractionEndDelayed.cancel();
         // Reset the pointer trackers.
         mReceivedPointerTracker.clear();
         mInjectedPointerTracker.clear();
-        // Clear the gesture detector
-        mGestureDetector.clear();
+        // Clear the double tap detector
+        mDoubleTapDetector.clear();
         // Go to initial state.
         // Clear the long pressing pointer remap data.
         mLongPressingPointerId = -1;
         mLongPressingPointerDeltaX = 0;
         mLongPressingPointerDeltaY = 0;
         mCurrentState = STATE_TOUCH_EXPLORING;
+        if (mNext != null) {
+            mNext.clear();
+        }
         mTouchExplorationInProgress = false;
         mAms.onTouchInteractionEnd();
     }
@@ -263,13 +310,6 @@ class TouchExplorer implements EventStreamTransformation, AccessibilityGestureDe
 
     @Override
     public void onMotionEvent(MotionEvent event, MotionEvent rawEvent, int policyFlags) {
-        if (!event.isFromSource(InputDevice.SOURCE_TOUCHSCREEN)) {
-            if (mNext != null) {
-                mNext.onMotionEvent(event, rawEvent, policyFlags);
-            }
-            return;
-        }
-
         if (DEBUG) {
             Slog.d(LOG_TAG, "Received event: " + event + ", policyFlags=0x"
                     + Integer.toHexString(policyFlags));
@@ -277,19 +317,6 @@ class TouchExplorer implements EventStreamTransformation, AccessibilityGestureDe
         }
 
         mReceivedPointerTracker.onMotionEvent(rawEvent);
-
-        // The motion detector is interested in the movements in physical space,
-        // so it uses the rawEvent to ignore magnification and other
-        // transformations.
-        if (mGestureDetector.onMotionEvent(rawEvent, policyFlags)) {
-            // Event was handled by the gesture detector.
-            return;
-        }
-
-        if (event.getActionMasked() == MotionEvent.ACTION_CANCEL) {
-            clear(event, policyFlags);
-            return;
-        }
 
         switch(mCurrentState) {
             case STATE_TOUCH_EXPLORING: {
@@ -302,21 +329,13 @@ class TouchExplorer implements EventStreamTransformation, AccessibilityGestureDe
                 handleMotionEventStateDelegating(event, policyFlags);
             } break;
             case STATE_GESTURE_DETECTING: {
-                // Already handled.
+                handleMotionEventGestureDetecting(rawEvent, policyFlags);
             } break;
             default:
                 throw new IllegalStateException("Illegal state: " + mCurrentState);
         }
     }
 
-    @Override
-    public void onKeyEvent(KeyEvent event, int policyFlags) {
-        if (mNext != null) {
-            mNext.onKeyEvent(event, policyFlags);
-        }
-    }
-
-    @Override
     public void onAccessibilityEvent(AccessibilityEvent event) {
         final int eventType = event.getEventType();
 
@@ -357,135 +376,6 @@ class TouchExplorer implements EventStreamTransformation, AccessibilityGestureDe
         }
     }
 
-    @Override
-    public void onDoubleTapAndHold(MotionEvent event, int policyFlags) {
-        // Ignore the event if we aren't touch exploring.
-        if (mCurrentState != STATE_TOUCH_EXPLORING) {
-            return;
-        }
-
-        // Pointers should not be zero when running this command.
-        if (mReceivedPointerTracker.getLastReceivedEvent().getPointerCount() == 0) {
-            return;
-        }
-
-        final int pointerIndex = event.getActionIndex();
-        final int pointerId = event.getPointerId(pointerIndex);
-
-        Point clickLocation = mTempPoint;
-        final int result = computeClickLocation(clickLocation);
-
-        if (result == CLICK_LOCATION_NONE) {
-            return;
-        }
-
-        mLongPressingPointerId = pointerId;
-        mLongPressingPointerDeltaX = (int) event.getX(pointerIndex) - clickLocation.x;
-        mLongPressingPointerDeltaY = (int) event.getY(pointerIndex) - clickLocation.y;
-
-        sendHoverExitAndTouchExplorationGestureEndIfNeeded(policyFlags);
-
-        mCurrentState = STATE_DELEGATING;
-        sendDownForAllNotInjectedPointers(event, policyFlags);
-    }
-
-    @Override
-    public boolean onDoubleTap(MotionEvent event, int policyFlags) {
-        // Ignore the event if we aren't touch exploring.
-        if (mCurrentState != STATE_TOUCH_EXPLORING) {
-            return false;
-        }
-
-        // Remove pending event deliveries.
-        mSendHoverEnterAndMoveDelayed.cancel();
-        mSendHoverExitDelayed.cancel();
-
-        if (mSendTouchExplorationEndDelayed.isPending()) {
-            mSendTouchExplorationEndDelayed.forceSendAndRemove();
-        }
-        if (mSendTouchInteractionEndDelayed.isPending()) {
-            mSendTouchInteractionEndDelayed.forceSendAndRemove();
-        }
-
-        final int pointerIndex = event.getActionIndex();
-        final int pointerId = event.getPointerId(pointerIndex);
-
-        Point clickLocation = mTempPoint;
-        final int result = computeClickLocation(clickLocation);
-        if (result == CLICK_LOCATION_NONE) {
-            // We can't send a click to no location, but the gesture was still
-            // consumed.
-            return true;
-        }
-
-        // Do the click.
-        PointerProperties[] properties = new PointerProperties[1];
-        properties[0] = new PointerProperties();
-        event.getPointerProperties(pointerIndex, properties[0]);
-        PointerCoords[] coords = new PointerCoords[1];
-        coords[0] = new PointerCoords();
-        coords[0].x = clickLocation.x;
-        coords[0].y = clickLocation.y;
-        MotionEvent click_event = MotionEvent.obtain(event.getDownTime(),
-                event.getEventTime(), MotionEvent.ACTION_DOWN, 1, properties,
-                coords, 0, 0, 1.0f, 1.0f, event.getDeviceId(), 0,
-                event.getSource(), event.getFlags());
-        final boolean targetAccessibilityFocus = (result == CLICK_LOCATION_ACCESSIBILITY_FOCUS);
-        sendActionDownAndUp(click_event, policyFlags, targetAccessibilityFocus);
-        click_event.recycle();
-        return true;
-    }
-
-    @Override
-    public boolean onGestureStarted() {
-      // We have to perform gesture detection, so
-      // clear the current state and try to detect.
-      mCurrentState = STATE_GESTURE_DETECTING;
-      mSendHoverEnterAndMoveDelayed.cancel();
-      mSendHoverExitDelayed.cancel();
-      mExitGestureDetectionModeDelayed.post();
-      // Send accessibility event to announce the start
-      // of gesture recognition.
-      sendAccessibilityEvent(AccessibilityEvent.TYPE_GESTURE_DETECTION_START);
-      return false;
-    }
-
-    @Override
-    public boolean onGestureCompleted(int gestureId) {
-        if (mCurrentState != STATE_GESTURE_DETECTING) {
-            return false;
-        }
-
-        endGestureDetection();
-
-        mAms.onGesture(gestureId);
-
-        return true;
-    }
-
-    @Override
-    public boolean onGestureCancelled(MotionEvent event, int policyFlags) {
-        if (mCurrentState == STATE_GESTURE_DETECTING) {
-            endGestureDetection();
-            return true;
-        } else if (mCurrentState == STATE_TOUCH_EXPLORING) {
-            // If the finger is still moving, pass the event on.
-            if (event.getActionMasked() == MotionEvent.ACTION_MOVE) {
-                final int pointerId = mReceivedPointerTracker.getPrimaryPointerId();
-                final int pointerIdBits = (1 << pointerId);
-
-                // We have just decided that the user is touch,
-                // exploring so start sending events.
-                mSendHoverEnterAndMoveDelayed.addEvent(event);
-                mSendHoverEnterAndMoveDelayed.forceSendAndRemove();
-                mSendHoverExitDelayed.cancel();
-                sendMotionEvent(event, MotionEvent.ACTION_HOVER_MOVE, pointerIdBits, policyFlags);
-                return true;
-            }
-        }
-        return false;
-    }
-
     /**
      * Handles a motion event in touch exploring state.
      *
@@ -497,10 +387,19 @@ class TouchExplorer implements EventStreamTransformation, AccessibilityGestureDe
             int policyFlags) {
         ReceivedPointerTracker receivedTracker = mReceivedPointerTracker;
 
+        mVelocityTracker.addMovement(rawEvent);
+
+        mDoubleTapDetector.onMotionEvent(event, policyFlags);
+
         switch (event.getActionMasked()) {
             case MotionEvent.ACTION_DOWN: {
                 mAms.onTouchInteractionStart();
 
+                // Pre-feed the motion events to the gesture detector since we
+                // have a distance slop before getting into gesture detection
+                // mode and not using the points within this slop significantly
+                // decreases the quality of gesture recognition.
+                handleMotionEventGestureDetecting(rawEvent, policyFlags);
                 sendAccessibilityEvent(AccessibilityEvent.TYPE_TOUCH_INTERACTION_START);
 
                 // If we still have not notified the user for the last
@@ -508,6 +407,7 @@ class TouchExplorer implements EventStreamTransformation, AccessibilityGestureDe
                 // we resent the delayed callback and wait again.
                 mSendHoverEnterAndMoveDelayed.cancel();
                 mSendHoverExitDelayed.cancel();
+                mPerformLongPressDelayed.cancel();
 
                 if (mSendTouchExplorationEndDelayed.isPending()) {
                     mSendTouchExplorationEndDelayed.forceSendAndRemove();
@@ -517,7 +417,18 @@ class TouchExplorer implements EventStreamTransformation, AccessibilityGestureDe
                     mSendTouchInteractionEndDelayed.forceSendAndRemove();
                 }
 
-                if (!mGestureDetector.firstTapDetected() && !mTouchExplorationInProgress) {
+                // If we have the first tap, schedule a long press and break
+                // since we do not want to schedule hover enter because
+                // the delayed callback will kick in before the long click.
+                // This would lead to a state transition resulting in long
+                // pressing the item below the double taped area which is
+                // not necessary where accessibility focus is.
+                if (mDoubleTapDetector.firstTapDetected()) {
+                    // We got a tap now post a long press action.
+                    mPerformLongPressDelayed.post(event, policyFlags);
+                    break;
+                }
+                if (!mTouchExplorationInProgress) {
                     if (!mSendHoverEnterAndMoveDelayed.isPending()) {
                         // Deliver hover enter with a delay to have a chance
                         // to detect what the user is trying to do.
@@ -537,6 +448,7 @@ class TouchExplorer implements EventStreamTransformation, AccessibilityGestureDe
                 // decide what we will actually do next.
                 mSendHoverEnterAndMoveDelayed.cancel();
                 mSendHoverExitDelayed.cancel();
+                mPerformLongPressDelayed.cancel();
             } break;
             case MotionEvent.ACTION_MOVE: {
                 final int pointerId = receivedTracker.getPrimaryPointerId();
@@ -547,9 +459,71 @@ class TouchExplorer implements EventStreamTransformation, AccessibilityGestureDe
                         // We have not started sending events since we try to
                         // figure out what the user is doing.
                         if (mSendHoverEnterAndMoveDelayed.isPending()) {
+                            // Pre-feed the motion events to the gesture detector since we
+                            // have a distance slop before getting into gesture detection
+                            // mode and not using the points within this slop significantly
+                            // decreases the quality of gesture recognition.
+                            handleMotionEventGestureDetecting(rawEvent, policyFlags);
+
                             // Cache the event until we discern exploration from gesturing.
                             mSendHoverEnterAndMoveDelayed.addEvent(event);
+
+                            // It is *important* to use the distance traveled by the pointers
+                            // on the screen which may or may not be magnified.
+                            final float deltaX = receivedTracker.getReceivedPointerDownX(pointerId)
+                                - rawEvent.getX(pointerIndex);
+                            final float deltaY = receivedTracker.getReceivedPointerDownY(pointerId)
+                                - rawEvent.getY(pointerIndex);
+                            final double moveDelta = Math.hypot(deltaX, deltaY);
+                            // The user has moved enough for us to decide.
+                            if (moveDelta > mDoubleTapSlop) {
+                                // Check whether the user is performing a gesture. We
+                                // detect gestures if the pointer is moving above a
+                                // given velocity.
+                                mVelocityTracker.computeCurrentVelocity(1000);
+                                final float maxAbsVelocity = Math.max(
+                                        Math.abs(mVelocityTracker.getXVelocity(pointerId)),
+                                        Math.abs(mVelocityTracker.getYVelocity(pointerId)));
+                                if (maxAbsVelocity > mScaledGestureDetectionVelocity) {
+                                    // We have to perform gesture detection, so
+                                    // clear the current state and try to detect.
+                                    mCurrentState = STATE_GESTURE_DETECTING;
+                                    mVelocityTracker.clear();
+                                    mSendHoverEnterAndMoveDelayed.cancel();
+                                    mSendHoverExitDelayed.cancel();
+                                    mPerformLongPressDelayed.cancel();
+                                    mExitGestureDetectionModeDelayed.post();
+                                    // Send accessibility event to announce the start
+                                    // of gesture recognition.
+                                    sendAccessibilityEvent(
+                                            AccessibilityEvent.TYPE_GESTURE_DETECTION_START);
+                                } else {
+                                    // We have just decided that the user is touch,
+                                    // exploring so start sending events.
+                                    mSendHoverEnterAndMoveDelayed.forceSendAndRemove();
+                                    mSendHoverExitDelayed.cancel();
+                                    mPerformLongPressDelayed.cancel();
+                                    sendMotionEvent(event, MotionEvent.ACTION_HOVER_MOVE,
+                                            pointerIdBits, policyFlags);
+                                }
+                                break;
+                            }
                         } else {
+                            // Cancel the long press if pending and the user
+                            // moved more than the slop.
+                            if (mPerformLongPressDelayed.isPending()) {
+                                final float deltaX =
+                                        receivedTracker.getReceivedPointerDownX(pointerId)
+                                        - rawEvent.getX(pointerIndex);
+                                final float deltaY =
+                                        receivedTracker.getReceivedPointerDownY(pointerId)
+                                        - rawEvent.getY(pointerIndex);
+                                final double moveDelta = Math.hypot(deltaX, deltaY);
+                                // The user has moved enough for us to decide.
+                                if (moveDelta > mTouchSlop) {
+                                    mPerformLongPressDelayed.cancel();
+                                }
+                            }
                             if (mTouchExplorationInProgress) {
                                 sendTouchExplorationGestureStartAndHoverEnterIfNeeded(policyFlags);
                                 sendMotionEvent(event, MotionEvent.ACTION_HOVER_MOVE, pointerIdBits,
@@ -565,7 +539,9 @@ class TouchExplorer implements EventStreamTransformation, AccessibilityGestureDe
                             // scheduled sending events.
                             mSendHoverEnterAndMoveDelayed.cancel();
                             mSendHoverExitDelayed.cancel();
+                            mPerformLongPressDelayed.cancel();
                         } else {
+                            mPerformLongPressDelayed.cancel();
                             if (mTouchExplorationInProgress) {
                                 // If the user is touch exploring the second pointer may be
                                 // performing a double tap to activate an item without need
@@ -586,6 +562,11 @@ class TouchExplorer implements EventStreamTransformation, AccessibilityGestureDe
                             }
                         }
 
+                        // We know that a new state transition is to happen and the
+                        // new state will not be gesture recognition, so clear the
+                        // stashed gesture strokes.
+                        mStrokeBuffer.clear();
+
                         if (isDraggingGesture(event)) {
                             // Two pointers moving in the same direction within
                             // a given distance perform a drag.
@@ -599,6 +580,7 @@ class TouchExplorer implements EventStreamTransformation, AccessibilityGestureDe
                             mCurrentState = STATE_DELEGATING;
                             sendDownForAllNotInjectedPointers(event, policyFlags);
                         }
+                        mVelocityTracker.clear();
                     } break;
                     default: {
                         // More than one pointer so the user is not touch exploring
@@ -608,7 +590,9 @@ class TouchExplorer implements EventStreamTransformation, AccessibilityGestureDe
                             // scheduled sending events.
                             mSendHoverEnterAndMoveDelayed.cancel();
                             mSendHoverExitDelayed.cancel();
+                            mPerformLongPressDelayed.cancel();
                         } else {
+                            mPerformLongPressDelayed.cancel();
                             // We are sending events so send exit and gesture
                             // end since we transition to another state.
                             sendHoverExitAndTouchExplorationGestureEndIfNeeded(policyFlags);
@@ -617,13 +601,20 @@ class TouchExplorer implements EventStreamTransformation, AccessibilityGestureDe
                         // More than two pointers are delegated to the view hierarchy.
                         mCurrentState = STATE_DELEGATING;
                         sendDownForAllNotInjectedPointers(event, policyFlags);
+                        mVelocityTracker.clear();
                     }
                 }
             } break;
             case MotionEvent.ACTION_UP: {
                 mAms.onTouchInteractionEnd();
+                // We know that we do not need the pre-fed gesture points are not
+                // needed anymore since the last pointer just went up.
+                mStrokeBuffer.clear();
                 final int pointerId = event.getPointerId(event.getActionIndex());
                 final int pointerIdBits = (1 << pointerId);
+
+                mPerformLongPressDelayed.cancel();
+                mVelocityTracker.clear();
 
                 if (mSendHoverEnterAndMoveDelayed.isPending()) {
                     // If we have not delivered the enter schedule an exit.
@@ -638,6 +629,9 @@ class TouchExplorer implements EventStreamTransformation, AccessibilityGestureDe
                 }
 
             } break;
+            case MotionEvent.ACTION_CANCEL: {
+                clear(event, policyFlags);
+            } break;
         }
     }
 
@@ -648,16 +642,7 @@ class TouchExplorer implements EventStreamTransformation, AccessibilityGestureDe
      * @param policyFlags The policy flags associated with the event.
      */
     private void handleMotionEventStateDragging(MotionEvent event, int policyFlags) {
-        int pointerIdBits = 0;
-        // Clear the dragging pointer id if it's no longer valid.
-        if (event.findPointerIndex(mDraggingPointerId) == -1) {
-            Slog.e(LOG_TAG, "mDraggingPointerId doesn't match any pointers on current event. " +
-                    "mDraggingPointerId: " + Integer.toString(mDraggingPointerId) +
-                    ", Event: " + event);
-            mDraggingPointerId = INVALID_POINTER_ID;
-        } else {
-            pointerIdBits = (1 << mDraggingPointerId);
-        }
+        final int pointerIdBits = (1 << mDraggingPointerId);
         switch (event.getActionMasked()) {
             case MotionEvent.ACTION_DOWN: {
                 throw new IllegalStateException("Dragging state can be reached only if two "
@@ -673,9 +658,6 @@ class TouchExplorer implements EventStreamTransformation, AccessibilityGestureDe
                 sendDownForAllNotInjectedPointers(event, policyFlags);
             } break;
             case MotionEvent.ACTION_MOVE: {
-                if (mDraggingPointerId == INVALID_POINTER_ID) {
-                    break;
-                }
                 switch (event.getPointerCount()) {
                     case 1: {
                         // do nothing
@@ -740,6 +722,9 @@ class TouchExplorer implements EventStreamTransformation, AccessibilityGestureDe
                 }
                 mCurrentState = STATE_TOUCH_EXPLORING;
             } break;
+            case MotionEvent.ACTION_CANCEL: {
+                clear(event, policyFlags);
+            } break;
         }
     }
 
@@ -776,6 +761,9 @@ class TouchExplorer implements EventStreamTransformation, AccessibilityGestureDe
 
                 mCurrentState = STATE_TOUCH_EXPLORING;
             } break;
+            case MotionEvent.ACTION_CANCEL: {
+                clear(event, policyFlags);
+            } break;
             default: {
                 // Deliver the event.
                 sendMotionEvent(event, event.getAction(), ALL_POINTER_ID_BITS, policyFlags);
@@ -783,16 +771,65 @@ class TouchExplorer implements EventStreamTransformation, AccessibilityGestureDe
         }
     }
 
-    private void endGestureDetection() {
-        mAms.onTouchInteractionEnd();
+    private void handleMotionEventGestureDetecting(MotionEvent event, int policyFlags) {
+        switch (event.getActionMasked()) {
+            case MotionEvent.ACTION_DOWN: {
+                final float x = event.getX();
+                final float y = event.getY();
+                mPreviousX = x;
+                mPreviousY = y;
+                mStrokeBuffer.add(new GesturePoint(x, y, event.getEventTime()));
+            } break;
+            case MotionEvent.ACTION_MOVE: {
+                final float x = event.getX();
+                final float y = event.getY();
+                final float dX = Math.abs(x - mPreviousX);
+                final float dY = Math.abs(y - mPreviousY);
+                if (dX >= TOUCH_TOLERANCE || dY >= TOUCH_TOLERANCE) {
+                    mPreviousX = x;
+                    mPreviousY = y;
+                    mStrokeBuffer.add(new GesturePoint(x, y, event.getEventTime()));
+                }
+            } break;
+            case MotionEvent.ACTION_UP: {
+                mAms.onTouchInteractionEnd();
+                // Announce the end of the gesture recognition.
+                sendAccessibilityEvent(AccessibilityEvent.TYPE_GESTURE_DETECTION_END);
+                // Announce the end of a the touch interaction.
+                sendAccessibilityEvent(AccessibilityEvent.TYPE_TOUCH_INTERACTION_END);
 
-        // Announce the end of the gesture recognition.
-        sendAccessibilityEvent(AccessibilityEvent.TYPE_GESTURE_DETECTION_END);
-        // Announce the end of a the touch interaction.
-        sendAccessibilityEvent(AccessibilityEvent.TYPE_TOUCH_INTERACTION_END);
+                float x = event.getX();
+                float y = event.getY();
+                mStrokeBuffer.add(new GesturePoint(x, y, event.getEventTime()));
 
-        mExitGestureDetectionModeDelayed.cancel();
-        mCurrentState = STATE_TOUCH_EXPLORING;
+                Gesture gesture = new Gesture();
+                gesture.addStroke(new GestureStroke(mStrokeBuffer));
+
+                ArrayList<Prediction> predictions = mGestureLibrary.recognize(gesture);
+                if (!predictions.isEmpty()) {
+                    Prediction bestPrediction = predictions.get(0);
+                    if (bestPrediction.score >= MIN_PREDICTION_SCORE) {
+                        if (DEBUG) {
+                            Slog.i(LOG_TAG, "gesture: " + bestPrediction.name + " score: "
+                                    + bestPrediction.score);
+                        }
+                        try {
+                            final int gestureId = Integer.parseInt(bestPrediction.name);
+                            mAms.onGesture(gestureId);
+                        } catch (NumberFormatException nfe) {
+                            Slog.w(LOG_TAG, "Non numeric gesture id:" + bestPrediction.name);
+                        }
+                    }
+                }
+
+                mStrokeBuffer.clear();
+                mExitGestureDetectionModeDelayed.cancel();
+                mCurrentState = STATE_TOUCH_EXPLORING;
+            } break;
+            case MotionEvent.ACTION_CANCEL: {
+                clear(event, policyFlags);
+            } break;
+        }
     }
 
     /**
@@ -901,16 +938,12 @@ class TouchExplorer implements EventStreamTransformation, AccessibilityGestureDe
      *
      * @param prototype The prototype from which to create the injected events.
      * @param policyFlags The policy flags associated with the event.
-     * @param targetAccessibilityFocus Whether the event targets the accessibility focus.
      */
-    private void sendActionDownAndUp(MotionEvent prototype, int policyFlags,
-            boolean targetAccessibilityFocus) {
+    private void sendActionDownAndUp(MotionEvent prototype, int policyFlags) {
         // Tap with the pointer that last explored.
         final int pointerId = prototype.getPointerId(prototype.getActionIndex());
         final int pointerIdBits = (1 << pointerId);
-        prototype.setTargetAccessibilityFocus(targetAccessibilityFocus);
         sendMotionEvent(prototype, MotionEvent.ACTION_DOWN, pointerIdBits, policyFlags);
-        prototype.setTargetAccessibilityFocus(targetAccessibilityFocus);
         sendMotionEvent(prototype, MotionEvent.ACTION_UP, pointerIdBits, policyFlags);
     }
 
@@ -1039,6 +1072,154 @@ class TouchExplorer implements EventStreamTransformation, AccessibilityGestureDe
         }
     }
 
+    private class DoubleTapDetector {
+        private MotionEvent mDownEvent;
+        private MotionEvent mFirstTapEvent;
+
+        public void onMotionEvent(MotionEvent event, int policyFlags) {
+            final int actionIndex = event.getActionIndex();
+            final int action = event.getActionMasked();
+            switch (action) {
+                case MotionEvent.ACTION_DOWN:
+                case MotionEvent.ACTION_POINTER_DOWN: {
+                    if (mFirstTapEvent != null
+                            && !GestureUtils.isSamePointerContext(mFirstTapEvent, event)) {
+                        clear();
+                    }
+                    mDownEvent = MotionEvent.obtain(event);
+                } break;
+                case MotionEvent.ACTION_UP:
+                case MotionEvent.ACTION_POINTER_UP: {
+                    if (mDownEvent == null) {
+                        return;
+                    }
+                    if (!GestureUtils.isSamePointerContext(mDownEvent, event)) {
+                        clear();
+                        return;
+                    }
+                    if (GestureUtils.isTap(mDownEvent, event, mTapTimeout, mTouchSlop,
+                            actionIndex)) {
+                        if (mFirstTapEvent == null || GestureUtils.isTimedOut(mFirstTapEvent,
+                                event, mDoubleTapTimeout)) {
+                            mFirstTapEvent = MotionEvent.obtain(event);
+                            mDownEvent.recycle();
+                            mDownEvent = null;
+                            return;
+                        }
+                        if (GestureUtils.isMultiTap(mFirstTapEvent, event, mDoubleTapTimeout,
+                                mDoubleTapSlop, actionIndex)) {
+                            onDoubleTap(event, policyFlags);
+                            mFirstTapEvent.recycle();
+                            mFirstTapEvent = null;
+                            mDownEvent.recycle();
+                            mDownEvent = null;
+                            return;
+                        }
+                        mFirstTapEvent.recycle();
+                        mFirstTapEvent = null;
+                    } else {
+                        if (mFirstTapEvent != null) {
+                            mFirstTapEvent.recycle();
+                            mFirstTapEvent = null;
+                        }
+                    }
+                    mDownEvent.recycle();
+                    mDownEvent = null;
+                } break;
+            }
+        }
+
+        public void onDoubleTap(MotionEvent secondTapUp, int policyFlags) {
+            // This should never be called when more than two pointers are down.
+            if (secondTapUp.getPointerCount() > 2) {
+                return;
+            }
+
+            // Remove pending event deliveries.
+            mSendHoverEnterAndMoveDelayed.cancel();
+            mSendHoverExitDelayed.cancel();
+            mPerformLongPressDelayed.cancel();
+
+            if (mSendTouchExplorationEndDelayed.isPending()) {
+                mSendTouchExplorationEndDelayed.forceSendAndRemove();
+            }
+            if (mSendTouchInteractionEndDelayed.isPending()) {
+                mSendTouchInteractionEndDelayed.forceSendAndRemove();
+            }
+
+            int clickLocationX;
+            int clickLocationY;
+
+            final int pointerId = secondTapUp.getPointerId(secondTapUp.getActionIndex());
+            final int pointerIndex = secondTapUp.findPointerIndex(pointerId);
+
+            MotionEvent lastExploreEvent =
+                mInjectedPointerTracker.getLastInjectedHoverEventForClick();
+            if (lastExploreEvent == null) {
+                // No last touch explored event but there is accessibility focus in
+                // the active window. We click in the middle of the focus bounds.
+                Rect focusBounds = mTempRect;
+                if (mAms.getAccessibilityFocusBoundsInActiveWindow(focusBounds)) {
+                    clickLocationX = focusBounds.centerX();
+                    clickLocationY = focusBounds.centerY();
+                } else {
+                    // Out of luck - do nothing.
+                    return;
+                }
+            } else {
+                // If the click is within the active window but not within the
+                // accessibility focus bounds we click in the focus center.
+                final int lastExplorePointerIndex = lastExploreEvent.getActionIndex();
+                clickLocationX = (int) lastExploreEvent.getX(lastExplorePointerIndex);
+                clickLocationY = (int) lastExploreEvent.getY(lastExplorePointerIndex);
+                Rect activeWindowBounds = mTempRect;
+                if (mLastTouchedWindowId == mAms.getActiveWindowId()) {
+                    mAms.getActiveWindowBounds(activeWindowBounds);
+                    if (activeWindowBounds.contains(clickLocationX, clickLocationY)) {
+                        Rect focusBounds = mTempRect;
+                        if (mAms.getAccessibilityFocusBoundsInActiveWindow(focusBounds)) {
+                            if (!focusBounds.contains(clickLocationX, clickLocationY)) {
+                                clickLocationX = focusBounds.centerX();
+                                clickLocationY = focusBounds.centerY();
+                            }
+                        }
+                    }
+                }
+            }
+
+            // Do the click.
+            PointerProperties[] properties = new PointerProperties[1];
+            properties[0] = new PointerProperties();
+            secondTapUp.getPointerProperties(pointerIndex, properties[0]);
+            PointerCoords[] coords = new PointerCoords[1];
+            coords[0] = new PointerCoords();
+            coords[0].x = clickLocationX;
+            coords[0].y = clickLocationY;
+            MotionEvent event = MotionEvent.obtain(secondTapUp.getDownTime(),
+                    secondTapUp.getEventTime(), MotionEvent.ACTION_DOWN, 1, properties,
+                    coords, 0, 0, 1.0f, 1.0f, secondTapUp.getDeviceId(), 0,
+                    secondTapUp.getSource(), secondTapUp.getFlags());
+            sendActionDownAndUp(event, policyFlags);
+            event.recycle();
+        }
+
+        public void clear() {
+            if (mDownEvent != null) {
+                mDownEvent.recycle();
+                mDownEvent = null;
+            }
+            if (mFirstTapEvent != null) {
+                mFirstTapEvent.recycle();
+                mFirstTapEvent = null;
+            }
+        }
+
+        public boolean firstTapDetected() {
+            return mFirstTapEvent != null
+                && SystemClock.uptimeMillis() - mFirstTapEvent.getEventTime() < mDoubleTapTimeout;
+        }
+    }
+
     /**
      * Determines whether a two pointer gesture is a dragging one.
      *
@@ -1061,27 +1242,6 @@ class TouchExplorer implements EventStreamTransformation, AccessibilityGestureDe
         return GestureUtils.isDraggingGesture(firstPtrDownX, firstPtrDownY, secondPtrDownX,
                 secondPtrDownY, firstPtrX, firstPtrY, secondPtrX, secondPtrY,
                 MAX_DRAGGING_ANGLE_COS);
-    }
-
-    private int computeClickLocation(Point outLocation) {
-        MotionEvent lastExploreEvent = mInjectedPointerTracker.getLastInjectedHoverEventForClick();
-        if (lastExploreEvent != null) {
-            final int lastExplorePointerIndex = lastExploreEvent.getActionIndex();
-            outLocation.x = (int) lastExploreEvent.getX(lastExplorePointerIndex);
-            outLocation.y = (int) lastExploreEvent.getY(lastExplorePointerIndex);
-            if (!mAms.accessibilityFocusOnlyInActiveWindow()
-                    || mLastTouchedWindowId == mAms.getActiveWindowId()) {
-                if (mAms.getAccessibilityFocusClickPointInScreen(outLocation)) {
-                    return CLICK_LOCATION_ACCESSIBILITY_FOCUS;
-                } else {
-                    return CLICK_LOCATION_LAST_TOUCH_EXPLORED;
-                }
-            }
-        }
-        if (mAms.getAccessibilityFocusClickPointInScreen(outLocation)) {
-            return CLICK_LOCATION_ACCESSIBILITY_FOCUS;
-        }
-        return CLICK_LOCATION_NONE;
     }
 
     /**
@@ -1126,6 +1286,95 @@ class TouchExplorer implements EventStreamTransformation, AccessibilityGestureDe
             // down, so announce the transition to exploration state.
             sendAccessibilityEvent(AccessibilityEvent.TYPE_TOUCH_EXPLORATION_GESTURE_START);
             clear();
+        }
+    }
+
+    /**
+     * Class for delayed sending of long press.
+     */
+    private final class PerformLongPressDelayed implements Runnable {
+        private MotionEvent mEvent;
+        private int mPolicyFlags;
+
+        public void post(MotionEvent prototype, int policyFlags) {
+            mEvent = MotionEvent.obtain(prototype);
+            mPolicyFlags = policyFlags;
+            mHandler.postDelayed(this, ViewConfiguration.getLongPressTimeout());
+        }
+
+        public void cancel() {
+            if (mEvent != null) {
+                mHandler.removeCallbacks(this);
+                clear();
+            }
+        }
+
+        private boolean isPending() {
+            return mHandler.hasCallbacks(this);
+        }
+
+        @Override
+        public void run() {
+            // Pointers should not be zero when running this command.
+            if (mReceivedPointerTracker.getLastReceivedEvent().getPointerCount() == 0) {
+                return;
+            }
+
+            int clickLocationX;
+            int clickLocationY;
+
+            final int pointerId = mEvent.getPointerId(mEvent.getActionIndex());
+            final int pointerIndex = mEvent.findPointerIndex(pointerId);
+
+            MotionEvent lastExploreEvent =
+                mInjectedPointerTracker.getLastInjectedHoverEventForClick();
+            if (lastExploreEvent == null) {
+                // No last touch explored event but there is accessibility focus in
+                // the active window. We click in the middle of the focus bounds.
+                Rect focusBounds = mTempRect;
+                if (mAms.getAccessibilityFocusBoundsInActiveWindow(focusBounds)) {
+                    clickLocationX = focusBounds.centerX();
+                    clickLocationY = focusBounds.centerY();
+                } else {
+                    // Out of luck - do nothing.
+                    return;
+                }
+            } else {
+                // If the click is within the active window but not within the
+                // accessibility focus bounds we click in the focus center.
+                final int lastExplorePointerIndex = lastExploreEvent.getActionIndex();
+                clickLocationX = (int) lastExploreEvent.getX(lastExplorePointerIndex);
+                clickLocationY = (int) lastExploreEvent.getY(lastExplorePointerIndex);
+                Rect activeWindowBounds = mTempRect;
+                if (mLastTouchedWindowId == mAms.getActiveWindowId()) {
+                    mAms.getActiveWindowBounds(activeWindowBounds);
+                    if (activeWindowBounds.contains(clickLocationX, clickLocationY)) {
+                        Rect focusBounds = mTempRect;
+                        if (mAms.getAccessibilityFocusBoundsInActiveWindow(focusBounds)) {
+                            if (!focusBounds.contains(clickLocationX, clickLocationY)) {
+                                clickLocationX = focusBounds.centerX();
+                                clickLocationY = focusBounds.centerY();
+                            }
+                        }
+                    }
+                }
+            }
+
+            mLongPressingPointerId = pointerId;
+            mLongPressingPointerDeltaX = (int) mEvent.getX(pointerIndex) - clickLocationX;
+            mLongPressingPointerDeltaY = (int) mEvent.getY(pointerIndex) - clickLocationY;
+
+            sendHoverExitAndTouchExplorationGestureEndIfNeeded(mPolicyFlags);
+
+            mCurrentState = STATE_DELEGATING;
+            sendDownForAllNotInjectedPointers(mEvent, mPolicyFlags);
+            clear();
+        }
+
+        private void clear() {
+            mEvent.recycle();
+            mEvent = null;
+            mPolicyFlags = 0;
         }
     }
 

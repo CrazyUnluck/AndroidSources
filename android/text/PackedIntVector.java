@@ -17,7 +17,6 @@
 package android.text;
 
 import com.android.internal.util.ArrayUtils;
-import com.android.internal.util.GrowingArrayUtils;
 
 
 /**
@@ -253,9 +252,9 @@ class PackedIntVector {
      */
     private final void growBuffer() {
         final int columns = mColumns;
-        int[] newvalues = ArrayUtils.newUnpaddedIntArray(
-                GrowingArrayUtils.growSize(size()) * columns);
-        int newsize = newvalues.length / columns;
+        int newsize = size() + 1;
+        newsize = ArrayUtils.idealIntArraySize(newsize * columns) / columns;
+        int[] newvalues = new int[newsize * columns];
 
         final int[] valuegap = mValueGap;
         final int rowgapstart = mRowGapStart;

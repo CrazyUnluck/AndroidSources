@@ -19,6 +19,13 @@ package android.test;
 import android.app.Instrumentation;
 import android.content.Intent;
 import android.os.Bundle;
+import android.os.RemoteException;
+import android.os.Debug;
+import android.os.Process;
+import android.os.ServiceManager;
+import android.os.SystemClock;
+
+import java.util.ArrayList;
 
 
 /**
@@ -26,7 +33,6 @@ import android.os.Bundle;
  *
  * @hide
  */
-@Deprecated
 public class LaunchPerformanceBase extends Instrumentation {
 
     public static final String LOG_TAG = "Launch Performance";
@@ -40,7 +46,7 @@ public class LaunchPerformanceBase extends Instrumentation {
         mIntent.setFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
         setAutomaticPerformanceSnapshots();
     }
-
+   
     /**
      * Launches intent, and waits for idle before returning.
      *

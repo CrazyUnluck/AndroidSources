@@ -20,8 +20,6 @@ import android.app.Fragment;
 
 class FragmentCompatICSMR1 {
     public static void setUserVisibleHint(Fragment f, boolean isVisible) {
-        if (f.getFragmentManager() != null) {
-            f.setUserVisibleHint(isVisible);
-        }
+        f.setUserVisibleHint(isVisible);
     }
 }

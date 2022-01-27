@@ -16,8 +16,6 @@
 package android.support.v7.media;
 
 import android.content.IntentFilter;
-import android.content.IntentSender;
-import android.net.Uri;
 import android.os.Bundle;
 import android.text.TextUtils;
 
@@ -38,24 +36,18 @@ import java.util.List;
  */
 public final class MediaRouteDescriptor {
     private static final String KEY_ID = "id";
-    private static final String KEY_GROUP_MEMBER_IDS = "groupMemberIds";
     private static final String KEY_NAME = "name";
     private static final String KEY_DESCRIPTION = "status";
-    private static final String KEY_ICON_URI = "iconUri";
     private static final String KEY_ENABLED = "enabled";
     private static final String KEY_CONNECTING = "connecting";
-    private static final String KEY_CONNECTION_STATE = "connectionState";
     private static final String KEY_CONTROL_FILTERS = "controlFilters";
     private static final String KEY_PLAYBACK_TYPE = "playbackType";
     private static final String KEY_PLAYBACK_STREAM = "playbackStream";
-    private static final String KEY_DEVICE_TYPE = "deviceType";
     private static final String KEY_VOLUME = "volume";
     private static final String KEY_VOLUME_MAX = "volumeMax";
     private static final String KEY_VOLUME_HANDLING = "volumeHandling";
     private static final String KEY_PRESENTATION_DISPLAY_ID = "presentationDisplayId";
     private static final String KEY_EXTRAS = "extras";
-    private static final String KEY_CAN_DISCONNECT = "canDisconnect";
-    private static final String KEY_SETTINGS_INTENT = "settingsIntent";
 
     private final Bundle mBundle;
     private List<IntentFilter> mControlFilters;
@@ -75,18 +67,6 @@ public final class MediaRouteDescriptor {
      */
     public String getId() {
         return mBundle.getString(KEY_ID);
-    }
-
-    /**
-     * Gets the group member ids of the route.
-     * <p>
-     * A route descriptor that has one or more group member route ids
-     * represents a route group. A member route may belong to another group.
-     * </p>
-     * @hide
-     */
-    public List<String> getGroupMemberIds() {
-        return mBundle.getStringArrayList(KEY_GROUP_MEMBER_IDS);
     }
 
     /**
@@ -112,17 +92,6 @@ public final class MediaRouteDescriptor {
     }
 
     /**
-     * Gets the URI of the icon representing this route.
-     * <p>
-     * This icon will be used in picker UIs if available.
-     * </p>
-     */
-    public Uri getIconUri() {
-        String iconUri = mBundle.getString(KEY_ICON_URI);
-        return iconUri == null ? null : Uri.parse(iconUri);
-    }
-
-    /**
      * Gets whether the route is enabled.
      */
     public boolean isEnabled() {
@@ -131,52 +100,9 @@ public final class MediaRouteDescriptor {
 
     /**
      * Gets whether the route is connecting.
-     * @deprecated Use {@link #getConnectionState} instead
      */
-    @Deprecated
     public boolean isConnecting() {
         return mBundle.getBoolean(KEY_CONNECTING, false);
-    }
-
-    /**
-     * Gets the connection state of the route.
-     *
-     * @return The connection state of this route:
-     * {@link MediaRouter.RouteInfo#CONNECTION_STATE_DISCONNECTED},
-     * {@link MediaRouter.RouteInfo#CONNECTION_STATE_CONNECTING}, or
-     * {@link MediaRouter.RouteInfo#CONNECTION_STATE_CONNECTED}.
-     */
-    public int getConnectionState() {
-        return mBundle.getInt(KEY_CONNECTION_STATE,
-                MediaRouter.RouteInfo.CONNECTION_STATE_DISCONNECTED);
-    }
-
-    /**
-     * Gets whether the route can be disconnected without stopping playback.
-     * <p>
-     * The route can normally be disconnected without stopping playback when
-     * the destination device on the route is connected to two or more source
-     * devices. The route provider should update the route immediately when the
-     * number of connected devices changes.
-     * </p><p>
-     * To specify that the route should disconnect without stopping use
-     * {@link MediaRouter#unselect(int)} with
-     * {@link MediaRouter#UNSELECT_REASON_DISCONNECTED}.
-     * </p>
-     */
-    public boolean canDisconnectAndKeepPlaying() {
-        return mBundle.getBoolean(KEY_CAN_DISCONNECT, false);
-    }
-
-    /**
-     * Gets an {@link IntentSender} for starting a settings activity for this
-     * route. The activity may have specific route settings or general settings
-     * for the connected device or route provider.
-     *
-     * @return An {@link IntentSender} to start a settings activity.
-     */
-    public IntentSender getSettingsActivity() {
-        return mBundle.getParcelable(KEY_SETTINGS_INTENT);
     }
 
     /**
@@ -197,11 +123,7 @@ public final class MediaRouteDescriptor {
     }
 
     /**
-     * Gets the type of playback associated with this route.
-     *
-     * @return The type of playback associated with this route:
-     * {@link MediaRouter.RouteInfo#PLAYBACK_TYPE_LOCAL} or
-     * {@link MediaRouter.RouteInfo#PLAYBACK_TYPE_REMOTE}.
+     * Gets the route's playback type.
      */
     public int getPlaybackType() {
         return mBundle.getInt(KEY_PLAYBACK_TYPE, MediaRouter.RouteInfo.PLAYBACK_TYPE_REMOTE);
@@ -212,17 +134,6 @@ public final class MediaRouteDescriptor {
      */
     public int getPlaybackStream() {
         return mBundle.getInt(KEY_PLAYBACK_STREAM, -1);
-    }
-
-    /**
-     * Gets the type of the receiver device associated with this route.
-     *
-     * @return The type of the receiver device associated with this route:
-     * {@link MediaRouter.RouteInfo#DEVICE_TYPE_TV} or
-     * {@link MediaRouter.RouteInfo#DEVICE_TYPE_SPEAKER}.
-     */
-    public int getDeviceType() {
-        return mBundle.getInt(KEY_DEVICE_TYPE);
     }
 
     /**
@@ -240,11 +151,7 @@ public final class MediaRouteDescriptor {
     }
 
     /**
-     * Gets information about how volume is handled on the route.
-     *
-     * @return How volume is handled on the route:
-     * {@link MediaRouter.RouteInfo#PLAYBACK_VOLUME_FIXED} or
-     * {@link MediaRouter.RouteInfo#PLAYBACK_VOLUME_VARIABLE}.
+     * Gets the route's volume handling.
      */
     public int getVolumeHandling() {
         return mBundle.getInt(KEY_VOLUME_HANDLING,
@@ -255,8 +162,7 @@ public final class MediaRouteDescriptor {
      * Gets the route's presentation display id, or -1 if none.
      */
     public int getPresentationDisplayId() {
-        return mBundle.getInt(
-                KEY_PRESENTATION_DISPLAY_ID, MediaRouter.RouteInfo.PRESENTATION_DISPLAY_ID_NONE);
+        return mBundle.getInt(KEY_PRESENTATION_DISPLAY_ID, -1);
     }
 
     /**
@@ -286,17 +192,13 @@ public final class MediaRouteDescriptor {
         StringBuilder result = new StringBuilder();
         result.append("MediaRouteDescriptor{ ");
         result.append("id=").append(getId());
-        result.append(", groupMemberIds=").append(getGroupMemberIds());
         result.append(", name=").append(getName());
         result.append(", description=").append(getDescription());
-        result.append(", iconUri=").append(getIconUri());
         result.append(", isEnabled=").append(isEnabled());
         result.append(", isConnecting=").append(isConnecting());
-        result.append(", connectionState=").append(getConnectionState());
         result.append(", controlFilters=").append(Arrays.toString(getControlFilters().toArray()));
         result.append(", playbackType=").append(getPlaybackType());
         result.append(", playbackStream=").append(getPlaybackStream());
-        result.append(", deviceType=").append(getDeviceType());
         result.append(", volume=").append(getVolume());
         result.append(", volumeMax=").append(getVolumeMax());
         result.append(", volumeHandling=").append(getVolumeHandling());
@@ -331,7 +233,6 @@ public final class MediaRouteDescriptor {
      */
     public static final class Builder {
         private final Bundle mBundle;
-        private ArrayList<String> mGroupMemberIds;
         private ArrayList<IntentFilter> mControlFilters;
 
         /**
@@ -377,49 +278,6 @@ public final class MediaRouteDescriptor {
         }
 
         /**
-         * Adds a group member id of the route.
-         * <p>
-         * A route descriptor that has one or more group member route ids
-         * represents a route group. A member route may belong to another group.
-         * </p>
-         * @hide
-         */
-        public Builder addGroupMemberId(String groupMemberId) {
-            if (TextUtils.isEmpty(groupMemberId)) {
-                throw new IllegalArgumentException("groupMemberId must not be empty");
-            }
-
-            if (mGroupMemberIds == null) {
-                mGroupMemberIds = new ArrayList<>();
-            }
-            if (!mGroupMemberIds.contains(groupMemberId)) {
-                mGroupMemberIds.add(groupMemberId);
-            }
-            return this;
-        }
-
-        /**
-         * Adds a list of group member ids of the route.
-         * <p>
-         * A route descriptor that has one or more group member route ids
-         * represents a route group. A member route may belong to another group.
-         * </p>
-         * @hide
-         */
-        public Builder addGroupMemberIds(Collection<String> groupMemberIds) {
-            if (groupMemberIds == null) {
-                throw new IllegalArgumentException("groupMemberIds must not be null");
-            }
-
-            if (!groupMemberIds.isEmpty()) {
-                for (String groupMemberId : groupMemberIds) {
-                    addGroupMemberId(groupMemberId);
-                }
-            }
-            return this;
-        }
-
-        /**
          * Sets the user-visible name of the route.
          * <p>
          * The route name identifies the destination represented by the route.
@@ -444,28 +302,6 @@ public final class MediaRouteDescriptor {
         }
 
         /**
-         * Sets the URI of the icon representing this route.
-         * <p>
-         * This icon will be used in picker UIs if available.
-         * </p><p>
-         * The URI must be one of the following formats:
-         * <ul>
-         * <li>content ({@link android.content.ContentResolver#SCHEME_CONTENT})</li>
-         * <li>android.resource ({@link android.content.ContentResolver#SCHEME_ANDROID_RESOURCE})
-         * </li>
-         * <li>file ({@link android.content.ContentResolver#SCHEME_FILE})</li>
-         * </ul>
-         * </p>
-         */
-        public Builder setIconUri(Uri iconUri) {
-            if (iconUri == null) {
-                throw new IllegalArgumentException("iconUri must not be null");
-            }
-            mBundle.putString(KEY_ICON_URI, iconUri.toString());
-            return this;
-        }
-
-        /**
          * Sets whether the route is enabled.
          * <p>
          * Disabled routes represent routes that a route provider knows about, such as paired
@@ -480,41 +316,9 @@ public final class MediaRouteDescriptor {
         /**
          * Sets whether the route is in the process of connecting and is not yet
          * ready for use.
-         * @deprecated Use {@link #setConnectionState} instead.
          */
-        @Deprecated
         public Builder setConnecting(boolean connecting) {
             mBundle.putBoolean(KEY_CONNECTING, connecting);
-            return this;
-        }
-
-        /**
-         * Sets the route's connection state.
-         *
-         * @param connectionState The connection state of the route:
-         * {@link MediaRouter.RouteInfo#CONNECTION_STATE_DISCONNECTED},
-         * {@link MediaRouter.RouteInfo#CONNECTION_STATE_CONNECTING}, or
-         * {@link MediaRouter.RouteInfo#CONNECTION_STATE_CONNECTED}.
-         */
-        public Builder setConnectionState(int connectionState) {
-            mBundle.putInt(KEY_CONNECTION_STATE, connectionState);
-            return this;
-        }
-
-        /**
-         * Sets whether the route can be disconnected without stopping playback.
-         */
-        public Builder setCanDisconnect(boolean canDisconnect) {
-            mBundle.putBoolean(KEY_CAN_DISCONNECT, canDisconnect);
-            return this;
-        }
-
-        /**
-         * Sets an intent sender for launching the settings activity for this
-         * route.
-         */
-        public Builder setSettingsActivity(IntentSender is) {
-            mBundle.putParcelable(KEY_SETTINGS_INTENT, is);
             return this;
         }
 
@@ -553,10 +357,6 @@ public final class MediaRouteDescriptor {
 
         /**
          * Sets the route's playback type.
-         *
-         * @param playbackType The playback type of the route:
-         * {@link MediaRouter.RouteInfo#PLAYBACK_TYPE_LOCAL} or
-         * {@link MediaRouter.RouteInfo#PLAYBACK_TYPE_REMOTE}.
          */
         public Builder setPlaybackType(int playbackType) {
             mBundle.putInt(KEY_PLAYBACK_TYPE, playbackType);
@@ -568,18 +368,6 @@ public final class MediaRouteDescriptor {
          */
         public Builder setPlaybackStream(int playbackStream) {
             mBundle.putInt(KEY_PLAYBACK_STREAM, playbackStream);
-            return this;
-        }
-
-        /**
-         * Sets the route's receiver device type.
-         *
-         * @param deviceType The receive device type of the route:
-         * {@link MediaRouter.RouteInfo#DEVICE_TYPE_TV} or
-         * {@link MediaRouter.RouteInfo#DEVICE_TYPE_SPEAKER}.
-         */
-        public Builder setDeviceType(int deviceType) {
-            mBundle.putInt(KEY_DEVICE_TYPE, deviceType);
             return this;
         }
 
@@ -601,10 +389,6 @@ public final class MediaRouteDescriptor {
 
         /**
          * Sets the route's volume handling.
-         *
-         * @param volumeHandling how volume is handled on the route:
-         * {@link MediaRouter.RouteInfo#PLAYBACK_VOLUME_FIXED} or
-         * {@link MediaRouter.RouteInfo#PLAYBACK_VOLUME_VARIABLE}.
          */
         public Builder setVolumeHandling(int volumeHandling) {
             mBundle.putInt(KEY_VOLUME_HANDLING, volumeHandling);
@@ -635,9 +419,6 @@ public final class MediaRouteDescriptor {
         public MediaRouteDescriptor build() {
             if (mControlFilters != null) {
                 mBundle.putParcelableArrayList(KEY_CONTROL_FILTERS, mControlFilters);
-            }
-            if (mGroupMemberIds != null) {
-                mBundle.putStringArrayList(KEY_GROUP_MEMBER_IDS, mGroupMemberIds);
             }
             return new MediaRouteDescriptor(mBundle, mControlFilters);
         }

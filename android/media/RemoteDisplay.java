@@ -37,19 +37,17 @@ public final class RemoteDisplay {
     private final CloseGuard mGuard = CloseGuard.get();
     private final Listener mListener;
     private final Handler mHandler;
-    private final String mOpPackageName;
 
     private long mPtr;
 
-    private native long nativeListen(String iface, String opPackageName);
+    private native long nativeListen(String iface);
     private native void nativeDispose(long ptr);
     private native void nativePause(long ptr);
     private native void nativeResume(long ptr);
 
-    private RemoteDisplay(Listener listener, Handler handler, String opPackageName) {
+    private RemoteDisplay(Listener listener, Handler handler) {
         mListener = listener;
         mHandler = handler;
-        mOpPackageName = opPackageName;
     }
 
     @Override
@@ -68,8 +66,7 @@ public final class RemoteDisplay {
      * @param listener The listener to invoke when displays are connected or disconnected.
      * @param handler The handler on which to invoke the listener.
      */
-    public static RemoteDisplay listen(String iface, Listener listener, Handler handler,
-            String opPackageName) {
+    public static RemoteDisplay listen(String iface, Listener listener, Handler handler) {
         if (iface == null) {
             throw new IllegalArgumentException("iface must not be null");
         }
@@ -80,7 +77,7 @@ public final class RemoteDisplay {
             throw new IllegalArgumentException("handler must not be null");
         }
 
-        RemoteDisplay display = new RemoteDisplay(listener, handler, opPackageName);
+        RemoteDisplay display = new RemoteDisplay(listener, handler);
         display.startListening(iface);
         return display;
     }
@@ -116,7 +113,7 @@ public final class RemoteDisplay {
     }
 
     private void startListening(String iface) {
-        mPtr = nativeListen(iface, mOpPackageName);
+        mPtr = nativeListen(iface);
         if (mPtr == 0) {
             throw new IllegalStateException("Could not start listening for "
                     + "remote display connection on \"" + iface + "\"");

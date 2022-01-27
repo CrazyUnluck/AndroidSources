@@ -25,7 +25,7 @@ import android.view.accessibility.AccessibilityEvent;
  * Helper for accessing features in {@link ViewGroup}
  * introduced after API level 4 in a backwards compatible fashion.
  */
-public final class ViewGroupCompat {
+public class ViewGroupCompat {
 
     /**
      * This constant is a {@link #setLayoutMode(ViewGroup, int) layoutMode}.
@@ -44,14 +44,12 @@ public final class ViewGroupCompat {
     public static final int LAYOUT_MODE_OPTICAL_BOUNDS = 1;
 
     interface ViewGroupCompatImpl {
-        boolean onRequestSendAccessibilityEvent(ViewGroup group, View child,
+        public boolean onRequestSendAccessibilityEvent(ViewGroup group, View child,
                 AccessibilityEvent event);
-        void setMotionEventSplittingEnabled(ViewGroup group, boolean split);
-        int getLayoutMode(ViewGroup group);
-        void setLayoutMode(ViewGroup group, int mode);
-        void setTransitionGroup(ViewGroup group, boolean isTransitionGroup);
-        boolean isTransitionGroup(ViewGroup group);
-        int getNestedScrollAxes(ViewGroup group);
+
+        public void setMotionEventSplittingEnabled(ViewGroup group, boolean split);
+        public int getLayoutMode(ViewGroup group);
+        public void setLayoutMode(ViewGroup group, int mode);
     }
 
     static class ViewGroupCompatStubImpl implements ViewGroupCompatImpl {
@@ -72,23 +70,6 @@ public final class ViewGroupCompat {
         @Override
         public void setLayoutMode(ViewGroup group, int mode) {
             // no-op, didn't exist. Views only support clip bounds.
-        }
-
-        @Override
-        public void setTransitionGroup(ViewGroup group, boolean isTransitionGroup) {
-        }
-
-        @Override
-        public boolean isTransitionGroup(ViewGroup group) {
-            return false;
-        }
-
-        @Override
-        public int getNestedScrollAxes(ViewGroup group) {
-            if (group instanceof NestedScrollingParent) {
-                return ((NestedScrollingParent) group).getNestedScrollAxes();
-            }
-            return ViewCompat.SCROLL_AXIS_NONE;
         }
     }
 
@@ -119,29 +100,10 @@ public final class ViewGroupCompat {
         }
     }
 
-    static class ViewGroupCompatLollipopImpl extends ViewGroupCompatJellybeanMR2Impl {
-        @Override
-        public void setTransitionGroup(ViewGroup group, boolean isTransitionGroup) {
-            ViewGroupCompatLollipop.setTransitionGroup(group, isTransitionGroup);
-        }
-
-        @Override
-        public boolean isTransitionGroup(ViewGroup group) {
-            return ViewGroupCompatLollipop.isTransitionGroup(group);
-        }
-
-        @Override
-        public int getNestedScrollAxes(ViewGroup group) {
-            return ViewGroupCompatLollipop.getNestedScrollAxes(group);
-        }
-    }
-
     static final ViewGroupCompatImpl IMPL;
     static {
         final int version = Build.VERSION.SDK_INT;
-        if (version >= 21) {
-            IMPL = new ViewGroupCompatLollipopImpl();
-        } else if (version >= 18) {
+        if (version >= 18) {
             IMPL = new ViewGroupCompatJellybeanMR2Impl();
         } else if (version >= 14) {
             IMPL = new ViewGroupCompatIcsImpl();
@@ -155,7 +117,9 @@ public final class ViewGroupCompat {
     /*
      * Hide the constructor.
      */
-    private ViewGroupCompat() {}
+    private ViewGroupCompat() {
+
+    }
 
     /**
      * Called when a child has requested sending an {@link AccessibilityEvent} and
@@ -224,42 +188,5 @@ public final class ViewGroupCompat {
      */
     public static void setLayoutMode(ViewGroup group, int mode) {
         IMPL.setLayoutMode(group, mode);
-    }
-
-    /**
-     * Changes whether or not this ViewGroup should be treated as a single entity during
-     * Activity Transitions.
-     * @param isTransitionGroup Whether or not the ViewGroup should be treated as a unit
-     *                          in Activity transitions. If false, the ViewGroup won't transition,
-     *                          only its children. If true, the entire ViewGroup will transition
-     *                          together.
-     */
-    public static void setTransitionGroup(ViewGroup group, boolean isTransitionGroup) {
-        IMPL.setTransitionGroup(group, isTransitionGroup);
-    }
-
-    /**
-     * Returns true if this ViewGroup should be considered as a single entity for removal
-     * when executing an Activity transition. If this is false, child elements will move
-     * individually during the transition.
-     */
-    public static boolean isTransitionGroup(ViewGroup group) {
-        return IMPL.isTransitionGroup(group);
-    }
-
-    /**
-     * Return the current axes of nested scrolling for this ViewGroup.
-     *
-     * <p>A ViewGroup returning something other than {@link ViewCompat#SCROLL_AXIS_NONE} is
-     * currently acting as a nested scrolling parent for one or more descendant views in
-     * the hierarchy.</p>
-     *
-     * @return Flags indicating the current axes of nested scrolling
-     * @see ViewCompat#SCROLL_AXIS_HORIZONTAL
-     * @see ViewCompat#SCROLL_AXIS_VERTICAL
-     * @see ViewCompat#SCROLL_AXIS_NONE
-     */
-    public static int getNestedScrollAxes(ViewGroup group) {
-        return IMPL.getNestedScrollAxes(group);
     }
 }

@@ -8,30 +8,11 @@
 
 package jsr166;
 
-import static java.util.concurrent.TimeUnit.DAYS;
-import static java.util.concurrent.TimeUnit.HOURS;
-import static java.util.concurrent.TimeUnit.MICROSECONDS;
-import static java.util.concurrent.TimeUnit.MILLISECONDS;
-import static java.util.concurrent.TimeUnit.MINUTES;
-import static java.util.concurrent.TimeUnit.NANOSECONDS;
-import static java.util.concurrent.TimeUnit.SECONDS;
-
+import junit.framework.*;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
 
-import junit.framework.Test;
-import junit.framework.TestSuite;
-
 public class TimeUnitTest extends JSR166TestCase {
-    // android-note: Removed because the CTS runner does a bad job of
-    // retrying tests that have suite() declarations.
-    //
-    // public static void main(String[] args) {
-    //     main(suite(), args);
-    // }
-    // public static Test suite() {
-    //     return new TestSuite(TimeUnitTest.class);
-    // }
 
     // (loops to 88888 check increments at all time divisions.)
 
@@ -41,64 +22,92 @@ public class TimeUnitTest extends JSR166TestCase {
     public void testConvert() {
         for (long t = 0; t < 88888; ++t) {
             assertEquals(t*60*60*24,
-                         SECONDS.convert(t, DAYS));
+                         TimeUnit.SECONDS.convert(t,
+                                                  TimeUnit.DAYS));
             assertEquals(t*60*60,
-                         SECONDS.convert(t, HOURS));
+                         TimeUnit.SECONDS.convert(t,
+                                                  TimeUnit.HOURS));
             assertEquals(t*60,
-                         SECONDS.convert(t, MINUTES));
+                         TimeUnit.SECONDS.convert(t,
+                                                  TimeUnit.MINUTES));
             assertEquals(t,
-                         SECONDS.convert(t, SECONDS));
+                         TimeUnit.SECONDS.convert(t,
+                                                  TimeUnit.SECONDS));
             assertEquals(t,
-                         SECONDS.convert(1000L*t, MILLISECONDS));
+                         TimeUnit.SECONDS.convert(1000L*t,
+                                                  TimeUnit.MILLISECONDS));
             assertEquals(t,
-                         SECONDS.convert(1000000L*t, MICROSECONDS));
+                         TimeUnit.SECONDS.convert(1000000L*t,
+                                                  TimeUnit.MICROSECONDS));
             assertEquals(t,
-                         SECONDS.convert(1000000000L*t, NANOSECONDS));
+                         TimeUnit.SECONDS.convert(1000000000L*t,
+                                                  TimeUnit.NANOSECONDS));
 
             assertEquals(1000L*t*60*60*24,
-                         MILLISECONDS.convert(t, DAYS));
+                         TimeUnit.MILLISECONDS.convert(t,
+                                                  TimeUnit.DAYS));
             assertEquals(1000L*t*60*60,
-                         MILLISECONDS.convert(t, HOURS));
+                         TimeUnit.MILLISECONDS.convert(t,
+                                                  TimeUnit.HOURS));
             assertEquals(1000L*t*60,
-                         MILLISECONDS.convert(t, MINUTES));
+                         TimeUnit.MILLISECONDS.convert(t,
+                                                  TimeUnit.MINUTES));
             assertEquals(1000L*t,
-                         MILLISECONDS.convert(t, SECONDS));
+                         TimeUnit.MILLISECONDS.convert(t,
+                                                  TimeUnit.SECONDS));
             assertEquals(t,
-                         MILLISECONDS.convert(t, MILLISECONDS));
+                         TimeUnit.MILLISECONDS.convert(t,
+                                                  TimeUnit.MILLISECONDS));
             assertEquals(t,
-                         MILLISECONDS.convert(1000L*t, MICROSECONDS));
+                         TimeUnit.MILLISECONDS.convert(1000L*t,
+                                                  TimeUnit.MICROSECONDS));
             assertEquals(t,
-                         MILLISECONDS.convert(1000000L*t, NANOSECONDS));
+                         TimeUnit.MILLISECONDS.convert(1000000L*t,
+                                                  TimeUnit.NANOSECONDS));
 
             assertEquals(1000000L*t*60*60*24,
-                         MICROSECONDS.convert(t, DAYS));
+                         TimeUnit.MICROSECONDS.convert(t,
+                                                  TimeUnit.DAYS));
             assertEquals(1000000L*t*60*60,
-                         MICROSECONDS.convert(t, HOURS));
+                         TimeUnit.MICROSECONDS.convert(t,
+                                                  TimeUnit.HOURS));
             assertEquals(1000000L*t*60,
-                         MICROSECONDS.convert(t, MINUTES));
+                         TimeUnit.MICROSECONDS.convert(t,
+                                                  TimeUnit.MINUTES));
             assertEquals(1000000L*t,
-                         MICROSECONDS.convert(t, SECONDS));
+                         TimeUnit.MICROSECONDS.convert(t,
+                                                  TimeUnit.SECONDS));
             assertEquals(1000L*t,
-                         MICROSECONDS.convert(t, MILLISECONDS));
+                         TimeUnit.MICROSECONDS.convert(t,
+                                                  TimeUnit.MILLISECONDS));
             assertEquals(t,
-                         MICROSECONDS.convert(t, MICROSECONDS));
+                         TimeUnit.MICROSECONDS.convert(t,
+                                                  TimeUnit.MICROSECONDS));
             assertEquals(t,
-                         MICROSECONDS.convert(1000L*t, NANOSECONDS));
+                         TimeUnit.MICROSECONDS.convert(1000L*t,
+                                                  TimeUnit.NANOSECONDS));
 
             assertEquals(1000000000L*t*60*60*24,
-                         NANOSECONDS.convert(t, DAYS));
+                         TimeUnit.NANOSECONDS.convert(t,
+                                                  TimeUnit.DAYS));
             assertEquals(1000000000L*t*60*60,
-                         NANOSECONDS.convert(t, HOURS));
+                         TimeUnit.NANOSECONDS.convert(t,
+                                                  TimeUnit.HOURS));
             assertEquals(1000000000L*t*60,
-                         NANOSECONDS.convert(t, MINUTES));
+                         TimeUnit.NANOSECONDS.convert(t,
+                                                  TimeUnit.MINUTES));
             assertEquals(1000000000L*t,
-                         NANOSECONDS.convert(t, SECONDS));
+                         TimeUnit.NANOSECONDS.convert(t,
+                                                  TimeUnit.SECONDS));
             assertEquals(1000000L*t,
-                         NANOSECONDS.convert(t, MILLISECONDS));
+                         TimeUnit.NANOSECONDS.convert(t,
+                                                  TimeUnit.MILLISECONDS));
             assertEquals(1000L*t,
-                         NANOSECONDS.convert(t, MICROSECONDS));
+                         TimeUnit.NANOSECONDS.convert(t,
+                                                  TimeUnit.MICROSECONDS));
             assertEquals(t,
-                         NANOSECONDS.convert(t, NANOSECONDS));
+                         TimeUnit.NANOSECONDS.convert(t,
+                                                  TimeUnit.NANOSECONDS));
         }
     }
 
@@ -109,19 +118,19 @@ public class TimeUnitTest extends JSR166TestCase {
     public void testToNanos() {
         for (long t = 0; t < 88888; ++t) {
             assertEquals(t*1000000000L*60*60*24,
-                         DAYS.toNanos(t));
+                         TimeUnit.DAYS.toNanos(t));
             assertEquals(t*1000000000L*60*60,
-                         HOURS.toNanos(t));
+                         TimeUnit.HOURS.toNanos(t));
             assertEquals(t*1000000000L*60,
-                         MINUTES.toNanos(t));
+                         TimeUnit.MINUTES.toNanos(t));
             assertEquals(1000000000L*t,
-                         SECONDS.toNanos(t));
+                         TimeUnit.SECONDS.toNanos(t));
             assertEquals(1000000L*t,
-                         MILLISECONDS.toNanos(t));
+                         TimeUnit.MILLISECONDS.toNanos(t));
             assertEquals(1000L*t,
-                         MICROSECONDS.toNanos(t));
+                         TimeUnit.MICROSECONDS.toNanos(t));
             assertEquals(t,
-                         NANOSECONDS.toNanos(t));
+                         TimeUnit.NANOSECONDS.toNanos(t));
         }
     }
 
@@ -132,19 +141,19 @@ public class TimeUnitTest extends JSR166TestCase {
     public void testToMicros() {
         for (long t = 0; t < 88888; ++t) {
             assertEquals(t*1000000L*60*60*24,
-                         DAYS.toMicros(t));
+                         TimeUnit.DAYS.toMicros(t));
             assertEquals(t*1000000L*60*60,
-                         HOURS.toMicros(t));
+                         TimeUnit.HOURS.toMicros(t));
             assertEquals(t*1000000L*60,
-                         MINUTES.toMicros(t));
+                         TimeUnit.MINUTES.toMicros(t));
             assertEquals(1000000L*t,
-                         SECONDS.toMicros(t));
+                         TimeUnit.SECONDS.toMicros(t));
             assertEquals(1000L*t,
-                         MILLISECONDS.toMicros(t));
+                         TimeUnit.MILLISECONDS.toMicros(t));
             assertEquals(t,
-                         MICROSECONDS.toMicros(t));
+                         TimeUnit.MICROSECONDS.toMicros(t));
             assertEquals(t,
-                         NANOSECONDS.toMicros(t*1000L));
+                         TimeUnit.NANOSECONDS.toMicros(t*1000L));
         }
     }
 
@@ -155,19 +164,19 @@ public class TimeUnitTest extends JSR166TestCase {
     public void testToMillis() {
         for (long t = 0; t < 88888; ++t) {
             assertEquals(t*1000L*60*60*24,
-                         DAYS.toMillis(t));
+                         TimeUnit.DAYS.toMillis(t));
             assertEquals(t*1000L*60*60,
-                         HOURS.toMillis(t));
+                         TimeUnit.HOURS.toMillis(t));
             assertEquals(t*1000L*60,
-                         MINUTES.toMillis(t));
+                         TimeUnit.MINUTES.toMillis(t));
             assertEquals(1000L*t,
-                         SECONDS.toMillis(t));
+                         TimeUnit.SECONDS.toMillis(t));
             assertEquals(t,
-                         MILLISECONDS.toMillis(t));
+                         TimeUnit.MILLISECONDS.toMillis(t));
             assertEquals(t,
-                         MICROSECONDS.toMillis(t*1000L));
+                         TimeUnit.MICROSECONDS.toMillis(t*1000L));
             assertEquals(t,
-                         NANOSECONDS.toMillis(t*1000000L));
+                         TimeUnit.NANOSECONDS.toMillis(t*1000000L));
         }
     }
 
@@ -178,19 +187,19 @@ public class TimeUnitTest extends JSR166TestCase {
     public void testToSeconds() {
         for (long t = 0; t < 88888; ++t) {
             assertEquals(t*60*60*24,
-                         DAYS.toSeconds(t));
+                         TimeUnit.DAYS.toSeconds(t));
             assertEquals(t*60*60,
-                         HOURS.toSeconds(t));
+                         TimeUnit.HOURS.toSeconds(t));
             assertEquals(t*60,
-                         MINUTES.toSeconds(t));
+                         TimeUnit.MINUTES.toSeconds(t));
             assertEquals(t,
-                         SECONDS.toSeconds(t));
+                         TimeUnit.SECONDS.toSeconds(t));
             assertEquals(t,
-                         MILLISECONDS.toSeconds(t*1000L));
+                         TimeUnit.MILLISECONDS.toSeconds(t*1000L));
             assertEquals(t,
-                         MICROSECONDS.toSeconds(t*1000000L));
+                         TimeUnit.MICROSECONDS.toSeconds(t*1000000L));
             assertEquals(t,
-                         NANOSECONDS.toSeconds(t*1000000000L));
+                         TimeUnit.NANOSECONDS.toSeconds(t*1000000000L));
         }
     }
 
@@ -201,19 +210,19 @@ public class TimeUnitTest extends JSR166TestCase {
     public void testToMinutes() {
         for (long t = 0; t < 88888; ++t) {
             assertEquals(t*60*24,
-                         DAYS.toMinutes(t));
+                         TimeUnit.DAYS.toMinutes(t));
             assertEquals(t*60,
-                         HOURS.toMinutes(t));
+                         TimeUnit.HOURS.toMinutes(t));
             assertEquals(t,
-                         MINUTES.toMinutes(t));
+                         TimeUnit.MINUTES.toMinutes(t));
             assertEquals(t,
-                         SECONDS.toMinutes(t*60));
+                         TimeUnit.SECONDS.toMinutes(t*60));
             assertEquals(t,
-                         MILLISECONDS.toMinutes(t*1000L*60));
+                         TimeUnit.MILLISECONDS.toMinutes(t*1000L*60));
             assertEquals(t,
-                         MICROSECONDS.toMinutes(t*1000000L*60));
+                         TimeUnit.MICROSECONDS.toMinutes(t*1000000L*60));
             assertEquals(t,
-                         NANOSECONDS.toMinutes(t*1000000000L*60));
+                         TimeUnit.NANOSECONDS.toMinutes(t*1000000000L*60));
         }
     }
 
@@ -224,19 +233,19 @@ public class TimeUnitTest extends JSR166TestCase {
     public void testToHours() {
         for (long t = 0; t < 88888; ++t) {
             assertEquals(t*24,
-                         DAYS.toHours(t));
+                         TimeUnit.DAYS.toHours(t));
             assertEquals(t,
-                         HOURS.toHours(t));
+                         TimeUnit.HOURS.toHours(t));
             assertEquals(t,
-                         MINUTES.toHours(t*60));
+                         TimeUnit.MINUTES.toHours(t*60));
             assertEquals(t,
-                         SECONDS.toHours(t*60*60));
+                         TimeUnit.SECONDS.toHours(t*60*60));
             assertEquals(t,
-                         MILLISECONDS.toHours(t*1000L*60*60));
+                         TimeUnit.MILLISECONDS.toHours(t*1000L*60*60));
             assertEquals(t,
-                         MICROSECONDS.toHours(t*1000000L*60*60));
+                         TimeUnit.MICROSECONDS.toHours(t*1000000L*60*60));
             assertEquals(t,
-                         NANOSECONDS.toHours(t*1000000000L*60*60));
+                         TimeUnit.NANOSECONDS.toHours(t*1000000000L*60*60));
         }
     }
 
@@ -247,19 +256,19 @@ public class TimeUnitTest extends JSR166TestCase {
     public void testToDays() {
         for (long t = 0; t < 88888; ++t) {
             assertEquals(t,
-                         DAYS.toDays(t));
+                         TimeUnit.DAYS.toDays(t));
             assertEquals(t,
-                         HOURS.toDays(t*24));
+                         TimeUnit.HOURS.toDays(t*24));
             assertEquals(t,
-                         MINUTES.toDays(t*60*24));
+                         TimeUnit.MINUTES.toDays(t*60*24));
             assertEquals(t,
-                         SECONDS.toDays(t*60*60*24));
+                         TimeUnit.SECONDS.toDays(t*60*60*24));
             assertEquals(t,
-                         MILLISECONDS.toDays(t*1000L*60*60*24));
+                         TimeUnit.MILLISECONDS.toDays(t*1000L*60*60*24));
             assertEquals(t,
-                         MICROSECONDS.toDays(t*1000000L*60*60*24));
+                         TimeUnit.MICROSECONDS.toDays(t*1000000L*60*60*24));
             assertEquals(t,
-                         NANOSECONDS.toDays(t*1000000000L*60*60*24));
+                         TimeUnit.NANOSECONDS.toDays(t*1000000000L*60*60*24));
         }
     }
 
@@ -269,21 +278,29 @@ public class TimeUnitTest extends JSR166TestCase {
      */
     public void testConvertSaturate() {
         assertEquals(Long.MAX_VALUE,
-                     NANOSECONDS.convert(Long.MAX_VALUE / 2, SECONDS));
+                     TimeUnit.NANOSECONDS.convert(Long.MAX_VALUE / 2,
+                                                  TimeUnit.SECONDS));
         assertEquals(Long.MIN_VALUE,
-                     NANOSECONDS.convert(-Long.MAX_VALUE / 4, SECONDS));
+                     TimeUnit.NANOSECONDS.convert(-Long.MAX_VALUE / 4,
+                                                  TimeUnit.SECONDS));
         assertEquals(Long.MAX_VALUE,
-                     NANOSECONDS.convert(Long.MAX_VALUE / 2, MINUTES));
+                     TimeUnit.NANOSECONDS.convert(Long.MAX_VALUE / 2,
+                                                  TimeUnit.MINUTES));
         assertEquals(Long.MIN_VALUE,
-                     NANOSECONDS.convert(-Long.MAX_VALUE / 4, MINUTES));
+                     TimeUnit.NANOSECONDS.convert(-Long.MAX_VALUE / 4,
+                                                  TimeUnit.MINUTES));
         assertEquals(Long.MAX_VALUE,
-                     NANOSECONDS.convert(Long.MAX_VALUE / 2, HOURS));
+                     TimeUnit.NANOSECONDS.convert(Long.MAX_VALUE / 2,
+                                                  TimeUnit.HOURS));
         assertEquals(Long.MIN_VALUE,
-                     NANOSECONDS.convert(-Long.MAX_VALUE / 4, HOURS));
+                     TimeUnit.NANOSECONDS.convert(-Long.MAX_VALUE / 4,
+                                                  TimeUnit.HOURS));
         assertEquals(Long.MAX_VALUE,
-                     NANOSECONDS.convert(Long.MAX_VALUE / 2, DAYS));
+                     TimeUnit.NANOSECONDS.convert(Long.MAX_VALUE / 2,
+                                                  TimeUnit.DAYS));
         assertEquals(Long.MIN_VALUE,
-                     NANOSECONDS.convert(-Long.MAX_VALUE / 4, DAYS));
+                     TimeUnit.NANOSECONDS.convert(-Long.MAX_VALUE / 4,
+                                                  TimeUnit.DAYS));
     }
 
     /**
@@ -292,23 +309,23 @@ public class TimeUnitTest extends JSR166TestCase {
      */
     public void testToNanosSaturate() {
         assertEquals(Long.MAX_VALUE,
-                     MILLISECONDS.toNanos(Long.MAX_VALUE / 2));
+                     TimeUnit.MILLISECONDS.toNanos(Long.MAX_VALUE / 2));
         assertEquals(Long.MIN_VALUE,
-                     MILLISECONDS.toNanos(-Long.MAX_VALUE / 3));
+                     TimeUnit.MILLISECONDS.toNanos(-Long.MAX_VALUE / 3));
     }
 
     /**
      * toString returns name of unit
      */
     public void testToString() {
-        assertEquals("SECONDS", SECONDS.toString());
+        assertEquals("SECONDS", TimeUnit.SECONDS.toString());
     }
 
     /**
      * name returns name of unit
      */
     public void testName() {
-        assertEquals("SECONDS", SECONDS.name());
+        assertEquals("SECONDS", TimeUnit.SECONDS.name());
     }
 
     /**
@@ -319,7 +336,7 @@ public class TimeUnitTest extends JSR166TestCase {
         Thread t = newStartedThread(new CheckedRunnable() {
             public void realRun() throws InterruptedException {
                 Object o = new Object();
-                TimeUnit tu = MILLISECONDS;
+                TimeUnit tu = TimeUnit.MILLISECONDS;
 
                 try {
                     tu.timedWait(o, LONG_DELAY_MS);
@@ -338,7 +355,7 @@ public class TimeUnitTest extends JSR166TestCase {
         Thread t = newStartedThread(new CheckedRunnable() {
             public void realRun() throws InterruptedException {
                 Object o = new Object();
-                TimeUnit tu = MILLISECONDS;
+                TimeUnit tu = TimeUnit.MILLISECONDS;
 
                 Thread.currentThread().interrupt();
                 try {
@@ -376,7 +393,7 @@ public class TimeUnitTest extends JSR166TestCase {
             }});
         final Thread t = newStartedThread(new CheckedRunnable() {
             public void realRun() throws InterruptedException {
-                TimeUnit tu = MILLISECONDS;
+                TimeUnit tu = TimeUnit.MILLISECONDS;
                 Thread.currentThread().interrupt();
                 try {
                     tu.timedJoin(s, LONG_DELAY_MS);
@@ -407,7 +424,7 @@ public class TimeUnitTest extends JSR166TestCase {
         final CountDownLatch pleaseInterrupt = new CountDownLatch(1);
         Thread t = newStartedThread(new CheckedRunnable() {
             public void realRun() throws InterruptedException {
-                TimeUnit tu = MILLISECONDS;
+                TimeUnit tu = TimeUnit.MILLISECONDS;
                 Thread.currentThread().interrupt();
                 try {
                     tu.sleep(LONG_DELAY_MS);
@@ -433,8 +450,8 @@ public class TimeUnitTest extends JSR166TestCase {
      * a deserialized serialized unit is the same instance
      */
     public void testSerialization() throws Exception {
-        for (TimeUnit x : TimeUnit.values())
-            assertSame(x, serialClone(x));
+        TimeUnit x = TimeUnit.MILLISECONDS;
+        assertSame(x, serialClone(x));
     }
 
 }

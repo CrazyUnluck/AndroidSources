@@ -13,8 +13,9 @@
  */
 package android.support.v17.leanback.widget;
 
+import android.content.Context;
 import android.os.Build;
-import android.view.View;
+import android.view.ViewGroup;
 
 
 /**
@@ -23,26 +24,34 @@ import android.view.View;
 final class ShadowHelper {
 
     final static ShadowHelper sInstance = new ShadowHelper();
-    boolean mSupportsDynamicShadow;
+    boolean mSupportsShadow;
     ShadowHelperVersionImpl mImpl;
 
     /**
      * Interface implemented by classes that support Shadow.
      */
     static interface ShadowHelperVersionImpl {
-        public Object addDynamicShadow(
-                View shadowContainer, float unfocusedZ, float focusedZ, int roundedCornerRadius);
-        public void setZ(View view, float z);
+
+        public void prepareParent(ViewGroup parent);
+
+        public Object addShadow(ViewGroup shadowContainer);
+
         public void setShadowFocusLevel(Object impl, float level);
+
     }
 
     /**
      * Interface used when we do not support Shadow animations.
      */
     private static final class ShadowHelperStubImpl implements ShadowHelperVersionImpl {
+
         @Override
-        public Object addDynamicShadow(
-                View shadowContainer, float focusedZ, float unfocusedZ, int roundedCornerRadius) {
+        public void prepareParent(ViewGroup parent) {
+            // do nothing
+        }
+
+        @Override
+        public Object addShadow(ViewGroup shadowContainer) {
             // do nothing
             return null;
         }
@@ -52,42 +61,39 @@ final class ShadowHelper {
             // do nothing
         }
 
-        @Override
-        public void setZ(View view, float z) {
-            // do nothing
-        }
     }
 
     /**
-     * Implementation used on api 21 (and above).
+     * Implementation used on JBMR2 (and above).
      */
-    private static final class ShadowHelperApi21Impl implements ShadowHelperVersionImpl {
+    private static final class ShadowHelperJbmr2Impl implements ShadowHelperVersionImpl {
+
         @Override
-        public Object addDynamicShadow(
-                View shadowContainer, float unfocusedZ, float focusedZ, int roundedCornerRadius) {
-            return ShadowHelperApi21.addDynamicShadow(
-                    shadowContainer, unfocusedZ, focusedZ, roundedCornerRadius);
+        public void prepareParent(ViewGroup parent) {
+            ShadowHelperJbmr2.prepareParent(parent);
+        }
+
+        @Override
+        public Object addShadow(ViewGroup shadowContainer) {
+            return ShadowHelperJbmr2.addShadow(shadowContainer);
         }
 
         @Override
         public void setShadowFocusLevel(Object impl, float level) {
-            ShadowHelperApi21.setShadowFocusLevel(impl, level);
+            ShadowHelperJbmr2.setShadowFocusLevel(impl, level);
         }
 
-        @Override
-        public void setZ(View view, float z) {
-            ShadowHelperApi21.setZ(view, z);
-        }
     }
 
     /**
      * Returns the ShadowHelper.
      */
     private ShadowHelper() {
-        if (Build.VERSION.SDK_INT >= 21) {
-            mSupportsDynamicShadow = true;
-            mImpl = new ShadowHelperApi21Impl();
+        if (Build.VERSION.SDK_INT >= 18) {
+            mSupportsShadow = true;
+            mImpl = new ShadowHelperJbmr2Impl();
         } else {
+            mSupportsShadow = false;
             mImpl = new ShadowHelperStubImpl();
         }
     }
@@ -96,24 +102,19 @@ final class ShadowHelper {
         return sInstance;
     }
 
-    public boolean supportsDynamicShadow() {
-        return mSupportsDynamicShadow;
+    public boolean supportsShadow() {
+        return mSupportsShadow;
     }
 
-    public Object addDynamicShadow(
-            View shadowContainer, float unfocusedZ, float focusedZ, int roundedCornerRadius) {
-        return mImpl.addDynamicShadow(shadowContainer, unfocusedZ, focusedZ, roundedCornerRadius);
+    public void prepareParent(ViewGroup parent) {
+        mImpl.prepareParent(parent);
+    }
+
+    public Object addShadow(ViewGroup shadowContainer) {
+        return mImpl.addShadow(shadowContainer);
     }
 
     public void setShadowFocusLevel(Object impl, float level) {
         mImpl.setShadowFocusLevel(impl, level);
     }
-
-    /**
-     * Set the view z coordinate.
-     */
-    public void setZ(View view, float z) {
-        mImpl.setZ(view, z);
-    }
-
 }

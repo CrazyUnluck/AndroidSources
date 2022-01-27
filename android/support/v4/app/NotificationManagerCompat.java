@@ -34,7 +34,6 @@ import android.os.IBinder;
 import android.os.Message;
 import android.os.RemoteException;
 import android.provider.Settings;
-import android.support.v4.os.BuildCompat;
 import android.util.Log;
 
 import java.util.HashMap;
@@ -52,7 +51,7 @@ import java.util.Set;
  * {@link NotificationManagerCompat} object, and then call one of its
  * methods to post or cancel notifications.
  */
-public final class NotificationManagerCompat {
+public class NotificationManagerCompat {
     private static final String TAG = "NotifManCompat";
 
     /**
@@ -69,12 +68,6 @@ public final class NotificationManagerCompat {
      */
     public static final String ACTION_BIND_SIDE_CHANNEL =
             "android.support.BIND_NOTIFICATION_SIDE_CHANNEL";
-
-    /**
-     * Maximum sdk build version which needs support for side channeled notifications.
-     * Currently the only needed use is for side channeling group children before KITKAT_WATCH.
-     */
-    static final int MAX_SIDE_CHANNEL_SDK_VERSION = 19;
 
     /** Base time delay for a side channel listener queue retry. */
     private static final int SIDE_CHANNEL_RETRY_BASE_INTERVAL_MS = 1000;
@@ -99,46 +92,6 @@ public final class NotificationManagerCompat {
     /** Guarded by {@link #sLock} */
     private static SideChannelManager sSideChannelManager;
 
-    /**
-     * Value signifying that the user has not expressed an importance.
-     *
-     * This value is for persisting preferences, and should never be associated with
-     * an actual notification.
-     */
-    public static final int IMPORTANCE_UNSPECIFIED = -1000;
-
-    /**
-     * A notification with no importance: shows nowhere, is blocked.
-     */
-    public static final int IMPORTANCE_NONE = 0;
-
-    /**
-     * Min notification importance: only shows in the shade, below the fold.
-     */
-    public static final int IMPORTANCE_MIN = 1;
-
-    /**
-     * Low notification importance: shows everywhere, but is not intrusive.
-     */
-    public static final int IMPORTANCE_LOW = 2;
-
-    /**
-     * Default notification importance: shows everywhere, allowed to makes noise,
-     * but does not visually intrude.
-     */
-    public static final int IMPORTANCE_DEFAULT = 3;
-
-    /**
-     * Higher notification importance: shows everywhere, allowed to makes noise and peek.
-     */
-    public static final int IMPORTANCE_HIGH = 4;
-
-    /**
-     * Highest notification importance: shows everywhere, allowed to makes noise, peek, and
-     * use full screen intents.
-     */
-    public static final int IMPORTANCE_MAX = 5;
-
     /** Get a {@link NotificationManagerCompat} instance for a provided context. */
     public static NotificationManagerCompat from(Context context) {
         return new NotificationManagerCompat(context);
@@ -159,14 +112,9 @@ public final class NotificationManagerCompat {
                 Notification notification);
 
         int getSideChannelBindFlags();
-
-        boolean areNotificationsEnabled(Context context, NotificationManager notificationManager);
-
-        int getImportance(NotificationManager notificationManager);
     }
 
     static class ImplBase implements Impl {
-
         @Override
         public void cancelNotification(NotificationManager notificationManager, String tag,
                 int id) {
@@ -182,17 +130,6 @@ public final class NotificationManagerCompat {
         @Override
         public int getSideChannelBindFlags() {
             return Service.BIND_AUTO_CREATE;
-        }
-
-        @Override
-        public boolean areNotificationsEnabled(Context context,
-                NotificationManager notificationManager) {
-            return true;
-        }
-
-        @Override
-        public int getImportance(NotificationManager notificationManager) {
-            return IMPORTANCE_UNSPECIFIED;
         }
     }
 
@@ -218,33 +155,8 @@ public final class NotificationManagerCompat {
         }
     }
 
-    static class ImplKitKat extends ImplIceCreamSandwich {
-        @Override
-        public boolean areNotificationsEnabled(Context context,
-                NotificationManager notificationManager) {
-            return NotificationManagerCompatKitKat.areNotificationsEnabled(context);
-        }
-    }
-
-    static class ImplApi24 extends ImplKitKat {
-        @Override
-        public boolean areNotificationsEnabled(Context context,
-                NotificationManager notificationManager) {
-            return NotificationManagerCompatApi24.areNotificationsEnabled(notificationManager);
-        }
-
-        @Override
-        public int getImportance(NotificationManager notificationManager) {
-            return NotificationManagerCompatApi24.getImportance(notificationManager);
-        }
-    }
-
     static {
-        if (BuildCompat.isAtLeastN()) {
-            IMPL = new ImplApi24();
-        } else if (Build.VERSION.SDK_INT >= 19) {
-            IMPL = new ImplKitKat();
-        }  else if (Build.VERSION.SDK_INT >= 14) {
+        if (Build.VERSION.SDK_INT >= 14) {
             IMPL = new ImplIceCreamSandwich();
         } else if (Build.VERSION.SDK_INT >= 5) {
             IMPL = new ImplEclair();
@@ -269,17 +181,13 @@ public final class NotificationManagerCompat {
      */
     public void cancel(String tag, int id) {
         IMPL.cancelNotification(mNotificationManager, tag, id);
-        if (Build.VERSION.SDK_INT <= MAX_SIDE_CHANNEL_SDK_VERSION) {
-            pushSideChannelQueue(new CancelTask(mContext.getPackageName(), id, tag));
-        }
+        pushSideChannelQueue(new CancelTask(mContext.getPackageName(), id, tag));
     }
 
     /** Cancel all previously shown notifications. */
     public void cancelAll() {
         mNotificationManager.cancelAll();
-        if (Build.VERSION.SDK_INT <= MAX_SIDE_CHANNEL_SDK_VERSION) {
-            pushSideChannelQueue(new CancelTask(mContext.getPackageName()));
-        }
+        pushSideChannelQueue(new CancelTask(mContext.getPackageName()));
     }
 
     /**
@@ -300,28 +208,9 @@ public final class NotificationManagerCompat {
     public void notify(String tag, int id, Notification notification) {
         if (useSideChannelForNotification(notification)) {
             pushSideChannelQueue(new NotifyTask(mContext.getPackageName(), id, tag, notification));
-            // Cancel this notification in notification manager if it just transitioned to being
-            // side channelled.
-            IMPL.cancelNotification(mNotificationManager, tag, id);
         } else {
             IMPL.postNotification(mNotificationManager, tag, id, notification);
         }
-    }
-
-    /**
-     * Returns whether notifications from the calling package are not blocked.
-     */
-    public boolean areNotificationsEnabled() {
-        return IMPL.areNotificationsEnabled(mContext, mNotificationManager);
-    }
-
-    /**
-     * Returns the user specified importance for notifications from the calling package.
-     *
-     * @return An importance level, such as {@link #IMPORTANCE_DEFAULT}.
-     */
-    public int getImportance() {
-        return IMPL.getImportance(mNotificationManager);
     }
 
     /**
@@ -331,23 +220,23 @@ public final class NotificationManagerCompat {
         final String enabledNotificationListeners = Settings.Secure.getString(
                 context.getContentResolver(),
                 SETTING_ENABLED_NOTIFICATION_LISTENERS);
-        synchronized (sEnabledNotificationListenersLock) {
-            // Parse the string again if it is different from the last time this method was called.
-            if (enabledNotificationListeners != null
-                    && !enabledNotificationListeners.equals(sEnabledNotificationListeners)) {
-                final String[] components = enabledNotificationListeners.split(":");
-                Set<String> packageNames = new HashSet<String>(components.length);
-                for (String component : components) {
-                    ComponentName componentName = ComponentName.unflattenFromString(component);
-                    if (componentName != null) {
-                        packageNames.add(componentName.getPackageName());
-                    }
+        // Parse the string again if it is different from the last time this method was called.
+        if (enabledNotificationListeners != null
+                && !enabledNotificationListeners.equals(sEnabledNotificationListeners)) {
+            final String[] components = enabledNotificationListeners.split(":");
+            Set<String> packageNames = new HashSet<String>(components.length);
+            for (String component : components) {
+                ComponentName componentName = ComponentName.unflattenFromString(component);
+                if (componentName != null) {
+                    packageNames.add(componentName.getPackageName());
                 }
+            }
+            synchronized (sEnabledNotificationListenersLock) {
                 sEnabledNotificationListenerPackages = packageNames;
                 sEnabledNotificationListeners = enabledNotificationListeners;
             }
-            return sEnabledNotificationListenerPackages;
         }
+        return sEnabledNotificationListenerPackages;
     }
 
     /**
@@ -366,8 +255,8 @@ public final class NotificationManagerCompat {
             if (sSideChannelManager == null) {
                 sSideChannelManager = new SideChannelManager(mContext.getApplicationContext());
             }
-            sSideChannelManager.queueTask(task);
         }
+        sSideChannelManager.queueTask(task);
     }
 
     /**

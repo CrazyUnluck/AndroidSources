@@ -20,6 +20,7 @@ import org.apache.harmony.dalvik.ddmc.Chunk;
 import org.apache.harmony.dalvik.ddmc.ChunkHandler;
 import org.apache.harmony.dalvik.ddmc.DdmServer;
 import android.util.Log;
+import java.nio.ByteBuffer;
 
 /**
  * Handle thread-related traffic.

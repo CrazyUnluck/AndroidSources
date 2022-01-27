@@ -16,7 +16,6 @@
 
 package android.printservice;
 
-import android.annotation.NonNull;
 import android.content.ComponentName;
 import android.content.Context;
 import android.content.pm.PackageManager;
@@ -55,8 +54,6 @@ public final class PrintServiceInfo implements Parcelable {
 
     private final String mId;
 
-    private boolean mIsEnabled;
-
     private final ResolveInfo mResolveInfo;
 
     private final String mSettingsActivityName;
@@ -72,7 +69,6 @@ public final class PrintServiceInfo implements Parcelable {
      */
     public PrintServiceInfo(Parcel parcel) {
         mId = parcel.readString();
-        mIsEnabled = parcel.readByte() != 0;
         mResolveInfo = parcel.readParcelable(null);
         mSettingsActivityName = parcel.readString();
         mAddPrintersActivityName = parcel.readString();
@@ -98,21 +94,12 @@ public final class PrintServiceInfo implements Parcelable {
     }
 
     /**
-     * Return the component name for this print service.
-     *
-     * @return The component name for this print service.
-     */
-    public @NonNull ComponentName getComponentName() {
-        return new ComponentName(mResolveInfo.serviceInfo.packageName,
-                mResolveInfo.serviceInfo.name);
-    }
-
-    /**
      * Creates a new instance.
      *
      * @param resolveInfo The service resolve info.
      * @param context Context for accessing resources.
-     * @return The created instance.
+     * @throws XmlPullParserException If a XML parsing error occurs.
+     * @throws IOException If a I/O error occurs.
      */
     public static PrintServiceInfo create(ResolveInfo resolveInfo, Context context) {
         String settingsActivityName = null;
@@ -183,24 +170,6 @@ public final class PrintServiceInfo implements Parcelable {
     }
 
     /**
-     * If the service was enabled when it was read from the system.
-     *
-     * @return The id.
-     */
-    public boolean isEnabled() {
-        return mIsEnabled;
-    }
-
-    /**
-     * Mark a service as enabled or not
-     *
-     * @param isEnabled If the service should be marked as enabled.
-     */
-    public void setIsEnabled(boolean isEnabled) {
-        mIsEnabled = isEnabled;
-    }
-
-    /**
      * The service {@link ResolveInfo}.
      *
      * @return The info.
@@ -251,15 +220,12 @@ public final class PrintServiceInfo implements Parcelable {
     /**
      * {@inheritDoc}
      */
-    @Override
     public int describeContents() {
         return 0;
     }
 
-    @Override
     public void writeToParcel(Parcel parcel, int flagz) {
         parcel.writeString(mId);
-        parcel.writeByte((byte)(mIsEnabled ? 1 : 0));
         parcel.writeParcelable(mResolveInfo, 0);
         parcel.writeString(mSettingsActivityName);
         parcel.writeString(mAddPrintersActivityName);
@@ -298,7 +264,6 @@ public final class PrintServiceInfo implements Parcelable {
         StringBuilder builder = new StringBuilder();
         builder.append("PrintServiceInfo{");
         builder.append("id=").append(mId);
-        builder.append("isEnabled=").append(mIsEnabled);
         builder.append(", resolveInfo=").append(mResolveInfo);
         builder.append(", settingsActivityName=").append(mSettingsActivityName);
         builder.append(", addPrintersActivityName=").append(mAddPrintersActivityName);
@@ -310,12 +275,10 @@ public final class PrintServiceInfo implements Parcelable {
 
     public static final Parcelable.Creator<PrintServiceInfo> CREATOR =
             new Parcelable.Creator<PrintServiceInfo>() {
-        @Override
         public PrintServiceInfo createFromParcel(Parcel parcel) {
             return new PrintServiceInfo(parcel);
         }
 
-        @Override
         public PrintServiceInfo[] newArray(int size) {
             return new PrintServiceInfo[size];
         }

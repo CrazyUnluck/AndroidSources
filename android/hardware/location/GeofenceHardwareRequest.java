@@ -16,16 +16,14 @@
 
 package android.hardware.location;
 
-import android.annotation.SystemApi;
+import android.location.Location;
 
 /**
  * This class represents the characteristics of the geofence.
  *
  * <p> Use this in conjunction with {@link GeofenceHardware} APIs.
- *
- * @hide
  */
-@SystemApi
+
 public final class GeofenceHardwareRequest {
     static final int GEOFENCE_TYPE_CIRCLE = 0;
     private int mType;
@@ -37,7 +35,6 @@ public final class GeofenceHardwareRequest {
     private int mMonitorTransitions = GeofenceHardware.GEOFENCE_UNCERTAIN |
         GeofenceHardware.GEOFENCE_ENTERED | GeofenceHardware.GEOFENCE_EXITED;
     private int mNotificationResponsiveness = 5000; // 5 secs
-    private int mSourceTechnologies = GeofenceHardware.SOURCE_TECHNOLOGY_GNSS;
 
     private void setCircularGeofence(double latitude, double longitude, double radius) {
         mLatitude = latitude;
@@ -107,28 +104,6 @@ public final class GeofenceHardwareRequest {
     }
 
     /**
-     * Set the source technologies to use while tracking the geofence.
-     * The value is the bit-wise of one or several source fields defined in
-     * {@link GeofenceHardware}.
-     *
-     * @param sourceTechnologies The set of source technologies to use.
-     */
-    public void setSourceTechnologies(int sourceTechnologies) {
-        int sourceTechnologiesAll = GeofenceHardware.SOURCE_TECHNOLOGY_GNSS
-                | GeofenceHardware.SOURCE_TECHNOLOGY_WIFI
-                | GeofenceHardware.SOURCE_TECHNOLOGY_SENSORS
-                | GeofenceHardware.SOURCE_TECHNOLOGY_CELL
-                | GeofenceHardware.SOURCE_TECHNOLOGY_BLUETOOTH;
-
-        int sanitizedSourceTechnologies = (sourceTechnologies & sourceTechnologiesAll);
-        if (sanitizedSourceTechnologies == 0) {
-            throw new IllegalArgumentException("At least one valid source technology must be set.");
-        }
-
-        mSourceTechnologies = sanitizedSourceTechnologies;
-    }
-
-    /**
      * Returns the latitude of this geofence.
      */
     public double getLatitude() {
@@ -175,13 +150,6 @@ public final class GeofenceHardwareRequest {
      */
     public int getLastTransition() {
         return mLastTransition;
-    }
-
-    /**
-     * Returns the source technologies to track this geofence.
-     */
-    public int getSourceTechnologies() {
-        return mSourceTechnologies;
     }
 
     int getType() {

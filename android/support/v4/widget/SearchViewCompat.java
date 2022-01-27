@@ -27,7 +27,7 @@ import android.widget.TextView;
  * Helper for accessing features in {@link android.widget.SearchView}
  * introduced after API level 4 in a backwards compatible fashion.
  */
-public final class SearchViewCompat {
+public class SearchViewCompat {
 
     interface SearchViewCompatImpl {
         View newSearchView(Context context);

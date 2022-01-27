@@ -170,7 +170,7 @@ public class ShareActionProvider extends ActionProvider {
         // Lookup and set the expand action icon.
         TypedValue outTypedValue = new TypedValue();
         mContext.getTheme().resolveAttribute(R.attr.actionModeShareDrawable, outTypedValue, true);
-        Drawable drawable = mContext.getDrawable(outTypedValue.resourceId);
+        Drawable drawable = mContext.getResources().getDrawable(outTypedValue.resourceId);
         activityChooserView.setExpandActivityOverflowButtonDrawable(drawable);
         activityChooserView.setProvider(this);
 
@@ -276,13 +276,6 @@ public class ShareActionProvider extends ActionProvider {
      * @see Intent#ACTION_SEND_MULTIPLE
      */
     public void setShareIntent(Intent shareIntent) {
-        if (shareIntent != null) {
-            final String action = shareIntent.getAction();
-            if (Intent.ACTION_SEND.equals(action) || Intent.ACTION_SEND_MULTIPLE.equals(action)) {
-                shareIntent.addFlags(Intent.FLAG_ACTIVITY_NEW_DOCUMENT |
-                        Intent.FLAG_ACTIVITY_MULTIPLE_TASK);
-            }
-        }
         ActivityChooserModel dataModel = ActivityChooserModel.get(mContext,
             mShareHistoryFileName);
         dataModel.setIntent(shareIntent);
@@ -299,12 +292,7 @@ public class ShareActionProvider extends ActionProvider {
             final int itemId = item.getItemId();
             Intent launchIntent = dataModel.chooseActivity(itemId);
             if (launchIntent != null) {
-                final String action = launchIntent.getAction();
-                if (Intent.ACTION_SEND.equals(action) ||
-                        Intent.ACTION_SEND_MULTIPLE.equals(action)) {
-                    launchIntent.addFlags(Intent.FLAG_ACTIVITY_NEW_DOCUMENT |
-                            Intent.FLAG_ACTIVITY_MULTIPLE_TASK);
-                }
+                launchIntent.addFlags(Intent.FLAG_ACTIVITY_CLEAR_WHEN_TASK_RESET);
                 mContext.startActivity(launchIntent);
             }
             return true;
@@ -320,7 +308,7 @@ public class ShareActionProvider extends ActionProvider {
             return;
         }
         if (mOnChooseActivityListener == null) {
-            mOnChooseActivityListener = new ShareActivityChooserModelPolicy();
+            mOnChooseActivityListener = new ShareAcitivityChooserModelPolicy();
         }
         ActivityChooserModel dataModel = ActivityChooserModel.get(mContext, mShareHistoryFileName);
         dataModel.setOnChooseActivityListener(mOnChooseActivityListener);
@@ -329,7 +317,7 @@ public class ShareActionProvider extends ActionProvider {
     /**
      * Policy that delegates to the {@link OnShareTargetSelectedListener}, if such.
      */
-    private class ShareActivityChooserModelPolicy implements OnChooseActivityListener {
+    private class ShareAcitivityChooserModelPolicy implements OnChooseActivityListener {
         @Override
         public boolean onChooseActivity(ActivityChooserModel host, Intent intent) {
             if (mOnShareTargetSelectedListener != null) {

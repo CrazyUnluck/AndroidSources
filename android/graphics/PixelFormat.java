@@ -16,18 +16,8 @@
 
 package android.graphics;
 
-import android.annotation.IntDef;
-
-import java.lang.annotation.Retention;
-import java.lang.annotation.RetentionPolicy;
-
-public class PixelFormat {
-
-    /** @hide */
-    @IntDef({UNKNOWN, TRANSLUCENT, TRANSPARENT, OPAQUE})
-    @Retention(RetentionPolicy.SOURCE)
-    public @interface Opacity {}
-
+public class PixelFormat
+{
     /* these constants need to match those in hardware/hardware.h */
 
     public static final int UNKNOWN     = 0;
@@ -125,7 +115,7 @@ public class PixelFormat {
                 info.bytesPerPixel = 1;
                 break;
             default:
-                throw new IllegalArgumentException("unknown pixel format " + format);
+                throw new IllegalArgumentException("unkonwon pixel format " + format);
         }
     }
 
@@ -145,29 +135,4 @@ public class PixelFormat {
 
     public int  bytesPerPixel;
     public int  bitsPerPixel;
-
-    /**
-     * Determine whether or not this is a public-visible and non-deprecated {@code format}.
-     *
-     * <p>In particular, {@code @hide} formats will return {@code false}.</p>
-     *
-     * <p>Any other indirect formats (such as {@code TRANSPARENT} or {@code TRANSLUCENT})
-     * will return {@code false}.</p>
-     *
-     * @param format an integer format
-     * @return a boolean
-     *
-     * @hide
-     */
-    public static boolean isPublicFormat(int format) {
-        switch (format) {
-            case RGBA_8888:
-            case RGBX_8888:
-            case RGB_888:
-            case RGB_565:
-                return true;
-        }
-
-        return false;
-    }
 }

@@ -39,23 +39,17 @@ public class ProcessMap<E> {
         return value;
     }
     
-    public E remove(String name, int uid) {
+    public void remove(String name, int uid) {
         SparseArray<E> uids = mMap.get(name);
         if (uids != null) {
-            final E old = uids.removeReturnOld(uid);
+            uids.remove(uid);
             if (uids.size() == 0) {
                 mMap.remove(name);
             }
-            return old;
         }
-        return null;
     }
     
     public ArrayMap<String, SparseArray<E>> getMap() {
         return mMap;
-    }
-
-    public int size() {
-        return mMap.size();
     }
 }

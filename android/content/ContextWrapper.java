@@ -16,7 +16,9 @@
 
 package android.content;
 
-import android.annotation.SystemApi;
+import android.app.Activity;
+import android.app.ActivityManagerNative;
+import android.app.LoadedApk;
 import android.content.pm.ApplicationInfo;
 import android.content.pm.PackageManager;
 import android.content.res.AssetManager;
@@ -30,11 +32,11 @@ import android.graphics.drawable.Drawable;
 import android.net.Uri;
 import android.os.Bundle;
 import android.os.Handler;
-import android.os.IBinder;
 import android.os.Looper;
+import android.os.RemoteException;
 import android.os.UserHandle;
-import android.view.Display;
 import android.view.DisplayAdjustments;
+import android.view.Display;
 
 import java.io.File;
 import java.io.FileInputStream;
@@ -82,7 +84,8 @@ public class ContextWrapper extends Context {
     }
 
     @Override
-    public Resources getResources() {
+    public Resources getResources()
+    {
         return mBase.getResources();
     }
 
@@ -159,25 +162,15 @@ public class ContextWrapper extends Context {
         return mBase.getPackageCodePath();
     }
 
+    /** @hide */
+    @Override
+    public File getSharedPrefsFile(String name) {
+        return mBase.getSharedPrefsFile(name);
+    }
+
     @Override
     public SharedPreferences getSharedPreferences(String name, int mode) {
         return mBase.getSharedPreferences(name, mode);
-    }
-
-    /** @removed */
-    @Override
-    public SharedPreferences getSharedPreferences(File file, int mode) {
-        return mBase.getSharedPreferences(file, mode);
-    }
-
-    @Override
-    public boolean moveSharedPreferencesFrom(Context sourceContext, String name) {
-        return mBase.moveSharedPreferencesFrom(sourceContext, name);
-    }
-
-    @Override
-    public boolean deleteSharedPreferences(String name) {
-        return mBase.deleteSharedPreferences(name);
     }
 
     @Override
@@ -202,32 +195,16 @@ public class ContextWrapper extends Context {
         return mBase.getFileStreamPath(name);
     }
 
-    /** @removed */
-    @Override
-    public File getSharedPreferencesPath(String name) {
-        return mBase.getSharedPreferencesPath(name);
-    }
-
     @Override
     public String[] fileList() {
         return mBase.fileList();
     }
 
     @Override
-    public File getDataDir() {
-        return mBase.getDataDir();
-    }
-
-    @Override
     public File getFilesDir() {
         return mBase.getFilesDir();
     }
-
-    @Override
-    public File getNoBackupFilesDir() {
-        return mBase.getNoBackupFilesDir();
-    }
-
+    
     @Override
     public File getExternalFilesDir(String type) {
         return mBase.getExternalFilesDir(type);
@@ -254,11 +231,6 @@ public class ContextWrapper extends Context {
     }
 
     @Override
-    public File getCodeCacheDir() {
-        return mBase.getCodeCacheDir();
-    }
-
-    @Override
     public File getExternalCacheDir() {
         return mBase.getExternalCacheDir();
     }
@@ -266,11 +238,6 @@ public class ContextWrapper extends Context {
     @Override
     public File[] getExternalCacheDirs() {
         return mBase.getExternalCacheDirs();
-    }
-
-    @Override
-    public File[] getExternalMediaDirs() {
-        return mBase.getExternalMediaDirs();
     }
 
     @Override
@@ -290,11 +257,6 @@ public class ContextWrapper extends Context {
     }
 
     @Override
-    public boolean moveDatabaseFrom(Context sourceContext, String name) {
-        return mBase.moveDatabaseFrom(sourceContext, name);
-    }
-
-    @Override
     public boolean deleteDatabase(String name) {
         return mBase.deleteDatabase(name);
     }
@@ -310,43 +272,36 @@ public class ContextWrapper extends Context {
     }
 
     @Override
-    @Deprecated
     public Drawable getWallpaper() {
         return mBase.getWallpaper();
     }
 
     @Override
-    @Deprecated
     public Drawable peekWallpaper() {
         return mBase.peekWallpaper();
     }
 
     @Override
-    @Deprecated
     public int getWallpaperDesiredMinimumWidth() {
         return mBase.getWallpaperDesiredMinimumWidth();
     }
 
     @Override
-    @Deprecated
     public int getWallpaperDesiredMinimumHeight() {
         return mBase.getWallpaperDesiredMinimumHeight();
     }
 
     @Override
-    @Deprecated
     public void setWallpaper(Bitmap bitmap) throws IOException {
         mBase.setWallpaper(bitmap);
     }
 
     @Override
-    @Deprecated
     public void setWallpaper(InputStream data) throws IOException {
         mBase.setWallpaper(data);
     }
 
     @Override
-    @Deprecated
     public void clearWallpaper() throws IOException {
         mBase.clearWallpaper();
     }
@@ -360,17 +315,6 @@ public class ContextWrapper extends Context {
     @Override
     public void startActivityAsUser(Intent intent, UserHandle user) {
         mBase.startActivityAsUser(intent, user);
-    }
-
-    /** @hide **/
-    public void startActivityForResult(
-            String who, Intent intent, int requestCode, Bundle options) {
-        mBase.startActivityForResult(who, intent, requestCode, options);
-    }
-
-    /** @hide **/
-    public boolean canStartActivityForResult() {
-        return mBase.canStartActivityForResult();
     }
 
     @Override
@@ -428,19 +372,6 @@ public class ContextWrapper extends Context {
 
     /** @hide */
     @Override
-    public void sendBroadcastMultiplePermissions(Intent intent, String[] receiverPermissions) {
-        mBase.sendBroadcastMultiplePermissions(intent, receiverPermissions);
-    }
-
-    /** @hide */
-    @SystemApi
-    @Override
-    public void sendBroadcast(Intent intent, String receiverPermission, Bundle options) {
-        mBase.sendBroadcast(intent, receiverPermission, options);
-    }
-
-    /** @hide */
-    @Override
     public void sendBroadcast(Intent intent, String receiverPermission, int appOp) {
         mBase.sendBroadcast(intent, receiverPermission, appOp);
     }
@@ -458,18 +389,6 @@ public class ContextWrapper extends Context {
         Bundle initialExtras) {
         mBase.sendOrderedBroadcast(intent, receiverPermission,
                 resultReceiver, scheduler, initialCode,
-                initialData, initialExtras);
-    }
-
-    /** @hide */
-    @SystemApi
-    @Override
-    public void sendOrderedBroadcast(
-            Intent intent, String receiverPermission, Bundle options, BroadcastReceiver resultReceiver,
-            Handler scheduler, int initialCode, String initialData,
-            Bundle initialExtras) {
-        mBase.sendOrderedBroadcast(intent, receiverPermission,
-                options, resultReceiver, scheduler, initialCode,
                 initialData, initialExtras);
     }
 
@@ -495,13 +414,6 @@ public class ContextWrapper extends Context {
         mBase.sendBroadcastAsUser(intent, user, receiverPermission);
     }
 
-    /** @hide */
-    @Override
-    public void sendBroadcastAsUser(Intent intent, UserHandle user,
-            String receiverPermission, int appOp) {
-        mBase.sendBroadcastAsUser(intent, user, receiverPermission, appOp);
-    }
-
     @Override
     public void sendOrderedBroadcastAsUser(Intent intent, UserHandle user,
             String receiverPermission, BroadcastReceiver resultReceiver, Handler scheduler,
@@ -510,32 +422,12 @@ public class ContextWrapper extends Context {
                 scheduler, initialCode, initialData, initialExtras);
     }
 
-    /** @hide */
     @Override
-    public void sendOrderedBroadcastAsUser(Intent intent, UserHandle user,
-            String receiverPermission, int appOp, BroadcastReceiver resultReceiver,
-            Handler scheduler, int initialCode, String initialData, Bundle initialExtras) {
-        mBase.sendOrderedBroadcastAsUser(intent, user, receiverPermission, appOp, resultReceiver,
-                scheduler, initialCode, initialData, initialExtras);
-    }
-
-    /** @hide */
-    @Override
-    public void sendOrderedBroadcastAsUser(Intent intent, UserHandle user,
-            String receiverPermission, int appOp, Bundle options, BroadcastReceiver resultReceiver,
-            Handler scheduler, int initialCode, String initialData, Bundle initialExtras) {
-        mBase.sendOrderedBroadcastAsUser(intent, user, receiverPermission, appOp, options,
-                resultReceiver, scheduler, initialCode, initialData, initialExtras);
-    }
-
-    @Override
-    @Deprecated
     public void sendStickyBroadcast(Intent intent) {
         mBase.sendStickyBroadcast(intent);
     }
 
     @Override
-    @Deprecated
     public void sendStickyOrderedBroadcast(
         Intent intent, BroadcastReceiver resultReceiver,
         Handler scheduler, int initialCode, String initialData,
@@ -546,26 +438,16 @@ public class ContextWrapper extends Context {
     }
 
     @Override
-    @Deprecated
     public void removeStickyBroadcast(Intent intent) {
         mBase.removeStickyBroadcast(intent);
     }
 
     @Override
-    @Deprecated
     public void sendStickyBroadcastAsUser(Intent intent, UserHandle user) {
         mBase.sendStickyBroadcastAsUser(intent, user);
     }
 
-    /** @hide */
     @Override
-    @Deprecated
-    public void sendStickyBroadcastAsUser(Intent intent, UserHandle user, Bundle options) {
-        mBase.sendStickyBroadcastAsUser(intent, user, options);
-    }
-
-    @Override
-    @Deprecated
     public void sendStickyOrderedBroadcastAsUser(Intent intent,
             UserHandle user, BroadcastReceiver resultReceiver,
             Handler scheduler, int initialCode, String initialData,
@@ -575,7 +457,6 @@ public class ContextWrapper extends Context {
     }
 
     @Override
-    @Deprecated
     public void removeStickyBroadcastAsUser(Intent intent, UserHandle user) {
         mBase.removeStickyBroadcastAsUser(intent, user);
     }
@@ -660,19 +541,8 @@ public class ContextWrapper extends Context {
     }
 
     @Override
-    public String getSystemServiceName(Class<?> serviceClass) {
-        return mBase.getSystemServiceName(serviceClass);
-    }
-
-    @Override
     public int checkPermission(String permission, int pid, int uid) {
         return mBase.checkPermission(permission, pid, uid);
-    }
-
-    /** @hide */
-    @Override
-    public int checkPermission(String permission, int pid, int uid, IBinder callerToken) {
-        return mBase.checkPermission(permission, pid, uid, callerToken);
     }
 
     @Override
@@ -683,11 +553,6 @@ public class ContextWrapper extends Context {
     @Override
     public int checkCallingOrSelfPermission(String permission) {
         return mBase.checkCallingOrSelfPermission(permission);
-    }
-
-    @Override
-    public int checkSelfPermission(String permission) {
-       return mBase.checkSelfPermission(permission);
     }
 
     @Override
@@ -720,12 +585,6 @@ public class ContextWrapper extends Context {
     @Override
     public int checkUriPermission(Uri uri, int pid, int uid, int modeFlags) {
         return mBase.checkUriPermission(uri, pid, uid, modeFlags);
-    }
-
-    /** @hide */
-    @Override
-    public int checkUriPermission(Uri uri, int pid, int uid, int modeFlags, IBinder callerToken) {
-        return mBase.checkUriPermission(uri, pid, uid, modeFlags, callerToken);
     }
 
     @Override
@@ -787,13 +646,6 @@ public class ContextWrapper extends Context {
 
     /** @hide */
     @Override
-    public Context createApplicationContext(ApplicationInfo application,
-            int flags) throws PackageManager.NameNotFoundException {
-        return mBase.createApplicationContext(application, flags);
-    }
-
-    /** @hide */
-    @Override
     public int getUserId() {
         return mBase.getUserId();
     }
@@ -817,37 +669,5 @@ public class ContextWrapper extends Context {
     @Override
     public DisplayAdjustments getDisplayAdjustments(int displayId) {
         return mBase.getDisplayAdjustments(displayId);
-    }
-
-    /**
-     * @hide
-     */
-    @Override
-    public Display getDisplay() {
-        return mBase.getDisplay();
-    }
-
-    @Override
-    public Context createDeviceProtectedStorageContext() {
-        return mBase.createDeviceProtectedStorageContext();
-    }
-
-    /** {@hide} */
-    @SystemApi
-    @Override
-    public Context createCredentialProtectedStorageContext() {
-        return mBase.createCredentialProtectedStorageContext();
-    }
-
-    @Override
-    public boolean isDeviceProtectedStorage() {
-        return mBase.isDeviceProtectedStorage();
-    }
-
-    /** {@hide} */
-    @SystemApi
-    @Override
-    public boolean isCredentialProtectedStorage() {
-        return mBase.isCredentialProtectedStorage();
     }
 }

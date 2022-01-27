@@ -16,7 +16,6 @@
 
 package android.app.backup;
 
-import android.annotation.SystemApi;
 import android.app.backup.RestoreObserver;
 import android.app.backup.RestoreSet;
 import android.app.backup.IRestoreObserver;
@@ -31,7 +30,6 @@ import android.util.Log;
  * Interface for managing a restore session.
  * @hide
  */
-@SystemApi
 public class RestoreSession {
     static final String TAG = "RestoreSession";
 

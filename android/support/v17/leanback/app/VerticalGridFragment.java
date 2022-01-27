@@ -14,51 +14,111 @@
 package android.support.v17.leanback.app;
 
 import android.support.v17.leanback.R;
-import android.support.v17.leanback.transition.TransitionHelper;
-import android.support.v17.leanback.widget.BrowseFrameLayout;
-import android.support.v17.leanback.widget.OnChildLaidOutListener;
-import android.support.v17.leanback.widget.OnItemViewClickedListener;
-import android.support.v17.leanback.widget.OnItemViewSelectedListener;
-import android.support.v17.leanback.widget.Presenter;
-import android.support.v17.leanback.widget.Row;
-import android.support.v17.leanback.widget.RowPresenter;
 import android.support.v17.leanback.widget.VerticalGridPresenter;
 import android.support.v17.leanback.widget.ObjectAdapter;
-import android.os.Bundle;
+import android.support.v17.leanback.widget.OnItemClickedListener;
+import android.support.v17.leanback.widget.OnItemSelectedListener;
+import android.support.v17.leanback.widget.Presenter;
+import android.support.v17.leanback.widget.PresenterSelector;
+import android.support.v17.leanback.widget.RowPresenter;
+import android.support.v17.leanback.widget.SearchOrbView;
+import android.support.v17.leanback.widget.VerticalGridView;
 import android.util.Log;
+import android.app.Fragment;
+import android.graphics.drawable.Drawable;
+import android.os.Bundle;
 import android.view.LayoutInflater;
 import android.view.View;
 import android.view.ViewGroup;
+import android.widget.ImageView;
+import android.widget.TextView;
 
 /**
- * A fragment for creating leanback vertical grids.
+ * Leanback fragment for a vertical grid.
  *
- * <p>Renders a vertical grid of objects given a {@link VerticalGridPresenter} and
+ * Renders a vertical grid of objects given a {@link VerticalGridPresenter} and
  * an {@link ObjectAdapter}.
  */
-public class VerticalGridFragment extends BaseFragment {
+public class VerticalGridFragment extends Fragment {
     private static final String TAG = "VerticalGridFragment";
     private static boolean DEBUG = false;
 
+    private Params mParams;
     private ObjectAdapter mAdapter;
     private VerticalGridPresenter mGridPresenter;
     private VerticalGridPresenter.ViewHolder mGridViewHolder;
-    private OnItemViewSelectedListener mOnItemViewSelectedListener;
-    private OnItemViewClickedListener mOnItemViewClickedListener;
-    private Object mSceneAfterEntranceTransition;
+    private OnItemSelectedListener mOnItemSelectedListener;
+    private OnItemClickedListener mOnItemClickedListener;
+    private View.OnClickListener mExternalOnSearchClickedListener;
     private int mSelectedPosition = -1;
 
+    private ImageView mBadgeView;
+    private TextView mTitleView;
+    private ViewGroup mBrowseTitle;
+    private SearchOrbView mSearchOrbView;
+
+    public static class Params {
+        private String mTitle;
+        private Drawable mBadgeDrawable;
+
+        /**
+         * Sets the badge image.
+         */
+        public void setBadgeImage(Drawable drawable) {
+            mBadgeDrawable = drawable;
+        }
+
+        /**
+         * Returns the badge image.
+         */
+        public Drawable getBadgeImage() {
+            return mBadgeDrawable;
+        }
+
+        /**
+         * Sets a title for the browse fragment.
+         */
+        public void setTitle(String title) {
+            mTitle = title;
+        }
+
+        /**
+         * Returns the title for the browse fragment.
+         */
+        public String getTitle() {
+            return mTitle;
+        }
+    }
+
     /**
-     * Sets the grid presenter.
+     * Set fragment parameters.
+     */
+    public void setParams(Params params) {
+        mParams = params;
+        setBadgeDrawable(mParams.mBadgeDrawable);
+        setTitle(mParams.mTitle);
+    }
+
+    /**
+     * Returns fragment parameters.
+     */
+    public Params getParams() {
+        return mParams;
+    }
+
+    /**
+     * Set the grid presenter.
      */
     public void setGridPresenter(VerticalGridPresenter gridPresenter) {
         if (gridPresenter == null) {
             throw new IllegalArgumentException("Grid presenter may not be null");
         }
         mGridPresenter = gridPresenter;
-        mGridPresenter.setOnItemViewSelectedListener(mViewSelectedListener);
-        if (mOnItemViewClickedListener != null) {
-            mGridPresenter.setOnItemViewClickedListener(mOnItemViewClickedListener);
+        if (mOnItemSelectedListener != null) {
+            mGridPresenter.setOnItemSelectedListener(mOnItemSelectedListener);
+        }
+        if (mOnItemClickedListener != null) {
+            mGridPresenter.setOnItemClickedListener(mOnItemClickedListener);
         }
     }
 
@@ -84,116 +144,104 @@ public class VerticalGridFragment extends BaseFragment {
         return mAdapter;
     }
 
-    final private OnItemViewSelectedListener mViewSelectedListener =
-            new OnItemViewSelectedListener() {
-        @Override
-        public void onItemSelected(Presenter.ViewHolder itemViewHolder, Object item,
-                RowPresenter.ViewHolder rowViewHolder, Row row) {
-            int position = mGridViewHolder.getGridView().getSelectedPosition();
-            if (DEBUG) Log.v(TAG, "grid selected position " + position);
-            gridOnItemSelected(position);
-            if (mOnItemViewSelectedListener != null) {
-                mOnItemViewSelectedListener.onItemSelected(itemViewHolder, item,
-                        rowViewHolder, row);
-            }
-        }
-    };
-
-    final private OnChildLaidOutListener mChildLaidOutListener =
-            new OnChildLaidOutListener() {
-        @Override
-        public void onChildLaidOut(ViewGroup parent, View view, int position, long id) {
-            if (position == 0) {
-                showOrHideTitle();
-            }
-        }
-    };
-
     /**
      * Sets an item selection listener.
      */
-    public void setOnItemViewSelectedListener(OnItemViewSelectedListener listener) {
-        mOnItemViewSelectedListener = listener;
-    }
-
-    private void gridOnItemSelected(int position) {
-        if (position != mSelectedPosition) {
-            mSelectedPosition = position;
-            showOrHideTitle();
+    public void setOnItemSelectedListener(OnItemSelectedListener listener) {
+        mOnItemSelectedListener = listener;
+        if (mGridPresenter != null) {
+            mGridPresenter.setOnItemSelectedListener(mOnItemSelectedListener);
         }
     }
 
-    private void showOrHideTitle() {
-        if (mGridViewHolder.getGridView().findViewHolderForAdapterPosition(mSelectedPosition)
-                == null) {
-            return;
-        }
-        if (!mGridViewHolder.getGridView().hasPreviousViewInSameRow(mSelectedPosition)) {
-            showTitle(true);
-        } else {
-            showTitle(false);
-        }
-    }
+    // TODO: getitemselectedlistener?
 
     /**
      * Sets an item clicked listener.
      */
-    public void setOnItemViewClickedListener(OnItemViewClickedListener listener) {
-        mOnItemViewClickedListener = listener;
+    public void setOnItemClickedListener(OnItemClickedListener listener) {
+        mOnItemClickedListener = listener;
         if (mGridPresenter != null) {
-            mGridPresenter.setOnItemViewClickedListener(mOnItemViewClickedListener);
+            mGridPresenter.setOnItemClickedListener(mOnItemClickedListener);
         }
     }
 
     /**
      * Returns the item clicked listener.
      */
-    public OnItemViewClickedListener getOnItemViewClickedListener() {
-        return mOnItemViewClickedListener;
+    public OnItemClickedListener getOnItemClickedListener() {
+        return mOnItemClickedListener;
+    }
+
+    /**
+     * Sets a click listener for the search affordance.
+     *
+     * The presence of a listener will change the visibility of the search affordance in the
+     * title area. When set to non-null the title area will contain a call to search action.
+     *
+     * The listener onClick method will be invoked when the user click on the search action.
+     *
+     * @param listener The listener.
+     */
+    public void setOnSearchClickedListener(View.OnClickListener listener) {
+        mExternalOnSearchClickedListener = listener;
+        if (mSearchOrbView != null) {
+            mSearchOrbView.setOnOrbClickedListener(listener);
+        }
+    }
+
+    private void setBadgeDrawable(Drawable drawable) {
+        if (mBadgeView == null) {
+            return;
+        }
+        mBadgeView.setImageDrawable(drawable);
+        if (drawable != null) {
+            mBadgeView.setVisibility(View.VISIBLE);
+        } else {
+            mBadgeView.setVisibility(View.GONE);
+        }
+    }
+
+    private void setTitle(String title) {
+        if (mTitleView != null) {
+            mTitleView.setText(title);
+        }
     }
 
     @Override
     public View onCreateView(LayoutInflater inflater, ViewGroup container,
             Bundle savedInstanceState) {
-        ViewGroup root = (ViewGroup) inflater.inflate(R.layout.lb_vertical_grid_fragment,
-                container, false);
-        ViewGroup gridFrame = (ViewGroup) root.findViewById(R.id.grid_frame);
-        installTitleView(inflater, gridFrame, savedInstanceState);
-        getProgressBarManager().setRootView(root);
+        View root = inflater.inflate(R.layout.lb_vertical_grid_fragment, container, false);
+
+        mBrowseTitle = (ViewGroup) root.findViewById(R.id.browse_title_group);
+        mBadgeView = (ImageView) mBrowseTitle.findViewById(R.id.browse_badge);
+        mTitleView = (TextView) mBrowseTitle.findViewById(R.id.browse_title);
+        mSearchOrbView = (SearchOrbView) mBrowseTitle.findViewById(R.id.browse_orb);
+        if (mExternalOnSearchClickedListener != null) {
+            mSearchOrbView.setOnOrbClickedListener(mExternalOnSearchClickedListener);
+        }
+
+        if (mParams != null) {
+            setBadgeDrawable(mParams.mBadgeDrawable);
+            setTitle(mParams.mTitle);
+        }
+
         return root;
     }
 
     @Override
     public void onViewCreated(View view, Bundle savedInstanceState) {
-        super.onViewCreated(view, savedInstanceState);
         ViewGroup gridDock = (ViewGroup) view.findViewById(R.id.browse_grid_dock);
         mGridViewHolder = mGridPresenter.onCreateViewHolder(gridDock);
         gridDock.addView(mGridViewHolder.view);
-        mGridViewHolder.getGridView().setOnChildLaidOutListener(mChildLaidOutListener);
-
-        mSceneAfterEntranceTransition = TransitionHelper.createScene(gridDock, new Runnable() {
-            @Override
-            public void run() {
-                setEntranceTransitionState(true);
-            }
-        });
 
         updateAdapter();
-    }
-
-    private void setupFocusSearchListener() {
-        BrowseFrameLayout browseFrameLayout = (BrowseFrameLayout) getView().findViewById(
-                R.id.grid_frame);
-        browseFrameLayout.setOnFocusSearchListener(getTitleHelper().getOnFocusSearchListener());
     }
 
     @Override
     public void onStart() {
         super.onStart();
-        setupFocusSearchListener();
-        if (isEntranceTransitionEnabled()) {
-            setEntranceTransitionState(false);
-        }
+        mGridViewHolder.getGridView().requestFocus();
     }
 
     @Override
@@ -219,20 +267,5 @@ public class VerticalGridFragment extends BaseFragment {
                 mGridViewHolder.getGridView().setSelectedPosition(mSelectedPosition);
             }
         }
-    }
-
-    @Override
-    protected Object createEntranceTransition() {
-        return TransitionHelper.loadTransition(getActivity(),
-                R.transition.lb_vertical_grid_entrance_transition);
-    }
-
-    @Override
-    protected void runEntranceTransition(Object entranceTransition) {
-        TransitionHelper.runTransition(mSceneAfterEntranceTransition, entranceTransition);
-    }
-
-    void setEntranceTransitionState(boolean afterTransition) {
-        mGridPresenter.setEntranceTransitionState(mGridViewHolder, afterTransition);
     }
 }

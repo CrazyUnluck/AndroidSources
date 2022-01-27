@@ -17,51 +17,41 @@
 package com.android.keyguard;
 
 import com.android.internal.telephony.ITelephony;
-import com.android.internal.telephony.IccCardConstants;
-import com.android.internal.telephony.IccCardConstants.State;
 import com.android.internal.telephony.PhoneConstants;
 
 import android.content.Context;
-import android.content.res.ColorStateList;
-import android.content.res.Configuration;
-import android.content.res.Resources;
+import android.content.DialogInterface;
+import android.app.Activity;
 import android.app.AlertDialog;
 import android.app.AlertDialog.Builder;
 import android.app.Dialog;
 import android.app.ProgressDialog;
-import android.graphics.Color;
+import android.os.Message;
 import android.os.RemoteException;
 import android.os.ServiceManager;
-import android.telephony.SubscriptionInfo;
-import android.telephony.SubscriptionManager;
-import android.telephony.TelephonyManager;
+import android.text.Editable;
+import android.text.InputType;
+import android.text.TextWatcher;
+import android.text.method.DigitsKeyListener;
 import android.util.AttributeSet;
+import android.view.View;
 import android.util.Log;
 import android.view.WindowManager;
-import android.widget.ImageView;
+import android.widget.TextView.OnEditorActionListener;
 
 /**
  * Displays a PIN pad for unlocking.
  */
-public class KeyguardSimPinView extends KeyguardPinBasedInputView {
+public class KeyguardSimPinView extends KeyguardAbsKeyInputView
+        implements KeyguardSecurityView, OnEditorActionListener, TextWatcher {
     private static final String LOG_TAG = "KeyguardSimPinView";
-    private static final boolean DEBUG = KeyguardConstants.DEBUG_SIM_STATES;
+    private static final boolean DEBUG = KeyguardViewMediator.DEBUG;
     public static final String TAG = "KeyguardSimPinView";
 
     private ProgressDialog mSimUnlockProgressDialog = null;
     private CheckSimPin mCheckSimPinThread;
 
     private AlertDialog mRemainingAttemptsDialog;
-    private int mSubId;
-    private ImageView mSimImageView;
-
-    KeyguardUpdateMonitorCallback mUpdateMonitorCallback = new KeyguardUpdateMonitorCallback() {
-        @Override
-        public void onSimStateChanged(int subId, int slotId, State simState) {
-           if (DEBUG) Log.v(TAG, "onSimStateChanged(subId=" + subId + ",state=" + simState + ")");
-           resetState();
-       };
-    };
 
     public KeyguardSimPinView(Context context) {
         this(context, null);
@@ -71,42 +61,9 @@ public class KeyguardSimPinView extends KeyguardPinBasedInputView {
         super(context, attrs);
     }
 
-    @Override
     public void resetState() {
-        super.resetState();
-        if (DEBUG) Log.v(TAG, "Resetting state");
-        KeyguardUpdateMonitor monitor = KeyguardUpdateMonitor.getInstance(mContext);
-        mSubId = monitor.getNextSubIdForState(IccCardConstants.State.PIN_REQUIRED);
-        if (SubscriptionManager.isValidSubscriptionId(mSubId)) {
-            int count = TelephonyManager.getDefault().getSimCount();
-            Resources rez = getResources();
-            final String msg;
-            int color = Color.WHITE;
-            if (count < 2) {
-                msg = rez.getString(R.string.kg_sim_pin_instructions);
-            } else {
-                SubscriptionInfo info = monitor.getSubscriptionInfoForSubId(mSubId);
-                CharSequence displayName = info != null ? info.getDisplayName() : ""; // don't crash
-                msg = rez.getString(R.string.kg_sim_pin_instructions_multi, displayName);
-                if (info != null) {
-                    color = info.getIconTint();
-                }
-            }
-            mSecurityMessageDisplay.setMessage(msg, true);
-            mSimImageView.setImageTintList(ColorStateList.valueOf(color));
-        }
-    }
-
-    @Override
-    protected void onConfigurationChanged(Configuration newConfig) {
-        super.onConfigurationChanged(newConfig);
-        resetState();
-    }
-
-    @Override
-    protected int getPromtReasonStringRes(int reason) {
-        // No message on SIM Pin
-        return 0;
+        mSecurityMessageDisplay.setMessage(R.string.kg_sim_pin_instructions, true);
+        mPasswordEntry.setEnabled(true);
     }
 
     private String getPinPasswordErrorMessage(int attemptsRemaining) {
@@ -134,30 +91,54 @@ public class KeyguardSimPinView extends KeyguardPinBasedInputView {
 
     @Override
     protected int getPasswordTextViewId() {
-        return R.id.simPinEntry;
+        return R.id.pinEntry;
     }
 
     @Override
     protected void onFinishInflate() {
         super.onFinishInflate();
 
-        mSecurityMessageDisplay.setTimeout(0); // don't show ownerinfo/charging status by default
-        if (mEcaView instanceof EmergencyCarrierArea) {
-            ((EmergencyCarrierArea) mEcaView).setCarrierTextVisible(true);
+        final View ok = findViewById(R.id.key_enter);
+        if (ok != null) {
+            ok.setOnClickListener(new View.OnClickListener() {
+                @Override
+                public void onClick(View v) {
+                    doHapticKeyClick();
+                    verifyPasswordAndUnlock();
+                }
+            });
         }
-        mSimImageView = (ImageView) findViewById(R.id.keyguard_sim);
-    }
 
-    @Override
-    protected void onAttachedToWindow() {
-        super.onAttachedToWindow();
-        KeyguardUpdateMonitor.getInstance(mContext).registerCallback(mUpdateMonitorCallback);
-    }
+        // The delete button is of the PIN keyboard itself in some (e.g. tablet) layouts,
+        // not a separate view
+        View pinDelete = findViewById(R.id.delete_button);
+        if (pinDelete != null) {
+            pinDelete.setVisibility(View.VISIBLE);
+            pinDelete.setOnClickListener(new OnClickListener() {
+                public void onClick(View v) {
+                    CharSequence str = mPasswordEntry.getText();
+                    if (str.length() > 0) {
+                        mPasswordEntry.setText(str.subSequence(0, str.length()-1));
+                    }
+                    doHapticKeyClick();
+                }
+            });
+            pinDelete.setOnLongClickListener(new View.OnLongClickListener() {
+                public boolean onLongClick(View v) {
+                    mPasswordEntry.setText("");
+                    doHapticKeyClick();
+                    return true;
+                }
+            });
+        }
 
-    @Override
-    protected void onDetachedFromWindow() {
-        super.onDetachedFromWindow();
-        KeyguardUpdateMonitor.getInstance(mContext).removeCallback(mUpdateMonitorCallback);
+        mPasswordEntry.setKeyListener(DigitsKeyListener.getInstance());
+        mPasswordEntry.setInputType(InputType.TYPE_CLASS_NUMBER
+                | InputType.TYPE_NUMBER_VARIATION_PASSWORD);
+
+        mPasswordEntry.requestFocus();
+
+        mSecurityMessageDisplay.setTimeout(0); // don't show ownerinfo/charging status by default
     }
 
     @Override
@@ -179,11 +160,9 @@ public class KeyguardSimPinView extends KeyguardPinBasedInputView {
      */
     private abstract class CheckSimPin extends Thread {
         private final String mPin;
-        private int mSubId;
 
-        protected CheckSimPin(String pin, int subId) {
+        protected CheckSimPin(String pin) {
             mPin = pin;
-            mSubId = subId;
         }
 
         abstract void onSimCheckResponse(final int result, final int attemptsRemaining);
@@ -191,16 +170,11 @@ public class KeyguardSimPinView extends KeyguardPinBasedInputView {
         @Override
         public void run() {
             try {
-                if (DEBUG) {
-                    Log.v(TAG, "call supplyPinReportResultForSubscriber(subid=" + mSubId + ")");
-                }
+                Log.v(TAG, "call supplyPinReportResult()");
                 final int[] result = ITelephony.Stub.asInterface(ServiceManager
-                        .checkService("phone")).supplyPinReportResultForSubscriber(mSubId, mPin);
-                if (DEBUG) {
-                    Log.v(TAG, "supplyPinReportResult returned: " + result[0] + " " + result[1]);
-                }
+                        .checkService("phone")).supplyPinReportResult(mPin);
+                Log.v(TAG, "supplyPinReportResult returned: " + result[0] + " " + result[1]);
                 post(new Runnable() {
-                    @Override
                     public void run() {
                         onSimCheckResponse(result[0], result[1]);
                     }
@@ -208,7 +182,6 @@ public class KeyguardSimPinView extends KeyguardPinBasedInputView {
             } catch (RemoteException e) {
                 Log.e(TAG, "RemoteException for supplyPinReportResult:", e);
                 post(new Runnable() {
-                    @Override
                     public void run() {
                         onSimCheckResponse(PhoneConstants.PIN_GENERAL_FAILURE, -1);
                     }
@@ -248,33 +221,28 @@ public class KeyguardSimPinView extends KeyguardPinBasedInputView {
 
     @Override
     protected void verifyPasswordAndUnlock() {
-        String entry = mPasswordEntry.getText();
+        String entry = mPasswordEntry.getText().toString();
 
         if (entry.length() < 4) {
             // otherwise, display a message to the user, and don't submit.
             mSecurityMessageDisplay.setMessage(R.string.kg_invalid_sim_pin_hint, true);
-            resetPasswordText(true /* animate */, true /* announce */);
-            mCallback.userActivity();
+            mPasswordEntry.setText("");
+            mCallback.userActivity(0);
             return;
         }
 
         getSimUnlockProgressDialog().show();
 
         if (mCheckSimPinThread == null) {
-            mCheckSimPinThread = new CheckSimPin(mPasswordEntry.getText(), mSubId) {
-                @Override
+            mCheckSimPinThread = new CheckSimPin(mPasswordEntry.getText().toString()) {
                 void onSimCheckResponse(final int result, final int attemptsRemaining) {
                     post(new Runnable() {
-                        @Override
                         public void run() {
                             if (mSimUnlockProgressDialog != null) {
                                 mSimUnlockProgressDialog.hide();
                             }
-                            resetPasswordText(true /* animate */,
-                                    result != PhoneConstants.PIN_RESULT_SUCCESS /* announce */);
                             if (result == PhoneConstants.PIN_RESULT_SUCCESS) {
-                                KeyguardUpdateMonitor.getInstance(getContext())
-                                        .reportSimUnlocked(mSubId);
+                                KeyguardUpdateMonitor.getInstance(getContext()).reportSimUnlocked();
                                 mCallback.dismiss(true);
                             } else {
                                 if (result == PhoneConstants.PIN_PASSWORD_INCORRECT) {
@@ -295,8 +263,9 @@ public class KeyguardSimPinView extends KeyguardPinBasedInputView {
                                 if (DEBUG) Log.d(LOG_TAG, "verifyPasswordAndUnlock "
                                         + " CheckSimPin.onSimCheckResponse: " + result
                                         + " attemptsRemaining=" + attemptsRemaining);
+                                mPasswordEntry.setText("");
                             }
-                            mCallback.userActivity();
+                            mCallback.userActivity(0);
                             mCheckSimPinThread = null;
                         }
                     });
@@ -304,16 +273,6 @@ public class KeyguardSimPinView extends KeyguardPinBasedInputView {
             };
             mCheckSimPinThread.start();
         }
-    }
-
-    @Override
-    public void startAppearAnimation() {
-        // noop.
-    }
-
-    @Override
-    public boolean startDisappearAnimation(Runnable finishRunnable) {
-        return false;
     }
 }
 

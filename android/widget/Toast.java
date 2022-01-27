@@ -16,8 +16,6 @@
 
 package android.widget;
 
-import android.annotation.IntDef;
-import android.annotation.StringRes;
 import android.app.INotificationManager;
 import android.app.ITransientNotification;
 import android.content.Context;
@@ -31,12 +29,10 @@ import android.util.Log;
 import android.view.Gravity;
 import android.view.LayoutInflater;
 import android.view.View;
+import android.view.View.OnClickListener;
 import android.view.WindowManager;
 import android.view.accessibility.AccessibilityEvent;
 import android.view.accessibility.AccessibilityManager;
-
-import java.lang.annotation.Retention;
-import java.lang.annotation.RetentionPolicy;
 
 /**
  * A toast is a view containing a quick little message for the user.  The toast class
@@ -64,11 +60,6 @@ import java.lang.annotation.RetentionPolicy;
 public class Toast {
     static final String TAG = "Toast";
     static final boolean localLOGV = false;
-
-    /** @hide */
-    @IntDef({LENGTH_SHORT, LENGTH_LONG})
-    @Retention(RetentionPolicy.SOURCE)
-    public @interface Duration {}
 
     /**
      * Show the view or text notification for a short period of time.  This time
@@ -114,7 +105,7 @@ public class Toast {
         }
 
         INotificationManager service = getService();
-        String pkg = mContext.getOpPackageName();
+        String pkg = mContext.getPackageName();
         TN tn = mTN;
         tn.mNextView = mNextView;
 
@@ -161,16 +152,14 @@ public class Toast {
      * @see #LENGTH_SHORT
      * @see #LENGTH_LONG
      */
-    public void setDuration(@Duration int duration) {
+    public void setDuration(int duration) {
         mDuration = duration;
-        mTN.mDuration = duration;
     }
 
     /**
      * Return the duration.
      * @see #setDuration
      */
-    @Duration
     public int getDuration() {
         return mDuration;
     }
@@ -237,14 +226,6 @@ public class Toast {
     public int getYOffset() {
         return mTN.mY;
     }
-
-    /**
-     * Gets the LayoutParams for the Toast window.
-     * @hide
-     */
-    public WindowManager.LayoutParams getWindowParams() {
-        return mTN.mParams;
-    }
     
     /**
      * Make a standard toast that just contains a text view.
@@ -256,7 +237,7 @@ public class Toast {
      *                 {@link #LENGTH_LONG}
      *
      */
-    public static Toast makeText(Context context, CharSequence text, @Duration int duration) {
+    public static Toast makeText(Context context, CharSequence text, int duration) {
         Toast result = new Toast(context);
 
         LayoutInflater inflate = (LayoutInflater)
@@ -282,7 +263,7 @@ public class Toast {
      *
      * @throws Resources.NotFoundException if the resource can't be found.
      */
-    public static Toast makeText(Context context, @StringRes int resId, @Duration int duration)
+    public static Toast makeText(Context context, int resId, int duration)
                                 throws Resources.NotFoundException {
         return makeText(context, context.getResources().getText(resId), duration);
     }
@@ -291,7 +272,7 @@ public class Toast {
      * Update the text in a Toast that was previously created using one of the makeText() methods.
      * @param resId The new text for the Toast.
      */
-    public void setText(@StringRes int resId) {
+    public void setText(int resId) {
         setText(mContext.getText(resId));
     }
     
@@ -343,7 +324,7 @@ public class Toast {
         };
 
         private final WindowManager.LayoutParams mParams = new WindowManager.LayoutParams();
-        final Handler mHandler = new Handler();
+        final Handler mHandler = new Handler();    
 
         int mGravity;
         int mX, mY;
@@ -353,12 +334,8 @@ public class Toast {
 
         View mView;
         View mNextView;
-        int mDuration;
 
         WindowManager mWM;
-
-        static final long SHORT_DURATION_TIMEOUT = 5000;
-        static final long LONG_DURATION_TIMEOUT = 1000;
 
         TN() {
             // XXX This should be changed to use a Dialog, with a Theme.Toast
@@ -401,7 +378,6 @@ public class Toast {
                 handleHide();
                 mView = mNextView;
                 Context context = mView.getContext().getApplicationContext();
-                String packageName = mView.getContext().getOpPackageName();
                 if (context == null) {
                     context = mView.getContext();
                 }
@@ -421,9 +397,6 @@ public class Toast {
                 mParams.y = mY;
                 mParams.verticalMargin = mVerticalMargin;
                 mParams.horizontalMargin = mHorizontalMargin;
-                mParams.packageName = packageName;
-                mParams.removeTimeoutMilliseconds = mDuration ==
-                    Toast.LENGTH_LONG ? LONG_DURATION_TIMEOUT : SHORT_DURATION_TIMEOUT;
                 if (mView.getParent() != null) {
                     if (localLOGV) Log.v(TAG, "REMOVE! " + mView + " in " + this);
                     mWM.removeView(mView);

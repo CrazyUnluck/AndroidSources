@@ -17,6 +17,7 @@
 package android.os;
 
 import java.io.FileDescriptor;
+import java.io.PrintWriter;
 
 /**
  * Base interface for a remotable object, the core part of a lightweight
@@ -103,12 +104,6 @@ public interface IBinder {
     int DUMP_TRANSACTION        = ('_'<<24)|('D'<<16)|('M'<<8)|'P';
     
     /**
-     * IBinder protocol transaction code: execute a shell command.
-     * @hide
-     */
-    int SHELL_COMMAND_TRANSACTION = ('_'<<24)|('C'<<16)|('M'<<8)|'D';
-
-    /**
      * IBinder protocol transaction code: interrogate the recipient side
      * of the transaction for its canonical interface descriptor.
      */
@@ -155,14 +150,7 @@ public interface IBinder {
      * processes.
      */
     int FLAG_ONEWAY             = 0x00000001;
-
-    /**
-     * Limit that should be placed on IPC sizes to keep them safely under the
-     * transaction buffer limit.
-     * @hide
-     */
-    public static final int MAX_IPC_SIZE = 64 * 1024;
-
+    
     /**
      * Get the canonical name of the interface supported by this binder.
      */
@@ -193,7 +181,7 @@ public interface IBinder {
      * the transact() method.
      */
     public IInterface queryLocalInterface(String descriptor);
-
+    
     /**
      * Print the object's state into the given stream.
      * 
@@ -201,7 +189,7 @@ public interface IBinder {
      * @param args additional arguments to the dump request.
      */
     public void dump(FileDescriptor fd, String[] args) throws RemoteException;
-
+    
     /**
      * Like {@link #dump(FileDescriptor, String[])} but always executes
      * asynchronously.  If the object is local, a new thread is created
@@ -211,20 +199,6 @@ public interface IBinder {
      * @param args additional arguments to the dump request.
      */
     public void dumpAsync(FileDescriptor fd, String[] args) throws RemoteException;
-
-    /**
-     * Execute a shell command on this object.  This may be performed asynchrously from the caller;
-     * the implementation must always call resultReceiver when finished.
-     *
-     * @param in The raw file descriptor that an input data stream can be read from.
-     * @param out The raw file descriptor that normal command messages should be written to.
-     * @param err The raw file descriptor that command error messages should be written to.
-     * @param args Command-line arguments.
-     * @param resultReceiver Called when the command has finished executing, with the result code.
-     * @hide
-     */
-    public void shellCommand(FileDescriptor in, FileDescriptor out, FileDescriptor err,
-            String[] args, ResultReceiver resultReceiver) throws RemoteException;
 
     /**
      * Perform a generic operation with the object.

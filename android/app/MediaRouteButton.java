@@ -19,7 +19,6 @@ package android.app;
 import com.android.internal.R;
 import com.android.internal.app.MediaRouteDialogPresenter;
 
-import android.annotation.NonNull;
 import android.content.Context;
 import android.content.ContextWrapper;
 import android.content.res.TypedArray;
@@ -74,18 +73,13 @@ public class MediaRouteButton extends View {
     }
 
     public MediaRouteButton(Context context, AttributeSet attrs, int defStyleAttr) {
-        this(context, attrs, defStyleAttr, 0);
-    }
-
-    public MediaRouteButton(
-            Context context, AttributeSet attrs, int defStyleAttr, int defStyleRes) {
-        super(context, attrs, defStyleAttr, defStyleRes);
+        super(context, attrs, defStyleAttr);
 
         mRouter = (MediaRouter)context.getSystemService(Context.MEDIA_ROUTER_SERVICE);
         mCallback = new MediaRouterCallback();
 
-        final TypedArray a = context.obtainStyledAttributes(attrs,
-                com.android.internal.R.styleable.MediaRouteButton, defStyleAttr, defStyleRes);
+        TypedArray a = context.obtainStyledAttributes(attrs,
+                com.android.internal.R.styleable.MediaRouteButton, defStyleAttr, 0);
         setRemoteIndicatorDrawable(a.getDrawable(
                 com.android.internal.R.styleable.MediaRouteButton_externalRouteEnabledDrawable));
         mMinWidth = a.getDimensionPixelSize(
@@ -257,10 +251,10 @@ public class MediaRouteButton extends View {
     protected void drawableStateChanged() {
         super.drawableStateChanged();
 
-        final Drawable remoteIndicator = mRemoteIndicator;
-        if (remoteIndicator != null && remoteIndicator.isStateful()
-                && remoteIndicator.setState(getDrawableState())) {
-            invalidateDrawable(remoteIndicator);
+        if (mRemoteIndicator != null) {
+            int[] myDrawableState = getDrawableState();
+            mRemoteIndicator.setState(myDrawableState);
+            invalidate();
         }
     }
 
@@ -280,7 +274,7 @@ public class MediaRouteButton extends View {
     }
 
     @Override
-    protected boolean verifyDrawable(@NonNull Drawable who) {
+    protected boolean verifyDrawable(Drawable who) {
         return super.verifyDrawable(who) || who == mRemoteIndicator;
     }
 
@@ -331,40 +325,40 @@ public class MediaRouteButton extends View {
         final int widthMode = MeasureSpec.getMode(widthMeasureSpec);
         final int heightMode = MeasureSpec.getMode(heightMeasureSpec);
 
-        final int width = Math.max(mMinWidth, mRemoteIndicator != null ?
-                mRemoteIndicator.getIntrinsicWidth() + getPaddingLeft() + getPaddingRight() : 0);
-        final int height = Math.max(mMinHeight, mRemoteIndicator != null ?
-                mRemoteIndicator.getIntrinsicHeight() + getPaddingTop() + getPaddingBottom() : 0);
+        final int minWidth = Math.max(mMinWidth,
+                mRemoteIndicator != null ? mRemoteIndicator.getIntrinsicWidth() : 0);
+        final int minHeight = Math.max(mMinHeight,
+                mRemoteIndicator != null ? mRemoteIndicator.getIntrinsicHeight() : 0);
 
-        int measuredWidth;
+        int width;
         switch (widthMode) {
             case MeasureSpec.EXACTLY:
-                measuredWidth = widthSize;
+                width = widthSize;
                 break;
             case MeasureSpec.AT_MOST:
-                measuredWidth = Math.min(widthSize, width);
+                width = Math.min(widthSize, minWidth + getPaddingLeft() + getPaddingRight());
                 break;
             default:
             case MeasureSpec.UNSPECIFIED:
-                measuredWidth = width;
+                width = minWidth + getPaddingLeft() + getPaddingRight();
                 break;
         }
 
-        int measuredHeight;
+        int height;
         switch (heightMode) {
             case MeasureSpec.EXACTLY:
-                measuredHeight = heightSize;
+                height = heightSize;
                 break;
             case MeasureSpec.AT_MOST:
-                measuredHeight = Math.min(heightSize, height);
+                height = Math.min(heightSize, minHeight + getPaddingTop() + getPaddingBottom());
                 break;
             default:
             case MeasureSpec.UNSPECIFIED:
-                measuredHeight = height;
+                height = minHeight + getPaddingTop() + getPaddingBottom();
                 break;
         }
 
-        setMeasuredDimension(measuredWidth, measuredHeight);
+        setMeasuredDimension(width, height);
     }
 
     @Override

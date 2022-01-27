@@ -39,7 +39,7 @@ package android.util;
  * is more useful in conjunction with compiled XML resources:
  * 
  * <pre>
- * XmlPullParser parser = resources.getXml(myResource);
+ * XmlPullParser parser = resources.getXml(myResouce);
  * AttributeSet attributes = Xml.asAttributeSet(parser);</pre>
  * 
  * <p>The implementation returned here, unlike using

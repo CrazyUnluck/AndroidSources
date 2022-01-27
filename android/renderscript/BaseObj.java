@@ -16,7 +16,6 @@
 
 package android.renderscript;
 
-import dalvik.system.CloseGuard;
 import java.util.concurrent.locks.ReentrantReadWriteLock;
 
 /**
@@ -26,14 +25,14 @@ import java.util.concurrent.locks.ReentrantReadWriteLock;
  *
  **/
 public class BaseObj {
-    BaseObj(long id, RenderScript rs) {
+    BaseObj(int id, RenderScript rs) {
         rs.validate();
         mRS = rs;
         mID = id;
         mDestroyed = false;
     }
 
-    void setID(long id) {
+    void setID(int id) {
         if (mID != 0) {
             throw new RSRuntimeException("Internal Error, reset of object ID.");
         }
@@ -47,9 +46,9 @@ public class BaseObj {
      * @param rs Context to verify against internal context for
      *           match.
      *
-     * @return long
+     * @return int
      */
-    long getID(RenderScript rs) {
+    int getID(RenderScript rs) {
         mRS.validate();
         if (mDestroyed) {
             throw new RSInvalidStateException("using a destroyed object.");
@@ -69,8 +68,7 @@ public class BaseObj {
         }
     }
 
-    private long mID;
-    final CloseGuard guard = CloseGuard.get();
+    private int mID;
     private boolean mDestroyed;
     private String mName;
     RenderScript mRS;
@@ -121,7 +119,6 @@ public class BaseObj {
         }
 
         if (shouldDestroy) {
-            guard.close();
             // must include nObjDestroy in the critical section
             ReentrantReadWriteLock.ReadLock rlock = mRS.mRWLock.readLock();
             rlock.lock();
@@ -136,14 +133,8 @@ public class BaseObj {
     }
 
     protected void finalize() throws Throwable {
-        try {
-            if (guard != null) {
-                guard.warnIfOpen();
-            }
-            helpDestroy();
-        } finally {
-            super.finalize();
-        }
+        helpDestroy();
+        super.finalize();
     }
 
     /**
@@ -174,7 +165,7 @@ public class BaseObj {
      */
     @Override
     public int hashCode() {
-        return (int)((mID & 0xfffffff) ^ (mID >> 32));
+        return mID;
     }
 
     /**
@@ -189,10 +180,6 @@ public class BaseObj {
         // Early-out check to see if both BaseObjs are actually the same
         if (this == obj)
             return true;
-
-        if (obj == null) {
-            return false;
-        }
 
         if (getClass() != obj.getClass()) {
             return false;

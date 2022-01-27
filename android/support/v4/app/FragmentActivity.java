@@ -19,23 +19,18 @@ package android.support.v4.app;
 import android.app.Activity;
 import android.content.Context;
 import android.content.Intent;
-import android.content.IntentSender;
 import android.content.res.Configuration;
 import android.content.res.Resources;
+import android.content.res.TypedArray;
 import android.os.Bundle;
 import android.os.Handler;
 import android.os.Message;
 import android.os.Parcelable;
-import android.support.annotation.CallSuper;
 import android.support.annotation.NonNull;
-import android.support.annotation.Nullable;
-import android.support.v4.media.session.MediaControllerCompat;
 import android.support.v4.util.SimpleArrayMap;
-import android.support.v4.util.SparseArrayCompat;
 import android.util.AttributeSet;
 import android.util.Log;
 import android.view.KeyEvent;
-import android.view.LayoutInflater;
 import android.view.Menu;
 import android.view.MenuItem;
 import android.view.View;
@@ -44,6 +39,7 @@ import android.view.Window;
 
 import java.io.FileDescriptor;
 import java.io.PrintWriter;
+import java.util.ArrayList;
 
 /**
  * Base class for activities that want to use the support-based
@@ -54,6 +50,11 @@ import java.io.PrintWriter;
  * and loader support, you must use the {@link #getSupportFragmentManager()}
  * and {@link #getSupportLoaderManager()} methods respectively to access
  * those features.
+ *
+ * <p class="note"><strong>Note:</strong> If you want to implement an activity that includes
+ * an <a href="{@docRoot}guide/topics/ui/actionbar.html">action bar</a>, you should instead use
+ * the {@link android.support.v7.app.ActionBarActivity} class, which is a subclass of this one,
+ * so allows you to use {@link android.support.v4.app.Fragment} APIs on API level 7 and higher.</p>
  *
  * <p>Known limitations:</p>
  * <ul>
@@ -72,17 +73,11 @@ import java.io.PrintWriter;
  * state, this may be a snapshot slightly before what the user last saw.</p>
  * </ul>
  */
-public class FragmentActivity extends BaseFragmentActivityJB implements
-        ActivityCompat.OnRequestPermissionsResultCallback,
-        ActivityCompatApi23.RequestPermissionsRequestCodeValidator {
+public class FragmentActivity extends Activity {
     private static final String TAG = "FragmentActivity";
-
+    
     static final String FRAGMENTS_TAG = "android:support:fragments";
-    static final String NEXT_CANDIDATE_REQUEST_INDEX_TAG = "android:support:next_request_index";
-    static final String ALLOCATED_REQUEST_INDICIES_TAG = "android:support:request_indicies";
-    static final String REQUEST_FRAGMENT_WHO_TAG = "android:support:request_fragment_who";
-    static final int MAX_NUM_PENDING_FRAGMENT_ACTIVITY_RESULTS = 0xffff - 1;
-
+    
     // This is the SDK API version of Honeycomb (3.0).
     private static final int HONEYCOMB = 11;
 
@@ -108,8 +103,14 @@ public class FragmentActivity extends BaseFragmentActivityJB implements
         }
 
     };
-    final FragmentController mFragments = FragmentController.createController(new HostCallbacks());
-
+    final FragmentManagerImpl mFragments = new FragmentManagerImpl();
+    final FragmentContainer mContainer = new FragmentContainer() {
+        @Override
+        public View findViewById(int id) {
+            return FragmentActivity.this.findViewById(id);
+        }
+    };
+    
     boolean mCreated;
     boolean mResumed;
     boolean mStopped;
@@ -117,56 +118,57 @@ public class FragmentActivity extends BaseFragmentActivityJB implements
     boolean mRetaining;
 
     boolean mOptionsMenuInvalidated;
-    boolean mRequestedPermissionsFromFragment;
 
-    // A hint for the next candidate request index. Request indicies are ints between 0 and 2^16-1
-    // which are encoded into the upper 16 bits of the requestCode for
-    // Fragment.startActivityForResult(...) calls. This allows us to dispatch onActivityResult(...)
-    // to the appropriate Fragment. Request indicies are allocated by allocateRequestIndex(...).
-    int mNextCandidateRequestIndex;
-    // A map from request index to Fragment "who" (i.e. a Fragment's unique identifier). Used to
-    // keep track of the originating Fragment for Fragment.startActivityForResult(...) calls, so we
-    // can dispatch the onActivityResult(...) to the appropriate Fragment. Will only contain entries
-    // for startActivityForResult calls where a result has not yet been delivered.
-    SparseArrayCompat<String> mPendingFragmentActivityResults;
+    boolean mCheckedForLoaderManager;
+    boolean mLoadersStarted;
+    SimpleArrayMap<String, LoaderManagerImpl> mAllLoaderManagers;
+    LoaderManagerImpl mLoaderManager;
 
     static final class NonConfigurationInstances {
+        Object activity;
         Object custom;
-        FragmentManagerNonConfig fragments;
-        SimpleArrayMap<String, LoaderManager> loaders;
+        SimpleArrayMap<String, Object> children;
+        ArrayList<Fragment> fragments;
+        SimpleArrayMap<String, LoaderManagerImpl> loaders;
     }
-
-    MediaControllerCompat mMediaController;
-
+    
+    static class FragmentTag {
+        public static final int[] Fragment = {
+            0x01010003, 0x010100d0, 0x010100d1
+        };
+        public static final int Fragment_id = 1;
+        public static final int Fragment_name = 0;
+        public static final int Fragment_tag = 2;
+    }
+    
     // ------------------------------------------------------------------------
     // HOOKS INTO ACTIVITY
     // ------------------------------------------------------------------------
-
+    
     /**
      * Dispatch incoming result to the correct fragment.
      */
     @Override
     protected void onActivityResult(int requestCode, int resultCode, Intent data) {
         mFragments.noteStateNotSaved();
-        int requestIndex = requestCode>>16;
-        if (requestIndex != 0) {
-            requestIndex--;
-
-            String who = mPendingFragmentActivityResults.get(requestIndex);
-            mPendingFragmentActivityResults.remove(requestIndex);
-            if (who == null) {
-                Log.w(TAG, "Activity result delivered for unknown Fragment.");
+        int index = requestCode>>16;
+        if (index != 0) {
+            index--;
+            if (mFragments.mActive == null || index < 0 || index >= mFragments.mActive.size()) {
+                Log.w(TAG, "Activity result fragment index out of range: 0x"
+                        + Integer.toHexString(requestCode));
                 return;
             }
-            Fragment targetFragment = mFragments.findFragmentByWho(who);
-            if (targetFragment == null) {
-                Log.w(TAG, "Activity result no fragment exists for who: " + who);
+            Fragment frag = mFragments.mActive.get(index);
+            if (frag == null) {
+                Log.w(TAG, "Activity result no fragment exists for index: 0x"
+                        + Integer.toHexString(requestCode));
             } else {
-                targetFragment.onActivityResult(requestCode & 0xffff, resultCode, data);
+                frag.onActivityResult(requestCode&0xffff, resultCode, data);
             }
             return;
         }
-
+        
         super.onActivityResult(requestCode, resultCode, data);
     }
 
@@ -175,124 +177,9 @@ public class FragmentActivity extends BaseFragmentActivityJB implements
      * as appropriate.
      */
     public void onBackPressed() {
-        if (!mFragments.getSupportFragmentManager().popBackStackImmediate()) {
-            onBackPressedNotHandled();
+        if (!mFragments.popBackStackImmediate()) {
+            finish();
         }
-    }
-
-    /**
-     * Sets a {@link MediaControllerCompat} for later retrieval via
-     * {@link #getSupportMediaController()}.
-     *
-     * <p>On API 21 and later, this controller will be tied to the window of the activity and
-     * media key and volume events which are received while the Activity is in the foreground
-     * will be forwarded to the controller and used to invoke transport controls or adjust the
-     * volume. Prior to API 21, the global handling of media key and volume events through an
-     * active {@link android.support.v4.media.session.MediaSessionCompat} and media button receiver
-     * will still be respected.</p>
-     *
-     * @param mediaController The controller for the session which should receive
-     *     media keys and volume changes on API 21 and later.
-     * @see #setMediaController(android.media.session.MediaController)
-     */
-    final public void setSupportMediaController(MediaControllerCompat mediaController) {
-        mMediaController = mediaController;
-        if (android.os.Build.VERSION.SDK_INT >= 21) {
-            ActivityCompat21.setMediaController(this, mediaController.getMediaController());
-        }
-    }
-
-    /**
-     * Retrieves the current {@link MediaControllerCompat} for sending media key and volume events.
-     *
-     * @return The controller which should receive events.
-     * @see #setSupportMediaController(android.support.v4.media.session.MediaController)
-     * @see #getMediaController()
-     */
-    final public MediaControllerCompat getSupportMediaController() {
-        return mMediaController;
-    }
-
-    /**
-     * Reverses the Activity Scene entry Transition and triggers the calling Activity
-     * to reverse its exit Transition. When the exit Transition completes,
-     * {@link #finish()} is called. If no entry Transition was used, finish() is called
-     * immediately and the Activity exit Transition is run.
-     *
-     * <p>On Android 4.4 or lower, this method only finishes the Activity with no
-     * special exit transition.</p>
-     */
-    public void supportFinishAfterTransition() {
-        ActivityCompat.finishAfterTransition(this);
-    }
-
-    /**
-     * When {@link android.app.ActivityOptions#makeSceneTransitionAnimation(Activity,
-     * android.view.View, String)} was used to start an Activity, <var>callback</var>
-     * will be called to handle shared elements on the <i>launched</i> Activity. This requires
-     * {@link Window#FEATURE_CONTENT_TRANSITIONS}.
-     *
-     * @param callback Used to manipulate shared element transitions on the launched Activity.
-     */
-    public void setEnterSharedElementCallback(SharedElementCallback callback) {
-        ActivityCompat.setEnterSharedElementCallback(this, callback);
-    }
-
-    /**
-     * When {@link android.app.ActivityOptions#makeSceneTransitionAnimation(Activity,
-     * android.view.View, String)} was used to start an Activity, <var>listener</var>
-     * will be called to handle shared elements on the <i>launching</i> Activity. Most
-     * calls will only come when returning from the started Activity.
-     * This requires {@link Window#FEATURE_CONTENT_TRANSITIONS}.
-     *
-     * @param listener Used to manipulate shared element transitions on the launching Activity.
-     */
-    public void setExitSharedElementCallback(SharedElementCallback listener) {
-        ActivityCompat.setExitSharedElementCallback(this, listener);
-    }
-
-    /**
-     * Support library version of {@link android.app.Activity#postponeEnterTransition()} that works
-     * only on API 21 and later.
-     */
-    public void supportPostponeEnterTransition() {
-        ActivityCompat.postponeEnterTransition(this);
-    }
-
-    /**
-     * Support library version of {@link android.app.Activity#startPostponedEnterTransition()}
-     * that only works with API 21 and later.
-     */
-    public void supportStartPostponedEnterTransition() {
-        ActivityCompat.startPostponedEnterTransition(this);
-    }
-
-    /**
-     * {@inheritDoc}
-     *
-     * <p><strong>Note:</strong> If you override this method you must call
-     * <code>super.onMultiWindowModeChanged</code> to correctly dispatch the event
-     * to support fragments attached to this activity.</p>
-     *
-     * @param isInMultiWindowMode True if the activity is in multi-window mode.
-     */
-    @CallSuper
-    public void onMultiWindowModeChanged(boolean isInMultiWindowMode) {
-        mFragments.dispatchMultiWindowModeChanged(isInMultiWindowMode);
-    }
-
-    /**
-     * {@inheritDoc}
-     *
-     * <p><strong>Note:</strong> If you override this method you must call
-     * <code>super.onPictureInPictureModeChanged</code> to correctly dispatch the event
-     * to support fragments attached to this activity.</p>
-     *
-     * @param isInPictureInPictureMode True if the activity is in picture-in-picture mode.
-     */
-    @CallSuper
-    public void onPictureInPictureModeChanged(boolean isInPictureInPictureMode) {
-        mFragments.dispatchPictureInPictureModeChanged(isInPictureInPictureMode);
     }
 
     /**
@@ -307,45 +194,25 @@ public class FragmentActivity extends BaseFragmentActivityJB implements
     /**
      * Perform initialization of all fragments and loaders.
      */
-    @SuppressWarnings("deprecation")
     @Override
-    protected void onCreate(@Nullable Bundle savedInstanceState) {
-        mFragments.attachHost(null /*parent*/);
-
+    protected void onCreate(Bundle savedInstanceState) {
+        mFragments.attachActivity(this, mContainer, null);
+        // Old versions of the platform didn't do this!
+        if (getLayoutInflater().getFactory() == null) {
+            getLayoutInflater().setFactory(this);
+        }
+        
         super.onCreate(savedInstanceState);
-
-        NonConfigurationInstances nc =
-                (NonConfigurationInstances) getLastNonConfigurationInstance();
+        
+        NonConfigurationInstances nc = (NonConfigurationInstances)
+                getLastNonConfigurationInstance();
         if (nc != null) {
-            mFragments.restoreLoaderNonConfig(nc.loaders);
+            mAllLoaderManagers = nc.loaders;
         }
         if (savedInstanceState != null) {
             Parcelable p = savedInstanceState.getParcelable(FRAGMENTS_TAG);
             mFragments.restoreAllState(p, nc != null ? nc.fragments : null);
-
-            // Check if there are any pending onActivityResult calls to descendent Fragments.
-            if (savedInstanceState.containsKey(NEXT_CANDIDATE_REQUEST_INDEX_TAG)) {
-                mNextCandidateRequestIndex =
-                        savedInstanceState.getInt(NEXT_CANDIDATE_REQUEST_INDEX_TAG);
-                int[] requestCodes = savedInstanceState.getIntArray(ALLOCATED_REQUEST_INDICIES_TAG);
-                String[] fragmentWhos = savedInstanceState.getStringArray(REQUEST_FRAGMENT_WHO_TAG);
-                if (requestCodes == null || fragmentWhos == null ||
-                            requestCodes.length != fragmentWhos.length) {
-                    Log.w(TAG, "Invalid requestCode mapping in savedInstanceState.");
-                } else {
-                    mPendingFragmentActivityResults = new SparseArrayCompat<>(requestCodes.length);
-                    for (int i = 0; i < requestCodes.length; i++) {
-                        mPendingFragmentActivityResults.put(requestCodes[i], fragmentWhos[i]);
-                    }
-                }
-            }
         }
-
-        if (mPendingFragmentActivityResults == null) {
-            mPendingFragmentActivityResults = new SparseArrayCompat<>();
-            mNextCandidateRequestIndex = 0;
-        }
-
         mFragments.dispatchCreate();
     }
 
@@ -367,11 +234,94 @@ public class FragmentActivity extends BaseFragmentActivityJB implements
         }
         return super.onCreatePanelMenu(featureId, menu);
     }
-
+    
+    /**
+     * Add support for inflating the &lt;fragment> tag.
+     */
     @Override
-    final View dispatchFragmentsOnCreateView(View parent, String name, Context context,
-            AttributeSet attrs) {
-        return mFragments.onCreateView(parent, name, context, attrs);
+    public View onCreateView(String name, @NonNull Context context, @NonNull AttributeSet attrs) {
+        if (!"fragment".equals(name)) {
+            return super.onCreateView(name, context, attrs);
+        }
+        
+        String fname = attrs.getAttributeValue(null, "class");
+        TypedArray a =  context.obtainStyledAttributes(attrs, FragmentTag.Fragment);
+        if (fname == null) {
+            fname = a.getString(FragmentTag.Fragment_name);
+        }
+        int id = a.getResourceId(FragmentTag.Fragment_id, View.NO_ID);
+        String tag = a.getString(FragmentTag.Fragment_tag);
+        a.recycle();
+
+        if (!Fragment.isSupportFragmentClass(this, fname)) {
+            // Invalid support lib fragment; let the device's framework handle it.
+            // This will allow android.app.Fragments to do the right thing.
+            return super.onCreateView(name, context, attrs);
+        }
+        
+        View parent = null; // NOTE: no way to get parent pre-Honeycomb.
+        int containerId = parent != null ? parent.getId() : 0;
+        if (containerId == View.NO_ID && id == View.NO_ID && tag == null) {
+            throw new IllegalArgumentException(attrs.getPositionDescription()
+                    + ": Must specify unique android:id, android:tag, or have a parent with an id for " + fname);
+        }
+
+        // If we restored from a previous state, we may already have
+        // instantiated this fragment from the state and should use
+        // that instance instead of making a new one.
+        Fragment fragment = id != View.NO_ID ? mFragments.findFragmentById(id) : null;
+        if (fragment == null && tag != null) {
+            fragment = mFragments.findFragmentByTag(tag);
+        }
+        if (fragment == null && containerId != View.NO_ID) {
+            fragment = mFragments.findFragmentById(containerId);
+        }
+
+        if (FragmentManagerImpl.DEBUG) Log.v(TAG, "onCreateView: id=0x"
+                + Integer.toHexString(id) + " fname=" + fname
+                + " existing=" + fragment);
+        if (fragment == null) {
+            fragment = Fragment.instantiate(this, fname);
+            fragment.mFromLayout = true;
+            fragment.mFragmentId = id != 0 ? id : containerId;
+            fragment.mContainerId = containerId;
+            fragment.mTag = tag;
+            fragment.mInLayout = true;
+            fragment.mFragmentManager = mFragments;
+            fragment.onInflate(this, attrs, fragment.mSavedFragmentState);
+            mFragments.addFragment(fragment, true);
+
+        } else if (fragment.mInLayout) {
+            // A fragment already exists and it is not one we restored from
+            // previous state.
+            throw new IllegalArgumentException(attrs.getPositionDescription()
+                    + ": Duplicate id 0x" + Integer.toHexString(id)
+                    + ", tag " + tag + ", or parent id 0x" + Integer.toHexString(containerId)
+                    + " with another fragment for " + fname);
+        } else {
+            // This fragment was retained from a previous instance; get it
+            // going now.
+            fragment.mInLayout = true;
+            // If this fragment is newly instantiated (either right now, or
+            // from last saved state), then give it the attributes to
+            // initialize itself.
+            if (!fragment.mRetaining) {
+                fragment.onInflate(this, attrs, fragment.mSavedFragmentState);
+            }
+            mFragments.moveToState(fragment);
+        }
+
+        if (fragment.mView == null) {
+            throw new IllegalStateException("Fragment " + fname
+                    + " did not create a view.");
+        }
+        if (id != 0) {
+            fragment.mView.setId(id);
+        }
+        if (fragment.mView.getTag() == null) {
+            fragment.mView.setTag(tag);
+        }
+        return fragment.mView;
     }
 
     /**
@@ -384,7 +334,9 @@ public class FragmentActivity extends BaseFragmentActivityJB implements
         doReallyStop(false);
 
         mFragments.dispatchDestroy();
-        mFragments.doLoaderDestroy();
+        if (mLoaderManager != null) {
+            mLoaderManager.doDestroy();
+        }
     }
 
     /**
@@ -478,13 +430,6 @@ public class FragmentActivity extends BaseFragmentActivityJB implements
     }
 
     /**
-     * Hook in to note that fragment state is no longer saved.
-     */
-    public void onStateNotSaved() {
-        mFragments.noteStateNotSaved();
-    }
-
-    /**
      * Dispatch onResume() to fragments.  Note that for better inter-operation
      * with older versions of the platform, at the point of this call the
      * fragments attached to the activity are <em>not</em> resumed.  This means
@@ -560,17 +505,36 @@ public class FragmentActivity extends BaseFragmentActivityJB implements
 
         Object custom = onRetainCustomNonConfigurationInstance();
 
-        FragmentManagerNonConfig fragments = mFragments.retainNestedNonConfig();
-        SimpleArrayMap<String, LoaderManager> loaders = mFragments.retainLoaderNonConfig();
-
-        if (fragments == null && loaders == null && custom == null) {
+        ArrayList<Fragment> fragments = mFragments.retainNonConfig();
+        boolean retainLoaders = false;
+        if (mAllLoaderManagers != null) {
+            // prune out any loader managers that were already stopped and so
+            // have nothing useful to retain.
+            final int N = mAllLoaderManagers.size();
+            LoaderManagerImpl loaders[] = new LoaderManagerImpl[N];
+            for (int i=N-1; i>=0; i--) {
+                loaders[i] = mAllLoaderManagers.valueAt(i);
+            }
+            for (int i=0; i<N; i++) {
+                LoaderManagerImpl lm = loaders[i];
+                if (lm.mRetaining) {
+                    retainLoaders = true;
+                } else {
+                    lm.doDestroy();
+                    mAllLoaderManagers.remove(lm.mWho);
+                }
+            }
+        }
+        if (fragments == null && !retainLoaders && custom == null) {
             return null;
         }
-
+        
         NonConfigurationInstances nci = new NonConfigurationInstances();
+        nci.activity = null;
         nci.custom = custom;
+        nci.children = null;
         nci.fragments = fragments;
-        nci.loaders = loaders;
+        nci.loaders = mAllLoaderManagers;
         return nci;
     }
 
@@ -583,18 +547,6 @@ public class FragmentActivity extends BaseFragmentActivityJB implements
         Parcelable p = mFragments.saveAllState();
         if (p != null) {
             outState.putParcelable(FRAGMENTS_TAG, p);
-        }
-        if (mPendingFragmentActivityResults.size() > 0) {
-            outState.putInt(NEXT_CANDIDATE_REQUEST_INDEX_TAG, mNextCandidateRequestIndex);
-
-            int[] requestCodes = new int[mPendingFragmentActivityResults.size()];
-            String[] fragmentWhos = new String[mPendingFragmentActivityResults.size()];
-            for (int i = 0; i < mPendingFragmentActivityResults.size(); i++) {
-                requestCodes[i] = mPendingFragmentActivityResults.keyAt(i);
-                fragmentWhos[i] = mPendingFragmentActivityResults.valueAt(i);
-            }
-            outState.putIntArray(ALLOCATED_REQUEST_INDICIES_TAG, requestCodes);
-            outState.putStringArray(REQUEST_FRAGMENT_WHO_TAG, fragmentWhos);
         }
     }
 
@@ -617,13 +569,35 @@ public class FragmentActivity extends BaseFragmentActivityJB implements
 
         mFragments.noteStateNotSaved();
         mFragments.execPendingActions();
-
-        mFragments.doLoaderStart();
-
+        
+        if (!mLoadersStarted) {
+            mLoadersStarted = true;
+            if (mLoaderManager != null) {
+                mLoaderManager.doStart();
+            } else if (!mCheckedForLoaderManager) {
+                mLoaderManager = getLoaderManager("(root)", mLoadersStarted, false);
+                // the returned loader manager may be a new one, so we have to start it
+                if ((mLoaderManager != null) && (!mLoaderManager.mStarted)) {
+                    mLoaderManager.doStart();
+                }
+            }
+            mCheckedForLoaderManager = true;
+        }
         // NOTE: HC onStart goes here.
-
+        
         mFragments.dispatchStart();
-        mFragments.reportLoaderStart();
+        if (mAllLoaderManagers != null) {
+            final int N = mAllLoaderManagers.size();
+            LoaderManagerImpl loaders[] = new LoaderManagerImpl[N];
+            for (int i=N-1; i>=0; i--) {
+                loaders[i] = mAllLoaderManagers.valueAt(i);
+            }
+            for (int i=0; i<N; i++) {
+                LoaderManagerImpl lm = loaders[i];
+                lm.finishRetain();
+                lm.doReportStart();
+            }
+        }
     }
 
     /**
@@ -635,14 +609,14 @@ public class FragmentActivity extends BaseFragmentActivityJB implements
 
         mStopped = true;
         mHandler.sendEmptyMessage(MSG_REALLY_STOPPED);
-
+        
         mFragments.dispatchStop();
     }
 
     // ------------------------------------------------------------------------
     // NEW METHODS
     // ------------------------------------------------------------------------
-
+    
     /**
      * Use this instead of {@link #onRetainNonConfigurationInstance()}.
      * Retrieve later with {@link #getLastCustomNonConfigurationInstance()}.
@@ -655,7 +629,6 @@ public class FragmentActivity extends BaseFragmentActivityJB implements
      * Return the value previously returned from
      * {@link #onRetainCustomNonConfigurationInstance()}.
      */
-    @SuppressWarnings("deprecation")
     public Object getLastCustomNonConfigurationInstance() {
         NonConfigurationInstances nc = (NonConfigurationInstances)
                 getLastNonConfigurationInstance();
@@ -706,8 +679,15 @@ public class FragmentActivity extends BaseFragmentActivityJB implements
                 writer.print(mResumed); writer.print(" mStopped=");
                 writer.print(mStopped); writer.print(" mReallyStopped=");
                 writer.println(mReallyStopped);
-        mFragments.dumpLoaders(innerPrefix, fd, writer, args);
-        mFragments.getSupportFragmentManager().dump(prefix, fd, writer, args);
+        writer.print(innerPrefix); writer.print("mLoadersStarted=");
+                writer.println(mLoadersStarted);
+        if (mLoaderManager != null) {
+            writer.print(prefix); writer.print("Loader Manager ");
+                    writer.print(Integer.toHexString(System.identityHashCode(mLoaderManager)));
+                    writer.println(":");
+            mLoaderManager.dump(prefix + "  ", fd, writer, args);
+        }
+        mFragments.dump(prefix, fd, writer, args);
         writer.print(prefix); writer.println("View Hierarchy:");
         dumpViewHierarchy(prefix + "  ", writer, getWindow().getDecorView());
     }
@@ -805,13 +785,6 @@ public class FragmentActivity extends BaseFragmentActivityJB implements
             mRetaining = retaining;
             mHandler.removeMessages(MSG_REALLY_STOPPED);
             onReallyStop();
-        } else if (retaining) {
-            // We're already really stopped, but we've been asked to retain.
-            // Our fragments are taken care of but we need to mark the loaders for retention.
-            // In order to do this correctly we need to restart the loaders first before
-            // handing them off to the next activity.
-            mFragments.doLoaderStart();
-            mFragments.doLoaderStop(true);
         }
     }
 
@@ -823,7 +796,16 @@ public class FragmentActivity extends BaseFragmentActivityJB implements
      * tell us what we need to know.
      */
     void onReallyStop() {
-        mFragments.doLoaderStop(mRetaining);
+        if (mLoadersStarted) {
+            mLoadersStarted = false;
+            if (mLoaderManager != null) {
+                if (!mRetaining) {
+                    mLoaderManager.doStop();
+                } else {
+                    mLoaderManager.doRetain();
+                }
+            }
+        }
 
         mFragments.dispatchReallyStop();
     }
@@ -831,28 +813,19 @@ public class FragmentActivity extends BaseFragmentActivityJB implements
     // ------------------------------------------------------------------------
     // FRAGMENT SUPPORT
     // ------------------------------------------------------------------------
-
+    
     /**
      * Called when a fragment is attached to the activity.
-     *
-     * <p>This is called after the attached fragment's <code>onAttach</code> and before
-     * the attached fragment's <code>onCreate</code> if the fragment has not yet had a previous
-     * call to <code>onCreate</code>.</p>
      */
-    @SuppressWarnings("unused")
     public void onAttachFragment(Fragment fragment) {
     }
-
+    
     /**
      * Return the FragmentManager for interacting with fragments associated
      * with this activity.
      */
     public FragmentManager getSupportFragmentManager() {
-        return mFragments.getSupportFragmentManager();
-    }
-
-    public LoaderManager getSupportLoaderManager() {
-        return mFragments.getSupportLoaderManager();
+        return mFragments;
     }
 
     /**
@@ -861,249 +834,67 @@ public class FragmentActivity extends BaseFragmentActivityJB implements
      */
     @Override
     public void startActivityForResult(Intent intent, int requestCode) {
-        // If this was started from a Fragment we've already checked the upper 16 bits were not in
-        // use, and then repurposed them for the Fragment's index.
-        if (!mStartedActivityFromFragment) {
-            if (requestCode != -1) {
-                checkForValidRequestCode(requestCode);
-            }
+        if (requestCode != -1 && (requestCode&0xffff0000) != 0) {
+            throw new IllegalArgumentException("Can only use lower 16 bits for requestCode");
         }
         super.startActivityForResult(intent, requestCode);
     }
 
-    @Override
-    public final void validateRequestPermissionsRequestCode(int requestCode) {
-        // We use 16 bits of the request code to encode the fragment id when
-        // requesting permissions from a fragment. Hence, requestPermissions()
-        // should validate the code against that but we cannot override it as
-        // we can not then call super and also the ActivityCompat would call
-        // back to this override. To handle this we use dependency inversion
-        // where we are the validator of request codes when requesting
-        // permissions in ActivityCompat.
-        if (!mRequestedPermissionsFromFragment
-                && requestCode != -1) {
-            checkForValidRequestCode(requestCode);
-        }
-    }
-
-    /**
-     * Callback for the result from requesting permissions. This method
-     * is invoked for every call on {@link #requestPermissions(String[], int)}.
-     * <p>
-     * <strong>Note:</strong> It is possible that the permissions request interaction
-     * with the user is interrupted. In this case you will receive empty permissions
-     * and results arrays which should be treated as a cancellation.
-     * </p>
-     *
-     * @param requestCode The request code passed in {@link #requestPermissions(String[], int)}.
-     * @param permissions The requested permissions. Never null.
-     * @param grantResults The grant results for the corresponding permissions
-     *     which is either {@link android.content.pm.PackageManager#PERMISSION_GRANTED}
-     *     or {@link android.content.pm.PackageManager#PERMISSION_DENIED}. Never null.
-     *
-     * @see #requestPermissions(String[], int)
-     */
-    public void onRequestPermissionsResult(int requestCode, @NonNull String[] permissions,
-            @NonNull int[] grantResults) {
-        int index = (requestCode >> 16) & 0xffff;
-        if (index != 0) {
-            index--;
-
-            String who = mPendingFragmentActivityResults.get(index);
-            mPendingFragmentActivityResults.remove(index);
-            if (who == null) {
-                Log.w(TAG, "Activity result delivered for unknown Fragment.");
-                return;
-            }
-            Fragment frag = mFragments.findFragmentByWho(who);
-            if (frag == null) {
-                Log.w(TAG, "Activity result no fragment exists for who: " + who);
-            } else {
-                frag.onRequestPermissionsResult(requestCode & 0xffff, permissions, grantResults);
-            }
-        }
-    }
-
     /**
      * Called by Fragment.startActivityForResult() to implement its behavior.
      */
-    public void startActivityFromFragment(Fragment fragment, Intent intent,
-            int requestCode) {
-        startActivityFromFragment(fragment, intent, requestCode, null);
-    }
-
-    /**
-     * Called by Fragment.startActivityForResult() to implement its behavior.
-     */
-    public void startActivityFromFragment(Fragment fragment, Intent intent,
-            int requestCode, @Nullable Bundle options) {
-        mStartedActivityFromFragment = true;
-        try {
-            if (requestCode == -1) {
-                ActivityCompat.startActivityForResult(this, intent, -1, options);
-                return;
-            }
-            checkForValidRequestCode(requestCode);
-            int requestIndex = allocateRequestIndex(fragment);
-            ActivityCompat.startActivityForResult(
-                    this, intent, ((requestIndex + 1) << 16) + (requestCode & 0xffff), options);
-        } finally {
-            mStartedActivityFromFragment = false;
-        }
-    }
-
-    /**
-     * Called by Fragment.startIntentSenderForResult() to implement its behavior.
-     */
-    public void startIntentSenderFromFragment(Fragment fragment, IntentSender intent,
-            int requestCode, @Nullable Intent fillInIntent, int flagsMask, int flagsValues,
-            int extraFlags, Bundle options) throws IntentSender.SendIntentException {
-        mStartedIntentSenderFromFragment = true;
-        try {
-            if (requestCode == -1) {
-                ActivityCompat.startIntentSenderForResult(this, intent, requestCode, fillInIntent,
-                        flagsMask, flagsValues, extraFlags, options);
-                return;
-            }
-            checkForValidRequestCode(requestCode);
-            int requestIndex = allocateRequestIndex(fragment);
-            ActivityCompat.startIntentSenderForResult(this, intent,
-                    ((requestIndex + 1) << 16) + (requestCode & 0xffff), fillInIntent,
-                    flagsMask, flagsValues, extraFlags, options);
-        } finally {
-            mStartedIntentSenderFromFragment = false;
-        }
-    }
-
-    // Allocates the next available startActivityForResult request index.
-    private int allocateRequestIndex(Fragment fragment) {
-        // Sanity check that we havn't exhaused the request index space.
-        if (mPendingFragmentActivityResults.size() >= MAX_NUM_PENDING_FRAGMENT_ACTIVITY_RESULTS) {
-            throw new IllegalStateException("Too many pending Fragment activity results.");
-        }
-
-        // Find an unallocated request index in the mPendingFragmentActivityResults map.
-        while (mPendingFragmentActivityResults.indexOfKey(mNextCandidateRequestIndex) >= 0) {
-            mNextCandidateRequestIndex =
-                    (mNextCandidateRequestIndex + 1) % MAX_NUM_PENDING_FRAGMENT_ACTIVITY_RESULTS;
-        }
-
-        int requestIndex = mNextCandidateRequestIndex;
-        mPendingFragmentActivityResults.put(requestIndex, fragment.mWho);
-        mNextCandidateRequestIndex =
-                (mNextCandidateRequestIndex + 1) % MAX_NUM_PENDING_FRAGMENT_ACTIVITY_RESULTS;
-
-        return requestIndex;
-    }
-
-    /**
-     * Called by Fragment.requestPermissions() to implement its behavior.
-     */
-    private void requestPermissionsFromFragment(Fragment fragment, String[] permissions,
+    public void startActivityFromFragment(Fragment fragment, Intent intent, 
             int requestCode) {
         if (requestCode == -1) {
-            ActivityCompat.requestPermissions(this, permissions, requestCode);
+            super.startActivityForResult(intent, -1);
             return;
         }
-        checkForValidRequestCode(requestCode);
-        try {
-            mRequestedPermissionsFromFragment = true;
-            int requestIndex = allocateRequestIndex(fragment);
-            ActivityCompat.requestPermissions(this, permissions,
-                    ((requestIndex + 1) << 16) + (requestCode & 0xffff));
-        } finally {
-            mRequestedPermissionsFromFragment = false;
+        if ((requestCode&0xffff0000) != 0) {
+            throw new IllegalArgumentException("Can only use lower 16 bits for requestCode");
+        }
+        super.startActivityForResult(intent, ((fragment.mIndex+1)<<16) + (requestCode&0xffff));
+    }
+    
+    void invalidateSupportFragment(String who) {
+        //Log.v(TAG, "invalidateSupportFragment: who=" + who);
+        if (mAllLoaderManagers != null) {
+            LoaderManagerImpl lm = mAllLoaderManagers.get(who);
+            if (lm != null && !lm.mRetaining) {
+                lm.doDestroy();
+                mAllLoaderManagers.remove(who);
+            }
         }
     }
-
-    class HostCallbacks extends FragmentHostCallback<FragmentActivity> {
-        public HostCallbacks() {
-            super(FragmentActivity.this /*fragmentActivity*/);
+    
+    // ------------------------------------------------------------------------
+    // LOADER SUPPORT
+    // ------------------------------------------------------------------------
+    
+    /**
+     * Return the LoaderManager for this fragment, creating it if needed.
+     */
+    public LoaderManager getSupportLoaderManager() {
+        if (mLoaderManager != null) {
+            return mLoaderManager;
         }
-
-        @Override
-        public void onDump(String prefix, FileDescriptor fd, PrintWriter writer, String[] args) {
-            FragmentActivity.this.dump(prefix, fd, writer, args);
+        mCheckedForLoaderManager = true;
+        mLoaderManager = getLoaderManager("(root)", mLoadersStarted, true);
+        return mLoaderManager;
+    }
+    
+    LoaderManagerImpl getLoaderManager(String who, boolean started, boolean create) {
+        if (mAllLoaderManagers == null) {
+            mAllLoaderManagers = new SimpleArrayMap<String, LoaderManagerImpl>();
         }
-
-        @Override
-        public boolean onShouldSaveFragmentState(Fragment fragment) {
-            return !isFinishing();
+        LoaderManagerImpl lm = mAllLoaderManagers.get(who);
+        if (lm == null) {
+            if (create) {
+                lm = new LoaderManagerImpl(who, this, started);
+                mAllLoaderManagers.put(who, lm);
+            }
+        } else {
+            lm.updateActivity(this);
         }
-
-        @Override
-        public LayoutInflater onGetLayoutInflater() {
-            return FragmentActivity.this.getLayoutInflater().cloneInContext(FragmentActivity.this);
-        }
-
-        @Override
-        public FragmentActivity onGetHost() {
-            return FragmentActivity.this;
-        }
-
-        @Override
-        public void onSupportInvalidateOptionsMenu() {
-            FragmentActivity.this.supportInvalidateOptionsMenu();
-        }
-
-        @Override
-        public void onStartActivityFromFragment(Fragment fragment, Intent intent, int requestCode) {
-            FragmentActivity.this.startActivityFromFragment(fragment, intent, requestCode);
-        }
-
-        @Override
-        public void onStartActivityFromFragment(
-                Fragment fragment, Intent intent, int requestCode, @Nullable Bundle options) {
-            FragmentActivity.this.startActivityFromFragment(fragment, intent, requestCode, options);
-        }
-
-        @Override
-        public void onStartIntentSenderFromFragment(Fragment fragment, IntentSender intent,
-                int requestCode, @Nullable Intent fillInIntent, int flagsMask, int flagsValues,
-                int extraFlags, Bundle options) throws IntentSender.SendIntentException {
-            FragmentActivity.this.startIntentSenderFromFragment(fragment, intent, requestCode,
-                    fillInIntent, flagsMask, flagsValues, extraFlags, options);
-        }
-
-        @Override
-        public void onRequestPermissionsFromFragment(@NonNull Fragment fragment,
-                @NonNull String[] permissions, int requestCode) {
-            FragmentActivity.this.requestPermissionsFromFragment(fragment, permissions,
-                    requestCode);
-        }
-
-        @Override
-        public boolean onShouldShowRequestPermissionRationale(@NonNull String permission) {
-            return ActivityCompat.shouldShowRequestPermissionRationale(
-                    FragmentActivity.this, permission);
-        }
-
-        @Override
-        public boolean onHasWindowAnimations() {
-            return getWindow() != null;
-        }
-
-        @Override
-        public int onGetWindowAnimations() {
-            final Window w = getWindow();
-            return (w == null) ? 0 : w.getAttributes().windowAnimations;
-        }
-
-        @Override
-        public void onAttachFragment(Fragment fragment) {
-            FragmentActivity.this.onAttachFragment(fragment);
-        }
-
-        @Nullable
-        @Override
-        public View onFindViewById(int id) {
-            return FragmentActivity.this.findViewById(id);
-        }
-
-        @Override
-        public boolean onHasView() {
-            final Window w = getWindow();
-            return (w != null && w.peekDecorView() != null);
-        }
+        return lm;
     }
 }

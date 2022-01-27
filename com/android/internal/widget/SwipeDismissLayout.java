@@ -16,12 +16,8 @@
 
 package com.android.internal.widget;
 
-import android.app.Activity;
-import android.content.BroadcastReceiver;
+import android.animation.TimeInterpolator;
 import android.content.Context;
-import android.content.Intent;
-import android.content.IntentFilter;
-import android.content.res.TypedArray;
 import android.util.AttributeSet;
 import android.util.Log;
 import android.view.MotionEvent;
@@ -29,7 +25,8 @@ import android.view.VelocityTracker;
 import android.view.View;
 import android.view.ViewConfiguration;
 import android.view.ViewGroup;
-import android.view.ViewTreeObserver;
+import android.view.animation.AccelerateInterpolator;
+import android.view.animation.DecelerateInterpolator;
 import android.widget.FrameLayout;
 
 /**
@@ -39,7 +36,6 @@ public class SwipeDismissLayout extends FrameLayout {
     private static final String TAG = "SwipeDismissLayout";
 
     private static final float DISMISS_MIN_DRAG_WIDTH_RATIO = .33f;
-    private boolean mUseDynamicTranslucency = true;
 
     public interface OnDismissedListener {
         void onDismissed(SwipeDismissLayout layout);
@@ -62,6 +58,10 @@ public class SwipeDismissLayout extends FrameLayout {
     // Cached ViewConfiguration and system-wide constant values
     private int mSlop;
     private int mMinFlingVelocity;
+    private int mMaxFlingVelocity;
+    private long mAnimationTime;
+    private TimeInterpolator mCancelInterpolator;
+    private TimeInterpolator mDismissInterpolator;
 
     // Transient properties
     private int mActiveTouchId;
@@ -75,38 +75,6 @@ public class SwipeDismissLayout extends FrameLayout {
 
     private OnDismissedListener mDismissedListener;
     private OnSwipeProgressChangedListener mProgressListener;
-    private ViewTreeObserver.OnEnterAnimationCompleteListener mOnEnterAnimationCompleteListener =
-            new ViewTreeObserver.OnEnterAnimationCompleteListener() {
-                @Override
-                public void onEnterAnimationComplete() {
-                    // SwipeDismissLayout assumes that the host Activity is translucent
-                    // and temporarily disables translucency when it is fully visible.
-                    // As soon as the user starts swiping, we will re-enable
-                    // translucency.
-                    if (mUseDynamicTranslucency && getContext() instanceof Activity) {
-                        ((Activity) getContext()).convertFromTranslucent();
-                    }
-                }
-            };
-    private BroadcastReceiver mScreenOffReceiver = new BroadcastReceiver() {
-        private Runnable mRunnable = new Runnable() {
-            @Override
-            public void run() {
-                if (mDismissed) {
-                    dismiss();
-                } else {
-                    cancel();
-                }
-                resetMembers();
-            }
-        };
-
-        @Override
-        public void onReceive(Context context, Intent intent) {
-            post(mRunnable);
-        }
-    };
-    private IntentFilter mScreenOffFilter = new IntentFilter(Intent.ACTION_SCREEN_OFF);
 
     private float mLastX;
 
@@ -126,14 +94,14 @@ public class SwipeDismissLayout extends FrameLayout {
     }
 
     private void init(Context context) {
-        ViewConfiguration vc = ViewConfiguration.get(context);
+        ViewConfiguration vc = ViewConfiguration.get(getContext());
         mSlop = vc.getScaledTouchSlop();
         mMinFlingVelocity = vc.getScaledMinimumFlingVelocity();
-        TypedArray a = context.getTheme().obtainStyledAttributes(
-                com.android.internal.R.styleable.Theme);
-        mUseDynamicTranslucency = !a.hasValue(
-                com.android.internal.R.styleable.Window_windowIsTranslucent);
-        a.recycle();
+        mMaxFlingVelocity = vc.getScaledMaximumFlingVelocity();
+        mAnimationTime = getContext().getResources().getInteger(
+                android.R.integer.config_shortAnimTime);
+        mCancelInterpolator = new DecelerateInterpolator(1.5f);
+        mDismissInterpolator = new AccelerateInterpolator(1.5f);
     }
 
     public void setOnDismissedListener(OnDismissedListener listener) {
@@ -142,26 +110,6 @@ public class SwipeDismissLayout extends FrameLayout {
 
     public void setOnSwipeProgressChangedListener(OnSwipeProgressChangedListener listener) {
         mProgressListener = listener;
-    }
-
-    @Override
-    protected void onAttachedToWindow() {
-        super.onAttachedToWindow();
-        if (getContext() instanceof Activity) {
-            getViewTreeObserver().addOnEnterAnimationCompleteListener(
-                    mOnEnterAnimationCompleteListener);
-        }
-        getContext().registerReceiver(mScreenOffReceiver, mScreenOffFilter);
-    }
-
-    @Override
-    protected void onDetachedFromWindow() {
-        getContext().unregisterReceiver(mScreenOffReceiver);
-        if (getContext() instanceof Activity) {
-            getViewTreeObserver().removeOnEnterAnimationCompleteListener(
-                    mOnEnterAnimationCompleteListener);
-        }
-        super.onDetachedFromWindow();
     }
 
     @Override
@@ -228,8 +176,6 @@ public class SwipeDismissLayout extends FrameLayout {
         if (mVelocityTracker == null) {
             return super.onTouchEvent(ev);
         }
-        // offset because the view is translated during swipe
-        ev.offsetLocation(mTranslationX, 0);
         switch (ev.getActionMasked()) {
             case MotionEvent.ACTION_UP:
                 updateDismiss(ev);
@@ -251,9 +197,6 @@ public class SwipeDismissLayout extends FrameLayout {
                 mLastX = ev.getRawX();
                 updateSwiping(ev);
                 if (mSwiping) {
-                    if (mUseDynamicTranslucency && getContext() instanceof Activity) {
-                        ((Activity) getContext()).convertToTranslucent(null, null);
-                    }
                     setProgress(ev.getRawX() - mDownX);
                     break;
                 }
@@ -275,9 +218,6 @@ public class SwipeDismissLayout extends FrameLayout {
     }
 
     protected void cancel() {
-        if (mUseDynamicTranslucency && getContext() instanceof Activity) {
-            ((Activity) getContext()).convertFromTranslucent();
-        }
         if (mProgressListener != null) {
             mProgressListener.onSwipeCancelled(this);
         }
@@ -304,7 +244,7 @@ public class SwipeDismissLayout extends FrameLayout {
             float deltaX = ev.getRawX() - mDownX;
             float deltaY = ev.getRawY() - mDownY;
             if ((deltaX * deltaX) + (deltaY * deltaY) > mSlop * mSlop) {
-                mSwiping = deltaX > mSlop * 2 && Math.abs(deltaY) < Math.abs(deltaX);
+                mSwiping = deltaX > mSlop * 2 && Math.abs(deltaY) < mSlop * 2;
             } else {
                 mSwiping = false;
             }
@@ -313,9 +253,9 @@ public class SwipeDismissLayout extends FrameLayout {
 
     private void updateDismiss(MotionEvent ev) {
         float deltaX = ev.getRawX() - mDownX;
-        mVelocityTracker.addMovement(ev);
-        mVelocityTracker.computeCurrentVelocity(1000);
         if (!mDismissed) {
+            mVelocityTracker.addMovement(ev);
+            mVelocityTracker.computeCurrentVelocity(1000);
 
             if (deltaX > (getWidth() * DISMISS_MIN_DRAG_WIDTH_RATIO) &&
                     ev.getRawX() >= mLastX) {
@@ -325,9 +265,7 @@ public class SwipeDismissLayout extends FrameLayout {
         // Check if the user tried to undo this.
         if (mDismissed && mSwiping) {
             // Check if the user's finger is actually back
-            if (deltaX < (getWidth() * DISMISS_MIN_DRAG_WIDTH_RATIO) ||
-                    // or user is flinging back left
-                    mVelocityTracker.getXVelocity() < -mMinFlingVelocity) {
+            if (deltaX < (getWidth() * DISMISS_MIN_DRAG_WIDTH_RATIO)) {
                 mDismissed = false;
             }
         }

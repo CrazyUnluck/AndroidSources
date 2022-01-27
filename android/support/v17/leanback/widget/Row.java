@@ -16,8 +16,9 @@ package android.support.v17.leanback.widget;
 import static android.support.v17.leanback.widget.ObjectAdapter.NO_ID;
 
 /**
- * The base class for all rows.  A commonly used subclass is the {@link ListRow}.  Custom
- * subclasses may define other types of rows.
+ * A row in the RowContainerFragment.  This is the basic class for all Rows.
+ * Developer usually overrides {@link ListRow}, but may override this class
+ * for non-list Row (e.g. a HtmlRow).
  */
 public class Row {
 
@@ -29,57 +30,34 @@ public class Row {
     private HeaderItem mHeaderItem;
     private long mId = NO_ID;
 
-    /**
-     * Constructor for a Row.
-     *
-     * @param id The id of the row.
-     * @param headerItem The {@link HeaderItem} for this Row, or null if there
-     *        is no header.
-     */
     public Row(long id, HeaderItem headerItem) {
         setId(id);
         setHeaderItem(headerItem);
     }
 
-    /**
-     * Constructor for a Row.
-     *
-     * @param headerItem The {@link HeaderItem} for this Row, or null if there
-     *        is no header.
-     */
     public Row(HeaderItem headerItem) {
         setHeaderItem(headerItem);
     }
 
-    /**
-     * Constructor for a Row.
-     */
     public Row() {
     }
 
     /**
-     * Returns the {@link HeaderItem} that represents metadata for the row.
-     *
-     * @return The HeaderItem for this row, or null if unset.
+     * Get optional {@link HeaderItem} that represents metadata for the row.
      */
     public final HeaderItem getHeaderItem() {
         return mHeaderItem;
     }
 
     /**
-     * Sets the {@link HeaderItem} that represents metadata for the row.
-     *
-     * @param headerItem The HeaderItem for this Row, or null if there is no
-     *        header.
+     * Set the {@link HeaderItem} that represents metadata for the row.
      */
     public final void setHeaderItem(HeaderItem headerItem) {
         mHeaderItem = headerItem;
     }
 
     /**
-     * Sets the id for this row.
-     *
-     * @param id The id of the row.
+     * Set id for this row.
      */
     public final void setId(long id) {
         mId = id;
@@ -87,15 +65,9 @@ public class Row {
     }
 
     /**
-     * Returns a unique identifier for this row. This id can come from one of
-     * three places:
-     * <ul>
-     *   <li>If {@link #setId(long)} is ever called on this row, it will return
-     *   this id.
-     *   <li>If {@link #setId(long)} has not been called but the header item is
-     *   not null, the result of {@link HeaderItem#getId()} is returned.
-     *   <li>Otherwise {@link ObjectAdapter#NO_ID NO_ID} is returned.
-     * </ul>
+     * Returns a unique identifier for this row.  If {@link #setId(long)}
+     * is ever called, it will return this id; else returns {@link HeaderItem#getId()}
+     * if header item is null; otherwise returns NO_ID.
      */
     public final long getId() {
         if ( (mFlags & FLAG_ID_USE_MASK) == FLAG_ID_USE_HEADER) {
@@ -115,15 +87,5 @@ public class Row {
 
     final int getFlags() {
         return mFlags;
-    }
-
-    /**
-     * Returns true if this Row can be rendered in a visible row view, false otherwise.  For example
-     * {@link ListRow} is rendered by {@link ListRowPresenter}.  {@link PageRow},
-     * {@link SectionRow}, {@link DividerRow} are rendered as invisible row views.
-     * @return True if this Row can be rendered in a visible row view, false otherwise.
-     */
-    public boolean isRenderedAsRowView() {
-        return true;
     }
 }

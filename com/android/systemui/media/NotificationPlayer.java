@@ -17,11 +17,9 @@
 package com.android.systemui.media;
 
 import android.content.Context;
-import android.media.AudioAttributes;
 import android.media.AudioManager;
 import android.media.MediaPlayer;
 import android.media.MediaPlayer.OnCompletionListener;
-import android.media.MediaPlayer.OnErrorListener;
 import android.net.Uri;
 import android.os.Looper;
 import android.os.PowerManager;
@@ -37,7 +35,7 @@ import java.util.LinkedList;
  * - whenever audio is played, audio focus is requested,
  * - whenever audio playback is stopped or the playback completed, audio focus is abandoned.
  */
-public class NotificationPlayer implements OnCompletionListener, OnErrorListener {
+public class NotificationPlayer implements OnCompletionListener {
     private static final int PLAY = 1;
     private static final int STOP = 2;
     private static final boolean mDebug = false;
@@ -47,11 +45,11 @@ public class NotificationPlayer implements OnCompletionListener, OnErrorListener
         Context context;
         Uri uri;
         boolean looping;
-        AudioAttributes attributes;
+        int stream;
         long requestTime;
 
         public String toString() {
-            return "{ code=" + code + " looping=" + looping + " attributes=" + attributes
+            return "{ code=" + code + " looping=" + looping + " stream=" + stream
                     + " uri=" + uri + " }";
         }
     }
@@ -81,7 +79,7 @@ public class NotificationPlayer implements OnCompletionListener, OnErrorListener
                     (AudioManager) mCmd.context.getSystemService(Context.AUDIO_SERVICE);
                 try {
                     MediaPlayer player = new MediaPlayer();
-                    player.setAudioAttributes(mCmd.attributes);
+                    player.setAudioStreamType(mCmd.stream);
                     player.setDataSource(mCmd.context, mCmd.uri);
                     player.setLooping(mCmd.looping);
                     player.prepare();
@@ -92,12 +90,10 @@ public class NotificationPlayer implements OnCompletionListener, OnErrorListener
                                 if (mAudioManagerWithAudioFocus == null) {
                                     if (mDebug) Log.d(mTag, "requesting AudioFocus");
                                     if (mCmd.looping) {
-                                        audioManager.requestAudioFocus(null,
-                                                AudioAttributes.toLegacyStreamType(mCmd.attributes),
+                                        audioManager.requestAudioFocus(null, mCmd.stream,
                                                 AudioManager.AUDIOFOCUS_GAIN);
                                     } else {
-                                        audioManager.requestAudioFocus(null,
-                                                AudioAttributes.toLegacyStreamType(mCmd.attributes),
+                                        audioManager.requestAudioFocus(null, mCmd.stream,
                                                 AudioManager.AUDIOFOCUS_GAIN_TRANSIENT_MAY_DUCK);
                                     }
                                     mAudioManagerWithAudioFocus = audioManager;
@@ -113,7 +109,6 @@ public class NotificationPlayer implements OnCompletionListener, OnErrorListener
                     //  done playing. This class should be modified to use a single thread, on which
                     //  command are issued, and on which it receives the completion callbacks.
                     player.setOnCompletionListener(NotificationPlayer.this);
-                    player.setOnErrorListener(NotificationPlayer.this);
                     player.start();
                     if (mPlayer != null) {
                         mPlayer.release();
@@ -247,13 +242,6 @@ public class NotificationPlayer implements OnCompletionListener, OnErrorListener
         }
     }
 
-    public boolean onError(MediaPlayer mp, int what, int extra) {
-        Log.e(mTag, "error " + what + " (extra=" + extra + ") playing notification");
-        // error happened, handle it just like a completion
-        onCompletion(mp);
-        return true;
-    }
-
     private String mTag;
     private CmdThread mThread;
     private CreationAndCompletionThread mCompletionThread;
@@ -292,9 +280,7 @@ public class NotificationPlayer implements OnCompletionListener, OnErrorListener
      *          (see {@link MediaPlayer#setLooping(boolean)})
      * @param stream the AudioStream to use.
      *          (see {@link MediaPlayer#setAudioStreamType(int)})
-     * @deprecated use {@link #play(Context, Uri, boolean, AudioAttributes)} instead.
      */
-    @Deprecated
     public void play(Context context, Uri uri, boolean looping, int stream) {
         Command cmd = new Command();
         cmd.requestTime = SystemClock.uptimeMillis();
@@ -302,34 +288,7 @@ public class NotificationPlayer implements OnCompletionListener, OnErrorListener
         cmd.context = context;
         cmd.uri = uri;
         cmd.looping = looping;
-        cmd.attributes = new AudioAttributes.Builder().setInternalLegacyStreamType(stream).build();
-        synchronized (mCmdQueue) {
-            enqueueLocked(cmd);
-            mState = PLAY;
-        }
-    }
-
-    /**
-     * Start playing the sound.  It will actually start playing at some
-     * point in the future.  There are no guarantees about latency here.
-     * Calling this before another audio file is done playing will stop
-     * that one and start the new one.
-     *
-     * @param context Your application's context.
-     * @param uri The URI to play.  (see {@link MediaPlayer#setDataSource(Context, Uri)})
-     * @param looping Whether the audio should loop forever.
-     *          (see {@link MediaPlayer#setLooping(boolean)})
-     * @param attributes the AudioAttributes to use.
-     *          (see {@link MediaPlayer#setAudioAttributes(AudioAttributes)})
-     */
-    public void play(Context context, Uri uri, boolean looping, AudioAttributes attributes) {
-        Command cmd = new Command();
-        cmd.requestTime = SystemClock.uptimeMillis();
-        cmd.code = PLAY;
-        cmd.context = context;
-        cmd.uri = uri;
-        cmd.looping = looping;
-        cmd.attributes = attributes;
+        cmd.stream = stream;
         synchronized (mCmdQueue) {
             enqueueLocked(cmd);
             mState = PLAY;

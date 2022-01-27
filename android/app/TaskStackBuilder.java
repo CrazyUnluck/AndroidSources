@@ -16,7 +16,6 @@
 
 package android.app;
 
-import android.annotation.NonNull;
 import android.content.ComponentName;
 import android.content.Context;
 import android.content.Intent;
@@ -245,7 +244,7 @@ public class TaskStackBuilder {
      *
      * @return The obtained PendingIntent
      */
-    public PendingIntent getPendingIntent(int requestCode, @PendingIntent.Flags int flags) {
+    public PendingIntent getPendingIntent(int requestCode, int flags) {
         return getPendingIntent(requestCode, flags, null);
     }
 
@@ -264,8 +263,7 @@ public class TaskStackBuilder {
      *
      * @return The obtained PendingIntent
      */
-    public PendingIntent getPendingIntent(int requestCode, @PendingIntent.Flags int flags,
-            Bundle options) {
+    public PendingIntent getPendingIntent(int requestCode, int flags, Bundle options) {
         if (mIntents.isEmpty()) {
             throw new IllegalStateException(
                     "No intents added to TaskStackBuilder; cannot getPendingIntent");
@@ -296,7 +294,6 @@ public class TaskStackBuilder {
      *
      * @return An array containing the intents added to this builder.
      */
-    @NonNull
     public Intent[] getIntents() {
         Intent[] intents = new Intent[mIntents.size()];
         if (intents.length == 0) return intents;

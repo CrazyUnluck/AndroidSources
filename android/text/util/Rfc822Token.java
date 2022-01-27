@@ -16,21 +16,18 @@
 
 package android.text.util;
 
-import android.annotation.Nullable;
-
 /**
  * This class stores an RFC 822-like name, address, and comment,
  * and provides methods to convert them to quoted strings.
  */
 public class Rfc822Token {
-    @Nullable
     private String mName, mAddress, mComment;
 
     /**
      * Creates a new Rfc822Token with the specified name, address,
      * and comment.
      */
-    public Rfc822Token(@Nullable String name, @Nullable String address, @Nullable String comment) {
+    public Rfc822Token(String name, String address, String comment) {
         mName = name;
         mAddress = address;
         mComment = comment;
@@ -39,7 +36,6 @@ public class Rfc822Token {
     /**
      * Returns the name part.
      */
-    @Nullable
     public String getName() {
         return mName;
     }
@@ -47,7 +43,6 @@ public class Rfc822Token {
     /**
      * Returns the address part.
      */
-    @Nullable
     public String getAddress() {
         return mAddress;
     }
@@ -55,7 +50,6 @@ public class Rfc822Token {
     /**
      * Returns the comment part.
      */
-    @Nullable
     public String getComment() {
         return mComment;
     }
@@ -63,21 +57,21 @@ public class Rfc822Token {
     /**
      * Changes the name to the specified name.
      */
-    public void setName(@Nullable String name) {
+    public void setName(String name) {
         mName = name;
     }
 
     /**
      * Changes the address to the specified address.
      */
-    public void setAddress(@Nullable String address) {
+    public void setAddress(String address) {
         mAddress = address;
     }
 
     /**
      * Changes the comment to the specified comment.
      */
-    public void setComment(@Nullable String comment) {
+    public void setComment(String comment) {
         mComment = comment;
     }
 

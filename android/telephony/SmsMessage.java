@@ -16,17 +16,14 @@
 
 package android.telephony;
 
-import android.os.Binder;
 import android.os.Parcel;
-import android.content.res.Resources;
-import android.text.TextUtils;
+import android.telephony.Rlog;
 
 import com.android.internal.telephony.GsmAlphabet;
 import com.android.internal.telephony.GsmAlphabet.TextEncodingDetails;
 import com.android.internal.telephony.SmsConstants;
 import com.android.internal.telephony.SmsMessageBase;
 import com.android.internal.telephony.SmsMessageBase.SubmitPduBase;
-import com.android.internal.telephony.Sms7BitEncodingTranslator;
 
 import java.lang.Math;
 import java.util.ArrayList;
@@ -99,28 +96,6 @@ public class SmsMessage {
      */
     public SmsMessageBase mWrappedSmsMessage;
 
-    /** Indicates the subId
-     *
-     * @hide
-     */
-    private int mSubId = 0;
-
-    /** set Subscription information
-     *
-     * @hide
-     */
-    public void setSubId(int subId) {
-        mSubId = subId;
-    }
-
-    /** get Subscription information
-     *
-     * @hide
-     */
-    public int getSubId() {
-        return mSubId;
-    }
-
     public static class SubmitPdu {
 
         public byte[] encodedScAddress; // Null if not applicable.
@@ -149,18 +124,17 @@ public class SmsMessage {
     }
 
     /**
-     * Create an SmsMessage from a raw PDU. Guess format based on Voice
-     * technology first, if it fails use other format.
-     * All applications which handle
+     * Create an SmsMessage from a raw PDU.
+     *
+     * <p><b>This method will soon be deprecated</b> and all applications which handle
      * incoming SMS messages by processing the {@code SMS_RECEIVED_ACTION} broadcast
      * intent <b>must</b> now pass the new {@code format} String extra from the intent
      * into the new method {@code createFromPdu(byte[], String)} which takes an
      * extra format parameter. This is required in order to correctly decode the PDU on
      * devices that require support for both 3GPP and 3GPP2 formats at the same time,
-     * such as dual-mode GSM/CDMA and CDMA/LTE phones.
-     * @deprecated Use {@link #createFromPdu(byte[], String)} instead.
+     * such as dual-mode GSM/CDMA and CDMA/LTE phones.  Guess format based on Voice
+     * technology first, if it fails use other format.
      */
-    @Deprecated
     public static SmsMessage createFromPdu(byte[] pdu) {
          SmsMessage message = null;
 
@@ -182,15 +156,13 @@ public class SmsMessage {
 
     /**
      * Create an SmsMessage from a raw PDU with the specified message format. The
-     * message format is passed in the
-     * {@link android.provider.Telephony.Sms.Intents#SMS_RECEIVED_ACTION} as the {@code format}
+     * message format is passed in the {@code SMS_RECEIVED_ACTION} as the {@code format}
      * String extra, and will be either "3gpp" for GSM/UMTS/LTE messages in 3GPP format
      * or "3gpp2" for CDMA/LTE messages in 3GPP2 format.
      *
-     * @param pdu the message PDU from the
-     * {@link android.provider.Telephony.Sms.Intents#SMS_RECEIVED_ACTION} intent
-     * @param format the format extra from the
-     * {@link android.provider.Telephony.Sms.Intents#SMS_RECEIVED_ACTION} intent
+     * @param pdu the message PDU from the SMS_RECEIVED_ACTION intent
+     * @param format the format extra from the SMS_RECEIVED_ACTION intent
+     * @hide pending API council approval
      */
     public static SmsMessage createFromPdu(byte[] pdu, String format) {
         SmsMessageBase wrappedMessage;
@@ -300,8 +272,7 @@ public class SmsMessage {
     public static int[] calculateLength(CharSequence msgBody, boolean use7bitOnly) {
         // this function is for MO SMS
         TextEncodingDetails ted = (useCdmaFormatForMoSms()) ?
-            com.android.internal.telephony.cdma.SmsMessage.calculateLength(msgBody, use7bitOnly,
-                    true) :
+            com.android.internal.telephony.cdma.SmsMessage.calculateLength(msgBody, use7bitOnly) :
             com.android.internal.telephony.gsm.SmsMessage.calculateLength(msgBody, use7bitOnly);
         int ret[] = new int[4];
         ret[0] = ted.msgCount;
@@ -324,7 +295,7 @@ public class SmsMessage {
     public static ArrayList<String> fragmentText(String text) {
         // This function is for MO SMS
         TextEncodingDetails ted = (useCdmaFormatForMoSms()) ?
-            com.android.internal.telephony.cdma.SmsMessage.calculateLength(text, false, true) :
+            com.android.internal.telephony.cdma.SmsMessage.calculateLength(text, false) :
             com.android.internal.telephony.gsm.SmsMessage.calculateLength(text, false);
 
         // TODO(cleanup): The code here could be rolled into the logic
@@ -354,30 +325,13 @@ public class SmsMessage {
         } else {
             if (ted.msgCount > 1) {
                 limit = SmsConstants.MAX_USER_DATA_BYTES_WITH_HEADER;
-                // If EMS is not supported, break down EMS into single segment SMS
-                // and add page info " x/y".
-                // In the case of UCS2 encoding, we need 8 bytes for this,
-                // but we only have 6 bytes from UDH, so truncate the limit for
-                // each segment by 2 bytes (1 char).
-                // Make sure total number of segments is less than 10.
-                if (!hasEmsSupport() && ted.msgCount < 10) {
-                    limit -= 2;
-                }
             } else {
                 limit = SmsConstants.MAX_USER_DATA_BYTES;
             }
         }
 
-        String newMsgBody = null;
-        Resources r = Resources.getSystem();
-        if (r.getBoolean(com.android.internal.R.bool.config_sms_force_7bit_encoding)) {
-            newMsgBody  = Sms7BitEncodingTranslator.translate(text);
-        }
-        if (TextUtils.isEmpty(newMsgBody)) {
-            newMsgBody = text;
-        }
         int pos = 0;  // Index in code units.
-        int textLen = newMsgBody.length();
+        int textLen = text.length();
         ArrayList<String> result = new ArrayList<String>(ted.msgCount);
         while (pos < textLen) {
             int nextPos = 0;  // Counts code units.
@@ -387,18 +341,18 @@ public class SmsMessage {
                     nextPos = pos + Math.min(limit, textLen - pos);
                 } else {
                     // For multi-segment messages, CDMA 7bit equals GSM 7bit encoding (EMS mode).
-                    nextPos = GsmAlphabet.findGsmSeptetLimitIndex(newMsgBody, pos, limit,
+                    nextPos = GsmAlphabet.findGsmSeptetLimitIndex(text, pos, limit,
                             ted.languageTable, ted.languageShiftTable);
                 }
             } else {  // Assume unicode.
-                nextPos = SmsMessageBase.findNextUnicodePosition(pos, limit, newMsgBody);
+                nextPos = pos + Math.min(limit / 2, textLen - pos);
             }
             if ((nextPos <= pos) || (nextPos > textLen)) {
                 Rlog.e(LOG_TAG, "fragmentText failed (" + pos + " >= " + nextPos + " or " +
                           nextPos + " >= " + textLen + ")");
                 break;
             }
-            result.add(newMsgBody.substring(pos, nextPos));
+            result.add(text.substring(pos, nextPos));
             pos = nextPos;
         }
         return result;
@@ -765,111 +719,5 @@ public class SmsMessage {
     private static boolean isCdmaVoice() {
         int activePhone = TelephonyManager.getDefault().getCurrentPhoneType();
         return (PHONE_TYPE_CDMA == activePhone);
-    }
-
-    /**
-     * Decide if the carrier supports long SMS.
-     * {@hide}
-     */
-    public static boolean hasEmsSupport() {
-        if (!isNoEmsSupportConfigListExisted()) {
-            return true;
-        }
-
-        String simOperator;
-        String gid;
-        final long identity = Binder.clearCallingIdentity();
-        try {
-            simOperator = TelephonyManager.getDefault().getSimOperatorNumeric();
-            gid = TelephonyManager.getDefault().getGroupIdLevel1();
-        } finally {
-            Binder.restoreCallingIdentity(identity);
-        }
-
-        if (!TextUtils.isEmpty(simOperator)) {
-            for (NoEmsSupportConfig currentConfig : mNoEmsSupportConfigList) {
-                if (simOperator.startsWith(currentConfig.mOperatorNumber) &&
-                        (TextUtils.isEmpty(currentConfig.mGid1) ||
-                                (!TextUtils.isEmpty(currentConfig.mGid1) &&
-                                        currentConfig.mGid1.equalsIgnoreCase(gid)))) {
-                    return false;
-                }
-            }
-        }
-        return true;
-    }
-
-    /**
-     * Check where to add " x/y" in each SMS segment, begin or end.
-     * {@hide}
-     */
-    public static boolean shouldAppendPageNumberAsPrefix() {
-        if (!isNoEmsSupportConfigListExisted()) {
-            return false;
-        }
-
-        String simOperator;
-        String gid;
-        final long identity = Binder.clearCallingIdentity();
-        try {
-            simOperator = TelephonyManager.getDefault().getSimOperatorNumeric();
-            gid = TelephonyManager.getDefault().getGroupIdLevel1();
-        } finally {
-            Binder.restoreCallingIdentity(identity);
-        }
-
-        for (NoEmsSupportConfig currentConfig : mNoEmsSupportConfigList) {
-            if (simOperator.startsWith(currentConfig.mOperatorNumber) &&
-                (TextUtils.isEmpty(currentConfig.mGid1) ||
-                (!TextUtils.isEmpty(currentConfig.mGid1)
-                && currentConfig.mGid1.equalsIgnoreCase(gid)))) {
-                return currentConfig.mIsPrefix;
-            }
-        }
-        return false;
-    }
-
-    private static class NoEmsSupportConfig {
-        String mOperatorNumber;
-        String mGid1;
-        boolean mIsPrefix;
-
-        public NoEmsSupportConfig(String[] config) {
-            mOperatorNumber = config[0];
-            mIsPrefix = "prefix".equals(config[1]);
-            mGid1 = config.length > 2 ? config[2] : null;
-        }
-
-        @Override
-        public String toString() {
-            return "NoEmsSupportConfig { mOperatorNumber = " + mOperatorNumber
-                    + ", mIsPrefix = " + mIsPrefix + ", mGid1 = " + mGid1 + " }";
-        }
-    }
-
-    private static NoEmsSupportConfig[] mNoEmsSupportConfigList = null;
-    private static boolean mIsNoEmsSupportConfigListLoaded = false;
-
-    private static boolean isNoEmsSupportConfigListExisted() {
-        if (!mIsNoEmsSupportConfigListLoaded) {
-            Resources r = Resources.getSystem();
-            if (r != null) {
-                String[] listArray = r.getStringArray(
-                        com.android.internal.R.array.no_ems_support_sim_operators);
-                if ((listArray != null) && (listArray.length > 0)) {
-                    mNoEmsSupportConfigList = new NoEmsSupportConfig[listArray.length];
-                    for (int i=0; i<listArray.length; i++) {
-                        mNoEmsSupportConfigList[i] = new NoEmsSupportConfig(listArray[i].split(";"));
-                    }
-                }
-                mIsNoEmsSupportConfigListLoaded = true;
-            }
-        }
-
-        if (mNoEmsSupportConfigList != null && mNoEmsSupportConfigList.length != 0) {
-            return true;
-        }
-
-        return false;
     }
 }

@@ -18,7 +18,6 @@ package android.support.v4.net;
 
 import android.os.Build;
 
-import java.net.DatagramSocket;
 import java.net.Socket;
 import java.net.SocketException;
 
@@ -26,7 +25,7 @@ import java.net.SocketException;
  * Helper for accessing features in TrafficStats introduced after API level 14
  * in a backwards compatible fashion.
  */
-public final class TrafficStatsCompat {
+public class TrafficStatsCompat {
 
     interface TrafficStatsCompatImpl {
         void clearThreadStatsTag();
@@ -36,8 +35,6 @@ public final class TrafficStatsCompat {
         void setThreadStatsTag(int tag);
         void tagSocket(Socket socket) throws SocketException;
         void untagSocket(Socket socket) throws SocketException;
-        void tagDatagramSocket(DatagramSocket socket) throws SocketException;
-        void untagDatagramSocket(DatagramSocket socket) throws SocketException;
     }
 
     static class BaseTrafficStatsCompatImpl implements TrafficStatsCompatImpl {
@@ -82,14 +79,6 @@ public final class TrafficStatsCompat {
         @Override
         public void untagSocket(Socket socket) {
         }
-
-        @Override
-        public void tagDatagramSocket(DatagramSocket socket) {
-        }
-
-        @Override
-        public void untagDatagramSocket(DatagramSocket socket) {
-        }
     }
 
     static class IcsTrafficStatsCompatImpl implements TrafficStatsCompatImpl {
@@ -127,36 +116,12 @@ public final class TrafficStatsCompat {
         public void untagSocket(Socket socket) throws SocketException {
             TrafficStatsCompatIcs.untagSocket(socket);
         }
-
-        @Override
-        public void tagDatagramSocket(DatagramSocket socket) throws SocketException {
-            TrafficStatsCompatIcs.tagDatagramSocket(socket);
-        }
-
-        @Override
-        public void untagDatagramSocket(DatagramSocket socket) throws SocketException {
-            TrafficStatsCompatIcs.untagDatagramSocket(socket);
-        }
-    }
-
-    static class Api24TrafficStatsCompatImpl extends IcsTrafficStatsCompatImpl {
-        @Override
-        public void tagDatagramSocket(DatagramSocket socket) throws SocketException {
-            TrafficStatsCompatApi24.tagDatagramSocket(socket);
-        }
-
-        @Override
-        public void untagDatagramSocket(DatagramSocket socket) throws SocketException {
-            TrafficStatsCompatApi24.untagDatagramSocket(socket);
-        }
     }
 
     private static final TrafficStatsCompatImpl IMPL;
 
     static {
-        if ("N".equals(Build.VERSION.CODENAME)) {
-            IMPL = new Api24TrafficStatsCompatImpl();
-        } else if (Build.VERSION.SDK_INT >= 14) {
+        if (Build.VERSION.SDK_INT >= 14) {
             IMPL = new IcsTrafficStatsCompatImpl();
         } else {
             IMPL = new BaseTrafficStatsCompatImpl();
@@ -235,26 +200,4 @@ public final class TrafficStatsCompat {
     public static void untagSocket(Socket socket) throws SocketException {
         IMPL.untagSocket(socket);
     }
-
-    /**
-     * Tag the given {@link DatagramSocket} with any statistics parameters
-     * active for the current thread. Subsequent calls always replace any
-     * existing parameters. When finished, call
-     * {@link #untagDatagramSocket(DatagramSocket)} to remove statistics
-     * parameters.
-     *
-     * @see #setThreadStatsTag(int)
-     */
-    public static void tagDatagramSocket(DatagramSocket socket) throws SocketException {
-        IMPL.tagDatagramSocket(socket);
-    }
-
-    /**
-     * Remove any statistics parameters from the given {@link DatagramSocket}.
-     */
-    public static void untagDatagramSocket(DatagramSocket socket) throws SocketException {
-        IMPL.untagDatagramSocket(socket);
-    }
-
-    private TrafficStatsCompat() {}
 }

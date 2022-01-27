@@ -65,15 +65,11 @@ final class DockObserver extends SystemService {
 
     private boolean mUpdatesStopped;
 
-    private final boolean mAllowTheaterModeWakeFromDock;
-
     public DockObserver(Context context) {
         super(context);
 
         mPowerManager = (PowerManager)context.getSystemService(Context.POWER_SERVICE);
         mWakeLock = mPowerManager.newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, TAG);
-        mAllowTheaterModeWakeFromDock = context.getResources().getBoolean(
-                com.android.internal.R.bool.config_allowTheaterModeWakeFromDock);
 
         init();  // set initial status
 
@@ -106,7 +102,7 @@ final class DockObserver extends SystemService {
                 FileReader file = new FileReader(DOCK_STATE_PATH);
                 try {
                     int len = file.read(buffer, 0, 1024);
-                    setActualDockStateLocked(Integer.parseInt((new String(buffer, 0, len)).trim()));
+                    setActualDockStateLocked(Integer.valueOf((new String(buffer, 0, len)).trim()));
                     mPreviousDockState = mActualDockState;
                 } finally {
                     file.close();
@@ -130,13 +126,8 @@ final class DockObserver extends SystemService {
         if (newState != mReportedDockState) {
             mReportedDockState = newState;
             if (mSystemReady) {
-                // Wake up immediately when docked or undocked except in theater mode.
-                if (mAllowTheaterModeWakeFromDock
-                        || Settings.Global.getInt(getContext().getContentResolver(),
-                            Settings.Global.THEATER_MODE_ON, 0) == 0) {
-                    mPowerManager.wakeUp(SystemClock.uptimeMillis(),
-                            "android.server:DOCK");
-                }
+                // Wake up immediately when docked or undocked.
+                mPowerManager.wakeUp(SystemClock.uptimeMillis());
                 updateLocked();
             }
         }
@@ -210,6 +201,9 @@ final class DockObserver extends SystemService {
             // There are many components in the system watching for this so as to
             // adjust audio routing, screen orientation, etc.
             getContext().sendStickyBroadcastAsUser(intent, UserHandle.ALL);
+
+            // Release the wake lock that was acquired when the message was posted.
+            mWakeLock.release();
         }
     }
 
@@ -219,7 +213,6 @@ final class DockObserver extends SystemService {
             switch (msg.what) {
                 case MSG_DOCK_STATE_CHANGED:
                     handleDockStateChange();
-                    mWakeLock.release();
                     break;
             }
         }

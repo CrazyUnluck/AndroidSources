@@ -21,6 +21,7 @@ import android.app.Activity;
 import android.app.WallpaperManager;
 import android.content.Context;
 import android.content.Intent;
+import android.content.SharedPreferences;
 import android.content.res.Configuration;
 import android.content.res.Resources;
 import android.graphics.Bitmap;
@@ -69,8 +70,6 @@ public class WallpaperCropActivity extends Activity {
      */
     public static final int MAX_BMAP_IN_INTENT = 750000;
     private static final float WALLPAPER_SCREENS_SPAN = 2f;
-
-    protected static Point sDefaultWallpaperSize;
 
     protected CropView mCropView;
     protected Uri mUri;
@@ -132,14 +131,6 @@ public class WallpaperCropActivity extends Activity {
         setCropViewTileSource(bitmapSource, true, false, onLoad);
     }
 
-    @Override
-    protected void onDestroy() {
-        if (mCropView != null) {
-            mCropView.destroy();
-        }
-        super.onDestroy();
-    }
-
     public void setCropViewTileSource(
             final BitmapRegionTileSource.BitmapSource bitmapSource, final boolean touchEnabled,
             final boolean moveToLeft, final Runnable postExecute) {
@@ -148,21 +139,7 @@ public class WallpaperCropActivity extends Activity {
         final AsyncTask<Void, Void, Void> loadBitmapTask = new AsyncTask<Void, Void, Void>() {
             protected Void doInBackground(Void...args) {
                 if (!isCancelled()) {
-                    try {
-                        bitmapSource.loadInBackground();
-                    } catch (SecurityException securityException) {
-                        if (isDestroyed()) {
-                            // Temporarily granted permissions are revoked when the activity
-                            // finishes, potentially resulting in a SecurityException here.
-                            // Even though {@link #isDestroyed} might also return true in different
-                            // situations where the configuration changes, we are fine with
-                            // catching these cases here as well.
-                            cancel(false);
-                        } else {
-                            // otherwise it had a different cause and we throw it further
-                            throw securityException;
-                        }
-                    }
+                    bitmapSource.loadInBackground();
                 }
                 return null;
             }
@@ -232,34 +209,32 @@ public class WallpaperCropActivity extends Activity {
     }
 
     static protected Point getDefaultWallpaperSize(Resources res, WindowManager windowManager) {
-        if (sDefaultWallpaperSize == null) {
-            Point minDims = new Point();
-            Point maxDims = new Point();
-            windowManager.getDefaultDisplay().getCurrentSizeRange(minDims, maxDims);
+        Point minDims = new Point();
+        Point maxDims = new Point();
+        windowManager.getDefaultDisplay().getCurrentSizeRange(minDims, maxDims);
 
-            int maxDim = Math.max(maxDims.x, maxDims.y);
-            int minDim = Math.max(minDims.x, minDims.y);
+        int maxDim = Math.max(maxDims.x, maxDims.y);
+        int minDim = Math.max(minDims.x, minDims.y);
 
-            if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.JELLY_BEAN_MR1) {
-                Point realSize = new Point();
-                windowManager.getDefaultDisplay().getRealSize(realSize);
-                maxDim = Math.max(realSize.x, realSize.y);
-                minDim = Math.min(realSize.x, realSize.y);
-            }
-
-            // We need to ensure that there is enough extra space in the wallpaper
-            // for the intended parallax effects
-            final int defaultWidth, defaultHeight;
-            if (isScreenLarge(res)) {
-                defaultWidth = (int) (maxDim * wallpaperTravelToScreenWidthRatio(maxDim, minDim));
-                defaultHeight = maxDim;
-            } else {
-                defaultWidth = Math.max((int) (minDim * WALLPAPER_SCREENS_SPAN), maxDim);
-                defaultHeight = maxDim;
-            }
-            sDefaultWallpaperSize = new Point(defaultWidth, defaultHeight);
+        if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.JELLY_BEAN_MR1) {
+            Point realSize = new Point();
+            windowManager.getDefaultDisplay().getRealSize(realSize);
+            maxDim = Math.max(realSize.x, realSize.y);
+            minDim = Math.min(realSize.x, realSize.y);
         }
-        return sDefaultWallpaperSize;
+
+        // We need to ensure that there is enough extra space in the wallpaper
+        // for the intended
+        // parallax effects
+        final int defaultWidth, defaultHeight;
+        if (isScreenLarge(res)) {
+            defaultWidth = (int) (maxDim * wallpaperTravelToScreenWidthRatio(maxDim, minDim));
+            defaultHeight = maxDim;
+        } else {
+            defaultWidth = Math.max((int) (minDim * WALLPAPER_SCREENS_SPAN), maxDim);
+            defaultHeight = maxDim;
+        }
+        return new Point(defaultWidth, defaultHeight);
     }
 
     public static int getRotationFromExif(String path) {
@@ -297,9 +272,6 @@ public class WallpaperCropActivity extends Activity {
             }
         } catch (IOException e) {
             Log.w(LOGTAG, "Getting exif data failed", e);
-        } catch (NullPointerException e) {
-            // Sometimes the ExifInterface has an internal NPE if Exif data isn't valid
-            Log.w(LOGTAG, "Getting exif data failed", e);
         } finally {
             Utils.closeSilently(bis);
             Utils.closeSilently(is);
@@ -314,6 +286,7 @@ public class WallpaperCropActivity extends Activity {
         final Point bounds = cropTask.getImageBounds();
         Runnable onEndCrop = new Runnable() {
             public void run() {
+                updateWallpaperDimensions(bounds.x, bounds.y);
                 if (finishActivityWhenDone) {
                     setResult(Activity.RESULT_OK);
                     finish();
@@ -337,6 +310,9 @@ public class WallpaperCropActivity extends Activity {
                 inSize.x, inSize.y, outSize.x, outSize.y, false);
         Runnable onEndCrop = new Runnable() {
             public void run() {
+                // Passing 0, 0 will cause launcher to revert to using the
+                // default wallpaper size
+                updateWallpaperDimensions(0, 0);
                 if (finishActivityWhenDone) {
                     setResult(Activity.RESULT_OK);
                     finish();
@@ -430,6 +406,7 @@ public class WallpaperCropActivity extends Activity {
 
         Runnable onEndCrop = new Runnable() {
             public void run() {
+                updateWallpaperDimensions(outWidth, outHeight);
                 if (finishActivityWhenDone) {
                     setResult(Activity.RESULT_OK);
                     finish();
@@ -808,6 +785,40 @@ public class WallpaperCropActivity extends Activity {
                 mOnEndRunnable.run();
             }
         }
+    }
+
+    protected void updateWallpaperDimensions(int width, int height) {
+        String spKey = getSharedPreferencesKey();
+        SharedPreferences sp = getSharedPreferences(spKey, Context.MODE_MULTI_PROCESS);
+        SharedPreferences.Editor editor = sp.edit();
+        if (width != 0 && height != 0) {
+            editor.putInt(WALLPAPER_WIDTH_KEY, width);
+            editor.putInt(WALLPAPER_HEIGHT_KEY, height);
+        } else {
+            editor.remove(WALLPAPER_WIDTH_KEY);
+            editor.remove(WALLPAPER_HEIGHT_KEY);
+        }
+        editor.commit();
+
+        suggestWallpaperDimension(getResources(),
+                sp, getWindowManager(), WallpaperManager.getInstance(this));
+    }
+
+    static public void suggestWallpaperDimension(Resources res,
+            final SharedPreferences sharedPrefs,
+            WindowManager windowManager,
+            final WallpaperManager wallpaperManager) {
+        final Point defaultWallpaperSize = getDefaultWallpaperSize(res, windowManager);
+
+        new AsyncTask<Void, Void, Void>() {
+            public Void doInBackground(Void ... args) {
+                // If we have saved a wallpaper width/height, use that instead
+                int savedWidth = sharedPrefs.getInt(WALLPAPER_WIDTH_KEY, defaultWallpaperSize.x);
+                int savedHeight = sharedPrefs.getInt(WALLPAPER_HEIGHT_KEY, defaultWallpaperSize.y);
+                wallpaperManager.suggestDesiredDimensions(savedWidth, savedHeight);
+                return null;
+            }
+        }.executeOnExecutor(AsyncTask.THREAD_POOL_EXECUTOR, (Void) null);
     }
 
     protected static RectF getMaxCropRect(

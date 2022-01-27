@@ -20,7 +20,6 @@ import java.util.Locale;
 import java.util.Vector;
 
 import android.content.Context;
-import android.media.MediaPlayer.TrackInfo;
 import android.media.SubtitleTrack.RenderingWidget;
 import android.os.Handler;
 import android.os.Looper;
@@ -276,8 +275,7 @@ public class SubtitleController {
                      mSelectedTrack.getFormat().getInteger(
                             MediaFormat.KEY_IS_FORCED_SUBTITLE, 0) != 0)) {
                     show();
-                } else if (mSelectedTrack != null
-                        && mSelectedTrack.getTrackType() == TrackInfo.MEDIA_TRACK_TYPE_SUBTITLE) {
+                } else {
                     hide();
                 }
                 mVisibilityIsExplicit = false;
@@ -419,19 +417,6 @@ public class SubtitleController {
                 // TODO should added renderers override existing ones (to allow replacing?)
                 mRenderers.add(renderer);
             }
-        }
-    }
-
-    /** @hide */
-    public boolean hasRendererFor(MediaFormat format) {
-        synchronized(mRenderers) {
-            // TODO how to get available renderers in the system
-            for (Renderer renderer: mRenderers) {
-                if (renderer.supports(format)) {
-                    return true;
-                }
-            }
-            return false;
         }
     }
 

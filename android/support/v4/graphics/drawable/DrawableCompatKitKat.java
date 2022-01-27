@@ -16,8 +16,6 @@
 
 package android.support.v4.graphics.drawable;
 
-import android.content.res.ColorStateList;
-import android.graphics.PorterDuff;
 import android.graphics.drawable.Drawable;
 
 /**
@@ -30,16 +28,5 @@ class DrawableCompatKitKat {
 
     public static boolean isAutoMirrored(Drawable drawable) {
         return drawable.isAutoMirrored();
-    }
-
-    public static Drawable wrapForTinting(Drawable drawable) {
-        if (!(drawable instanceof TintAwareDrawable)) {
-            return new DrawableWrapperKitKat(drawable);
-        }
-        return drawable;
-    }
-
-    public static int getAlpha(Drawable drawable) {
-        return drawable.getAlpha();
     }
 }

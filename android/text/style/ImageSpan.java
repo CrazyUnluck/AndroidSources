@@ -16,7 +16,6 @@
 
 package android.text.style;
 
-import android.annotation.DrawableRes;
 import android.content.Context;
 import android.graphics.Bitmap;
 import android.graphics.BitmapFactory;
@@ -111,7 +110,7 @@ public class ImageSpan extends DynamicDrawableSpan {
         mSource = uri.toString();
     }
 
-    public ImageSpan(Context context, @DrawableRes int resourceId) {
+    public ImageSpan(Context context, int resourceId) {
         this(context, resourceId, ALIGN_BOTTOM);
     }
 
@@ -119,7 +118,7 @@ public class ImageSpan extends DynamicDrawableSpan {
      * @param verticalAlignment one of {@link DynamicDrawableSpan#ALIGN_BOTTOM} or
      * {@link DynamicDrawableSpan#ALIGN_BASELINE}.
      */
-    public ImageSpan(Context context, @DrawableRes int resourceId, int verticalAlignment) {
+    public ImageSpan(Context context, int resourceId, int verticalAlignment) {
         super(verticalAlignment);
         mContext = context;
         mResourceId = resourceId;
@@ -146,7 +145,7 @@ public class ImageSpan extends DynamicDrawableSpan {
             }
         } else {
             try {
-                drawable = mContext.getDrawable(mResourceId);
+                drawable = mContext.getResources().getDrawable(mResourceId);
                 drawable.setBounds(0, 0, drawable.getIntrinsicWidth(),
                         drawable.getIntrinsicHeight());
             } catch (Exception e) {

@@ -23,38 +23,56 @@ import java.io.Serializable;
  * WebView.copyBackForwardList() will return a copy of this class used to
  * inspect the entries in the list.
  */
-public abstract class WebBackForwardList implements Cloneable, Serializable {
+public class WebBackForwardList implements Cloneable, Serializable {
+
+    /**
+     *  @hide
+     */
+    public WebBackForwardList() {
+    }
+
     /**
      * Return the current history item. This method returns null if the list is
      * empty.
      * @return The current history item.
      */
-    public abstract WebHistoryItem getCurrentItem();
+    public synchronized WebHistoryItem getCurrentItem() {
+        throw new MustOverrideException();
+    }
 
     /**
      * Get the index of the current history item. This index can be used to
      * directly index into the array list.
      * @return The current index from 0...n or -1 if the list is empty.
      */
-    public abstract int getCurrentIndex();
+    public synchronized int getCurrentIndex() {
+        throw new MustOverrideException();
+    }
 
     /**
      * Get the history item at the given index. The index range is from 0...n
      * where 0 is the first item and n is the last item.
      * @param index The index to retrieve.
      */
-    public abstract WebHistoryItem getItemAtIndex(int index);
+    public synchronized WebHistoryItem getItemAtIndex(int index) {
+        throw new MustOverrideException();
+    }
 
     /**
      * Get the total size of the back/forward list.
      * @return The size of the list.
      */
-    public abstract int getSize();
+    public synchronized int getSize() {
+        throw new MustOverrideException();
+    }
 
     /**
      * Clone the entire object to be used in the UI thread by clients of
      * WebView. This creates a copy that should never be modified by any of the
      * webkit package classes.
      */
-    protected abstract WebBackForwardList clone();
+    protected synchronized WebBackForwardList clone() {
+        throw new MustOverrideException();
+    }
+
 }

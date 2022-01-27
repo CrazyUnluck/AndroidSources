@@ -15,14 +15,19 @@ package android.support.v17.leanback.widget;
 
 import android.support.v17.leanback.R;
 import android.content.Context;
+import android.content.res.Resources;
+import android.content.res.TypedArray;
+import android.graphics.Rect;
 import android.util.AttributeSet;
+import android.util.TypedValue;
 import android.view.LayoutInflater;
+import android.view.View;
 import android.view.ViewGroup;
 import android.widget.LinearLayout;
+import android.widget.TextView;
 
 /**
- * ListRowView is a {@link android.view.ViewGroup} which always contains a
- * {@link HorizontalGridView}, and may optionally include a hover card.
+ * ListRowView contains a horizontal grid view.
  */
 public final class ListRowView extends LinearLayout {
 
@@ -43,9 +48,6 @@ public final class ListRowView extends LinearLayout {
         inflater.inflate(R.layout.lb_list_row, this);
 
         mGridView = (HorizontalGridView) findViewById(R.id.row_content);
-        // since we use WRAP_CONTENT for height in lb_list_row, we need set fixed size to false
-        mGridView.setHasFixedSize(false);
-
         // Uncomment this to experiment with page-based scrolling.
         // mGridView.setFocusScrollStrategy(HorizontalGridView.FOCUS_SCROLL_PAGE);
 
@@ -53,9 +55,6 @@ public final class ListRowView extends LinearLayout {
         setDescendantFocusability(ViewGroup.FOCUS_AFTER_DESCENDANTS);
     }
 
-    /**
-     * Returns the HorizontalGridView.
-     */
     public HorizontalGridView getGridView() {
         return mGridView;
     }

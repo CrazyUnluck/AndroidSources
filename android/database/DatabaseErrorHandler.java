@@ -19,12 +19,13 @@ package android.database;
 import android.database.sqlite.SQLiteDatabase;
 
 /**
- * An interface to let apps define an action to take when database corruption is detected.
+ * An interface to let the apps define the actions to take when the following errors are detected
+ *   database corruption
  */
 public interface DatabaseErrorHandler {
 
     /**
-     * The method invoked when database corruption is detected.
+     * defines the method to be invoked when database corruption is detected.
      * @param dbObj the {@link SQLiteDatabase} object representing the database on which corruption
      * is detected.
      */

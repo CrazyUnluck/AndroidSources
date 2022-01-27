@@ -17,6 +17,9 @@
 package android.renderscript;
 
 
+import android.util.Log;
+
+
 /**
  * @hide
  * <p>ProgramStore contains a set of parameters that control how
@@ -143,7 +146,7 @@ public class ProgramStore extends BaseObj {
     BlendDstFunc mBlendDst;
     boolean mDither;
 
-    ProgramStore(long id, RenderScript rs) {
+    ProgramStore(int id, RenderScript rs) {
         super(id, rs);
     }
 
@@ -418,7 +421,7 @@ public class ProgramStore extends BaseObj {
         */
         public ProgramStore create() {
             mRS.validate();
-            long id = mRS.nProgramStoreCreate(mColorMaskR, mColorMaskG, mColorMaskB, mColorMaskA,
+            int id = mRS.nProgramStoreCreate(mColorMaskR, mColorMaskG, mColorMaskB, mColorMaskA,
                                              mDepthMask, mDither,
                                              mBlendSrc.mID, mBlendDst.mID, mDepthFunc.mID);
             ProgramStore programStore = new ProgramStore(id, mRS);

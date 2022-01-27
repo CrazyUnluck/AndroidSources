@@ -27,7 +27,6 @@ import android.net.sip.SipProfile;
 import android.net.sip.SipSession;
 import android.os.AsyncResult;
 import android.os.Message;
-import android.telephony.DisconnectCause;
 import android.telephony.PhoneNumberUtils;
 import android.telephony.ServiceState;
 import android.text.TextUtils;
@@ -54,8 +53,6 @@ public class SipPhone extends SipPhoneBase {
     private static final int TIMEOUT_MAKE_CALL = 15; // in seconds
     private static final int TIMEOUT_ANSWER_CALL = 8; // in seconds
     private static final int TIMEOUT_HOLD_CALL = 15; // in seconds
-    // Minimum time needed between hold/unhold requests.
-    private static final long TIMEOUT_HOLD_PROCESSING = 1000; // ms
 
     // A call that is ringing or (call) waiting
     private SipCall mRingingCall = new SipCall();
@@ -65,12 +62,10 @@ public class SipPhone extends SipPhoneBase {
     private SipManager mSipManager;
     private SipProfile mProfile;
 
-    private long mTimeOfLastValidHoldRequest = System.currentTimeMillis();
-
     SipPhone (Context context, PhoneNotifier notifier, SipProfile profile) {
         super("SIP:" + profile.getUriString(), context, notifier);
 
-        if (DBG) log("new SipPhone: " + hidePii(profile.getUriString()));
+        if (DBG) log("new SipPhone: " + profile.getUriString());
         mRingingCall = new SipCall();
         mForegroundCall = new SipCall();
         mBackgroundCall = new SipCall();
@@ -94,18 +89,18 @@ public class SipPhone extends SipPhoneBase {
         return getSipUri().equals(phone.getSipUri());
     }
 
-    public Connection takeIncomingCall(Object incomingCall) {
+    public boolean canTake(Object incomingCall) {
         // FIXME: Is synchronizing on the class necessary, should we use a mLockObj?
         // Also there are many things not synchronized, of course
-        // this may be true of GsmCdmaPhone too!!!
+        // this may be true of CdmaPhone and GsmPhone too!!!
         synchronized (SipPhone.class) {
             if (!(incomingCall instanceof SipAudioCall)) {
-                if (DBG) log("takeIncomingCall: ret=null, not a SipAudioCall");
-                return null;
+                if (DBG) log("canTake: ret=false, not a SipAudioCall");
+                return false;
             }
             if (mRingingCall.getState().isAlive()) {
-                if (DBG) log("takeIncomingCall: ret=null, ringingCall not alive");
-                return null;
+                if (DBG) log("canTake: ret=false, ringingCall not alive");
+                return false;
             }
 
             // FIXME: is it true that we cannot take any incoming call if
@@ -113,42 +108,42 @@ public class SipPhone extends SipPhoneBase {
             if (mForegroundCall.getState().isAlive()
                     && mBackgroundCall.getState().isAlive()) {
                 if (DBG) {
-                    log("takeIncomingCall: ret=null," + " foreground and background both alive");
+                    log("canTake: ret=false," +
+                            " foreground and background both alive");
                 }
-                return null;
+                return false;
             }
 
             try {
                 SipAudioCall sipAudioCall = (SipAudioCall) incomingCall;
-                if (DBG) log("takeIncomingCall: taking call from: "
+                if (DBG) log("canTake: taking call from: "
                         + sipAudioCall.getPeerProfile().getUriString());
                 String localUri = sipAudioCall.getLocalProfile().getUriString();
                 if (localUri.equals(mProfile.getUriString())) {
                     boolean makeCallWait = mForegroundCall.getState().isAlive();
-                    SipConnection connection = mRingingCall.initIncomingCall(sipAudioCall,
-                            makeCallWait);
-                    if (sipAudioCall.getState() != SipSession.State.INCOMING_CALL) {
+                    mRingingCall.initIncomingCall(sipAudioCall, makeCallWait);
+                    if (sipAudioCall.getState()
+                            != SipSession.State.INCOMING_CALL) {
                         // Peer cancelled the call!
-                        if (DBG) log("    takeIncomingCall: call cancelled !!");
+                        if (DBG) log("    canTake: call cancelled !!");
                         mRingingCall.reset();
-                        connection = null;
                     }
-                    return connection;
+                    return true;
                 }
             } catch (Exception e) {
                 // Peer may cancel the call at any time during the time we hook
                 // up ringingCall with sipAudioCall. Clean up ringingCall when
                 // that happens.
-                if (DBG) log("    takeIncomingCall: exception e=" + e);
+                if (DBG) log("    canTake: exception e=" + e);
                 mRingingCall.reset();
             }
-            if (DBG) log("takeIncomingCall: NOT taking !!");
-            return null;
+            if (DBG) log("canTake: NOT taking !!");
+            return false;
         }
     }
 
     @Override
-    public void acceptCall(int videoState) throws CallStateException {
+    public void acceptCall() throws CallStateException {
         synchronized (SipPhone.class) {
             if ((mRingingCall.getState() == Call.State.INCOMING) ||
                     (mRingingCall.getState() == Call.State.WAITING)) {
@@ -183,15 +178,15 @@ public class SipPhone extends SipPhoneBase {
     }
 
     @Override
-    public Connection dial(String dialString, int videoState) throws CallStateException {
+    public Connection dial(String dialString) throws CallStateException {
         synchronized (SipPhone.class) {
-            return dialInternal(dialString, videoState);
+            return dialInternal(dialString);
         }
     }
 
-    private Connection dialInternal(String dialString, int videoState)
+    private Connection dialInternal(String dialString)
             throws CallStateException {
-        if (DBG) log("dialInternal: dialString=" + hidePii(dialString));
+        if (DBG) log("dialInternal: dialString=" + (VDBG ? dialString : "xxxxxx"));
         clearDisconnected();
 
         if (!canDial()) {
@@ -217,14 +212,7 @@ public class SipPhone extends SipPhoneBase {
 
     @Override
     public void switchHoldingAndActive() throws CallStateException {
-        // Wait for at least TIMEOUT_HOLD_PROCESSING ms to occur before sending hold/unhold requests
-        // to prevent spamming the SipAudioCall state machine and putting it into an invalid state.
-        if (!isHoldTimeoutExpired()) {
-            if (DBG) log("switchHoldingAndActive: Disregarded! Under " + TIMEOUT_HOLD_PROCESSING +
-                    " ms...");
-            return;
-        }
-        if (DBG) log("switchHoldingAndActive: switch fg and bg");
+        if (DBG) log("dialInternal: switch fg and bg");
         synchronized (SipPhone.class) {
             mForegroundCall.switchWith(mBackgroundCall);
             if (mBackgroundCall.getState().isAlive()) mBackgroundCall.hold();
@@ -342,15 +330,14 @@ public class SipPhone extends SipPhoneBase {
     }
 
     @Override
-    public void setEchoSuppressionEnabled() {
-        // Echo suppression may not be available on every device. So, check
-        // whether it is supported
+    public void setEchoSuppressionEnabled(boolean enabled) {
+        // TODO: Remove the enabled argument. We should check the speakerphone
+        // state with AudioManager instead of keeping a state here so the
+        // method with a state argument is redundant. Also rename the method
+        // to something like onSpeaerphoneStateChanged(). Echo suppression may
+        // not be available on every device.
         synchronized (SipPhone.class) {
-            AudioManager audioManager = (AudioManager) mContext.getSystemService(Context.AUDIO_SERVICE);
-            String echoSuppression = audioManager.getParameters("ec_supported");
-            if (echoSuppression.contains("off")) {
-                mForegroundCall.setAudioGroupMode();
-            }
+            mForegroundCall.setAudioGroupMode();
         }
     }
 
@@ -420,15 +407,6 @@ public class SipPhone extends SipPhoneBase {
                 slog("illegal connection state: " + sessionState);
                 return Call.State.DISCONNECTED;
         }
-    }
-
-    private synchronized boolean isHoldTimeoutExpired() {
-        long currTime = System.currentTimeMillis();
-        if ((currTime - mTimeOfLastValidHoldRequest) > TIMEOUT_HOLD_PROCESSING) {
-            mTimeOfLastValidHoldRequest = currTime;
-            return true;
-        }
-        return false;
     }
 
     private void log(String s) {
@@ -537,7 +515,7 @@ public class SipPhone extends SipPhoneBase {
             }
         }
 
-        SipConnection initIncomingCall(SipAudioCall sipAudioCall, boolean makeCallWait) {
+        void initIncomingCall(SipAudioCall sipAudioCall, boolean makeCallWait) {
             SipProfile callee = sipAudioCall.getPeerProfile();
             SipConnection c = new SipConnection(this, callee);
             mConnections.add(c);
@@ -547,7 +525,6 @@ public class SipPhone extends SipPhoneBase {
 
             setState(newState);
             notifyNewRingingConnectionP(c);
-            return c;
         }
 
         void rejectCall() throws CallStateException {
@@ -752,7 +729,7 @@ public class SipPhone extends SipPhoneBase {
 
         private SipAudioCallAdapter mAdapter = new SipAudioCallAdapter() {
             @Override
-            protected void onCallEnded(int cause) {
+            protected void onCallEnded(DisconnectCause cause) {
                 if (getDisconnectCause() != DisconnectCause.LOCAL) {
                     setDisconnectCause(cause);
                 }
@@ -765,7 +742,7 @@ public class SipPhone extends SipPhoneBase {
                             ? ""
                             : (sipAudioCall.getState() + ", ");
                     if (SCN_DBG) log("[SipAudioCallAdapter] onCallEnded: "
-                            + hidePii(mPeer.getUriString()) + ": " + sessionState
+                            + mPeer.getUriString() + ": " + sessionState
                             + "cause: " + getDisconnectCause() + ", on phone "
                             + getPhone());
                     if (sipAudioCall != null) {
@@ -820,7 +797,7 @@ public class SipPhone extends SipPhoneBase {
             }
 
             @Override
-            protected void onError(int cause) {
+            protected void onError(DisconnectCause cause) {
                 if (SCN_DBG) log("onError: " + cause);
                 onCallEnded(cause);
             }
@@ -1011,23 +988,21 @@ public class SipPhone extends SipPhoneBase {
     private abstract class SipAudioCallAdapter extends SipAudioCall.Listener {
         private static final String SACA_TAG = "SipAudioCallAdapter";
         private static final boolean SACA_DBG = true;
-        /** Call ended with cause defined in {@link DisconnectCause}. */
-        protected abstract void onCallEnded(int cause);
-        /** Call failed with cause defined in {@link DisconnectCause}. */
-        protected abstract void onError(int cause);
+        protected abstract void onCallEnded(Connection.DisconnectCause cause);
+        protected abstract void onError(Connection.DisconnectCause cause);
 
         @Override
         public void onCallEnded(SipAudioCall call) {
             if (SACA_DBG) log("onCallEnded: call=" + call);
             onCallEnded(call.isInCall()
-                    ? DisconnectCause.NORMAL
-                    : DisconnectCause.INCOMING_MISSED);
+                    ? Connection.DisconnectCause.NORMAL
+                    : Connection.DisconnectCause.INCOMING_MISSED);
         }
 
         @Override
         public void onCallBusy(SipAudioCall call) {
             if (SACA_DBG) log("onCallBusy: call=" + call);
-            onCallEnded(DisconnectCause.BUSY);
+            onCallEnded(Connection.DisconnectCause.BUSY);
         }
 
         @Override
@@ -1039,43 +1014,39 @@ public class SipPhone extends SipPhoneBase {
             }
             switch (errorCode) {
                 case SipErrorCode.SERVER_UNREACHABLE:
-                    onError(DisconnectCause.SERVER_UNREACHABLE);
+                    onError(Connection.DisconnectCause.SERVER_UNREACHABLE);
                     break;
                 case SipErrorCode.PEER_NOT_REACHABLE:
-                    onError(DisconnectCause.NUMBER_UNREACHABLE);
+                    onError(Connection.DisconnectCause.NUMBER_UNREACHABLE);
                     break;
                 case SipErrorCode.INVALID_REMOTE_URI:
-                    onError(DisconnectCause.INVALID_NUMBER);
+                    onError(Connection.DisconnectCause.INVALID_NUMBER);
                     break;
                 case SipErrorCode.TIME_OUT:
                 case SipErrorCode.TRANSACTION_TERMINTED:
-                    onError(DisconnectCause.TIMED_OUT);
+                    onError(Connection.DisconnectCause.TIMED_OUT);
                     break;
                 case SipErrorCode.DATA_CONNECTION_LOST:
-                    onError(DisconnectCause.LOST_SIGNAL);
+                    onError(Connection.DisconnectCause.LOST_SIGNAL);
                     break;
                 case SipErrorCode.INVALID_CREDENTIALS:
-                    onError(DisconnectCause.INVALID_CREDENTIALS);
+                    onError(Connection.DisconnectCause.INVALID_CREDENTIALS);
                     break;
                 case SipErrorCode.CROSS_DOMAIN_AUTHENTICATION:
-                    onError(DisconnectCause.OUT_OF_NETWORK);
+                    onError(Connection.DisconnectCause.OUT_OF_NETWORK);
                     break;
                 case SipErrorCode.SERVER_ERROR:
-                    onError(DisconnectCause.SERVER_ERROR);
+                    onError(Connection.DisconnectCause.SERVER_ERROR);
                     break;
                 case SipErrorCode.SOCKET_ERROR:
                 case SipErrorCode.CLIENT_ERROR:
                 default:
-                    onError(DisconnectCause.ERROR_UNSPECIFIED);
+                    onError(Connection.DisconnectCause.ERROR_UNSPECIFIED);
             }
         }
 
         private void log(String s) {
             Rlog.d(SACA_TAG, s);
         }
-    }
-
-    public static String hidePii(String s) {
-        return VDBG ? s : "xxxxx";
     }
 }

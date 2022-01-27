@@ -16,8 +16,6 @@
 
 package android.view.animation;
 
-import android.annotation.AnimRes;
-import android.annotation.InterpolatorRes;
 import android.content.Context;
 import android.content.res.TypedArray;
 import android.util.AttributeSet;
@@ -182,7 +180,7 @@ public class LayoutAnimationController {
      *
      * @attr ref android.R.styleable#LayoutAnimation_animation
      */
-    public void setAnimation(Context context, @AnimRes int resourceID) {
+    public void setAnimation(Context context, int resourceID) {
         setAnimation(AnimationUtils.loadAnimation(context, resourceID));
     }
 
@@ -227,7 +225,7 @@ public class LayoutAnimationController {
      *
      * @attr ref android.R.styleable#LayoutAnimation_interpolator
      */
-    public void setInterpolator(Context context, @InterpolatorRes int resourceID) {
+    public void setInterpolator(Context context, int resourceID) {
         setInterpolator(AnimationUtils.loadInterpolator(context, resourceID));
     }
 

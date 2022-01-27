@@ -20,6 +20,7 @@ import android.nfc.ErrorCodes;
 import android.nfc.FormatException;
 import android.nfc.INfcTag;
 import android.nfc.NdefMessage;
+import android.nfc.NfcAdapter;
 import android.nfc.Tag;
 import android.nfc.TagLostException;
 import android.os.Bundle;
@@ -51,7 +52,7 @@ import java.io.IOException;
  * {@link Ndef} on NFC Forum Tag Types 1-4, and implement all NDEF operations
  * as defined in this class.
  *
- * <p>Some vendors have their own well defined specifications for storing NDEF data
+ * <p>Some vendors have there own well defined specifications for storing NDEF data
  * on tags that do not fall into the above categories. Android devices with NFC
  * should enumerate and implement {@link Ndef} under these vendor specifications
  * where possible, but it is not mandatory. {@link #getType} returns a String
@@ -277,8 +278,6 @@ public final class Ndef extends BasicTagTechnology {
                     throw new TagLostException();
                 }
                 return msg;
-            } else if (!tagService.isPresent(serviceHandle)) {
-                throw new TagLostException();
             } else {
                 return null;
             }

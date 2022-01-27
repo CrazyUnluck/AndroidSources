@@ -37,30 +37,17 @@ public class SeekBarPreference extends Preference
     private boolean mTrackingTouch;
 
     public SeekBarPreference(
-            Context context, AttributeSet attrs, int defStyleAttr, int defStyleRes) {
-        super(context, attrs, defStyleAttr, defStyleRes);
-
-        TypedArray a = context.obtainStyledAttributes(
-                attrs, com.android.internal.R.styleable.ProgressBar, defStyleAttr, defStyleRes);
+            Context context, AttributeSet attrs, int defStyle) {
+        super(context, attrs, defStyle);
+        TypedArray a = context.obtainStyledAttributes(attrs,
+                com.android.internal.R.styleable.ProgressBar, defStyle, 0);
         setMax(a.getInt(com.android.internal.R.styleable.ProgressBar_max, mMax));
         a.recycle();
-
-        a = context.obtainStyledAttributes(attrs,
-                com.android.internal.R.styleable.SeekBarPreference, defStyleAttr, defStyleRes);
-        final int layoutResId = a.getResourceId(
-                com.android.internal.R.styleable.SeekBarPreference_layout,
-                com.android.internal.R.layout.preference_widget_seekbar);
-        a.recycle();
-
-        setLayoutResource(layoutResId);
-    }
-
-    public SeekBarPreference(Context context, AttributeSet attrs, int defStyleAttr) {
-        this(context, attrs, defStyleAttr, 0);
+        setLayoutResource(com.android.internal.R.layout.preference_widget_seekbar);
     }
 
     public SeekBarPreference(Context context, AttributeSet attrs) {
-        this(context, attrs, com.android.internal.R.attr.seekBarPreferenceStyle);
+        this(context, attrs, 0);
     }
 
     public SeekBarPreference(Context context) {
@@ -96,15 +83,18 @@ public class SeekBarPreference extends Preference
 
     @Override
     public boolean onKey(View v, int keyCode, KeyEvent event) {
-        if (event.getAction() != KeyEvent.ACTION_DOWN) {
-            return false;
+        if (event.getAction() != KeyEvent.ACTION_UP) {
+            if (keyCode == KeyEvent.KEYCODE_PLUS
+                    || keyCode == KeyEvent.KEYCODE_EQUALS) {
+                setProgress(getProgress() + 1);
+                return true;
+            }
+            if (keyCode == KeyEvent.KEYCODE_MINUS) {
+                setProgress(getProgress() - 1);
+                return true;
+            }
         }
-
-        SeekBar seekBar = (SeekBar) v.findViewById(com.android.internal.R.id.seekbar);
-        if (seekBar == null) {
-            return false;
-        }
-        return seekBar.onKeyDown(keyCode, event);
+        return false;
     }
 
     public void setMax(int max) {

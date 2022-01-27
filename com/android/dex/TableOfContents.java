@@ -53,7 +53,6 @@ public final class TableOfContents {
             debugInfos, annotations, encodedArrays, annotationsDirectories
     };
 
-    public int apiLevel;
     public int checksum;
     public byte[] signature;
     public int fileSize;
@@ -74,12 +73,12 @@ public final class TableOfContents {
 
     private void readHeader(Dex.Section headerIn) throws UnsupportedEncodingException {
         byte[] magic = headerIn.readByteArray(8);
+        int apiTarget = DexFormat.magicToApi(magic);
 
-        if (!DexFormat.isSupportedDexMagic(magic)) {
+        if (apiTarget != DexFormat.API_NO_EXTENDED_OPCODES) {
             throw new DexException("Unexpected magic: " + Arrays.toString(magic));
         }
 
-        apiLevel = DexFormat.magicToApi(magic);
         checksum = headerIn.readInt();
         signature = headerIn.readByteArray(20);
         fileSize = headerIn.readInt();
@@ -164,8 +163,8 @@ public final class TableOfContents {
         throw new IllegalArgumentException("No such map item: " + type);
     }
 
-    public void writeHeader(Dex.Section out, int api) throws IOException {
-        out.write(DexFormat.apiToMagic(api).getBytes("UTF-8"));
+    public void writeHeader(Dex.Section out) throws IOException {
+        out.write(DexFormat.apiToMagic(DexFormat.API_NO_EXTENDED_OPCODES).getBytes("UTF-8"));
         out.writeInt(checksum);
         out.write(signature);
         out.writeInt(fileSize);

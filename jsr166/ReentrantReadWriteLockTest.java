@@ -8,31 +8,16 @@
 
 package jsr166;
 
-import static java.util.concurrent.TimeUnit.MILLISECONDS;
-
-import java.util.Arrays;
-import java.util.Collection;
-import java.util.HashSet;
-import java.util.concurrent.CountDownLatch;
+import junit.framework.*;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.locks.Condition;
 import java.util.concurrent.locks.Lock;
 import java.util.concurrent.locks.ReentrantReadWriteLock;
-
-import junit.framework.AssertionFailedError;
-import junit.framework.Test;
-import junit.framework.TestSuite;
+import java.util.concurrent.CountDownLatch;
+import static java.util.concurrent.TimeUnit.MILLISECONDS;
+import java.util.*;
 
 public class ReentrantReadWriteLockTest extends JSR166TestCase {
-    // android-note: Removed because the CTS runner does a bad job of
-    // retrying tests that have suite() declarations.
-    //
-    // public static void main(String[] args) {
-    //     main(suite(), args);
-    // }
-    // public static Test suite() {
-    //     return new TestSuite(ReentrantReadWriteLockTest.class);
-    // }
 
     /**
      * A runnable calling lockInterruptibly
@@ -157,32 +142,28 @@ public class ReentrantReadWriteLockTest extends JSR166TestCase {
         lock.writeLock().unlock();
     }
 
-    enum AwaitMethod { await, awaitTimed, awaitNanos, awaitUntil }
+    enum AwaitMethod { await, awaitTimed, awaitNanos, awaitUntil };
 
     /**
-     * Awaits condition "indefinitely" using the specified AwaitMethod.
+     * Awaits condition using the specified AwaitMethod.
      */
     void await(Condition c, AwaitMethod awaitMethod)
             throws InterruptedException {
-        long timeoutMillis = 2 * LONG_DELAY_MS;
         switch (awaitMethod) {
         case await:
             c.await();
             break;
         case awaitTimed:
-            assertTrue(c.await(timeoutMillis, MILLISECONDS));
+            assertTrue(c.await(2 * LONG_DELAY_MS, MILLISECONDS));
             break;
         case awaitNanos:
-            long timeoutNanos = MILLISECONDS.toNanos(timeoutMillis);
-            long nanosRemaining = c.awaitNanos(timeoutNanos);
-            assertTrue(nanosRemaining > timeoutNanos / 2);
-            assertTrue(nanosRemaining <= timeoutNanos);
+            long nanosRemaining = c.awaitNanos(MILLISECONDS.toNanos(2 * LONG_DELAY_MS));
+            assertTrue(nanosRemaining > 0);
             break;
         case awaitUntil:
-            assertTrue(c.awaitUntil(delayedDate(timeoutMillis)));
+            java.util.Date d = new java.util.Date();
+            assertTrue(c.awaitUntil(new java.util.Date(d.getTime() + 2 * LONG_DELAY_MS)));
             break;
-        default:
-            throw new AssertionError();
         }
     }
 
@@ -243,7 +224,7 @@ public class ReentrantReadWriteLockTest extends JSR166TestCase {
         }
         for (int i = SIZE; i > 0; i--) {
             lock.writeLock().unlock();
-            assertEquals(i - 1,lock.getWriteHoldCount());
+            assertEquals(i-1,lock.getWriteHoldCount());
         }
     }
 
@@ -260,7 +241,7 @@ public class ReentrantReadWriteLockTest extends JSR166TestCase {
         }
         for (int i = SIZE; i > 0; i--) {
             lock.writeLock().unlock();
-            assertEquals(i - 1,lock.writeLock().getHoldCount());
+            assertEquals(i-1,lock.writeLock().getHoldCount());
         }
     }
 
@@ -277,7 +258,7 @@ public class ReentrantReadWriteLockTest extends JSR166TestCase {
         }
         for (int i = SIZE; i > 0; i--) {
             lock.readLock().unlock();
-            assertEquals(i - 1,lock.getReadHoldCount());
+            assertEquals(i-1,lock.getReadHoldCount());
         }
     }
 
@@ -837,7 +818,9 @@ public class ReentrantReadWriteLockTest extends JSR166TestCase {
             new PublicReentrantReadWriteLock(fair);
         try {
             lock.writeLock().lockInterruptibly();
-        } catch (InterruptedException fail) { threadUnexpectedException(fail); }
+        } catch (InterruptedException ie) {
+            threadUnexpectedException(ie);
+        }
         Thread t = newStartedThread(new CheckedInterruptedRunnable() {
             public void realRun() throws InterruptedException {
                 lock.writeLock().lockInterruptibly();
@@ -862,7 +845,9 @@ public class ReentrantReadWriteLockTest extends JSR166TestCase {
             lock.readLock().lockInterruptibly();
             lock.readLock().unlock();
             lock.writeLock().lockInterruptibly();
-        } catch (InterruptedException fail) { threadUnexpectedException(fail); }
+        } catch (InterruptedException ie) {
+            threadUnexpectedException(ie);
+        }
         Thread t = newStartedThread(new CheckedInterruptedRunnable() {
             public void realRun() throws InterruptedException {
                 lock.readLock().lockInterruptibly();
@@ -888,9 +873,7 @@ public class ReentrantReadWriteLockTest extends JSR166TestCase {
                 await(c, awaitMethod);
                 shouldThrow();
             } catch (IllegalMonitorStateException success) {
-            } catch (InterruptedException fail) {
-                threadUnexpectedException(fail);
-            }
+            } catch (InterruptedException e) { threadUnexpectedException(e); }
             assertTrue(millisElapsedSince(startTime) < LONG_DELAY_MS);
         }
     }
@@ -941,7 +924,9 @@ public class ReentrantReadWriteLockTest extends JSR166TestCase {
             assertTrue(nanosRemaining <= 0);
             assertTrue(millisElapsedSince(startTime) >= timeoutMillis);
             lock.writeLock().unlock();
-        } catch (InterruptedException fail) { threadUnexpectedException(fail); }
+        } catch (InterruptedException e) {
+            threadUnexpectedException(e);
+        }
     }
 
     /**
@@ -960,7 +945,9 @@ public class ReentrantReadWriteLockTest extends JSR166TestCase {
             assertFalse(c.await(timeoutMillis, MILLISECONDS));
             assertTrue(millisElapsedSince(startTime) >= timeoutMillis);
             lock.writeLock().unlock();
-        } catch (InterruptedException fail) { threadUnexpectedException(fail); }
+        } catch (InterruptedException e) {
+            threadUnexpectedException(e);
+        }
     }
 
     /**
@@ -974,13 +961,15 @@ public class ReentrantReadWriteLockTest extends JSR166TestCase {
                 new ReentrantReadWriteLock(fair);
             final Condition c = lock.writeLock().newCondition();
             lock.writeLock().lock();
-            // We shouldn't assume that nanoTime and currentTimeMillis
-            // use the same time source, so don't use nanoTime here.
-            java.util.Date delayedDate = delayedDate(timeoutMillis());
-            assertFalse(c.awaitUntil(delayedDate));
-            assertTrue(new java.util.Date().getTime() >= delayedDate.getTime());
+            long startTime = System.nanoTime();
+            long timeoutMillis = 10;
+            java.util.Date d = new java.util.Date();
+            assertFalse(c.awaitUntil(new java.util.Date(d.getTime() + timeoutMillis)));
+            assertTrue(millisElapsedSince(startTime) >= timeoutMillis);
             lock.writeLock().unlock();
-        } catch (InterruptedException fail) { threadUnexpectedException(fail); }
+        } catch (InterruptedException e) {
+            threadUnexpectedException(e);
+        }
     }
 
     /**

@@ -16,7 +16,6 @@
 
 package com.android.systemui.statusbar.phone;
 
-import android.graphics.drawable.Icon;
 import android.os.Bundle;
 import android.os.UserHandle;
 import android.view.Gravity;
@@ -28,7 +27,7 @@ import com.android.internal.statusbar.StatusBarIcon;
 import com.android.systemui.DemoMode;
 import com.android.systemui.R;
 import com.android.systemui.statusbar.StatusBarIconView;
-import com.android.systemui.statusbar.policy.LocationControllerImpl;
+import com.android.systemui.statusbar.policy.LocationController;
 
 public class DemoStatusIcons extends LinearLayout implements DemoMode {
     private final LinearLayout mStatusIcons;
@@ -61,16 +60,10 @@ public class DemoStatusIcons extends LinearLayout implements DemoMode {
         } else if (mDemoMode && command.equals(COMMAND_STATUS)) {
             String volume = args.getString("volume");
             if (volume != null) {
-                int iconId = volume.equals("vibrate") ? R.drawable.stat_sys_ringer_vibrate
+                int iconId = volume.equals("silent") ? R.drawable.stat_sys_ringer_silent
+                        : volume.equals("vibrate") ? R.drawable.stat_sys_ringer_vibrate
                         : 0;
                 updateSlot("volume", null, iconId);
-            }
-            String zen = args.getString("zen");
-            if (zen != null) {
-                int iconId = zen.equals("important") ? R.drawable.stat_sys_zen_important
-                        : zen.equals("none") ? R.drawable.stat_sys_zen_none
-                        : 0;
-                updateSlot("zen", null, iconId);
             }
             String bt = args.getString("bluetooth");
             if (bt != null) {
@@ -81,9 +74,9 @@ public class DemoStatusIcons extends LinearLayout implements DemoMode {
             }
             String location = args.getString("location");
             if (location != null) {
-                int iconId = location.equals("show") ? LocationControllerImpl.LOCATION_STATUS_ICON_ID
+                int iconId = location.equals("show") ? LocationController.LOCATION_STATUS_ICON_ID
                         : 0;
-                updateSlot("location", null, iconId);
+                updateSlot(LocationController.LOCATION_STATUS_ICON_PLACEHOLDER, null, iconId);
             }
             String alarm = args.getString("alarm");
             if (alarm != null) {
@@ -91,11 +84,23 @@ public class DemoStatusIcons extends LinearLayout implements DemoMode {
                         : 0;
                 updateSlot("alarm_clock", null, iconId);
             }
+            String sync = args.getString("sync");
+            if (sync != null) {
+                int iconId = sync.equals("show") ? R.drawable.stat_sys_sync
+                        : 0;
+                updateSlot("sync_active", null, iconId);
+            }
             String tty = args.getString("tty");
             if (tty != null) {
                 int iconId = tty.equals("show") ? R.drawable.stat_sys_tty_mode
                         : 0;
                 updateSlot("tty", null, iconId);
+            }
+            String eri = args.getString("eri");
+            if (eri != null) {
+                int iconId = eri.equals("show") ? R.drawable.stat_sys_roaming_cdma_0
+                        : 0;
+                updateSlot("cdma_eri", null, iconId);
             }
             String mute = args.getString("mute");
             if (mute != null) {
@@ -109,24 +114,11 @@ public class DemoStatusIcons extends LinearLayout implements DemoMode {
                         : 0;
                 updateSlot("speakerphone", null, iconId);
             }
-            String cast = args.getString("cast");
-            if (cast != null) {
-                int iconId = cast.equals("show") ? R.drawable.stat_sys_cast : 0;
-                updateSlot("cast", null, iconId);
-            }
-            String hotspot = args.getString("hotspot");
-            if (hotspot != null) {
-                int iconId = hotspot.equals("show") ? R.drawable.stat_sys_hotspot : 0;
-                updateSlot("hotspot", null, iconId);
-            }
         }
     }
 
     private void updateSlot(String slot, String iconPkg, int iconId) {
         if (!mDemoMode) return;
-        if (iconPkg == null) {
-            iconPkg = mContext.getPackageName();
-        }
         int removeIndex = -1;
         for (int i = 0; i < getChildCount(); i++) {
             StatusBarIconView v = (StatusBarIconView) getChildAt(i);
@@ -136,7 +128,8 @@ public class DemoStatusIcons extends LinearLayout implements DemoMode {
                     break;
                 } else {
                     StatusBarIcon icon = v.getStatusBarIcon();
-                    icon.icon = Icon.createWithResource(icon.icon.getResPackage(), iconId);
+                    icon.iconPackage = iconPkg;
+                    icon.iconId = iconId;
                     v.set(icon);
                     v.updateDrawable();
                     return;
@@ -146,11 +139,11 @@ public class DemoStatusIcons extends LinearLayout implements DemoMode {
         if (iconId == 0) {
             if (removeIndex != -1) {
                 removeViewAt(removeIndex);
+                return;
             }
-            return;
         }
-        StatusBarIcon icon = new StatusBarIcon(iconPkg, UserHandle.SYSTEM, iconId, 0, 0, "Demo");
-        StatusBarIconView v = new StatusBarIconView(getContext(), null, null);
+        StatusBarIcon icon = new StatusBarIcon(iconPkg, UserHandle.CURRENT, iconId, 0, 0, "Demo");
+        StatusBarIconView v = new StatusBarIconView(mContext, null);
         v.setTag(slot);
         v.set(icon);
         addView(v, 0, new LinearLayout.LayoutParams(mIconSize, mIconSize));

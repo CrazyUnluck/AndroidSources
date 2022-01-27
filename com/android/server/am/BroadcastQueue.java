@@ -18,25 +18,18 @@ package com.android.server.am;
 
 import java.io.FileDescriptor;
 import java.io.PrintWriter;
-import java.text.SimpleDateFormat;
 import java.util.ArrayList;
-import java.util.Date;
-import java.util.Set;
 
 import android.app.ActivityManager;
 import android.app.AppGlobals;
 import android.app.AppOpsManager;
-import android.app.BroadcastOptions;
-import android.app.PendingIntent;
 import android.content.ComponentName;
 import android.content.IIntentReceiver;
-import android.content.IIntentSender;
 import android.content.Intent;
-import android.content.IntentSender;
 import android.content.pm.ActivityInfo;
+import android.content.pm.PackageInfo;
 import android.content.pm.PackageManager;
 import android.content.pm.ResolveInfo;
-import android.os.Build;
 import android.os.Bundle;
 import android.os.Handler;
 import android.os.IBinder;
@@ -47,11 +40,8 @@ import android.os.RemoteException;
 import android.os.SystemClock;
 import android.os.UserHandle;
 import android.util.EventLog;
+import android.util.Log;
 import android.util.Slog;
-import android.util.TimeUtils;
-import com.android.server.DeviceIdleController;
-
-import static com.android.server.am.ActivityManagerDebugConfig.*;
 
 /**
  * BROADCASTS
@@ -60,9 +50,11 @@ import static com.android.server.am.ActivityManagerDebugConfig.*;
  * foreground priority, and one for normal (background-priority) broadcasts.
  */
 public final class BroadcastQueue {
-    private static final String TAG = "BroadcastQueue";
-    private static final String TAG_MU = TAG + POSTFIX_MU;
-    private static final String TAG_BROADCAST = TAG + POSTFIX_BROADCAST;
+    static final String TAG = "BroadcastQueue";
+    static final String TAG_MU = ActivityManagerService.TAG_MU;
+    static final boolean DEBUG_BROADCAST = ActivityManagerService.DEBUG_BROADCAST;
+    static final boolean DEBUG_BROADCAST_LIGHT = ActivityManagerService.DEBUG_BROADCAST_LIGHT;
+    static final boolean DEBUG_MU = ActivityManagerService.DEBUG_MU;
 
     static final int MAX_BROADCAST_HISTORY = ActivityManager.isLowRamDeviceStatic() ? 10 : 50;
     static final int MAX_BROADCAST_SUMMARY_HISTORY
@@ -93,7 +85,7 @@ public final class BroadcastQueue {
      * a bunch of processes to execute IntentReceiver components.  Background-
      * and foreground-priority broadcasts are queued separately.
      */
-    final ArrayList<BroadcastRecord> mParallelBroadcasts = new ArrayList<>();
+    final ArrayList<BroadcastRecord> mParallelBroadcasts = new ArrayList<BroadcastRecord>();
 
     /**
      * List of all active broadcasts that are to be executed one at a time.
@@ -102,30 +94,17 @@ public final class BroadcastQueue {
      * broadcasts, separate background- and foreground-priority queues are
      * maintained.
      */
-    final ArrayList<BroadcastRecord> mOrderedBroadcasts = new ArrayList<>();
+    final ArrayList<BroadcastRecord> mOrderedBroadcasts = new ArrayList<BroadcastRecord>();
 
     /**
-     * Historical data of past broadcasts, for debugging.  This is a ring buffer
-     * whose last element is at mHistoryNext.
+     * Historical data of past broadcasts, for debugging.
      */
     final BroadcastRecord[] mBroadcastHistory = new BroadcastRecord[MAX_BROADCAST_HISTORY];
-    int mHistoryNext = 0;
 
     /**
-     * Summary of historical data of past broadcasts, for debugging.  This is a
-     * ring buffer whose last element is at mSummaryHistoryNext.
+     * Summary of historical data of past broadcasts, for debugging.
      */
     final Intent[] mBroadcastSummaryHistory = new Intent[MAX_BROADCAST_SUMMARY_HISTORY];
-    int mSummaryHistoryNext = 0;
-
-    /**
-     * Various milestone timestamps of entries in the mBroadcastSummaryHistory ring
-     * buffer, also tracked via the mSummaryHistoryNext index.  These are all in wall
-     * clock time, not elapsed.
-     */
-    final long[] mSummaryHistoryEnqueueTime = new  long[MAX_BROADCAST_SUMMARY_HISTORY];
-    final long[] mSummaryHistoryDispatchTime = new  long[MAX_BROADCAST_SUMMARY_HISTORY];
-    final long[] mSummaryHistoryFinishTime = new  long[MAX_BROADCAST_SUMMARY_HISTORY];
 
     /**
      * Set when we current have a BROADCAST_INTENT_MSG in flight.
@@ -153,8 +132,6 @@ public final class BroadcastQueue {
 
     static final int BROADCAST_INTENT_MSG = ActivityManagerService.FIRST_BROADCAST_QUEUE_MSG;
     static final int BROADCAST_TIMEOUT_MSG = ActivityManagerService.FIRST_BROADCAST_QUEUE_MSG + 1;
-    static final int SCHEDULE_TEMP_WHITELIST_MSG
-            = ActivityManagerService.FIRST_BROADCAST_QUEUE_MSG + 2;
 
     final BroadcastHandler mHandler;
 
@@ -168,7 +145,7 @@ public final class BroadcastQueue {
             switch (msg.what) {
                 case BROADCAST_INTENT_MSG: {
                     if (DEBUG_BROADCAST) Slog.v(
-                            TAG_BROADCAST, "Received BROADCAST_INTENT_MSG");
+                            TAG, "Received BROADCAST_INTENT_MSG");
                     processNextBroadcast(true);
                 } break;
                 case BROADCAST_TIMEOUT_MSG: {
@@ -176,16 +153,9 @@ public final class BroadcastQueue {
                         broadcastTimeoutLocked(true);
                     }
                 } break;
-                case SCHEDULE_TEMP_WHITELIST_MSG: {
-                    DeviceIdleController.LocalService dic = mService.mLocalDeviceIdleController;
-                    if (dic != null) {
-                        dic.addPowerSaveTempWhitelistAppDirect(UserHandle.getAppId(msg.arg1),
-                                msg.arg2, true, (String)msg.obj);
-                    }
-                } break;
             }
         }
-    }
+    };
 
     private final class AppNotResponding implements Runnable {
         private final ProcessRecord mApp;
@@ -198,7 +168,7 @@ public final class BroadcastQueue {
 
         @Override
         public void run() {
-            mService.mAppErrors.appNotResponding(mApp, null, null, false, mAnnotation);
+            mService.appNotResponding(mApp, null, null, false, mAnnotation);
         }
     }
 
@@ -217,18 +187,16 @@ public final class BroadcastQueue {
 
     public void enqueueParallelBroadcastLocked(BroadcastRecord r) {
         mParallelBroadcasts.add(r);
-        r.enqueueClockTime = System.currentTimeMillis();
     }
 
     public void enqueueOrderedBroadcastLocked(BroadcastRecord r) {
         mOrderedBroadcasts.add(r);
-        r.enqueueClockTime = System.currentTimeMillis();
     }
 
     public final boolean replaceParallelBroadcastLocked(BroadcastRecord r) {
-        for (int i = mParallelBroadcasts.size() - 1; i >= 0; i--) {
+        for (int i=mParallelBroadcasts.size()-1; i>=0; i--) {
             if (r.intent.filterEquals(mParallelBroadcasts.get(i).intent)) {
-                if (DEBUG_BROADCAST) Slog.v(TAG_BROADCAST,
+                if (DEBUG_BROADCAST) Slog.v(TAG,
                         "***** DROPPING PARALLEL ["
                 + mQueueName + "]: " + r.intent);
                 mParallelBroadcasts.set(i, r);
@@ -239,9 +207,9 @@ public final class BroadcastQueue {
     }
 
     public final boolean replaceOrderedBroadcastLocked(BroadcastRecord r) {
-        for (int i = mOrderedBroadcasts.size() - 1; i > 0; i--) {
+        for (int i=mOrderedBroadcasts.size()-1; i>0; i--) {
             if (r.intent.filterEquals(mOrderedBroadcasts.get(i).intent)) {
-                if (DEBUG_BROADCAST) Slog.v(TAG_BROADCAST,
+                if (DEBUG_BROADCAST) Slog.v(TAG,
                         "***** DROPPING ORDERED ["
                         + mQueueName + "]: " + r.intent);
                 mOrderedBroadcasts.set(i, r);
@@ -253,16 +221,11 @@ public final class BroadcastQueue {
 
     private final void processCurBroadcastLocked(BroadcastRecord r,
             ProcessRecord app) throws RemoteException {
-        if (DEBUG_BROADCAST)  Slog.v(TAG_BROADCAST,
+        if (DEBUG_BROADCAST)  Slog.v(TAG,
                 "Process cur broadcast " + r + " for app " + app);
         if (app.thread == null) {
             throw new RemoteException();
         }
-        if (app.inFullBackup) {
-            skipReceiverLocked(r);
-            return;
-        }
-
         r.receiver = app.thread.asBinder();
         r.curApp = app;
         app.curReceiver = r;
@@ -275,21 +238,20 @@ public final class BroadcastQueue {
 
         boolean started = false;
         try {
-            if (DEBUG_BROADCAST_LIGHT) Slog.v(TAG_BROADCAST,
+            if (DEBUG_BROADCAST_LIGHT) Slog.v(TAG,
                     "Delivering to component " + r.curComponent
                     + ": " + r);
-            mService.notifyPackageUse(r.intent.getComponent().getPackageName(),
-                                      PackageManager.NOTIFY_PACKAGE_USE_BROADCAST_RECEIVER);
+            mService.ensurePackageDexOpt(r.intent.getComponent().getPackageName());
             app.thread.scheduleReceiver(new Intent(r.intent), r.curReceiver,
                     mService.compatibilityInfoForPackageLocked(r.curReceiver.applicationInfo),
                     r.resultCode, r.resultData, r.resultExtras, r.ordered, r.userId,
                     app.repProcState);
-            if (DEBUG_BROADCAST)  Slog.v(TAG_BROADCAST,
+            if (DEBUG_BROADCAST)  Slog.v(TAG,
                     "Process cur broadcast " + r + " DELIVERED for app " + app);
             started = true;
         } finally {
             if (!started) {
-                if (DEBUG_BROADCAST)  Slog.v(TAG_BROADCAST,
+                if (DEBUG_BROADCAST)  Slog.v(TAG,
                         "Process cur broadcast " + r + ": NOT STARTED!");
                 r.receiver = null;
                 r.curApp = null;
@@ -302,11 +264,6 @@ public final class BroadcastQueue {
         boolean didSomething = false;
         final BroadcastRecord br = mPendingBroadcast;
         if (br != null && br.curApp.pid == app.pid) {
-            if (br.curApp != app) {
-                Slog.e(TAG, "App mismatch when sending pending broadcast to "
-                        + app.processName + ", intended target is " + br.curApp.processName);
-                return false;
-            }
             try {
                 mPendingBroadcast = null;
                 processCurBroadcastLocked(br, app);
@@ -337,33 +294,34 @@ public final class BroadcastQueue {
     }
 
     public void skipCurrentReceiverLocked(ProcessRecord app) {
-        BroadcastRecord r = null;
-        if (mOrderedBroadcasts.size() > 0) {
-            BroadcastRecord br = mOrderedBroadcasts.get(0);
-            if (br.curApp == app) {
-                r = br;
-            }
-        }
-        if (r == null && mPendingBroadcast != null && mPendingBroadcast.curApp == app) {
-            if (DEBUG_BROADCAST) Slog.v(TAG_BROADCAST,
-                    "[" + mQueueName + "] skip & discard pending app " + r);
-            r = mPendingBroadcast;
-        }
-
+        boolean reschedule = false;
+        BroadcastRecord r = app.curReceiver;
         if (r != null) {
-            skipReceiverLocked(r);
+            // The current broadcast is waiting for this app's receiver
+            // to be finished.  Looks like that's not going to happen, so
+            // let the broadcast continue.
+            logBroadcastReceiverDiscardLocked(r);
+            finishReceiverLocked(r, r.resultCode, r.resultData,
+                    r.resultExtras, r.resultAbort, false);
+            reschedule = true;
         }
-    }
 
-    private void skipReceiverLocked(BroadcastRecord r) {
-        logBroadcastReceiverDiscardLocked(r);
-        finishReceiverLocked(r, r.resultCode, r.resultData,
-                r.resultExtras, r.resultAbort, false);
-        scheduleBroadcastsLocked();
+        r = mPendingBroadcast;
+        if (r != null && r.curApp == app) {
+            if (DEBUG_BROADCAST) Slog.v(TAG,
+                    "[" + mQueueName + "] skip & discard pending app " + r);
+            logBroadcastReceiverDiscardLocked(r);
+            finishReceiverLocked(r, r.resultCode, r.resultData,
+                    r.resultExtras, r.resultAbort, false);
+            reschedule = true;
+        }
+        if (reschedule) {
+            scheduleBroadcastsLocked();
+        }
     }
 
     public void scheduleBroadcastsLocked() {
-        if (DEBUG_BROADCAST) Slog.v(TAG_BROADCAST, "Schedule broadcasts ["
+        if (DEBUG_BROADCAST) Slog.v(TAG, "Schedule broadcasts ["
                 + mQueueName + "]: current="
                 + mBroadcastsScheduled);
 
@@ -394,7 +352,7 @@ public final class BroadcastQueue {
         }
         r.receiver = null;
         r.intent.setComponent(null);
-        if (r.curApp != null && r.curApp.curReceiver == r) {
+        if (r.curApp != null) {
             r.curApp.curReceiver = null;
         }
         if (r.curFilter != null) {
@@ -433,7 +391,8 @@ public final class BroadcastQueue {
                 // on.  If there are background services currently starting, then we will go into a
                 // special state where we hold off on continuing this broadcast until they are done.
                 if (mService.mServices.hasBackgroundServices(r.userId)) {
-                    Slog.i(TAG, "Delay finish: " + r.curComponent.flattenToShortString());
+                    Slog.i(ActivityManagerService.TAG, "Delay finish: "
+                            + r.curComponent.flattenToShortString());
                     r.state = BroadcastRecord.WAITING_SERVICES;
                     return false;
                 }
@@ -453,7 +412,7 @@ public final class BroadcastQueue {
         if (mOrderedBroadcasts.size() > 0) {
             BroadcastRecord br = mOrderedBroadcasts.get(0);
             if (br.userId == userId && br.state == BroadcastRecord.WAITING_SERVICES) {
-                Slog.i(TAG, "Resuming delayed broadcast");
+                Slog.i(ActivityManagerService.TAG, "Resuming delayed broadcast");
                 br.curComponent = null;
                 br.state = BroadcastRecord.IDLE;
                 processNextBroadcast(false);
@@ -461,43 +420,23 @@ public final class BroadcastQueue {
         }
     }
 
-    void performReceiveLocked(ProcessRecord app, IIntentReceiver receiver,
+    private static void performReceiveLocked(ProcessRecord app, IIntentReceiver receiver,
             Intent intent, int resultCode, String data, Bundle extras,
             boolean ordered, boolean sticky, int sendingUser) throws RemoteException {
         // Send the intent to the receiver asynchronously using one-way binder calls.
-        if (app != null) {
-            if (app.thread != null) {
-                // If we have an app thread, do the call through that so it is
-                // correctly ordered with other one-way calls.
-                try {
-                    app.thread.scheduleRegisteredReceiver(receiver, intent, resultCode,
-                            data, extras, ordered, sticky, sendingUser, app.repProcState);
-                // TODO: Uncomment this when (b/28322359) is fixed and we aren't getting
-                // DeadObjectException when the process isn't actually dead.
-                //} catch (DeadObjectException ex) {
-                // Failed to call into the process.  It's dying so just let it die and move on.
-                //    throw ex;
-                } catch (RemoteException ex) {
-                    // Failed to call into the process. It's either dying or wedged. Kill it gently.
-                    synchronized (mService) {
-                        Slog.w(TAG, "Can't deliver broadcast to " + app.processName
-                                + " (pid " + app.pid + "). Crashing it.");
-                        app.scheduleCrash("can't deliver broadcast");
-                    }
-                    throw ex;
-                }
-            } else {
-                // Application has died. Receiver doesn't exist.
-                throw new RemoteException("app.thread must not be null");
-            }
+        if (app != null && app.thread != null) {
+            // If we have an app thread, do the call through that so it is
+            // correctly ordered with other one-way calls.
+            app.thread.scheduleRegisteredReceiver(receiver, intent, resultCode,
+                    data, extras, ordered, sticky, sendingUser, app.repProcState);
         } else {
             receiver.performReceive(intent, resultCode, data, extras, ordered,
                     sticky, sendingUser);
         }
     }
 
-    private void deliverToRegisteredReceiverLocked(BroadcastRecord r,
-            BroadcastFilter filter, boolean ordered, int index) {
+    private final void deliverToRegisteredReceiverLocked(BroadcastRecord r,
+            BroadcastFilter filter, boolean ordered) {
         boolean skip = false;
         if (filter.requiredPermission != null) {
             int perm = mService.checkComponentPermission(filter.requiredPermission,
@@ -510,256 +449,95 @@ public final class BroadcastQueue {
                         + " requires " + filter.requiredPermission
                         + " due to registered receiver " + filter);
                 skip = true;
-            } else {
-                final int opCode = AppOpsManager.permissionToOpCode(filter.requiredPermission);
-                if (opCode != AppOpsManager.OP_NONE
-                        && mService.mAppOpsService.noteOperation(opCode, r.callingUid,
-                                r.callerPackage) != AppOpsManager.MODE_ALLOWED) {
-                    Slog.w(TAG, "Appop Denial: broadcasting "
-                            + r.intent.toString()
-                            + " from " + r.callerPackage + " (pid="
-                            + r.callingPid + ", uid=" + r.callingUid + ")"
-                            + " requires appop " + AppOpsManager.permissionToOp(
-                                    filter.requiredPermission)
-                            + " due to registered receiver " + filter);
-                    skip = true;
-                }
             }
         }
-        if (!skip && r.requiredPermissions != null && r.requiredPermissions.length > 0) {
-            for (int i = 0; i < r.requiredPermissions.length; i++) {
-                String requiredPermission = r.requiredPermissions[i];
-                int perm = mService.checkComponentPermission(requiredPermission,
-                        filter.receiverList.pid, filter.receiverList.uid, -1, true);
-                if (perm != PackageManager.PERMISSION_GRANTED) {
-                    Slog.w(TAG, "Permission Denial: receiving "
-                            + r.intent.toString()
-                            + " to " + filter.receiverList.app
-                            + " (pid=" + filter.receiverList.pid
-                            + ", uid=" + filter.receiverList.uid + ")"
-                            + " requires " + requiredPermission
-                            + " due to sender " + r.callerPackage
-                            + " (uid " + r.callingUid + ")");
-                    skip = true;
-                    break;
-                }
-                int appOp = AppOpsManager.permissionToOpCode(requiredPermission);
-                if (appOp != AppOpsManager.OP_NONE && appOp != r.appOp
-                        && mService.mAppOpsService.noteOperation(appOp,
-                        filter.receiverList.uid, filter.packageName)
-                        != AppOpsManager.MODE_ALLOWED) {
-                    Slog.w(TAG, "Appop Denial: receiving "
-                            + r.intent.toString()
-                            + " to " + filter.receiverList.app
-                            + " (pid=" + filter.receiverList.pid
-                            + ", uid=" + filter.receiverList.uid + ")"
-                            + " requires appop " + AppOpsManager.permissionToOp(
-                            requiredPermission)
-                            + " due to sender " + r.callerPackage
-                            + " (uid " + r.callingUid + ")");
-                    skip = true;
-                    break;
-                }
-            }
-        }
-        if (!skip && (r.requiredPermissions == null || r.requiredPermissions.length == 0)) {
-            int perm = mService.checkComponentPermission(null,
+        if (!skip && r.requiredPermission != null) {
+            int perm = mService.checkComponentPermission(r.requiredPermission,
                     filter.receiverList.pid, filter.receiverList.uid, -1, true);
             if (perm != PackageManager.PERMISSION_GRANTED) {
-                Slog.w(TAG, "Permission Denial: security check failed when receiving "
+                Slog.w(TAG, "Permission Denial: receiving "
                         + r.intent.toString()
                         + " to " + filter.receiverList.app
                         + " (pid=" + filter.receiverList.pid
                         + ", uid=" + filter.receiverList.uid + ")"
+                        + " requires " + r.requiredPermission
                         + " due to sender " + r.callerPackage
                         + " (uid " + r.callingUid + ")");
                 skip = true;
             }
         }
-        if (!skip && r.appOp != AppOpsManager.OP_NONE
-                && mService.mAppOpsService.noteOperation(r.appOp,
-                filter.receiverList.uid, filter.packageName)
-                != AppOpsManager.MODE_ALLOWED) {
-            Slog.w(TAG, "Appop Denial: receiving "
-                    + r.intent.toString()
-                    + " to " + filter.receiverList.app
-                    + " (pid=" + filter.receiverList.pid
-                    + ", uid=" + filter.receiverList.uid + ")"
-                    + " requires appop " + AppOpsManager.opToName(r.appOp)
-                    + " due to sender " + r.callerPackage
-                    + " (uid " + r.callingUid + ")");
-            skip = true;
-        }
-        if (!skip) {
-            final int allowed = mService.checkAllowBackgroundLocked(filter.receiverList.uid,
-                    filter.packageName, -1, true);
-            if (allowed == ActivityManager.APP_START_MODE_DISABLED) {
-                Slog.w(TAG, "Background execution not allowed: receiving "
-                        + r.intent
-                        + " to " + filter.receiverList.app
-                        + " (pid=" + filter.receiverList.pid
-                        + ", uid=" + filter.receiverList.uid + ")");
+        if (r.appOp != AppOpsManager.OP_NONE) {
+            int mode = mService.mAppOpsService.noteOperation(r.appOp,
+                    filter.receiverList.uid, filter.packageName);
+            if (mode != AppOpsManager.MODE_ALLOWED) {
+                if (DEBUG_BROADCAST)  Slog.v(TAG,
+                        "App op " + r.appOp + " not allowed for broadcast to uid "
+                        + filter.receiverList.uid + " pkg " + filter.packageName);
                 skip = true;
             }
         }
-
-        if (!mService.mIntentFirewall.checkBroadcast(r.intent, r.callingUid,
-                r.callingPid, r.resolvedType, filter.receiverList.uid)) {
-            skip = true;
+        if (!skip) {
+            skip = !mService.mIntentFirewall.checkBroadcast(r.intent, r.callingUid,
+                    r.callingPid, r.resolvedType, filter.receiverList.uid);
         }
 
-        if (!skip && (filter.receiverList.app == null || filter.receiverList.app.crashing)) {
+        if (filter.receiverList.app == null || filter.receiverList.app.crashing) {
             Slog.w(TAG, "Skipping deliver [" + mQueueName + "] " + r
                     + " to " + filter.receiverList + ": process crashing");
             skip = true;
         }
 
-        if (skip) {
-            r.delivery[index] = BroadcastRecord.DELIVERY_SKIPPED;
-            return;
-        }
-
-        // If permissions need a review before any of the app components can run, we drop
-        // the broadcast and if the calling app is in the foreground and the broadcast is
-        // explicit we launch the review UI passing it a pending intent to send the skipped
-        // broadcast.
-        if (Build.PERMISSIONS_REVIEW_REQUIRED) {
-            if (!requestStartTargetPermissionsReviewIfNeededLocked(r, filter.packageName,
-                    filter.owningUserId)) {
-                r.delivery[index] = BroadcastRecord.DELIVERY_SKIPPED;
-                return;
-            }
-        }
-
-        r.delivery[index] = BroadcastRecord.DELIVERY_DELIVERED;
-
-        // If this is not being sent as an ordered broadcast, then we
-        // don't want to touch the fields that keep track of the current
-        // state of ordered broadcasts.
-        if (ordered) {
-            r.receiver = filter.receiverList.receiver.asBinder();
-            r.curFilter = filter;
-            filter.receiverList.curBroadcast = r;
-            r.state = BroadcastRecord.CALL_IN_RECEIVE;
-            if (filter.receiverList.app != null) {
-                // Bump hosting application to no longer be in background
-                // scheduling class.  Note that we can't do that if there
-                // isn't an app...  but we can only be in that case for
-                // things that directly call the IActivityManager API, which
-                // are already core system stuff so don't matter for this.
-                r.curApp = filter.receiverList.app;
-                filter.receiverList.app.curReceiver = r;
-                mService.updateOomAdjLocked(r.curApp);
-            }
-        }
-        try {
-            if (DEBUG_BROADCAST_LIGHT) Slog.i(TAG_BROADCAST,
-                    "Delivering to " + filter + " : " + r);
-            if (filter.receiverList.app != null && filter.receiverList.app.inFullBackup) {
-                // Skip delivery if full backup in progress
-                // If it's an ordered broadcast, we need to continue to the next receiver.
-                if (ordered) {
-                    skipReceiverLocked(r);
-                }
-            } else {
-                performReceiveLocked(filter.receiverList.app, filter.receiverList.receiver,
-                        new Intent(r.intent), r.resultCode, r.resultData,
-                        r.resultExtras, r.ordered, r.initialSticky, r.userId);
-            }
+        if (!skip) {
+            // If this is not being sent as an ordered broadcast, then we
+            // don't want to touch the fields that keep track of the current
+            // state of ordered broadcasts.
             if (ordered) {
-                r.state = BroadcastRecord.CALL_DONE_RECEIVE;
-            }
-        } catch (RemoteException e) {
-            Slog.w(TAG, "Failure sending broadcast " + r.intent, e);
-            if (ordered) {
-                r.receiver = null;
-                r.curFilter = null;
-                filter.receiverList.curBroadcast = null;
+                r.receiver = filter.receiverList.receiver.asBinder();
+                r.curFilter = filter;
+                filter.receiverList.curBroadcast = r;
+                r.state = BroadcastRecord.CALL_IN_RECEIVE;
                 if (filter.receiverList.app != null) {
-                    filter.receiverList.app.curReceiver = null;
+                    // Bump hosting application to no longer be in background
+                    // scheduling class.  Note that we can't do that if there
+                    // isn't an app...  but we can only be in that case for
+                    // things that directly call the IActivityManager API, which
+                    // are already core system stuff so don't matter for this.
+                    r.curApp = filter.receiverList.app;
+                    filter.receiverList.app.curReceiver = r;
+                    mService.updateOomAdjLocked(r.curApp, true);
+                }
+            }
+            try {
+                if (DEBUG_BROADCAST_LIGHT) {
+                    int seq = r.intent.getIntExtra("seq", -1);
+                    Slog.i(TAG, "Delivering to " + filter
+                            + " (seq=" + seq + "): " + r);
+                }
+                performReceiveLocked(filter.receiverList.app, filter.receiverList.receiver,
+                    new Intent(r.intent), r.resultCode, r.resultData,
+                    r.resultExtras, r.ordered, r.initialSticky, r.userId);
+                if (ordered) {
+                    r.state = BroadcastRecord.CALL_DONE_RECEIVE;
+                }
+            } catch (RemoteException e) {
+                Slog.w(TAG, "Failure sending broadcast " + r.intent, e);
+                if (ordered) {
+                    r.receiver = null;
+                    r.curFilter = null;
+                    filter.receiverList.curBroadcast = null;
+                    if (filter.receiverList.app != null) {
+                        filter.receiverList.app.curReceiver = null;
+                    }
                 }
             }
         }
-    }
-
-    private boolean requestStartTargetPermissionsReviewIfNeededLocked(
-            BroadcastRecord receiverRecord, String receivingPackageName,
-            final int receivingUserId) {
-        if (!mService.getPackageManagerInternalLocked().isPermissionsReviewRequired(
-                receivingPackageName, receivingUserId)) {
-            return true;
-        }
-
-        final boolean callerForeground = receiverRecord.callerApp != null
-                ? receiverRecord.callerApp.setSchedGroup != ProcessList.SCHED_GROUP_BACKGROUND
-                : true;
-
-        // Show a permission review UI only for explicit broadcast from a foreground app
-        if (callerForeground && receiverRecord.intent.getComponent() != null) {
-            IIntentSender target = mService.getIntentSenderLocked(
-                    ActivityManager.INTENT_SENDER_BROADCAST, receiverRecord.callerPackage,
-                    receiverRecord.callingUid, receiverRecord.userId, null, null, 0,
-                    new Intent[]{receiverRecord.intent},
-                    new String[]{receiverRecord.intent.resolveType(mService.mContext
-                            .getContentResolver())},
-                    PendingIntent.FLAG_CANCEL_CURRENT | PendingIntent.FLAG_ONE_SHOT
-                            | PendingIntent.FLAG_IMMUTABLE, null);
-
-            final Intent intent = new Intent(Intent.ACTION_REVIEW_PERMISSIONS);
-            intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK
-                    | Intent.FLAG_ACTIVITY_EXCLUDE_FROM_RECENTS);
-            intent.putExtra(Intent.EXTRA_PACKAGE_NAME, receivingPackageName);
-            intent.putExtra(Intent.EXTRA_INTENT, new IntentSender(target));
-
-            if (DEBUG_PERMISSIONS_REVIEW) {
-                Slog.i(TAG, "u" + receivingUserId + " Launching permission review for package "
-                        + receivingPackageName);
-            }
-
-            mHandler.post(new Runnable() {
-                @Override
-                public void run() {
-                    mService.mContext.startActivityAsUser(intent, new UserHandle(receivingUserId));
-                }
-            });
-        } else {
-            Slog.w(TAG, "u" + receivingUserId + " Receiving a broadcast in package"
-                    + receivingPackageName + " requires a permissions review");
-        }
-
-        return false;
-    }
-
-    final void scheduleTempWhitelistLocked(int uid, long duration, BroadcastRecord r) {
-        if (duration > Integer.MAX_VALUE) {
-            duration = Integer.MAX_VALUE;
-        }
-        // XXX ideally we should pause the broadcast until everything behind this is done,
-        // or else we will likely start dispatching the broadcast before we have opened
-        // access to the app (there is a lot of asynchronicity behind this).  It is probably
-        // not that big a deal, however, because the main purpose here is to allow apps
-        // to hold wake locks, and they will be able to acquire their wake lock immediately
-        // it just won't be enabled until we get through this work.
-        StringBuilder b = new StringBuilder();
-        b.append("broadcast:");
-        UserHandle.formatUid(b, r.callingUid);
-        b.append(":");
-        if (r.intent.getAction() != null) {
-            b.append(r.intent.getAction());
-        } else if (r.intent.getComponent() != null) {
-            b.append(r.intent.getComponent().flattenToShortString());
-        } else if (r.intent.getData() != null) {
-            b.append(r.intent.getData());
-        }
-        mHandler.obtainMessage(SCHEDULE_TEMP_WHITELIST_MSG, uid, (int)duration, b.toString())
-                .sendToTarget();
     }
 
     final void processNextBroadcast(boolean fromMsg) {
         synchronized(mService) {
             BroadcastRecord r;
 
-            if (DEBUG_BROADCAST) Slog.v(TAG_BROADCAST, "processNextBroadcast ["
+            if (DEBUG_BROADCAST) Slog.v(TAG, "processNextBroadcast ["
                     + mQueueName + "]: "
                     + mParallelBroadcasts.size() + " broadcasts, "
                     + mOrderedBroadcasts.size() + " ordered broadcasts");
@@ -776,17 +554,17 @@ public final class BroadcastQueue {
                 r.dispatchTime = SystemClock.uptimeMillis();
                 r.dispatchClockTime = System.currentTimeMillis();
                 final int N = r.receivers.size();
-                if (DEBUG_BROADCAST_LIGHT) Slog.v(TAG_BROADCAST, "Processing parallel broadcast ["
+                if (DEBUG_BROADCAST_LIGHT) Slog.v(TAG, "Processing parallel broadcast ["
                         + mQueueName + "] " + r);
                 for (int i=0; i<N; i++) {
                     Object target = r.receivers.get(i);
-                    if (DEBUG_BROADCAST)  Slog.v(TAG_BROADCAST,
+                    if (DEBUG_BROADCAST)  Slog.v(TAG,
                             "Delivering non-ordered on [" + mQueueName + "] to registered "
                             + target + ": " + r);
-                    deliverToRegisteredReceiverLocked(r, (BroadcastFilter)target, false, i);
+                    deliverToRegisteredReceiverLocked(r, (BroadcastFilter)target, false);
                 }
                 addBroadcastToHistoryLocked(r);
-                if (DEBUG_BROADCAST_LIGHT) Slog.v(TAG_BROADCAST, "Done with parallel broadcast ["
+                if (DEBUG_BROADCAST_LIGHT) Slog.v(TAG, "Done with parallel broadcast ["
                         + mQueueName + "] " + r);
             }
 
@@ -796,9 +574,11 @@ public final class BroadcastQueue {
             // broadcast, then do nothing at this point.  Just in case, we
             // check that the process we're waiting for still exists.
             if (mPendingBroadcast != null) {
-                if (DEBUG_BROADCAST_LIGHT) Slog.v(TAG_BROADCAST,
-                        "processNextBroadcast [" + mQueueName + "]: waiting for "
-                        + mPendingBroadcast.curApp);
+                if (DEBUG_BROADCAST_LIGHT) {
+                    Slog.v(TAG, "processNextBroadcast ["
+                            + mQueueName + "]: waiting for "
+                            + mPendingBroadcast.curApp);
+                }
 
                 boolean isDead;
                 synchronized (mService.mPidsSelfLocked) {
@@ -864,7 +644,7 @@ public final class BroadcastQueue {
                 }
 
                 if (r.state != BroadcastRecord.IDLE) {
-                    if (DEBUG_BROADCAST) Slog.d(TAG_BROADCAST,
+                    if (DEBUG_BROADCAST) Slog.d(TAG,
                             "processNextBroadcast("
                             + mQueueName + ") called when not idle (state="
                             + r.state + ")");
@@ -877,9 +657,12 @@ public final class BroadcastQueue {
                     // result if requested...
                     if (r.resultTo != null) {
                         try {
-                            if (DEBUG_BROADCAST) Slog.i(TAG_BROADCAST,
-                                    "Finishing broadcast [" + mQueueName + "] "
-                                    + r.intent.getAction() + " app=" + r.callerApp);
+                            if (DEBUG_BROADCAST) {
+                                int seq = r.intent.getIntExtra("seq", -1);
+                                Slog.i(TAG, "Finishing broadcast ["
+                                        + mQueueName + "] " + r.intent.getAction()
+                                        + " seq=" + seq + " app=" + r.callerApp);
+                            }
                             performReceiveLocked(r.callerApp, r.resultTo,
                                 new Intent(r.intent), r.resultCode,
                                 r.resultData, r.resultExtras, false, false, r.userId);
@@ -887,28 +670,20 @@ public final class BroadcastQueue {
                             // (local and remote) isn't kept in the mBroadcastHistory.
                             r.resultTo = null;
                         } catch (RemoteException e) {
-                            r.resultTo = null;
                             Slog.w(TAG, "Failure ["
                                     + mQueueName + "] sending broadcast result of "
                                     + r.intent, e);
-
                         }
                     }
 
-                    if (DEBUG_BROADCAST) Slog.v(TAG_BROADCAST, "Cancelling BROADCAST_TIMEOUT_MSG");
+                    if (DEBUG_BROADCAST) Slog.v(TAG, "Cancelling BROADCAST_TIMEOUT_MSG");
                     cancelBroadcastTimeoutLocked();
 
-                    if (DEBUG_BROADCAST_LIGHT) Slog.v(TAG_BROADCAST,
-                            "Finished with ordered broadcast " + r);
+                    if (DEBUG_BROADCAST_LIGHT) Slog.v(TAG, "Finished with ordered broadcast "
+                            + r);
 
                     // ... and on to the next...
                     addBroadcastToHistoryLocked(r);
-                    if (r.intent.getComponent() == null && r.intent.getPackage() == null
-                            && (r.intent.getFlags()&Intent.FLAG_RECEIVER_REGISTERED_ONLY) == 0) {
-                        // This was an implicit broadcast... let's record it for posterity.
-                        mService.addBroadcastStatLocked(r.intent.getAction(), r.callerPackage,
-                                r.manifestCount, r.manifestSkipCount, r.finishTime-r.dispatchTime);
-                    }
                     mOrderedBroadcasts.remove(0);
                     r = null;
                     looped = true;
@@ -925,42 +700,35 @@ public final class BroadcastQueue {
             if (recIdx == 0) {
                 r.dispatchTime = r.receiverTime;
                 r.dispatchClockTime = System.currentTimeMillis();
-                if (DEBUG_BROADCAST_LIGHT) Slog.v(TAG_BROADCAST, "Processing ordered broadcast ["
+                if (DEBUG_BROADCAST_LIGHT) Slog.v(TAG, "Processing ordered broadcast ["
                         + mQueueName + "] " + r);
             }
             if (! mPendingBroadcastTimeoutMessage) {
                 long timeoutTime = r.receiverTime + mTimeoutPeriod;
-                if (DEBUG_BROADCAST) Slog.v(TAG_BROADCAST,
+                if (DEBUG_BROADCAST) Slog.v(TAG,
                         "Submitting BROADCAST_TIMEOUT_MSG ["
                         + mQueueName + "] for " + r + " at " + timeoutTime);
                 setBroadcastTimeoutLocked(timeoutTime);
             }
 
-            final BroadcastOptions brOptions = r.options;
-            final Object nextReceiver = r.receivers.get(recIdx);
-
+            Object nextReceiver = r.receivers.get(recIdx);
             if (nextReceiver instanceof BroadcastFilter) {
                 // Simple case: this is a registered receiver who gets
                 // a direct call.
                 BroadcastFilter filter = (BroadcastFilter)nextReceiver;
-                if (DEBUG_BROADCAST)  Slog.v(TAG_BROADCAST,
+                if (DEBUG_BROADCAST)  Slog.v(TAG,
                         "Delivering ordered ["
                         + mQueueName + "] to registered "
                         + filter + ": " + r);
-                deliverToRegisteredReceiverLocked(r, filter, r.ordered, recIdx);
+                deliverToRegisteredReceiverLocked(r, filter, r.ordered);
                 if (r.receiver == null || !r.ordered) {
                     // The receiver has already finished, so schedule to
                     // process the next one.
-                    if (DEBUG_BROADCAST) Slog.v(TAG_BROADCAST, "Quick finishing ["
+                    if (DEBUG_BROADCAST) Slog.v(TAG, "Quick finishing ["
                             + mQueueName + "]: ordered="
                             + r.ordered + " receiver=" + r.receiver);
                     r.state = BroadcastRecord.IDLE;
                     scheduleBroadcastsLocked();
-                } else {
-                    if (brOptions != null && brOptions.getTemporaryAppWhitelistDuration() > 0) {
-                        scheduleTempWhitelistLocked(filter.owningUid,
-                                brOptions.getTemporaryAppWhitelistDuration(), r);
-                    }
                 }
                 return;
             }
@@ -975,17 +743,10 @@ public final class BroadcastQueue {
                     info.activityInfo.name);
 
             boolean skip = false;
-            if (brOptions != null &&
-                    (info.activityInfo.applicationInfo.targetSdkVersion
-                            < brOptions.getMinManifestReceiverApiLevel() ||
-                    info.activityInfo.applicationInfo.targetSdkVersion
-                            > brOptions.getMaxManifestReceiverApiLevel())) {
-                skip = true;
-            }
             int perm = mService.checkComponentPermission(info.activityInfo.permission,
                     r.callingPid, r.callingUid, info.activityInfo.applicationInfo.uid,
                     info.activityInfo.exported);
-            if (!skip && perm != PackageManager.PERMISSION_GRANTED) {
+            if (perm != PackageManager.PERMISSION_GRANTED) {
                 if (!info.activityInfo.exported) {
                     Slog.w(TAG, "Permission Denial: broadcasting "
                             + r.intent.toString()
@@ -1002,73 +763,36 @@ public final class BroadcastQueue {
                             + " due to receiver " + component.flattenToShortString());
                 }
                 skip = true;
-            } else if (!skip && info.activityInfo.permission != null) {
-                final int opCode = AppOpsManager.permissionToOpCode(info.activityInfo.permission);
-                if (opCode != AppOpsManager.OP_NONE
-                        && mService.mAppOpsService.noteOperation(opCode, r.callingUid,
-                                r.callerPackage) != AppOpsManager.MODE_ALLOWED) {
-                    Slog.w(TAG, "Appop Denial: broadcasting "
-                            + r.intent.toString()
-                            + " from " + r.callerPackage + " (pid="
-                            + r.callingPid + ", uid=" + r.callingUid + ")"
-                            + " requires appop " + AppOpsManager.permissionToOp(
-                                    info.activityInfo.permission)
-                            + " due to registered receiver "
-                            + component.flattenToShortString());
+            }
+            if (info.activityInfo.applicationInfo.uid != Process.SYSTEM_UID &&
+                r.requiredPermission != null) {
+                try {
+                    perm = AppGlobals.getPackageManager().
+                            checkPermission(r.requiredPermission,
+                                    info.activityInfo.applicationInfo.packageName);
+                } catch (RemoteException e) {
+                    perm = PackageManager.PERMISSION_DENIED;
+                }
+                if (perm != PackageManager.PERMISSION_GRANTED) {
+                    Slog.w(TAG, "Permission Denial: receiving "
+                            + r.intent + " to "
+                            + component.flattenToShortString()
+                            + " requires " + r.requiredPermission
+                            + " due to sender " + r.callerPackage
+                            + " (uid " + r.callingUid + ")");
                     skip = true;
                 }
             }
-            if (!skip && info.activityInfo.applicationInfo.uid != Process.SYSTEM_UID &&
-                r.requiredPermissions != null && r.requiredPermissions.length > 0) {
-                for (int i = 0; i < r.requiredPermissions.length; i++) {
-                    String requiredPermission = r.requiredPermissions[i];
-                    try {
-                        perm = AppGlobals.getPackageManager().
-                                checkPermission(requiredPermission,
-                                        info.activityInfo.applicationInfo.packageName,
-                                        UserHandle
-                                                .getUserId(info.activityInfo.applicationInfo.uid));
-                    } catch (RemoteException e) {
-                        perm = PackageManager.PERMISSION_DENIED;
-                    }
-                    if (perm != PackageManager.PERMISSION_GRANTED) {
-                        Slog.w(TAG, "Permission Denial: receiving "
-                                + r.intent + " to "
-                                + component.flattenToShortString()
-                                + " requires " + requiredPermission
-                                + " due to sender " + r.callerPackage
-                                + " (uid " + r.callingUid + ")");
-                        skip = true;
-                        break;
-                    }
-                    int appOp = AppOpsManager.permissionToOpCode(requiredPermission);
-                    if (appOp != AppOpsManager.OP_NONE && appOp != r.appOp
-                            && mService.mAppOpsService.noteOperation(appOp,
-                            info.activityInfo.applicationInfo.uid, info.activityInfo.packageName)
-                            != AppOpsManager.MODE_ALLOWED) {
-                        Slog.w(TAG, "Appop Denial: receiving "
-                                + r.intent + " to "
-                                + component.flattenToShortString()
-                                + " requires appop " + AppOpsManager.permissionToOp(
-                                requiredPermission)
-                                + " due to sender " + r.callerPackage
-                                + " (uid " + r.callingUid + ")");
-                        skip = true;
-                        break;
-                    }
+            if (r.appOp != AppOpsManager.OP_NONE) {
+                int mode = mService.mAppOpsService.noteOperation(r.appOp,
+                        info.activityInfo.applicationInfo.uid, info.activityInfo.packageName);
+                if (mode != AppOpsManager.MODE_ALLOWED) {
+                    if (DEBUG_BROADCAST)  Slog.v(TAG,
+                            "App op " + r.appOp + " not allowed for broadcast to uid "
+                            + info.activityInfo.applicationInfo.uid + " pkg "
+                            + info.activityInfo.packageName);
+                    skip = true;
                 }
-            }
-            if (!skip && r.appOp != AppOpsManager.OP_NONE
-                    && mService.mAppOpsService.noteOperation(r.appOp,
-                    info.activityInfo.applicationInfo.uid, info.activityInfo.packageName)
-                    != AppOpsManager.MODE_ALLOWED) {
-                Slog.w(TAG, "Appop Denial: receiving "
-                        + r.intent + " to "
-                        + component.flattenToShortString()
-                        + " requires appop " + AppOpsManager.opToName(r.appOp)
-                        + " due to sender " + r.callerPackage
-                        + " (uid " + r.callingUid + ")");
-                skip = true;
             }
             if (!skip) {
                 skip = !mService.mIntentFirewall.checkBroadcast(r.intent, r.callingUid,
@@ -1094,11 +818,6 @@ public final class BroadcastQueue {
                     skip = true;
                 }
             }
-            if (!skip) {
-                r.manifestCount++;
-            } else {
-                r.manifestSkipCount++;
-            }
             if (r.curApp != null && r.curApp.crashing) {
                 // If the target process is crashing, just skip it.
                 Slog.w(TAG, "Skipping deliver ordered [" + mQueueName + "] " + r
@@ -1117,70 +836,19 @@ public final class BroadcastQueue {
                             + info.activityInfo.packageName, e);
                 }
                 if (!isAvailable) {
-                    if (DEBUG_BROADCAST) Slog.v(TAG_BROADCAST,
-                            "Skipping delivery to " + info.activityInfo.packageName + " / "
-                            + info.activityInfo.applicationInfo.uid
-                            + " : package no longer available");
-                    skip = true;
-                }
-            }
-
-            // If permissions need a review before any of the app components can run, we drop
-            // the broadcast and if the calling app is in the foreground and the broadcast is
-            // explicit we launch the review UI passing it a pending intent to send the skipped
-            // broadcast.
-            if (Build.PERMISSIONS_REVIEW_REQUIRED && !skip) {
-                if (!requestStartTargetPermissionsReviewIfNeededLocked(r,
-                        info.activityInfo.packageName, UserHandle.getUserId(
-                                info.activityInfo.applicationInfo.uid))) {
-                    skip = true;
-                }
-            }
-
-            // This is safe to do even if we are skipping the broadcast, and we need
-            // this information now to evaluate whether it is going to be allowed to run.
-            final int receiverUid = info.activityInfo.applicationInfo.uid;
-            // If it's a singleton, it needs to be the same app or a special app
-            if (r.callingUid != Process.SYSTEM_UID && isSingleton
-                    && mService.isValidSingletonCall(r.callingUid, receiverUid)) {
-                info.activityInfo = mService.getActivityInfoForUser(info.activityInfo, 0);
-            }
-            String targetProcess = info.activityInfo.processName;
-            ProcessRecord app = mService.getProcessRecordLocked(targetProcess,
-                    info.activityInfo.applicationInfo.uid, false);
-
-            if (!skip) {
-                final int allowed = mService.checkAllowBackgroundLocked(
-                        info.activityInfo.applicationInfo.uid, info.activityInfo.packageName, -1,
-                        false);
-                if (allowed != ActivityManager.APP_START_MODE_NORMAL) {
-                    // We won't allow this receiver to be launched if the app has been
-                    // completely disabled from launches, or it was not explicitly sent
-                    // to it and the app is in a state that should not receive it
-                    // (depending on how checkAllowBackgroundLocked has determined that).
-                    if (allowed == ActivityManager.APP_START_MODE_DISABLED) {
-                        Slog.w(TAG, "Background execution disabled: receiving "
-                                + r.intent + " to "
-                                + component.flattenToShortString());
-                        skip = true;
-                    } else if (((r.intent.getFlags()&Intent.FLAG_RECEIVER_EXCLUDE_BACKGROUND) != 0)
-                            || (r.intent.getComponent() == null
-                                && r.intent.getPackage() == null
-                                && ((r.intent.getFlags()
-                                        & Intent.FLAG_RECEIVER_INCLUDE_BACKGROUND) == 0))) {
-                        Slog.w(TAG, "Background execution not allowed: receiving "
-                                + r.intent + " to "
-                                + component.flattenToShortString());
-                        skip = true;
+                    if (DEBUG_BROADCAST) {
+                        Slog.v(TAG, "Skipping delivery to " + info.activityInfo.packageName
+                                + " / " + info.activityInfo.applicationInfo.uid
+                                + " : package no longer available");
                     }
+                    skip = true;
                 }
             }
 
             if (skip) {
-                if (DEBUG_BROADCAST)  Slog.v(TAG_BROADCAST,
-                        "Skipping delivery of ordered [" + mQueueName + "] "
-                        + r + " for whatever reason");
-                r.delivery[recIdx] = BroadcastRecord.DELIVERY_SKIPPED;
+                if (DEBUG_BROADCAST)  Slog.v(TAG,
+                        "Skipping delivery of ordered ["
+                        + mQueueName + "] " + r + " for whatever reason");
                 r.receiver = null;
                 r.curFilter = null;
                 r.state = BroadcastRecord.IDLE;
@@ -1188,19 +856,17 @@ public final class BroadcastQueue {
                 return;
             }
 
-            r.delivery[recIdx] = BroadcastRecord.DELIVERY_DELIVERED;
             r.state = BroadcastRecord.APP_RECEIVE;
+            String targetProcess = info.activityInfo.processName;
             r.curComponent = component;
+            if (r.callingUid != Process.SYSTEM_UID && isSingleton) {
+                info.activityInfo = mService.getActivityInfoForUser(info.activityInfo, 0);
+            }
             r.curReceiver = info.activityInfo;
             if (DEBUG_MU && r.callingUid > UserHandle.PER_USER_RANGE) {
                 Slog.v(TAG_MU, "Updated broadcast record activity info for secondary user, "
                         + info.activityInfo + ", callingUid = " + r.callingUid + ", uid = "
                         + info.activityInfo.applicationInfo.uid);
-            }
-
-            if (brOptions != null && brOptions.getTemporaryAppWhitelistDuration() > 0) {
-                scheduleTempWhitelistLocked(receiverUid,
-                        brOptions.getTemporaryAppWhitelistDuration(), r);
             }
 
             // Broadcast is being executed, its package can't be stopped.
@@ -1214,17 +880,18 @@ public final class BroadcastQueue {
             }
 
             // Is this receiver's application already running?
+            ProcessRecord app = mService.getProcessRecordLocked(targetProcess,
+                    info.activityInfo.applicationInfo.uid, false);
             if (app != null && app.thread != null) {
                 try {
-                    app.addPackage(info.activityInfo.packageName,
-                            info.activityInfo.applicationInfo.versionCode, mService.mProcessStats);
+                    app.addPackage(info.activityInfo.packageName, mService.mProcessStats);
                     processCurBroadcastLocked(r, app);
                     return;
                 } catch (RemoteException e) {
                     Slog.w(TAG, "Exception when sending broadcast to "
                           + r.curComponent, e);
                 } catch (RuntimeException e) {
-                    Slog.wtf(TAG, "Failed sending broadcast to "
+                    Log.wtf(TAG, "Failed sending broadcast to "
                             + r.curComponent + " with " + r.intent, e);
                     // If some unexpected exception happened, just skip
                     // this broadcast.  At this point we are not in the call
@@ -1245,7 +912,7 @@ public final class BroadcastQueue {
             }
 
             // Not running -- get it started, to be executed when the app comes up.
-            if (DEBUG_BROADCAST)  Slog.v(TAG_BROADCAST,
+            if (DEBUG_BROADCAST)  Slog.v(TAG,
                     "Need to start app ["
                     + mQueueName + "] " + targetProcess + " for broadcast " + r);
             if ((r.curApp=mService.startProcessLocked(targetProcess,
@@ -1320,7 +987,7 @@ public final class BroadcastQueue {
                 // broadcast timeout message after each receiver finishes.  Instead, we set up
                 // an initial timeout then kick it down the road a little further as needed
                 // when it expires.
-                if (DEBUG_BROADCAST) Slog.v(TAG_BROADCAST,
+                if (DEBUG_BROADCAST) Slog.v(TAG,
                         "Premature timeout ["
                         + mQueueName + "] @ " + now + ": resetting BROADCAST_TIMEOUT_MSG for "
                         + timeoutTime);
@@ -1335,7 +1002,7 @@ public final class BroadcastQueue {
             // for started services to finish as well before going on.  So if we have actually
             // waited long enough time timeout the broadcast, let's give up on the whole thing
             // and just move on to the next.
-            Slog.i(TAG, "Waited long enough for: " + (br.curComponent != null
+            Slog.i(ActivityManagerService.TAG, "Waited long enough for: " + (br.curComponent != null
                     ? br.curComponent.flattenToShortString() : "(null)"));
             br.curComponent = null;
             br.state = BroadcastRecord.IDLE;
@@ -1358,7 +1025,6 @@ public final class BroadcastQueue {
         String anrMessage = null;
 
         Object curReceiver = r.receivers.get(r.nextReceiver-1);
-        r.delivery[r.nextReceiver-1] = BroadcastRecord.DELIVERY_TIMEOUT;
         Slog.w(TAG, "Receiver during timeout: " + curReceiver);
         logBroadcastReceiverDiscardLocked(r);
         if (curReceiver instanceof BroadcastFilter) {
@@ -1394,70 +1060,40 @@ public final class BroadcastQueue {
         }
     }
 
-    private final int ringAdvance(int x, final int increment, final int ringSize) {
-        x += increment;
-        if (x < 0) return (ringSize - 1);
-        else if (x >= ringSize) return 0;
-        else return x;
-    }
-
     private final void addBroadcastToHistoryLocked(BroadcastRecord r) {
         if (r.callingUid < 0) {
             // This was from a registerReceiver() call; ignore it.
             return;
         }
+        System.arraycopy(mBroadcastHistory, 0, mBroadcastHistory, 1,
+                MAX_BROADCAST_HISTORY-1);
         r.finishTime = SystemClock.uptimeMillis();
-
-        mBroadcastHistory[mHistoryNext] = r;
-        mHistoryNext = ringAdvance(mHistoryNext, 1, MAX_BROADCAST_HISTORY);
-
-        mBroadcastSummaryHistory[mSummaryHistoryNext] = r.intent;
-        mSummaryHistoryEnqueueTime[mSummaryHistoryNext] = r.enqueueClockTime;
-        mSummaryHistoryDispatchTime[mSummaryHistoryNext] = r.dispatchClockTime;
-        mSummaryHistoryFinishTime[mSummaryHistoryNext] = System.currentTimeMillis();
-        mSummaryHistoryNext = ringAdvance(mSummaryHistoryNext, 1, MAX_BROADCAST_SUMMARY_HISTORY);
-    }
-
-    boolean cleanupDisabledPackageReceiversLocked(
-            String packageName, Set<String> filterByClasses, int userId, boolean doit) {
-        boolean didSomething = false;
-        for (int i = mParallelBroadcasts.size() - 1; i >= 0; i--) {
-            didSomething |= mParallelBroadcasts.get(i).cleanupDisabledPackageReceiversLocked(
-                    packageName, filterByClasses, userId, doit);
-            if (!doit && didSomething) {
-                return true;
-            }
-        }
-
-        for (int i = mOrderedBroadcasts.size() - 1; i >= 0; i--) {
-            didSomething |= mOrderedBroadcasts.get(i).cleanupDisabledPackageReceiversLocked(
-                    packageName, filterByClasses, userId, doit);
-            if (!doit && didSomething) {
-                return true;
-            }
-        }
-
-        return didSomething;
+        mBroadcastHistory[0] = r;
+        System.arraycopy(mBroadcastSummaryHistory, 0, mBroadcastSummaryHistory, 1,
+                MAX_BROADCAST_SUMMARY_HISTORY-1);
+        mBroadcastSummaryHistory[0] = r.intent;
     }
 
     final void logBroadcastReceiverDiscardLocked(BroadcastRecord r) {
-        final int logIndex = r.nextReceiver - 1;
-        if (logIndex >= 0 && logIndex < r.receivers.size()) {
-            Object curReceiver = r.receivers.get(logIndex);
+        if (r.nextReceiver > 0) {
+            Object curReceiver = r.receivers.get(r.nextReceiver-1);
             if (curReceiver instanceof BroadcastFilter) {
                 BroadcastFilter bf = (BroadcastFilter) curReceiver;
                 EventLog.writeEvent(EventLogTags.AM_BROADCAST_DISCARD_FILTER,
                         bf.owningUserId, System.identityHashCode(r),
-                        r.intent.getAction(), logIndex, System.identityHashCode(bf));
+                        r.intent.getAction(),
+                        r.nextReceiver - 1,
+                        System.identityHashCode(bf));
             } else {
-                ResolveInfo ri = (ResolveInfo) curReceiver;
+                ResolveInfo ri = (ResolveInfo)curReceiver;
                 EventLog.writeEvent(EventLogTags.AM_BROADCAST_DISCARD_APP,
                         UserHandle.getUserId(ri.activityInfo.applicationInfo.uid),
-                        System.identityHashCode(r), r.intent.getAction(), logIndex, ri.toString());
+                        System.identityHashCode(r), r.intent.getAction(),
+                        r.nextReceiver - 1, ri.toString());
             }
         } else {
-            if (logIndex < 0) Slog.w(TAG,
-                    "Discarding broadcast before first receiver is invoked: " + r);
+            Slog.w(TAG, "Discarding broadcast before first receiver is invoked: "
+                    + r);
             EventLog.writeEvent(EventLogTags.AM_BROADCAST_DISCARD_APP,
                     -1, System.identityHashCode(r),
                     r.intent.getAction(),
@@ -1468,11 +1104,10 @@ public final class BroadcastQueue {
 
     final boolean dumpLocked(FileDescriptor fd, PrintWriter pw, String[] args,
             int opti, boolean dumpAll, String dumpPackage, boolean needSep) {
-        SimpleDateFormat sdf = new SimpleDateFormat("yyyy-MM-dd HH:mm:ss");
         if (mParallelBroadcasts.size() > 0 || mOrderedBroadcasts.size() > 0
                 || mPendingBroadcast != null) {
             boolean printed = false;
-            for (int i = mParallelBroadcasts.size() - 1; i >= 0; i--) {
+            for (int i=mParallelBroadcasts.size()-1; i>=0; i--) {
                 BroadcastRecord br = mParallelBroadcasts.get(i);
                 if (dumpPackage != null && !dumpPackage.equals(br.callerPackage)) {
                     continue;
@@ -1486,11 +1121,11 @@ public final class BroadcastQueue {
                     pw.println("  Active broadcasts [" + mQueueName + "]:");
                 }
                 pw.println("  Active Broadcast " + mQueueName + " #" + i + ":");
-                br.dump(pw, "    ", sdf);
+                br.dump(pw, "    ");
             }
             printed = false;
             needSep = true;
-            for (int i = mOrderedBroadcasts.size() - 1; i >= 0; i--) {
+            for (int i=mOrderedBroadcasts.size()-1; i>=0; i--) {
                 BroadcastRecord br = mOrderedBroadcasts.get(i);
                 if (dumpPackage != null && !dumpPackage.equals(br.callerPackage)) {
                     continue;
@@ -1504,7 +1139,7 @@ public final class BroadcastQueue {
                     pw.println("  Active ordered broadcasts [" + mQueueName + "]:");
                 }
                 pw.println("  Active Ordered Broadcast " + mQueueName + " #" + i + ":");
-                mOrderedBroadcasts.get(i).dump(pw, "    ", sdf);
+                mOrderedBroadcasts.get(i).dump(pw, "    ");
             }
             if (dumpPackage == null || (mPendingBroadcast != null
                     && dumpPackage.equals(mPendingBroadcast.callerPackage))) {
@@ -1513,7 +1148,7 @@ public final class BroadcastQueue {
                 }
                 pw.println("  Pending broadcast [" + mQueueName + "]:");
                 if (mPendingBroadcast != null) {
-                    mPendingBroadcast.dump(pw, "    ", sdf);
+                    mPendingBroadcast.dump(pw, "    ");
                 } else {
                     pw.println("    (null)");
                 }
@@ -1523,20 +1158,11 @@ public final class BroadcastQueue {
 
         int i;
         boolean printed = false;
-
-        i = -1;
-        int lastIndex = mHistoryNext;
-        int ringIndex = lastIndex;
-        do {
-            // increasing index = more recent entry, and we want to print the most
-            // recent first and work backwards, so we roll through the ring backwards.
-            ringIndex = ringAdvance(ringIndex, -1, MAX_BROADCAST_HISTORY);
-            BroadcastRecord r = mBroadcastHistory[ringIndex];
+        for (i=0; i<MAX_BROADCAST_HISTORY; i++) {
+            BroadcastRecord r = mBroadcastHistory[i];
             if (r == null) {
-                continue;
+                break;
             }
-
-            i++; // genuine record of some sort even if we're filtering it out
             if (dumpPackage != null && !dumpPackage.equals(r.callerPackage)) {
                 continue;
             }
@@ -1551,7 +1177,7 @@ public final class BroadcastQueue {
             if (dumpAll) {
                 pw.print("  Historical Broadcast " + mQueueName + " #");
                         pw.print(i); pw.println(":");
-                r.dump(pw, "    ", sdf);
+                r.dump(pw, "    ");
             } else {
                 pw.print("  #"); pw.print(i); pw.print(": "); pw.println(r);
                 pw.print("    ");
@@ -1564,32 +1190,17 @@ public final class BroadcastQueue {
                     pw.print("    extras: "); pw.println(bundle.toString());
                 }
             }
-        } while (ringIndex != lastIndex);
+        }
 
         if (dumpPackage == null) {
-            lastIndex = ringIndex = mSummaryHistoryNext;
             if (dumpAll) {
+                i = 0;
                 printed = false;
-                i = -1;
-            } else {
-                // roll over the 'i' full dumps that have already been issued
-                for (int j = i;
-                        j > 0 && ringIndex != lastIndex;) {
-                    ringIndex = ringAdvance(ringIndex, -1, MAX_BROADCAST_SUMMARY_HISTORY);
-                    BroadcastRecord r = mBroadcastHistory[ringIndex];
-                    if (r == null) {
-                        continue;
-                    }
-                    j--;
-                }
             }
-            // done skipping; dump the remainder of the ring. 'i' is still the ordinal within
-            // the overall broadcast history.
-            do {
-                ringIndex = ringAdvance(ringIndex, -1, MAX_BROADCAST_SUMMARY_HISTORY);
-                Intent intent = mBroadcastSummaryHistory[ringIndex];
+            for (; i<MAX_BROADCAST_SUMMARY_HISTORY; i++) {
+                Intent intent = mBroadcastSummaryHistory[i];
                 if (intent == null) {
-                    continue;
+                    break;
                 }
                 if (!printed) {
                     if (needSep) {
@@ -1603,27 +1214,13 @@ public final class BroadcastQueue {
                     pw.println("  ...");
                     break;
                 }
-                i++;
                 pw.print("  #"); pw.print(i); pw.print(": ");
                 pw.println(intent.toShortString(false, true, true, false));
-                pw.print("    ");
-                TimeUtils.formatDuration(mSummaryHistoryDispatchTime[ringIndex]
-                        - mSummaryHistoryEnqueueTime[ringIndex], pw);
-                pw.print(" dispatch ");
-                TimeUtils.formatDuration(mSummaryHistoryFinishTime[ringIndex]
-                        - mSummaryHistoryDispatchTime[ringIndex], pw);
-                pw.println(" finish");
-                pw.print("    enq=");
-                pw.print(sdf.format(new Date(mSummaryHistoryEnqueueTime[ringIndex])));
-                pw.print(" disp=");
-                pw.print(sdf.format(new Date(mSummaryHistoryDispatchTime[ringIndex])));
-                pw.print(" fin=");
-                pw.println(sdf.format(new Date(mSummaryHistoryFinishTime[ringIndex])));
                 Bundle bundle = intent.getExtras();
                 if (bundle != null) {
                     pw.print("    extras: "); pw.println(bundle.toString());
                 }
-            } while (ringIndex != lastIndex);
+            }
         }
 
         return needSep;

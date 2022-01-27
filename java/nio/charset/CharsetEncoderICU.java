@@ -21,7 +21,6 @@ import java.util.Map;
 import libcore.icu.ICU;
 import libcore.icu.NativeConverter;
 import libcore.util.EmptyArray;
-import libcore.util.NativeAllocationRegistry;
 
 final class CharsetEncoderICU extends CharsetEncoder {
     private static final Map<String, byte[]> DEFAULT_REPLACEMENTS = new HashMap<String, byte[]>();
@@ -50,7 +49,7 @@ final class CharsetEncoderICU extends CharsetEncoder {
     private int[] data = new int[3];
 
     /* handle to the ICU converter that is opened */
-    private final long converterHandle;
+    private long converterHandle=0;
 
     private char[] input = null;
     private byte[] output = null;
@@ -96,7 +95,6 @@ final class CharsetEncoderICU extends CharsetEncoder {
         super(cs, averageBytesPerChar, maxBytesPerChar, replacement, true);
         // Our native peer needs to know what just happened...
         this.converterHandle = address;
-        NativeConverter.registerConverter(this, converterHandle);
         updateCallback();
     }
 
@@ -186,6 +184,15 @@ final class CharsetEncoderICU extends CharsetEncoder {
         }
     }
 
+    @Override protected void finalize() throws Throwable {
+        try {
+            NativeConverter.closeConverter(converterHandle);
+            converterHandle=0;
+        } finally {
+            super.finalize();
+        }
+    }
+
     private int getArray(ByteBuffer out) {
         if (out.hasArray()) {
             output = out.array();
@@ -224,7 +231,7 @@ final class CharsetEncoderICU extends CharsetEncoder {
 
     private void setPosition(ByteBuffer out) {
         if (out.hasArray()) {
-            out.position(data[OUTPUT_OFFSET] - out.arrayOffset());
+            out.position(out.position() + data[OUTPUT_OFFSET] - out.arrayOffset());
         } else {
             out.put(output, 0, data[OUTPUT_OFFSET]);
         }

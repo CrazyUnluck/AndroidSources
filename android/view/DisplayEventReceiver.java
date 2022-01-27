@@ -22,8 +22,6 @@ import android.os.Looper;
 import android.os.MessageQueue;
 import android.util.Log;
 
-import java.lang.ref.WeakReference;
-
 /**
  * Provides a low-level mechanism for an application to receive display events
  * such as vertical sync.
@@ -44,7 +42,7 @@ public abstract class DisplayEventReceiver {
     // GC'd while the native peer of the receiver is using them.
     private MessageQueue mMessageQueue;
 
-    private static native long nativeInit(WeakReference<DisplayEventReceiver> receiver,
+    private static native long nativeInit(DisplayEventReceiver receiver,
             MessageQueue messageQueue);
     private static native void nativeDispose(long receiverPtr);
     private static native void nativeScheduleVsync(long receiverPtr);
@@ -60,7 +58,7 @@ public abstract class DisplayEventReceiver {
         }
 
         mMessageQueue = looper.getQueue();
-        mReceiverPtr = nativeInit(new WeakReference<DisplayEventReceiver>(this), mMessageQueue);
+        mReceiverPtr = nativeInit(this, mMessageQueue);
 
         mCloseGuard.open("dispose");
     }

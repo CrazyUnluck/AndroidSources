@@ -22,22 +22,20 @@ package android.renderscript;
 public final class ScriptIntrinsicResize extends ScriptIntrinsic {
     private Allocation mInput;
 
-    private ScriptIntrinsicResize(long id, RenderScript rs) {
+    private ScriptIntrinsicResize(int id, RenderScript rs) {
         super(id, rs);
     }
 
     /**
      * Supported elements types are {@link Element#U8}, {@link
      * Element#U8_2}, {@link Element#U8_3}, {@link Element#U8_4}
-     * {@link Element#F32}, {@link Element#F32_2}, {@link
-     * Element#F32_3}, {@link Element#F32_4}
      *
      * @param rs The RenderScript context
      *
      * @return ScriptIntrinsicResize
      */
     public static ScriptIntrinsicResize create(RenderScript rs) {
-        long id = rs.nScriptIntrinsicCreate(12, 0);
+        int id = rs.nScriptIntrinsicCreate(12, 0);
         ScriptIntrinsicResize si = new ScriptIntrinsicResize(id, rs);
         return si;
 
@@ -54,11 +52,7 @@ public final class ScriptIntrinsicResize extends ScriptIntrinsic {
         if (!e.isCompatible(Element.U8(mRS)) &&
             !e.isCompatible(Element.U8_2(mRS)) &&
             !e.isCompatible(Element.U8_3(mRS)) &&
-            !e.isCompatible(Element.U8_4(mRS)) &&
-            !e.isCompatible(Element.F32(mRS)) &&
-            !e.isCompatible(Element.F32_2(mRS)) &&
-            !e.isCompatible(Element.F32_3(mRS)) &&
-            !e.isCompatible(Element.F32_4(mRS))) {
+            !e.isCompatible(Element.U8_4(mRS))) {
             throw new RSIllegalArgumentException("Unsuported element type.");
         }
 
@@ -101,7 +95,7 @@ public final class ScriptIntrinsicResize extends ScriptIntrinsic {
      * @param opt LaunchOptions for clipping
      */
     public void forEach_bicubic(Allocation aout, Script.LaunchOptions opt) {
-        forEach(0, (Allocation) null, aout, null, opt);
+        forEach(0, null, aout, null, opt);
     }
 
     /**
@@ -115,3 +109,4 @@ public final class ScriptIntrinsicResize extends ScriptIntrinsic {
 
 
 }
+

@@ -163,11 +163,8 @@ public class BitmapFactory {
         public boolean inPremultiplied;
 
         /**
-         * @deprecated As of {@link android.os.Build.VERSION_CODES#N}, this is
-         * ignored.
-         *
-         * In {@link android.os.Build.VERSION_CODES#M} and below, if dither is
-         * true, the decoder will attempt to dither the decoded image.
+         * If dither is true, the decoder will attempt to dither the decoded
+         * image.
          */
         public boolean inDither;
 
@@ -263,11 +260,7 @@ public class BitmapFactory {
         public boolean inScaled;
 
         /**
-         * @deprecated As of {@link android.os.Build.VERSION_CODES#LOLLIPOP}, this is
-         * ignored.
-         *
-         * In {@link android.os.Build.VERSION_CODES#KITKAT} and below, if this
-         * is set to true, then the resulting bitmap will allocate its
+         * If this is set to true, then the resulting bitmap will allocate its
          * pixels such that they can be purged if the system needs to reclaim
          * memory. In that instance, when the pixels need to be accessed again
          * (e.g. the bitmap is drawn, getPixels() is called), they will be
@@ -294,28 +287,18 @@ public class BitmapFactory {
          * android.graphics.BitmapFactory.Options)} or {@link #decodeFile(String,
          * android.graphics.BitmapFactory.Options)}.</p>
          */
-        @Deprecated
         public boolean inPurgeable;
 
         /**
-         * @deprecated As of {@link android.os.Build.VERSION_CODES#LOLLIPOP}, this is
-         * ignored.
-         *
-         * In {@link android.os.Build.VERSION_CODES#KITKAT} and below, this
-         * field works in conjuction with inPurgeable. If inPurgeable is false,
-         * then this field is ignored. If inPurgeable is true, then this field
-         * determines whether the bitmap can share a reference to the input
-         * data (inputstream, array, etc.) or if it must make a deep copy.
+         * This field works in conjuction with inPurgeable. If inPurgeable is
+         * false, then this field is ignored. If inPurgeable is true, then this
+         * field determines whether the bitmap can share a reference to the
+         * input data (inputstream, array, etc.) or if it must make a deep copy.
          */
-        @Deprecated
         public boolean inInputShareable;
 
         /**
-         * @deprecated As of {@link android.os.Build.VERSION_CODES#N}, this is
-         * ignored.  The output will always be high quality.
-         *
-         * In {@link android.os.Build.VERSION_CODES#M} and below, if
-         * inPreferQualityOverSpeed is set to true, the decoder will try to
+         * If inPreferQualityOverSpeed is set to true, the decoder will try to
          * decode the reconstructed image to a higher quality even at the
          * expense of the decoding speed. Currently the field only affects JPEG
          * decode, in the case of which a more accurate, but slightly slower,
@@ -324,22 +307,17 @@ public class BitmapFactory {
         public boolean inPreferQualityOverSpeed;
 
         /**
-         * The resulting width of the bitmap. If {@link #inJustDecodeBounds} is
-         * set to false, this will be width of the output bitmap after any
-         * scaling is applied. If true, it will be the width of the input image
-         * without any accounting for scaling.
-         *
-         * <p>outWidth will be set to -1 if there is an error trying to decode.</p>
+         * The resulting width of the bitmap, set independent of the state of
+         * inJustDecodeBounds. However, if there is an error trying to decode,
+         * outWidth will be set to -1.
          */
+
         public int outWidth;
 
         /**
-         * The resulting height of the bitmap. If {@link #inJustDecodeBounds} is
-         * set to false, this will be height of the output bitmap after any
-         * scaling is applied. If true, it will be the height of the input image
-         * without any accounting for scaling.
-         *
-         * <p>outHeight will be set to -1 if there is an error trying to decode.</p>
+         * The resulting height of the bitmap, set independent of the state of
+         * inJustDecodeBounds. However, if there is an error trying to decode,
+         * outHeight will be set to -1. 
          */
         public int outHeight;
 
@@ -354,10 +332,9 @@ public class BitmapFactory {
          */
         public byte[] inTempStorage;
 
+        private native void requestCancel();
+
         /**
-         * @deprecated As of {@link android.os.Build.VERSION_CODES#N}, see
-         * comments on {@link #requestCancelDecode()}.
-         *
          * Flag to indicate that cancel has been called on this object.  This
          * is useful if there's an intermediary that wants to first decode the
          * bounds and then decode the image.  In that case the intermediary
@@ -367,19 +344,16 @@ public class BitmapFactory {
         public boolean mCancel;
 
         /**
-         *  @deprecated As of {@link android.os.Build.VERSION_CODES#N}, this
-         *  will not affect the decode, though it will still set mCancel.
-         *
-         *  In {@link android.os.Build.VERSION_CODES#M} and below, if this can
-         *  be called from another thread while this options object is inside
-         *  a decode... call. Calling this will notify the decoder that it
-         *  should cancel its operation. This is not guaranteed to cancel the
-         *  decode, but if it does, the decoder... operation will return null,
-         *  or if inJustDecodeBounds is true, will set outWidth/outHeight
+         *  This can be called from another thread while this options object is
+         *  inside a decode... call. Calling this will notify the decoder that
+         *  it should cancel its operation. This is not guaranteed to cancel
+         *  the decode, but if it does, the decoder... operation will return
+         *  null, or if inJustDecodeBounds is true, will set outWidth/outHeight
          *  to -1
          */
         public void requestCancelDecode() {
             mCancel = true;
+            requestCancel();
         }
     }
 
@@ -498,7 +472,7 @@ public class BitmapFactory {
 
     /**
      * Synonym for {@link #decodeResource(Resources, int, android.graphics.BitmapFactory.Options)}
-     * with null Options.
+     * will null Options.
      *
      * @param res The resources object containing the image data
      * @param id The resource id of the image data

@@ -14,17 +14,16 @@
 package android.support.v17.leanback.widget;
 
 import android.graphics.Rect;
-import android.support.v4.view.ViewCompat;
 import android.view.View;
 import android.view.ViewGroup;
 import android.view.View.MeasureSpec;
 import android.view.ViewGroup.MarginLayoutParams;
 
 /**
- * A helper class for showing a hover card view below a {@link HorizontalGridView}.  The hover card
- * is aligned to the starting edge of the selected child view.  If there is no space when scrolling
- * to the end, the ending edge of the hover card will be aligned to the ending edge of the parent
- * view, excluding padding.
+ * Helper class that stay bellow a HorizontalGridView and shows a hover card and align
+ * the hover card left to left of selected child view.  If there is no space when scroll
+ * to the end, right edge hover card will be aligned to right of parent view excluding
+ * right padding.
  */
 public final class HorizontalHoverCardSwitcher extends PresenterSwitcher {
     // left and right of selected card view
@@ -43,18 +42,12 @@ public final class HorizontalHoverCardSwitcher extends PresenterSwitcher {
     protected void onViewSelected(View view) {
         int rightLimit = getParentViewGroup().getWidth() -
                 getParentViewGroup().getPaddingRight();
-        int leftLimit = getParentViewGroup().getPaddingLeft();
-        // measure the hover card width; if it's too large, align hover card
-        // end edge with row view's end edge, otherwise align start edges.
+        // measure the hover card width, if it's too large,  align hover card
+        // right edge with row view's right edge
         view.measure(MeasureSpec.UNSPECIFIED, MeasureSpec.UNSPECIFIED);
         MarginLayoutParams params = (MarginLayoutParams) view.getLayoutParams();
-        boolean isRtl = ViewCompat.getLayoutDirection(view) == View.LAYOUT_DIRECTION_RTL;
-        if (!isRtl && mCardLeft + view.getMeasuredWidth() > rightLimit) {
+        if (mCardLeft + view.getMeasuredWidth() > rightLimit) {
             params.leftMargin = rightLimit  - view.getMeasuredWidth();
-        } else if (isRtl && mCardLeft < leftLimit) {
-            params.leftMargin = leftLimit;
-        } else if (isRtl) {
-            params.leftMargin = mCardRight - view.getMeasuredWidth();
         } else {
             params.leftMargin = mCardLeft;
         }

@@ -8,19 +8,9 @@
 
 package jsr166;
 
-import junit.framework.Test;
-import junit.framework.TestSuite;
+import junit.framework.*;
 
 public class SystemTest extends JSR166TestCase {
-    // android-note: Removed because the CTS runner does a bad job of
-    // retrying tests that have suite() declarations.
-    //
-    // public static void main(String[] args) {
-    //     main(suite(), args);
-    // }
-    // public static Test suite() {
-    //     return new TestSuite(SystemTest.class);
-    // }
 
     /**
      * Worst case rounding for millisecs; set for 60 cycle millis clock.

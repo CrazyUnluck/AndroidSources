@@ -16,8 +16,6 @@
 
 package android.util;
 
-import libcore.util.EmptyArray;
-
 import java.lang.reflect.Array;
 import java.util.Collection;
 import java.util.Iterator;
@@ -42,6 +40,8 @@ import java.util.Set;
  * you have no control over this shrinking -- if you set a capacity and then remove an
  * item, it may reduce the capacity to better match the current size.  In the future an
  * explicit call to set the capacity should turn off this aggressive shrinking behavior.</p>
+ *
+ * @hide
  */
 public final class ArraySet<E> implements Collection<E>, Set<E> {
     private static final boolean DEBUG = false;
@@ -69,7 +69,6 @@ public final class ArraySet<E> implements Collection<E>, Set<E> {
     static Object[] mTwiceBaseCache;
     static int mTwiceBaseCacheSize;
 
-    final boolean mIdentityHashCode;
     int[] mHashes;
     Object[] mArray;
     int mSize;
@@ -223,22 +222,18 @@ public final class ArraySet<E> implements Collection<E>, Set<E> {
      * will grow once items are added to it.
      */
     public ArraySet() {
-        this(0, false);
+        mHashes = ContainerHelpers.EMPTY_INTS;
+        mArray = ContainerHelpers.EMPTY_OBJECTS;
+        mSize = 0;
     }
 
     /**
      * Create a new ArraySet with a given initial capacity.
      */
     public ArraySet(int capacity) {
-        this(capacity, false);
-    }
-
-    /** {@hide} */
-    public ArraySet(int capacity, boolean identityHashCode) {
-        mIdentityHashCode = identityHashCode;
         if (capacity == 0) {
-            mHashes = EmptyArray.INT;
-            mArray = EmptyArray.OBJECT;
+            mHashes = ContainerHelpers.EMPTY_INTS;
+            mArray = ContainerHelpers.EMPTY_OBJECTS;
         } else {
             allocArrays(capacity);
         }
@@ -248,20 +243,13 @@ public final class ArraySet<E> implements Collection<E>, Set<E> {
     /**
      * Create a new ArraySet with the mappings from the given ArraySet.
      */
-    public ArraySet(ArraySet<E> set) {
+    public ArraySet(ArraySet set) {
         this();
         if (set != null) {
             addAll(set);
         }
     }
 
-    /** {@hide} */
-    public ArraySet(Collection<E> set) {
-        this();
-        if (set != null) {
-            addAll(set);
-        }
-    }
 
     /**
      * Make the array map empty.  All storage is released.
@@ -270,8 +258,8 @@ public final class ArraySet<E> implements Collection<E>, Set<E> {
     public void clear() {
         if (mSize != 0) {
             freeArrays(mHashes, mArray, mSize);
-            mHashes = EmptyArray.INT;
-            mArray = EmptyArray.OBJECT;
+            mHashes = ContainerHelpers.EMPTY_INTS;
+            mArray = ContainerHelpers.EMPTY_OBJECTS;
             mSize = 0;
         }
     }
@@ -301,18 +289,7 @@ public final class ArraySet<E> implements Collection<E>, Set<E> {
      */
     @Override
     public boolean contains(Object key) {
-        return indexOf(key) >= 0;
-    }
-
-    /**
-     * Returns the index of a value in the set.
-     *
-     * @param key The value to search for.
-     * @return Returns the index of the value if it exists, else a negative integer.
-     */
-    public int indexOf(Object key) {
-        return key == null ? indexOfNull()
-                : indexOf(key, mIdentityHashCode ? System.identityHashCode(key) : key.hashCode());
+        return key == null ? (indexOfNull() >= 0) : (indexOf(key, key.hashCode()) >= 0);
     }
 
     /**
@@ -349,7 +326,7 @@ public final class ArraySet<E> implements Collection<E>, Set<E> {
             hash = 0;
             index = indexOfNull();
         } else {
-            hash = mIdentityHashCode ? System.identityHashCode(value) : value.hashCode();
+            hash = value.hashCode();
             index = indexOf(value, hash);
         }
         if (index >= 0) {
@@ -390,39 +367,10 @@ public final class ArraySet<E> implements Collection<E>, Set<E> {
     }
 
     /**
-     * Special fast path for appending items to the end of the array without validation.
-     * The array must already be large enough to contain the item.
-     * @hide
-     */
-    public void append(E value) {
-        final int index = mSize;
-        final int hash = value == null ? 0
-                : (mIdentityHashCode ? System.identityHashCode(value) : value.hashCode());
-        if (index >= mHashes.length) {
-            throw new IllegalStateException("Array is full");
-        }
-        if (index > 0 && mHashes[index - 1] > hash) {
-            // Cannot optimize since it would break the sorted order - fallback to add()
-            if (DEBUG) {
-                RuntimeException e = new RuntimeException("here");
-                e.fillInStackTrace();
-                Log.w(TAG, "New hash " + hash
-                        + " is before end of array hash " + mHashes[index - 1]
-                        + " at index " + index, e);
-            }
-            add(value);
-            return;
-        }
-        mSize = index + 1;
-        mHashes[index] = hash;
-        mArray[index] = value;
-    }
-
-    /**
      * Perform a {@link #add(Object)} of all values in <var>array</var>
      * @param array The array whose contents are to be retrieved.
      */
-    public void addAll(ArraySet<? extends E> array) {
+    public void putAll(ArraySet<? extends E> array) {
         final int N = array.mSize;
         ensureCapacity(mSize + N);
         if (mSize == 0) {
@@ -446,7 +394,7 @@ public final class ArraySet<E> implements Collection<E>, Set<E> {
      */
     @Override
     public boolean remove(Object object) {
-        final int index = indexOf(object);
+        int index = object == null ? indexOfNull() : indexOf(object, object.hashCode());
         if (index >= 0) {
             removeAt(index);
             return true;
@@ -465,8 +413,8 @@ public final class ArraySet<E> implements Collection<E>, Set<E> {
             // Now empty.
             if (DEBUG) Log.d(TAG, "remove: shrink from " + mHashes.length + " to 0");
             freeArrays(mHashes, mArray, mSize);
-            mHashes = EmptyArray.INT;
-            mArray = EmptyArray.OBJECT;
+            mHashes = ContainerHelpers.EMPTY_INTS;
+            mArray = ContainerHelpers.EMPTY_OBJECTS;
             mSize = 0;
         } else {
             if (mHashes.length > (BASE_SIZE*2) && mSize < mHashes.length/3) {
@@ -505,26 +453,6 @@ public final class ArraySet<E> implements Collection<E>, Set<E> {
             }
         }
         return (E)old;
-    }
-
-    /**
-     * Perform a {@link #remove(Object)} of all values in <var>array</var>
-     * @param array The array whose contents are to be removed.
-     */
-    public boolean removeAll(ArraySet<? extends E> array) {
-        // TODO: If array is sufficiently large, a marking approach might be beneficial. In a first
-        //       pass, use the property that the sets are sorted by hash to make this linear passes
-        //       (except for hash collisions, which means worst case still n*m), then do one
-        //       collection pass into a new array. This avoids binary searches and excessive memcpy.
-        final int N = array.mSize;
-
-        // Note: ArraySet does not make thread-safety guarantees. So instead of OR-ing together all
-        //       the single results, compare size before and after.
-        final int originalSize = mSize;
-        for (int i = 0; i < N; i++) {
-            remove(array.valueAt(i));
-        }
-        return originalSize != mSize;
     }
 
     /**
@@ -656,12 +584,12 @@ public final class ArraySet<E> implements Collection<E>, Set<E> {
 
                 @Override
                 protected int colIndexOfKey(Object key) {
-                    return indexOf(key);
+                    return key == null ? indexOfNull() : indexOf(key, key.hashCode());
                 }
 
                 @Override
                 protected int colIndexOfValue(Object value) {
-                    return indexOf(value);
+                    return value == null ? indexOfNull() : indexOf(value, value.hashCode());
                 }
 
                 @Override
@@ -693,24 +621,11 @@ public final class ArraySet<E> implements Collection<E>, Set<E> {
         return mCollections;
     }
 
-    /**
-     * Return an {@link java.util.Iterator} over all values in the set.
-     *
-     * <p><b>Note:</b> this is a fairly inefficient way to access the array contents, it
-     * requires generating a number of temporary objects and allocates additional state
-     * information associated with the container that will remain for the life of the container.</p>
-     */
     @Override
     public Iterator<E> iterator() {
         return getCollection().getKeySet().iterator();
     }
 
-    /**
-     * Determine if the array set contains all of the values in the given collection.
-     * @param collection The collection whose contents are to be checked against.
-     * @return Returns true if this array set contains a value for every entry
-     * in <var>collection</var>, else returns false.
-     */
     @Override
     public boolean containsAll(Collection<?> collection) {
         Iterator<?> it = collection.iterator();
@@ -722,10 +637,6 @@ public final class ArraySet<E> implements Collection<E>, Set<E> {
         return true;
     }
 
-    /**
-     * Perform an {@link #add(Object)} of all values in <var>collection</var>
-     * @param collection The collection whose contents are to be retrieved.
-     */
     @Override
     public boolean addAll(Collection<? extends E> collection) {
         ensureCapacity(mSize + collection.size());
@@ -736,11 +647,6 @@ public final class ArraySet<E> implements Collection<E>, Set<E> {
         return added;
     }
 
-    /**
-     * Remove all values in the array set that exist in the given collection.
-     * @param collection The collection whose contents are to be used to remove values.
-     * @return Returns true if any values were removed from the array set, else false.
-     */
     @Override
     public boolean removeAll(Collection<?> collection) {
         boolean removed = false;
@@ -750,12 +656,6 @@ public final class ArraySet<E> implements Collection<E>, Set<E> {
         return removed;
     }
 
-    /**
-     * Remove all values in the array set that do <b>not</b> exist in the given collection.
-     * @param collection The collection whose contents are to be used to determine which
-     * values to keep.
-     * @return Returns true if any values were removed from the array set, else false.
-     */
     @Override
     public boolean retainAll(Collection<?> collection) {
         boolean removed = false;

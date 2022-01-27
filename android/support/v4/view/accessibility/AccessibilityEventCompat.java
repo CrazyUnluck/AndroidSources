@@ -23,14 +23,12 @@ import android.view.accessibility.AccessibilityEvent;
  * Helper for accessing features in {@link AccessibilityEvent}
  * introduced after API level 4 in a backwards compatible fashion.
  */
-public final class AccessibilityEventCompat {
+public class AccessibilityEventCompat {
 
     static interface AccessibilityEventVersionImpl {
-        int getRecordCount(AccessibilityEvent event);
-        void appendRecord(AccessibilityEvent event, Object record);
-        Object getRecord(AccessibilityEvent event, int index);
-        void setContentChangeTypes(AccessibilityEvent event, int types);
-        int getContentChangeTypes(AccessibilityEvent event);
+        public int getRecordCount(AccessibilityEvent event);
+        public void appendRecord(AccessibilityEvent event, Object record);
+        public Object getRecord(AccessibilityEvent event, int index);
     }
 
     static class AccessibilityEventStubImpl implements AccessibilityEventVersionImpl {
@@ -46,17 +44,7 @@ public final class AccessibilityEventCompat {
         }
 
         @Override
-        public void setContentChangeTypes(AccessibilityEvent event, int types) {
-
-        }
-
-        @Override
         public int getRecordCount(AccessibilityEvent event) {
-            return 0;
-        }
-
-        @Override
-        public int getContentChangeTypes(AccessibilityEvent event) {
             return 0;
         }
     }
@@ -79,25 +67,10 @@ public final class AccessibilityEventCompat {
         }
     }
 
-    static class AccessibilityEventKitKatImpl extends AccessibilityEventIcsImpl {
-
-        @Override
-        public void setContentChangeTypes(AccessibilityEvent event, int types) {
-            AccessibilityEventCompatKitKat.setContentChangeTypes(event, types);
-        }
-
-        @Override
-        public int getContentChangeTypes(AccessibilityEvent event) {
-            return AccessibilityEventCompatKitKat.getContentChangeTypes(event);
-        }
-    }
-
     private final static AccessibilityEventVersionImpl IMPL;
 
     static {
-        if (Build.VERSION.SDK_INT >= 19) { // KitKat
-            IMPL = new AccessibilityEventKitKatImpl();
-        } else if (Build.VERSION.SDK_INT >= 14) { // ICS
+        if (Build.VERSION.SDK_INT >= 14) { // ICS
             IMPL = new AccessibilityEventIcsImpl();
         } else {
             IMPL = new AccessibilityEventStubImpl();
@@ -180,30 +153,6 @@ public final class AccessibilityEventCompat {
     public static final int TYPE_TOUCH_INTERACTION_END = 0x00200000;
 
     /**
-     * Change type for {@link #TYPE_WINDOW_CONTENT_CHANGED} event:
-     * The type of change is not defined.
-     */
-    public static final int CONTENT_CHANGE_TYPE_UNDEFINED = 0x00000000;
-
-    /**
-     * Change type for {@link #TYPE_WINDOW_CONTENT_CHANGED} event:
-     * A node in the subtree rooted at the source node was added or removed.
-     */
-    public static final int CONTENT_CHANGE_TYPE_SUBTREE = 0x00000001;
-
-    /**
-     * Change type for {@link #TYPE_WINDOW_CONTENT_CHANGED} event:
-     * The node's text changed.
-     */
-    public static final int CONTENT_CHANGE_TYPE_TEXT = 0x00000002;
-
-    /**
-     * Change type for {@link #TYPE_WINDOW_CONTENT_CHANGED} event:
-     * The node's content description changed.
-     */
-    public static final int CONTENT_CHANGE_TYPE_CONTENT_DESCRIPTION = 0x00000004;
-
-    /**
      * Mask for {@link AccessibilityEvent} all types.
      *
      * @see AccessibilityEvent#TYPE_VIEW_CLICKED
@@ -283,34 +232,4 @@ public final class AccessibilityEventCompat {
     public static AccessibilityRecordCompat asRecord(AccessibilityEvent event) {
         return new AccessibilityRecordCompat(event);
     }
-
-    /**
-     * Sets the bit mask of node tree changes signaled by an
-     * {@link #TYPE_WINDOW_CONTENT_CHANGED} event.
-     *
-     * @param changeTypes The bit mask of change types.
-     * @throws IllegalStateException If called from an AccessibilityService.
-     * @see #getContentChangeTypes(AccessibilityEvent)
-     */
-    public static void setContentChangeTypes(AccessibilityEvent event, int changeTypes) {
-        IMPL.setContentChangeTypes(event, changeTypes);
-    }
-
-    /**
-     * Gets the bit mask of change types signaled by an
-     * {@link #TYPE_WINDOW_CONTENT_CHANGED} event. A single event may represent
-     * multiple change types.
-     *
-     * @return The bit mask of change types. One or more of:
-     *         <ul>
-     *         <li>{@link AccessibilityEvent#CONTENT_CHANGE_TYPE_CONTENT_DESCRIPTION}
-     *         <li>{@link AccessibilityEvent#CONTENT_CHANGE_TYPE_SUBTREE}
-     *         <li>{@link AccessibilityEvent#CONTENT_CHANGE_TYPE_TEXT}
-     *         <li>{@link AccessibilityEvent#CONTENT_CHANGE_TYPE_UNDEFINED}
-     *         </ul>
-     */
-    public static int getContentChangeTypes(AccessibilityEvent event) {
-        return IMPL.getContentChangeTypes(event);
-    }
-
 }

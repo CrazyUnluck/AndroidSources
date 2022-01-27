@@ -17,9 +17,6 @@
 package android.util;
 
 import com.android.internal.util.ArrayUtils;
-import com.android.internal.util.GrowingArrayUtils;
-
-import libcore.util.EmptyArray;
 
 /**
  * SparseArrays map integers to Objects.  Unlike a normal array of Objects,
@@ -73,11 +70,12 @@ public class SparseArray<E> implements Cloneable {
      */
     public SparseArray(int initialCapacity) {
         if (initialCapacity == 0) {
-            mKeys = EmptyArray.INT;
-            mValues = EmptyArray.OBJECT;
+            mKeys = ContainerHelpers.EMPTY_INTS;
+            mValues = ContainerHelpers.EMPTY_OBJECTS;
         } else {
-            mValues = ArrayUtils.newUnpaddedObjectArray(initialCapacity);
-            mKeys = new int[mValues.length];
+            initialCapacity = ArrayUtils.idealIntArraySize(initialCapacity);
+            mKeys = new int[initialCapacity];
+            mValues = new Object[initialCapacity];
         }
         mSize = 0;
     }
@@ -134,24 +132,6 @@ public class SparseArray<E> implements Cloneable {
     }
 
     /**
-     * @hide
-     * Removes the mapping from the specified key, if there was any, returning the old value.
-     */
-    public E removeReturnOld(int key) {
-        int i = ContainerHelpers.binarySearch(mKeys, mSize, key);
-
-        if (i >= 0) {
-            if (mValues[i] != DELETED) {
-                final E old = (E) mValues[i];
-                mValues[i] = DELETED;
-                mGarbage = true;
-                return old;
-            }
-        }
-        return null;
-    }
-
-    /**
      * Alias for {@link #delete(int)}.
      */
     public void remove(int key) {
@@ -160,9 +140,6 @@ public class SparseArray<E> implements Cloneable {
 
     /**
      * Removes the mapping at the specified index.
-     *
-     * <p>For indices outside of the range <code>0...size()-1</code>,
-     * the behavior is undefined.</p>
      */
     public void removeAt(int index) {
         if (mValues[index] != DELETED) {
@@ -176,9 +153,6 @@ public class SparseArray<E> implements Cloneable {
      *
      * @param index Index to begin at
      * @param size Number of mappings to remove
-     *
-     * <p>For indices outside of the range <code>0...size()-1</code>,
-     * the behavior is undefined.</p>
      */
     public void removeAtRange(int index, int size) {
         final int end = Math.min(mSize, index + size);
@@ -241,8 +215,28 @@ public class SparseArray<E> implements Cloneable {
                 i = ~ContainerHelpers.binarySearch(mKeys, mSize, key);
             }
 
-            mKeys = GrowingArrayUtils.insert(mKeys, mSize, i, key);
-            mValues = GrowingArrayUtils.insert(mValues, mSize, i, value);
+            if (mSize >= mKeys.length) {
+                int n = ArrayUtils.idealIntArraySize(mSize + 1);
+
+                int[] nkeys = new int[n];
+                Object[] nvalues = new Object[n];
+
+                // Log.e("SparseArray", "grow " + mKeys.length + " to " + n);
+                System.arraycopy(mKeys, 0, nkeys, 0, mKeys.length);
+                System.arraycopy(mValues, 0, nvalues, 0, mValues.length);
+
+                mKeys = nkeys;
+                mValues = nvalues;
+            }
+
+            if (mSize - i != 0) {
+                // Log.e("SparseArray", "move " + (mSize - i));
+                System.arraycopy(mKeys, i, mKeys, i + 1, mSize - i);
+                System.arraycopy(mValues, i, mValues, i + 1, mSize - i);
+            }
+
+            mKeys[i] = key;
+            mValues[i] = value;
             mSize++;
         }
     }
@@ -268,9 +262,6 @@ public class SparseArray<E> implements Cloneable {
      * be in ascending order, e.g., <code>keyAt(0)</code> will return the
      * smallest key and <code>keyAt(size()-1)</code> will return the largest
      * key.</p>
-     *
-     * <p>For indices outside of the range <code>0...size()-1</code>,
-     * the behavior is undefined.</p>
      */
     public int keyAt(int index) {
         if (mGarbage) {
@@ -290,9 +281,6 @@ public class SparseArray<E> implements Cloneable {
      * <code>valueAt(0)</code> will return the value associated with the
      * smallest key and <code>valueAt(size()-1)</code> will return the value
      * associated with the largest key.</p>
-     *
-     * <p>For indices outside of the range <code>0...size()-1</code>,
-     * the behavior is undefined.</p>
      */
     @SuppressWarnings("unchecked")
     public E valueAt(int index) {
@@ -307,8 +295,6 @@ public class SparseArray<E> implements Cloneable {
      * Given an index in the range <code>0...size()-1</code>, sets a new
      * value for the <code>index</code>th key-value mapping that this
      * SparseArray stores.
-     *
-     * <p>For indices outside of the range <code>0...size()-1</code>, the behavior is undefined.</p>
      */
     public void setValueAt(int index, E value) {
         if (mGarbage) {
@@ -382,9 +368,24 @@ public class SparseArray<E> implements Cloneable {
             gc();
         }
 
-        mKeys = GrowingArrayUtils.append(mKeys, mSize, key);
-        mValues = GrowingArrayUtils.append(mValues, mSize, value);
-        mSize++;
+        int pos = mSize;
+        if (pos >= mKeys.length) {
+            int n = ArrayUtils.idealIntArraySize(pos + 1);
+
+            int[] nkeys = new int[n];
+            Object[] nvalues = new Object[n];
+
+            // Log.e("SparseArray", "grow " + mKeys.length + " to " + n);
+            System.arraycopy(mKeys, 0, nkeys, 0, mKeys.length);
+            System.arraycopy(mValues, 0, nvalues, 0, mValues.length);
+
+            mKeys = nkeys;
+            mValues = nvalues;
+        }
+
+        mKeys[pos] = key;
+        mValues[pos] = value;
+        mSize = pos + 1;
     }
 
     /**

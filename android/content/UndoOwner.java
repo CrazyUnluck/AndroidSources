@@ -23,8 +23,8 @@ package android.content;
  */
 public class UndoOwner {
     final String mTag;
-    final UndoManager mManager;
 
+    UndoManager mManager;
     Object mData;
     int mOpCount;
 
@@ -32,15 +32,8 @@ public class UndoOwner {
     int mStateSeq;
     int mSavedIdx;
 
-    UndoOwner(String tag, UndoManager manager) {
-        if (tag == null) {
-            throw new NullPointerException("tag can't be null");
-        }
-        if (manager == null) {
-            throw new NullPointerException("manager can't be null");
-        }
+    UndoOwner(String tag) {
         mTag = tag;
-        mManager = manager;
     }
 
     /**
@@ -60,16 +53,5 @@ public class UndoOwner {
      */
     public Object getData() {
         return mData;
-    }
-
-    @Override
-    public String toString() {
-        return "UndoOwner:[mTag=" + mTag +
-                " mManager=" + mManager +
-                " mData=" + mData +
-                " mData=" + mData +
-                " mOpCount=" + mOpCount +
-                " mStateSeq=" + mStateSeq +
-                " mSavedIdx=" + mSavedIdx + "]";
     }
 }

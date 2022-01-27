@@ -52,7 +52,7 @@ public class IntentFirewall {
     static final String TAG = "IntentFirewall";
 
     // e.g. /data/system/ifw or /data/secure/system/ifw
-    private static final File RULES_DIR = new File(Environment.getDataSystemDirectory(), "ifw");
+    private static final File RULES_DIR = new File(Environment.getSystemSecureDirectory(), "ifw");
 
     private static final int LOG_PACKAGES_MAX_LENGTH = 150;
     private static final int LOG_PACKAGES_SUFFICIENT_LENGTH = 125;
@@ -95,7 +95,6 @@ public class IntentFirewall {
 
                 CategoryFilter.FACTORY,
                 SenderFilter.FACTORY,
-                SenderPackageFilter.FACTORY,
                 SenderPermissionFilter.FACTORY,
                 PortFilter.FACTORY
         };
@@ -271,13 +270,11 @@ public class IntentFirewall {
         }
 
         File[] files = rulesDir.listFiles();
-        if (files != null) {
-            for (int i=0; i<files.length; i++) {
-                File file = files[i];
+        for (int i=0; i<files.length; i++) {
+            File file = files[i];
 
-                if (file.getName().endsWith(".xml")) {
-                    readRules(file, resolvers);
-                }
+            if (file.getName().endsWith(".xml")) {
+                readRules(file, resolvers);
             }
         }
 

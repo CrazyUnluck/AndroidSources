@@ -74,9 +74,8 @@ public class Program extends BaseObj {
     int mTextureCount;
     String mShader;
 
-    Program(long id, RenderScript rs) {
+    Program(int id, RenderScript rs) {
         super(id, rs);
-        guard.open("destroy");
     }
 
     /**
@@ -151,7 +150,7 @@ public class Program extends BaseObj {
             a.getType().getID(mRS) != mConstants[slot].getID(mRS)) {
             throw new IllegalArgumentException("Allocation type does not match slot type.");
         }
-        long id = a != null ? a.getID(mRS) : 0;
+        int id = a != null ? a.getID(mRS) : 0;
         mRS.nProgramBindConstants(getID(mRS), slot, id);
     }
 
@@ -173,7 +172,7 @@ public class Program extends BaseObj {
             throw new IllegalArgumentException("Cannot bind cubemap to 2d texture slot");
         }
 
-        long id = va != null ? va.getID(mRS) : 0;
+        int id = va != null ? va.getID(mRS) : 0;
         mRS.nProgramBindTexture(getID(mRS), slot, id);
     }
 
@@ -193,7 +192,7 @@ public class Program extends BaseObj {
             throw new IllegalArgumentException("Slot ID out of range.");
         }
 
-        long id = vs != null ? vs.getID(mRS) : 0;
+        int id = vs != null ? vs.getID(mRS) : 0;
         mRS.nProgramBindSampler(getID(mRS), slot, id);
     }
 

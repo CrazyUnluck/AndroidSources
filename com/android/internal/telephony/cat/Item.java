@@ -34,13 +34,9 @@ public class Item implements Parcelable {
     public Bitmap icon;
 
     public Item(int id, String text) {
-        this(id, text, null);
-    }
-
-    public Item(int id, String text, Bitmap icon) {
         this.id = id;
         this.text = text;
-        this.icon = icon;
+        this.icon = null;
     }
 
     public Item(Parcel in) {

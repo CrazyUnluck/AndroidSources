@@ -34,7 +34,7 @@ import java.util.Map;
  * Class that exposes IFusedLocationHardware functionality to unbundled services.
  */
 public final class FusedLocationHardware {
-    private static final String TAG = "FusedLocationHardware";
+    private final String TAG = "FusedLocationHardware";
 
     private IFusedLocationHardware mLocationHardware;
 
@@ -51,16 +51,6 @@ public final class FusedLocationHardware {
         @Override
         public void onDiagnosticDataAvailable(String data) {
             dispatchDiagnosticData(data);
-        }
-
-        @Override
-        public void onCapabilities(int capabilities) {
-            dispatchCapabilities(capabilities);
-        }
-
-        @Override
-        public void onStatusChanged(int status) {
-            dispatchStatus(status);
         }
     };
 
@@ -174,14 +164,6 @@ public final class FusedLocationHardware {
         }
     }
 
-    public void flushBatchedLocations() {
-        try {
-            mLocationHardware.flushBatchedLocations();
-        } catch(RemoteException e) {
-            Log.e(TAG, "RemoteException at flushBatchedLocations");
-        }
-    }
-
     public boolean supportsDiagnosticDataInjection() {
         try {
             return mLocationHardware.supportsDiagnosticDataInjection();
@@ -216,34 +198,12 @@ public final class FusedLocationHardware {
         }
     }
 
-
-    /**
-     * Returns the version of the FLP HAL.
-     *
-     * <p>Version 1 is the initial release.
-     * <p>Version 2 adds the ability to use {@link #flushBatchedLocations},
-     * {@link FusedLocationHardwareSink#onCapabilities}, and
-     * {@link FusedLocationHardwareSink#onStatusChanged}.
-     *
-     * <p>This method is only available on API 23 or later.  Older APIs have version 1.
-     */
-    public int getVersion() {
-        try {
-            return mLocationHardware.getVersion();
-        } catch(RemoteException e) {
-            Log.e(TAG, "RemoteException at getVersion");
-        }
-        return 1;
-    }
-
     /*
      * Helper methods and classes
      */
     private class DispatcherHandler extends Handler {
         public static final int DISPATCH_LOCATION = 1;
         public static final int DISPATCH_DIAGNOSTIC_DATA = 2;
-        public static final int DISPATCH_CAPABILITIES = 3;
-        public static final int DISPATCH_STATUS = 4;
 
         public DispatcherHandler(Looper looper) {
             super(looper, null /*callback*/ , true /*async*/);
@@ -258,13 +218,6 @@ public final class FusedLocationHardware {
                     break;
                 case DISPATCH_DIAGNOSTIC_DATA:
                     command.dispatchDiagnosticData();
-                    break;
-                case DISPATCH_CAPABILITIES:
-                    command.dispatchCapabilities();
-                    break;
-                case DISPATCH_STATUS:
-                    command.dispatchStatus();
-                    break;
                 default:
                     Log.e(TAG, "Invalid dispatch message");
                     break;
@@ -276,20 +229,14 @@ public final class FusedLocationHardware {
         private final FusedLocationHardwareSink mSink;
         private final Location[] mLocations;
         private final String mData;
-        private final int mCapabilities;
-        private final int mStatus;
 
         public MessageCommand(
                 FusedLocationHardwareSink sink,
                 Location[] locations,
-                String data,
-                int capabilities,
-                int status) {
+                String data) {
             mSink = sink;
             mLocations = locations;
             mData = data;
-            mCapabilities = capabilities;
-            mStatus = status;
         }
 
         public void dispatchLocation() {
@@ -298,14 +245,6 @@ public final class FusedLocationHardware {
 
         public void dispatchDiagnosticData() {
             mSink.onDiagnosticDataAvailable(mData);
-        }
-
-        public void dispatchCapabilities() {
-            mSink.onCapabilities(mCapabilities);
-        }
-
-        public void dispatchStatus() {
-            mSink.onStatusChanged(mStatus);
         }
     }
 
@@ -319,7 +258,7 @@ public final class FusedLocationHardware {
             Message message = Message.obtain(
                     entry.getValue(),
                     DispatcherHandler.DISPATCH_LOCATION,
-                    new MessageCommand(entry.getKey(), locations, null /*data*/, 0, 0));
+                    new MessageCommand(entry.getKey(), locations, null /*data*/));
             message.sendToTarget();
         }
     }
@@ -334,37 +273,7 @@ public final class FusedLocationHardware {
             Message message = Message.obtain(
                     entry.getValue(),
                     DispatcherHandler.DISPATCH_DIAGNOSTIC_DATA,
-                    new MessageCommand(entry.getKey(), null /*locations*/, data, 0, 0));
-            message.sendToTarget();
-        }
-    }
-
-    private void dispatchCapabilities(int capabilities) {
-        HashMap<FusedLocationHardwareSink, DispatcherHandler> sinks;
-        synchronized(mSinkList) {
-            sinks = mSinkList;
-        }
-
-        for(Map.Entry<FusedLocationHardwareSink, DispatcherHandler> entry : sinks.entrySet()) {
-            Message message = Message.obtain(
-                    entry.getValue(),
-                    DispatcherHandler.DISPATCH_CAPABILITIES,
-                    new MessageCommand(entry.getKey(), null /*locations*/, null, capabilities, 0));
-            message.sendToTarget();
-        }
-    }
-
-    private void dispatchStatus(int status) {
-        HashMap<FusedLocationHardwareSink, DispatcherHandler> sinks;
-        synchronized(mSinkList) {
-            sinks = mSinkList;
-        }
-
-        for(Map.Entry<FusedLocationHardwareSink, DispatcherHandler> entry : sinks.entrySet()) {
-            Message message = Message.obtain(
-                    entry.getValue(),
-                    DispatcherHandler.DISPATCH_STATUS,
-                    new MessageCommand(entry.getKey(), null /*locations*/, null, 0, status));
+                    new MessageCommand(entry.getKey(), null /*locations*/, data));
             message.sendToTarget();
         }
     }

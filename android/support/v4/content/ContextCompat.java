@@ -18,19 +18,11 @@ package android.support.v4.content;
 
 import android.content.Context;
 import android.content.Intent;
-import android.content.pm.ApplicationInfo;
-import android.content.res.ColorStateList;
-import android.content.res.TypedArray;
-import android.graphics.drawable.Drawable;
 import android.os.Build;
 import android.os.Bundle;
 import android.os.Environment;
-import android.os.Process;
-import android.support.annotation.NonNull;
-import android.support.v4.os.BuildCompat;
+import android.os.StatFs;
 import android.support.v4.os.EnvironmentCompat;
-import android.util.Log;
-import android.util.TypedValue;
 
 import java.io.File;
 
@@ -39,17 +31,12 @@ import java.io.File;
  * introduced after API level 4 in a backwards compatible fashion.
  */
 public class ContextCompat {
-    private static final String TAG = "ContextCompat";
 
     private static final String DIR_ANDROID = "Android";
     private static final String DIR_DATA = "data";
     private static final String DIR_OBB = "obb";
     private static final String DIR_FILES = "files";
     private static final String DIR_CACHE = "cache";
-
-    private static final Object sLock = new Object();
-
-    private static TypedValue sTempValue;
 
     /**
      * Start a set of activities as a synthesized task stack, if able.
@@ -104,7 +91,7 @@ public class ContextCompat {
      * @param intents Array of intents defining the activities that will be started. The element
      *                length-1 will correspond to the top activity on the resulting task stack.
      * @param options Additional options for how the Activity should be started.
-     * See {@link android.content.Context#startActivity(Intent, android.os.Bundle)
+     * See {@link android.content.Context#startActivity(Intent, Bundle)
      * @return true if the underlying API was available and the call was successful, false otherwise
      */
     public static boolean startActivities(Context context, Intent[] intents,
@@ -118,30 +105,6 @@ public class ContextCompat {
             return true;
         }
         return false;
-    }
-
-    /**
-     * Returns the absolute path to the directory on the filesystem where all
-     * private files belonging to this app are stored. Apps should not use this
-     * path directly; they should instead use {@link Context#getFilesDir()},
-     * {@link Context#getCacheDir()}, {@link Context#getDir(String, int)}, or
-     * other storage APIs on {@link Context}.
-     * <p>
-     * The returned path may change over time if the calling app is moved to an
-     * adopted storage device, so only relative paths should be persisted.
-     * <p>
-     * No additional permissions are required for the calling app to read or
-     * write files under the returned path.
-     *
-     * @see ApplicationInfo#dataDir
-     */
-    public static File getDataDir(Context context) {
-        if (BuildCompat.isAtLeastN()) {
-            return ContextCompatApi24.getDataDir(context);
-        } else {
-            final String dataDir = context.getApplicationInfo().dataDir;
-            return dataDir != null ? new File(dataDir) : null;
-        }
     }
 
     /**
@@ -166,7 +129,7 @@ public class ContextCompat {
      * <p>
      * An application may store data on any or all of the returned devices. For
      * example, an app may choose to store large files on the device with the
-     * most available space, as measured by {@link android.os.StatFs}.
+     * most available space, as measured by {@link StatFs}.
      * <p>
      * Starting in {@link android.os.Build.VERSION_CODES#KITKAT}, no permissions
      * are required to write to the returned paths; they're always accessible to
@@ -225,7 +188,7 @@ public class ContextCompat {
      * <p>
      * An application may store data on any or all of the returned devices. For
      * example, an app may choose to store large files on the device with the
-     * most available space, as measured by {@link android.os.StatFs}.
+     * most available space, as measured by {@link StatFs}.
      * <p>
      * Starting in {@link android.os.Build.VERSION_CODES#KITKAT}, no permissions
      * are required to write to the returned paths; they're always accessible to
@@ -285,7 +248,7 @@ public class ContextCompat {
      * <p>
      * An application may store data on any or all of the returned devices. For
      * example, an app may choose to store large files on the device with the
-     * most available space, as measured by {@link android.os.StatFs}.
+     * most available space, as measured by {@link StatFs}.
      * <p>
      * Starting in {@link android.os.Build.VERSION_CODES#KITKAT}, no permissions
      * are required to write to the returned paths; they're always accessible to
@@ -333,238 +296,5 @@ public class ContextCompat {
             }
         }
         return cur;
-    }
-
-    /**
-     * Returns a drawable object associated with a particular resource ID.
-     * <p>
-     * Starting in {@link android.os.Build.VERSION_CODES#LOLLIPOP}, the
-     * returned drawable will be styled for the specified Context's theme.
-     *
-     * @param id The desired resource identifier, as generated by the aapt tool.
-     *           This integer encodes the package, type, and resource entry.
-     *           The value 0 is an invalid identifier.
-     * @return Drawable An object that can be used to draw this resource.
-     */
-    public static final Drawable getDrawable(Context context, int id) {
-        final int version = Build.VERSION.SDK_INT;
-        if (version >= 21) {
-            return ContextCompatApi21.getDrawable(context, id);
-        } else if (version >= 16) {
-            return context.getResources().getDrawable(id);
-        } else {
-            // Prior to JELLY_BEAN, Resources.getDrawable() would not correctly
-            // retrieve the final configuration density when the resource ID
-            // is a reference another Drawable resource. As a workaround, try
-            // to resolve the drawable reference manually.
-            final int resolvedId;
-            synchronized (sLock) {
-                if (sTempValue == null) {
-                    sTempValue = new TypedValue();
-                }
-                context.getResources().getValue(id, sTempValue, true);
-                resolvedId = sTempValue.resourceId;
-            }
-            return context.getResources().getDrawable(resolvedId);
-        }
-    }
-
-    /**
-     * Returns a color state list associated with a particular resource ID.
-     * <p>
-     * Starting in {@link android.os.Build.VERSION_CODES#M}, the returned
-     * color state list will be styled for the specified Context's theme.
-     *
-     * @param id The desired resource identifier, as generated by the aapt
-     *           tool. This integer encodes the package, type, and resource
-     *           entry. The value 0 is an invalid identifier.
-     * @return A color state list, or {@code null} if the resource could not be
-     *         resolved.
-     * @throws android.content.res.Resources.NotFoundException if the given ID
-     *         does not exist.
-     */
-    public static final ColorStateList getColorStateList(Context context, int id) {
-        final int version = Build.VERSION.SDK_INT;
-        if (version >= 23) {
-            return ContextCompatApi23.getColorStateList(context, id);
-        } else {
-            return context.getResources().getColorStateList(id);
-        }
-    }
-
-    /**
-     * Returns a color associated with a particular resource ID
-     * <p>
-     * Starting in {@link android.os.Build.VERSION_CODES#M}, the returned
-     * color will be styled for the specified Context's theme.
-     *
-     * @param id The desired resource identifier, as generated by the aapt
-     *           tool. This integer encodes the package, type, and resource
-     *           entry. The value 0 is an invalid identifier.
-     * @return A single color value in the form 0xAARRGGBB.
-     * @throws android.content.res.Resources.NotFoundException if the given ID
-     *         does not exist.
-     */
-    public static final int getColor(Context context, int id) {
-        final int version = Build.VERSION.SDK_INT;
-        if (version >= 23) {
-            return ContextCompatApi23.getColor(context, id);
-        } else {
-            return context.getResources().getColor(id);
-        }
-    }
-
-    /**
-     * Determine whether <em>you</em> have been granted a particular permission.
-     *
-     * @param permission The name of the permission being checked.
-     *
-     * @return {@link android.content.pm.PackageManager#PERMISSION_GRANTED} if you have the
-     * permission, or {@link android.content.pm.PackageManager#PERMISSION_DENIED} if not.
-     *
-     * @see android.content.pm.PackageManager#checkPermission(String, String)
-     */
-    public static int checkSelfPermission(@NonNull Context context, @NonNull String permission) {
-        if (permission == null) {
-            throw new IllegalArgumentException("permission is null");
-        }
-
-        return context.checkPermission(permission, android.os.Process.myPid(), Process.myUid());
-    }
-
-    /**
-     * Returns the absolute path to the directory on the filesystem similar to
-     * {@link Context#getFilesDir()}.  The difference is that files placed under this
-     * directory will be excluded from automatic backup to remote storage on
-     * devices running {@link android.os.Build.VERSION_CODES#LOLLIPOP} or later.  See
-     * {@link android.app.backup.BackupAgent BackupAgent} for a full discussion
-     * of the automatic backup mechanism in Android.
-     *
-     * <p>No permissions are required to read or write to the returned path, since this
-     * path is internal storage.
-     *
-     * @return The path of the directory holding application files that will not be
-     *         automatically backed up to remote storage.
-     *
-     * @see android.content.Context.getFilesDir
-     */
-    public static final File getNoBackupFilesDir(Context context) {
-        final int version = Build.VERSION.SDK_INT;
-        if (version >= 21) {
-            return ContextCompatApi21.getNoBackupFilesDir(context);
-        } else {
-            ApplicationInfo appInfo = context.getApplicationInfo();
-            return createFilesDir(new File(appInfo.dataDir, "no_backup"));
-        }
-    }
-
-    /**
-     * Returns the absolute path to the application specific cache directory on
-     * the filesystem designed for storing cached code. On devices running
-     * {@link android.os.Build.VERSION_CODES#LOLLIPOP} or later, the system will delete
-     * any files stored in this location both when your specific application is
-     * upgraded, and when the entire platform is upgraded.
-     * <p>
-     * This location is optimal for storing compiled or optimized code generated
-     * by your application at runtime.
-     * <p>
-     * Apps require no extra permissions to read or write to the returned path,
-     * since this path lives in their private storage.
-     *
-     * @return The path of the directory holding application code cache files.
-     */
-    public static File getCodeCacheDir(Context context) {
-        final int version = Build.VERSION.SDK_INT;
-        if (version >= 21) {
-            return ContextCompatApi21.getCodeCacheDir(context);
-        } else {
-            ApplicationInfo appInfo = context.getApplicationInfo();
-            return createFilesDir(new File(appInfo.dataDir, "code_cache"));
-        }
-    }
-
-    private synchronized static File createFilesDir(File file) {
-        if (!file.exists()) {
-            if (!file.mkdirs()) {
-                if (file.exists()) {
-                    // spurious failure; probably racing with another process for this app
-                    return file;
-                }
-                Log.w(TAG, "Unable to create files subdir " + file.getPath());
-                return null;
-            }
-        }
-        return file;
-    }
-
-    /**
-     * Return a new Context object for the current Context but whose storage
-     * APIs are backed by device-protected storage.
-     * <p>
-     * On devices with direct boot, data stored in this location is encrypted
-     * with a key tied to the physical device, and it can be accessed
-     * immediately after the device has booted successfully, both
-     * <em>before and after</em> the user has authenticated with their
-     * credentials (such as a lock pattern or PIN).
-     * <p>
-     * Because device-protected data is available without user authentication,
-     * you should carefully limit the data you store using this Context. For
-     * example, storing sensitive authentication tokens or passwords in the
-     * device-protected area is strongly discouraged.
-     * <p>
-     * If the underlying device does not have the ability to store
-     * device-protected and credential-protected data using different keys, then
-     * both storage areas will become available at the same time. They remain as
-     * two distinct storage locations on disk, and only the window of
-     * availability changes.
-     * <p>
-     * Each call to this method returns a new instance of a Context object;
-     * Context objects are not shared, however common state (ClassLoader, other
-     * Resources for the same configuration) may be so the Context itself can be
-     * fairly lightweight.
-     * <p>
-     * Prior to {@link BuildCompat#isAtLeastN()} this method returns
-     * {@code null}, since device-protected storage is not available.
-     *
-     * @see ContextCompat#isDeviceProtectedStorage(Context)
-     */
-    public static Context createDeviceProtectedStorageContext(Context context) {
-        if (BuildCompat.isAtLeastN()) {
-            return ContextCompatApi24.createDeviceProtectedStorageContext(context);
-        } else {
-            return null;
-        }
-    }
-
-    /**
-     * @removed
-     * @deprecated Removed. Do not use.
-     */
-    @Deprecated
-    public static Context createDeviceEncryptedStorageContext(Context context) {
-        return createDeviceProtectedStorageContext(context);
-    }
-
-    /**
-     * Indicates if the storage APIs of this Context are backed by
-     * device-encrypted storage.
-     *
-     * @see ContextCompat#createDeviceProtectedStorageContext(Context)
-     */
-    public static boolean isDeviceProtectedStorage(Context context) {
-        if (BuildCompat.isAtLeastN()) {
-            return ContextCompatApi24.isDeviceProtectedStorage(context);
-        } else {
-            return false;
-        }
-    }
-
-    /**
-     * @removed
-     * @deprecated Removed. Do not use.
-     */
-    @Deprecated
-    public static boolean isDeviceEncryptedStorage(Context context) {
-        return isDeviceProtectedStorage(context);
     }
 }

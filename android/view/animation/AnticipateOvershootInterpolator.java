@@ -17,15 +17,8 @@
 package android.view.animation;
 
 import android.content.Context;
-import android.content.res.Resources;
-import android.content.res.Resources.Theme;
 import android.content.res.TypedArray;
 import android.util.AttributeSet;
-
-import com.android.internal.view.animation.HasNativeInterpolator;
-import com.android.internal.view.animation.NativeInterpolatorFactory;
-import com.android.internal.view.animation.NativeInterpolatorFactoryHelper;
-
 import static com.android.internal.R.styleable.AnticipateOvershootInterpolator_extraTension;
 import static com.android.internal.R.styleable.AnticipateOvershootInterpolator_tension;
 import static com.android.internal.R.styleable.AnticipateOvershootInterpolator;
@@ -34,9 +27,7 @@ import static com.android.internal.R.styleable.AnticipateOvershootInterpolator;
  * An interpolator where the change starts backward then flings forward and overshoots
  * the target value and finally goes back to the final value.
  */
-@HasNativeInterpolator
-public class AnticipateOvershootInterpolator extends BaseInterpolator
-        implements NativeInterpolatorFactory {
+public class AnticipateOvershootInterpolator implements Interpolator {
     private final float mTension;
 
     public AnticipateOvershootInterpolator() {
@@ -65,21 +56,11 @@ public class AnticipateOvershootInterpolator extends BaseInterpolator
     }
 
     public AnticipateOvershootInterpolator(Context context, AttributeSet attrs) {
-        this(context.getResources(), context.getTheme(), attrs);
-    }
-
-    /** @hide */
-    public AnticipateOvershootInterpolator(Resources res, Theme theme, AttributeSet attrs) {
-        TypedArray a;
-        if (theme != null) {
-            a = theme.obtainStyledAttributes(attrs, AnticipateOvershootInterpolator, 0, 0);
-        } else {
-            a = res.obtainAttributes(attrs, AnticipateOvershootInterpolator);
-        }
+        TypedArray a = context.obtainStyledAttributes(attrs, AnticipateOvershootInterpolator);
 
         mTension = a.getFloat(AnticipateOvershootInterpolator_tension, 2.0f) *
                 a.getFloat(AnticipateOvershootInterpolator_extraTension, 1.5f);
-        setChangingConfiguration(a.getChangingConfigurations());
+
         a.recycle();
     }
 
@@ -98,11 +79,5 @@ public class AnticipateOvershootInterpolator extends BaseInterpolator
         // f(t) = 0.5 * (o(t * 2 - 2, tension * extraTension) + 2), when t <= 1.0
         if (t < 0.5f) return 0.5f * a(t * 2.0f, mTension);
         else return 0.5f * (o(t * 2.0f - 2.0f, mTension) + 2.0f);
-    }
-
-    /** @hide */
-    @Override
-    public long createNativeInterpolator() {
-        return NativeInterpolatorFactoryHelper.createAnticipateOvershootInterpolator(mTension);
     }
 }

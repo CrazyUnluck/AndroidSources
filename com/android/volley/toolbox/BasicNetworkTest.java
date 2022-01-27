@@ -25,28 +25,29 @@ import org.apache.http.ProtocolVersion;
 import org.apache.http.entity.StringEntity;
 import org.apache.http.message.BasicHttpResponse;
 
-import org.junit.After;
-import org.junit.Before;
-import org.junit.Test;
-import org.junit.runner.RunWith;
-import org.robolectric.RobolectricTestRunner;
-
-import static org.junit.Assert.*;
+import android.test.AndroidTestCase;
+import android.test.suitebuilder.annotation.SmallTest;
 
 import java.util.HashMap;
 import java.util.Map;
 
-@RunWith(RobolectricTestRunner.class)
-public class BasicNetworkTest {
+@SmallTest
+public class BasicNetworkTest extends AndroidTestCase {
 
-    @Test public void headersAndPostParams() throws Exception {
+    @Override
+    protected void setUp() throws Exception {
+        super.setUp();
+        mContext = getContext();
+    }
+
+    public void testHeadersAndPostParams() throws Exception {
         MockHttpStack mockHttpStack = new MockHttpStack();
         BasicHttpResponse fakeResponse = new BasicHttpResponse(new ProtocolVersion("HTTP", 1, 1),
                 200, "OK");
         fakeResponse.setEntity(new StringEntity("foobar"));
         mockHttpStack.setResponseToReturn(fakeResponse);
         BasicNetwork httpNetwork = new BasicNetwork(mockHttpStack);
-        Request<String> request = new Request<String>(Request.Method.GET, "http://foo", null) {
+        Request<String> request = new Request<String>("http://foo", null) {
 
             @Override
             protected Response<String> parseNetworkResponse(NetworkResponse response) {
@@ -65,7 +66,7 @@ public class BasicNetworkTest {
             }
 
             @Override
-            public Map<String, String> getParams() {
+            public Map<String, String> getPostParams() {
                 Map<String, String> result = new HashMap<String, String>();
                 result.put("requestpost", "foo");
                 return result;

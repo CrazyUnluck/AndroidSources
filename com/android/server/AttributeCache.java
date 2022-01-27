@@ -24,12 +24,10 @@ import android.content.res.Configuration;
 import android.content.res.Resources;
 import android.content.res.TypedArray;
 import android.os.UserHandle;
-import android.util.ArrayMap;
 import android.util.SparseArray;
 
-import com.android.internal.annotations.GuardedBy;
-
-import java.lang.ref.WeakReference;
+import java.util.HashMap;
+import java.util.WeakHashMap;
 
 /**
  * TODO: This should be better integrated into the system so it doesn't need
@@ -37,18 +35,17 @@ import java.lang.ref.WeakReference;
  */
 public final class AttributeCache {
     private static AttributeCache sInstance = null;
-
+    
     private final Context mContext;
-
-    @GuardedBy("this")
-    private final ArrayMap<String, WeakReference<Package>> mPackages = new ArrayMap<>();
-    @GuardedBy("this")
+    private final WeakHashMap<String, Package> mPackages =
+            new WeakHashMap<String, Package>();
     private final Configuration mConfiguration = new Configuration();
-
+    
     public final static class Package {
         public final Context context;
-        private final SparseArray<ArrayMap<int[], Entry>> mMap = new SparseArray<>();
-
+        private final SparseArray<HashMap<int[], Entry>> mMap
+                = new SparseArray<HashMap<int[], Entry>>();
+        
         public Package(Context c) {
             context = c;
         }
@@ -61,12 +58,6 @@ public final class AttributeCache {
         public Entry(Context c, TypedArray ta) {
             context = c;
             array = ta;
-        }
-
-        void recycle() {
-            if (array != null) {
-                array.recycle();
-            }
         }
     }
     
@@ -83,27 +74,13 @@ public final class AttributeCache {
     public AttributeCache(Context context) {
         mContext = context;
     }
-
+    
     public void removePackage(String packageName) {
         synchronized (this) {
-            final WeakReference<Package> ref = mPackages.remove(packageName);
-            final Package pkg = (ref != null) ? ref.get() : null;
-            if (pkg != null) {
-                if (pkg.mMap != null) {
-                    for (int i = 0; i < pkg.mMap.size(); i++) {
-                        final ArrayMap<int[], Entry> map = pkg.mMap.valueAt(i);
-                        for (int j = 0; j < map.size(); j++) {
-                            map.valueAt(j).recycle();
-                        }
-                    }
-                }
-
-                final Resources res = pkg.context.getResources();
-                res.flushLayoutCache();
-            }
+            mPackages.remove(packageName);
         }
     }
-
+    
     public void updateConfiguration(Configuration config) {
         synchronized (this) {
             int changes = mConfiguration.updateFrom(config);
@@ -120,9 +97,8 @@ public final class AttributeCache {
     
     public Entry get(String packageName, int resId, int[] styleable, int userId) {
         synchronized (this) {
-            WeakReference<Package> ref = mPackages.get(packageName);
-            Package pkg = (ref != null) ? ref.get() : null;
-            ArrayMap<int[], Entry> map = null;
+            Package pkg = mPackages.get(packageName);
+            HashMap<int[], Entry> map = null;
             Entry ent = null;
             if (pkg != null) {
                 map = pkg.mMap.get(resId);
@@ -144,11 +120,11 @@ public final class AttributeCache {
                     return null;
                 }
                 pkg = new Package(context);
-                mPackages.put(packageName, new WeakReference<>(pkg));
+                mPackages.put(packageName, pkg);
             }
             
             if (map == null) {
-                map = new ArrayMap<>();
+                map = new HashMap<int[], Entry>();
                 pkg.mMap.put(resId, map);
             }
             

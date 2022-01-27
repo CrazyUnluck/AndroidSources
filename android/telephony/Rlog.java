@@ -16,7 +16,12 @@
 
 package android.telephony;
 
+import com.android.internal.os.RuntimeInit;
+
 import android.util.Log;
+
+import java.io.PrintWriter;
+import java.io.StringWriter;
 
 /**
  * A class to log strings to the RADIO LOG.

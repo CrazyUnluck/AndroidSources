@@ -92,8 +92,7 @@ public final class Sandman {
                     // be awake by the time this happens.  Otherwise the dream may not start.
                     PowerManager powerManager =
                             (PowerManager)context.getSystemService(Context.POWER_SERVICE);
-                    powerManager.wakeUp(SystemClock.uptimeMillis(),
-                            "android.service.dreams:DREAM");
+                    powerManager.wakeUp(SystemClock.uptimeMillis());
                 } else {
                     Slog.i(TAG, "Activating dream by user request.");
                 }

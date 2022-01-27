@@ -24,6 +24,7 @@ import android.filterfw.core.Frame;
 import android.filterfw.core.GLFrame;
 import android.filterfw.core.FrameFormat;
 import android.filterfw.core.MutableFrameFormat;
+import android.filterfw.core.Program;
 import android.filterfw.core.ShaderProgram;
 import android.filterfw.format.ImageFormat;
 import android.opengl.GLES20;
@@ -31,6 +32,7 @@ import android.os.SystemClock;
 import android.os.SystemProperties;
 import android.util.Log;
 
+import java.lang.ArrayIndexOutOfBoundsException;
 import java.lang.Math;
 import java.util.Arrays;
 import java.nio.ByteBuffer;

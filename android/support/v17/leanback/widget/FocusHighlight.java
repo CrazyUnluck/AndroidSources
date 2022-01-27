@@ -13,6 +13,8 @@
  */
 package android.support.v17.leanback.widget;
 
+import android.view.View;
+
 /**
  * Interface for highlighting the item that has focus.
  *
@@ -39,7 +41,11 @@ public interface FocusHighlight {
     public static final int ZOOM_FACTOR_LARGE = 3;
 
     /**
-     * An extra small zoom factor.
+     * Called when an item gains or loses focus.
+     * @hide
+     *
+     * @param view The view whose focus is changing.
+     * @param hasFocus True if focus is gained; false otherwise.
      */
-    public static final int ZOOM_FACTOR_XSMALL = 4;
+    void onItemFocused(View view, boolean hasFocus);
 }

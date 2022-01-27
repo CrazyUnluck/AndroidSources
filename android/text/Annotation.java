@@ -38,11 +38,6 @@ public class Annotation implements ParcelableSpan {
     }
     
     public int getSpanTypeId() {
-        return getSpanTypeIdInternal();
-    }
-
-    /** @hide */
-    public int getSpanTypeIdInternal() {
         return TextUtils.ANNOTATION;
     }
     
@@ -51,11 +46,6 @@ public class Annotation implements ParcelableSpan {
     }
 
     public void writeToParcel(Parcel dest, int flags) {
-        writeToParcelInternal(dest, flags);
-    }
-
-    /** @hide */
-    public void writeToParcelInternal(Parcel dest, int flags) {
         dest.writeString(mKey);
         dest.writeString(mValue);
     }

@@ -16,6 +16,7 @@
 
 package com.android.internal.widget;
 
+import java.util.Locale;
 import android.content.Context;
 import android.content.res.Resources;
 import android.content.res.XmlResourceParser;
@@ -72,8 +73,8 @@ public class PasswordEntryKeyboard extends Keyboard {
 
     private void init(Context context) {
         final Resources res = context.getResources();
-        mShiftIcon = context.getDrawable(R.drawable.sym_keyboard_shift);
-        mShiftLockIcon = context.getDrawable(R.drawable.sym_keyboard_shift_locked);
+        mShiftIcon = res.getDrawable(R.drawable.sym_keyboard_shift);
+        mShiftLockIcon = res.getDrawable(R.drawable.sym_keyboard_shift_locked);
         sSpacebarVerticalCorrection = res.getDimensionPixelOffset(
                 R.dimen.password_keyboard_spacebar_vertical_correction);
     }

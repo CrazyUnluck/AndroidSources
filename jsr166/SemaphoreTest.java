@@ -8,26 +8,13 @@
 
 package jsr166;
 
-import static java.util.concurrent.TimeUnit.MILLISECONDS;
-
-import java.util.Collection;
+import junit.framework.*;
+import java.util.*;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.Semaphore;
-
-import junit.framework.AssertionFailedError;
-import junit.framework.Test;
-import junit.framework.TestSuite;
+import static java.util.concurrent.TimeUnit.MILLISECONDS;
 
 public class SemaphoreTest extends JSR166TestCase {
-    // android-note: Removed because the CTS runner does a bad job of
-    // retrying tests that have suite() declarations.
-    //
-    // public static void main(String[] args) {
-    //     main(suite(), args);
-    // }
-    // public static Test suite() {
-    //     return new TestSuite(SemaphoreTest.class);
-    // }
 
     /**
      * Subclass to expose protected methods
@@ -472,16 +459,11 @@ public class SemaphoreTest extends JSR166TestCase {
             clone.release();
             assertEquals(2, s.availablePermits());
             assertEquals(1, clone.availablePermits());
-            assertFalse(s.hasQueuedThreads());
-            assertFalse(clone.hasQueuedThreads());
-        } catch (InterruptedException e) { threadUnexpectedException(e); }
 
-        {
-            PublicSemaphore s = new PublicSemaphore(0, fair);
+            s = new Semaphore(0, fair);
             Thread t = newStartedThread(new InterruptibleLockRunnable(s));
-            // waitForQueuedThreads(s); // suffers from "flicker", so ...
-            waitForQueuedThread(s, t);  // ... we use this instead
-            PublicSemaphore clone = serialClone(s);
+            waitForQueuedThreads(s);
+            clone = serialClone(s);
             assertEquals(fair, s.isFair());
             assertEquals(fair, clone.isFair());
             assertEquals(0, s.availablePermits());
@@ -492,7 +474,7 @@ public class SemaphoreTest extends JSR166TestCase {
             awaitTermination(t);
             assertFalse(s.hasQueuedThreads());
             assertFalse(clone.hasQueuedThreads());
-        }
+        } catch (InterruptedException e) { threadUnexpectedException(e); }
     }
 
     /**
@@ -600,7 +582,7 @@ public class SemaphoreTest extends JSR166TestCase {
                 s.acquire(3);
             }});
 
-        waitForQueuedThread(s, t1);
+        waitForQueuedThreads(s);
 
         Thread t2 = newStartedThread(new CheckedRunnable() {
             public void realRun() throws InterruptedException {
@@ -626,7 +608,7 @@ public class SemaphoreTest extends JSR166TestCase {
         assertTrue(t2.isAlive());
         s.release();
         awaitTermination(t2);
-    }
+   }
 
     /**
      * toString indicates current number of permits

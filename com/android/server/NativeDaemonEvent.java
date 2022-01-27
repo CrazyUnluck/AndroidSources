@@ -19,7 +19,6 @@ package com.android.server;
 import android.util.Slog;
 import com.google.android.collect.Lists;
 
-import java.io.FileDescriptor;
 import java.util.ArrayList;
 
 /**
@@ -34,22 +33,15 @@ public class NativeDaemonEvent {
     private final int mCode;
     private final String mMessage;
     private final String mRawEvent;
-    private final String mLogMessage;
     private String[] mParsed;
-    private FileDescriptor[] mFdList;
 
-    private NativeDaemonEvent(int cmdNumber, int code, String message,
-                              String rawEvent, String logMessage, FileDescriptor[] fdList) {
+    private NativeDaemonEvent(int cmdNumber, int code, String message, String rawEvent) {
         mCmdNumber = cmdNumber;
         mCode = code;
         mMessage = message;
         mRawEvent = rawEvent;
-        mLogMessage = logMessage;
         mParsed = null;
-        mFdList = fdList;
     }
-
-    static public final String SENSITIVE_MARKER = "{{sensitive}}";
 
     public int getCmdNumber() {
         return mCmdNumber;
@@ -63,10 +55,6 @@ public class NativeDaemonEvent {
         return mMessage;
     }
 
-    public FileDescriptor[] getFileDescriptors() {
-        return mFdList;
-    }
-
     @Deprecated
     public String getRawEvent() {
         return mRawEvent;
@@ -74,7 +62,7 @@ public class NativeDaemonEvent {
 
     @Override
     public String toString() {
-        return mLogMessage;
+        return mRawEvent;
     }
 
     /**
@@ -134,7 +122,7 @@ public class NativeDaemonEvent {
      * @throws IllegalArgumentException when line doesn't match format expected
      *             from native side.
      */
-    public static NativeDaemonEvent parseRawEvent(String rawEvent, FileDescriptor[] fdList) {
+    public static NativeDaemonEvent parseRawEvent(String rawEvent) {
         final String[] parsed = rawEvent.split(" ");
         if (parsed.length < 2) {
             throw new IllegalArgumentException("Insufficient arguments");
@@ -163,15 +151,9 @@ public class NativeDaemonEvent {
             }
         }
 
-        String logMessage = rawEvent;
-        if (parsed.length > 2 && parsed[2].equals(SENSITIVE_MARKER)) {
-            skiplength += parsed[2].length() + 1;
-            logMessage = parsed[0] + " " + parsed[1] + " {}";
-        }
-
         final String message = rawEvent.substring(skiplength);
 
-        return new NativeDaemonEvent(cmdNumber, code, message, rawEvent, logMessage, fdList);
+        return new NativeDaemonEvent(cmdNumber, code, message, rawEvent);
     }
 
     /**
@@ -219,16 +201,20 @@ public class NativeDaemonEvent {
         }
         while (current < length) {
             // find the end of the word
-            char terminator = quoted ? '\"' : ' ';
-            wordEnd = current;
-            while (wordEnd < length && rawEvent.charAt(wordEnd) != terminator) {
-                if (rawEvent.charAt(wordEnd) == '\\') {
-                    // skip the escaped char
-                    ++wordEnd;
+            if (quoted) {
+                wordEnd = current;
+                while ((wordEnd = rawEvent.indexOf('\"', wordEnd)) != -1) {
+                    if (rawEvent.charAt(wordEnd - 1) != '\\') {
+                        break;
+                    } else {
+                        wordEnd++; // skip this escaped quote and keep looking
+                    }
                 }
-                ++wordEnd;
+            } else {
+                wordEnd = rawEvent.indexOf(' ', current);
             }
-            if (wordEnd > length) wordEnd = length;
+            // if we didn't find the end-o-word token, take the rest of the string
+            if (wordEnd == -1) wordEnd = length;
             String word = rawEvent.substring(current, wordEnd);
             current += word.length();
             if (!quoted) {

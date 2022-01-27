@@ -16,112 +16,110 @@
 
 package com.android.server.pm;
 
-import android.util.ArrayMap;
-
-import com.android.internal.util.ArrayUtils;
+import java.util.Arrays;
+import java.util.HashMap;
+import java.util.HashSet;
+import java.util.Map;
+import java.util.Set;
 
 public class PackageKeySetData {
 
-    static final long KEYSET_UNASSIGNED = -1;
+    private long[] mSigningKeySets;
 
-    /* KeySet containing all signing keys - superset of the others */
-    private long mProperSigningKeySet;
+    private long[] mDefinedKeySets;
 
-    private long[] mUpgradeKeySets;
-
-    private final ArrayMap<String, Long> mKeySetAliases = new ArrayMap<String, Long>();
+    private final Map<String, Long> mKeySetAliases;
 
     PackageKeySetData() {
-        mProperSigningKeySet = KEYSET_UNASSIGNED;
+        mSigningKeySets = new long[0];
+        mDefinedKeySets = new long[0];
+        mKeySetAliases =  new HashMap<String, Long>();
     }
 
     PackageKeySetData(PackageKeySetData original) {
-        mProperSigningKeySet = original.mProperSigningKeySet;
-        mUpgradeKeySets = ArrayUtils.cloneOrNull(original.mUpgradeKeySets);
-        mKeySetAliases.putAll(original.mKeySetAliases);
+        mSigningKeySets = original.getSigningKeySets().clone();
+        mDefinedKeySets = original.getDefinedKeySets().clone();
+        mKeySetAliases = new HashMap<String, Long>();
+        mKeySetAliases.putAll(original.getAliases());
     }
 
-    protected void setProperSigningKeySet(long ks) {
-        mProperSigningKeySet = ks;
-        return;
-    }
-
-    protected long getProperSigningKeySet() {
-        return mProperSigningKeySet;
-    }
-
-    protected void addUpgradeKeySet(String alias) {
-        if (alias == null) {
-            return;
+    public void addSigningKeySet(long ks) {
+        // deduplicate
+        for (long knownKeySet : mSigningKeySets) {
+            if (ks == knownKeySet) {
+                return;
+            }
         }
-
-        /* must have previously been defined */
-        Long ks = mKeySetAliases.get(alias);
-        if (ks != null) {
-            mUpgradeKeySets = ArrayUtils.appendLong(mUpgradeKeySets, ks);
-        } else {
-            throw new IllegalArgumentException("Upgrade keyset alias " + alias
-                    + "does not refer to a defined keyset alias!");
-        }
+        int end = mSigningKeySets.length;
+        mSigningKeySets = Arrays.copyOf(mSigningKeySets, end + 1);
+        mSigningKeySets[end] = ks;
     }
 
-    /*
-     * Used only when restoring keyset data from persistent storage.  Must
-     * correspond to a defined-keyset.
-     */
-
-    protected void addUpgradeKeySetById(long ks) {
-        mUpgradeKeySets = ArrayUtils.appendLong(mUpgradeKeySets, ks);
-    }
-
-    protected void removeAllUpgradeKeySets() {
-        mUpgradeKeySets = null;
-        return;
-    }
-
-    protected long[] getUpgradeKeySets() {
-        return mUpgradeKeySets;
-    }
-
-    protected ArrayMap<String, Long> getAliases() {
-        return mKeySetAliases;
-    }
-
-    /*
-     * Replace defined keysets with new ones.
-     */
-    protected void setAliases(ArrayMap<String, Long> newAliases) {
-
-        /* remove old aliases */
-        removeAllDefinedKeySets();
-
-        /* add new ones */
-        final int newAliasSize = newAliases.size();
-        for (int i = 0; i < newAliasSize; i++) {
-            mKeySetAliases.put(newAliases.keyAt(i), newAliases.valueAt(i));;
+    public void removeSigningKeySet(long ks) {
+        if (packageIsSignedBy(ks)) {
+            long[] keysets = new long[mSigningKeySets.length - 1];
+            int index = 0;
+            for (long signingKeySet : mSigningKeySets) {
+                if (signingKeySet != ks) {
+                    keysets[index] = signingKeySet;
+                    index += 1;
+                }
+            }
+            mSigningKeySets = keysets;
         }
     }
 
-    protected void addDefinedKeySet(long ks, String alias) {
+    public void addDefinedKeySet(long ks, String alias) {
+        // deduplicate
+        for (long knownKeySet : mDefinedKeySets) {
+            if (ks == knownKeySet) {
+                return;
+            }
+        }
+        int end = mDefinedKeySets.length;
+        mDefinedKeySets = Arrays.copyOf(mDefinedKeySets, end + 1);
+        mDefinedKeySets[end] = ks;
         mKeySetAliases.put(alias, ks);
     }
 
-    protected void removeAllDefinedKeySets() {
-        final int aliasSize = mKeySetAliases.size();
-        for (int i = 0; i < aliasSize; i++) {
-            mKeySetAliases.removeAt(i);
+    public void removeDefinedKeySet(long ks) {
+        if (mKeySetAliases.containsValue(ks)) {
+            long[] keysets = new long[mDefinedKeySets.length - 1];
+            int index = 0;
+            for (long definedKeySet : mDefinedKeySets) {
+                if (definedKeySet != ks) {
+                    keysets[index] = definedKeySet;
+                    index += 1;
+                }
+            }
+            mDefinedKeySets = keysets;
+            for (String alias : mKeySetAliases.keySet()) {
+                if (mKeySetAliases.get(alias) == ks) {
+                    mKeySetAliases.remove(alias);
+                    break;
+                }
+            }
         }
     }
 
-    protected boolean isUsingDefinedKeySets() {
-
-        /* should never be the case that mUpgradeKeySets.length == 0 */
-        return (mKeySetAliases.size() > 0);
+    public boolean packageIsSignedBy(long ks) {
+        for (long signingKeySet : mSigningKeySets) {
+            if (ks == signingKeySet) {
+                return true;
+            }
+        }
+        return false;
     }
 
-    protected boolean isUsingUpgradeKeySets() {
+    public long[] getSigningKeySets() {
+        return mSigningKeySets;
+    }
 
-        /* should never be the case that mUpgradeKeySets.length == 0 */
-        return (mUpgradeKeySets != null && mUpgradeKeySets.length > 0);
+    public long[] getDefinedKeySets() {
+        return mDefinedKeySets;
+    }
+
+    public Map<String, Long> getAliases() {
+        return mKeySetAliases;
     }
 }

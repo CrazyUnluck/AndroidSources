@@ -16,12 +16,10 @@
 
 package android.content;
 
-import android.annotation.ArrayRes;
 import android.os.Parcel;
 import android.os.Parcelable;
 
-import java.util.Arrays;
-import java.util.Objects;
+import java.lang.annotation.Inherited;
 
 /**
  * Applications can expose restrictions for a restricted user on a
@@ -36,19 +34,19 @@ import java.util.Objects;
 public class RestrictionEntry implements Parcelable {
 
     /**
-     * Hidden restriction type. Use this type for information that needs to be transferred
-     * across but shouldn't be presented to the user in the UI. Stores a single String value.
+     * A type of restriction. Use this type for information that needs to be transferred across
+     * but shouldn't be presented to the user in the UI. Stores a single String value.
      */
     public static final int TYPE_NULL         = 0;
 
     /**
-     * Restriction of type "bool". Use this for storing a boolean value, typically presented as
+     * A type of restriction. Use this for storing a boolean value, typically presented as
      * a checkbox in the UI.
      */
     public static final int TYPE_BOOLEAN      = 1;
 
     /**
-     * Restriction of type "choice". Use this for storing a string value, typically presented as
+     * A type of restriction. Use this for storing a string value, typically presented as
      * a single-select list. Call {@link #setChoiceEntries(String[])} and
      * {@link #setChoiceValues(String[])} to set the localized list entries to present to the user
      * and the corresponding values, respectively.
@@ -56,7 +54,7 @@ public class RestrictionEntry implements Parcelable {
     public static final int TYPE_CHOICE       = 2;
 
     /**
-     * Internal restriction type. Use this for storing a string value, typically presented as
+     * A type of restriction. Use this for storing a string value, typically presented as
      * a single-select list. Call {@link #setChoiceEntries(String[])} and
      * {@link #setChoiceValues(String[])} to set the localized list entries to present to the user
      * and the corresponding values, respectively.
@@ -67,8 +65,8 @@ public class RestrictionEntry implements Parcelable {
     public static final int TYPE_CHOICE_LEVEL = 3;
 
     /**
-     * Restriction of type "multi-select". Use this for presenting a multi-select list where more
-     * than one entry can be selected, such as for choosing specific titles to white-list.
+     * A type of restriction. Use this for presenting a multi-select list where more than one
+     * entry can be selected, such as for choosing specific titles to white-list.
      * Call {@link #setChoiceEntries(String[])} and
      * {@link #setChoiceValues(String[])} to set the localized list entries to present to the user
      * and the corresponding values, respectively.
@@ -77,74 +75,32 @@ public class RestrictionEntry implements Parcelable {
      */
     public static final int TYPE_MULTI_SELECT = 4;
 
-    /**
-     * Restriction of type "integer". Use this for storing an integer value. The range of values
-     * is from {@link Integer#MIN_VALUE} to {@link Integer#MAX_VALUE}.
-     */
-    public static final int TYPE_INTEGER = 5;
-
-    /**
-     * Restriction of type "string". Use this for storing a string value.
-     * @see #setSelectedString
-     * @see #getSelectedString
-     */
-    public static final int TYPE_STRING = 6;
-
-    /**
-     * Restriction of type "bundle". Use this for storing {@link android.os.Bundle bundles} of
-     * restrictions
-     */
-    public static final int TYPE_BUNDLE = 7;
-
-    /**
-     * Restriction of type "bundle_array". Use this for storing arrays of
-     * {@link android.os.Bundle bundles} of restrictions
-     */
-    public static final int TYPE_BUNDLE_ARRAY = 8;
-
     /** The type of restriction. */
-    private int mType;
+    private int type;
 
     /** The unique key that identifies the restriction. */
-    private String mKey;
+    private String key;
 
     /** The user-visible title of the restriction. */
-    private String mTitle;
+    private String title;
 
     /** The user-visible secondary description of the restriction. */
-    private String mDescription;
+    private String description;
 
     /** The user-visible set of choices used for single-select and multi-select lists. */
-    private String[] mChoiceEntries;
+    private String [] choices;
 
     /** The values corresponding to the user-visible choices. The value(s) of this entry will
      * one or more of these, returned by {@link #getAllSelectedStrings()} and
      * {@link #getSelectedString()}.
      */
-    private String[] mChoiceValues;
+    private String [] values;
 
     /* The chosen value, whose content depends on the type of the restriction. */
-    private String mCurrentValue;
+    private String currentValue;
 
     /* List of selected choices in the multi-select case. */
-    private String[] mCurrentValues;
-
-    /**
-     * List of nested restrictions. Used by {@link #TYPE_BUNDLE bundle} and
-     * {@link #TYPE_BUNDLE_ARRAY bundle_array} restrictions.
-     */
-    private RestrictionEntry[] mRestrictions;
-
-    /**
-     * Constructor for specifying the type and key, with no initial value;
-     *
-     * @param type the restriction type.
-     * @param key the unique key for this restriction
-     */
-    public RestrictionEntry(int type, String key) {
-        mType = type;
-        mKey = key;
-    }
+    private String[] currentValues;
 
     /**
      * Constructor for {@link #TYPE_CHOICE} type.
@@ -152,9 +108,9 @@ public class RestrictionEntry implements Parcelable {
      * @param selectedString the current value
      */
     public RestrictionEntry(String key, String selectedString) {
-        this.mKey = key;
-        this.mType = TYPE_CHOICE;
-        this.mCurrentValue = selectedString;
+        this.key = key;
+        this.type = TYPE_CHOICE;
+        this.currentValue = selectedString;
     }
 
     /**
@@ -163,8 +119,8 @@ public class RestrictionEntry implements Parcelable {
      * @param selectedState whether this restriction is selected or not
      */
     public RestrictionEntry(String key, boolean selectedState) {
-        this.mKey = key;
-        this.mType = TYPE_BOOLEAN;
+        this.key = key;
+        this.type = TYPE_BOOLEAN;
         setSelectedState(selectedState);
     }
 
@@ -174,72 +130,9 @@ public class RestrictionEntry implements Parcelable {
      * @param selectedStrings the list of values that are currently selected
      */
     public RestrictionEntry(String key, String[] selectedStrings) {
-        this.mKey = key;
-        this.mType = TYPE_MULTI_SELECT;
-        this.mCurrentValues = selectedStrings;
-    }
-
-    /**
-     * Constructor for {@link #TYPE_INTEGER} type.
-     * @param key the unique key for this restriction
-     * @param selectedInt the integer value of the restriction
-     */
-    public RestrictionEntry(String key, int selectedInt) {
-        mKey = key;
-        mType = TYPE_INTEGER;
-        setIntValue(selectedInt);
-    }
-
-    /**
-     * Constructor for {@link #TYPE_BUNDLE}/{@link #TYPE_BUNDLE_ARRAY} type.
-     * @param key the unique key for this restriction
-     * @param restrictionEntries array of nested restriction entries. If the entry, being created
-     * represents a {@link #TYPE_BUNDLE_ARRAY bundle-array}, {@code restrictionEntries} array may
-     * only contain elements of type {@link #TYPE_BUNDLE bundle}.
-     * @param isBundleArray true if this restriction represents
-     * {@link #TYPE_BUNDLE_ARRAY bundle-array} type, otherwise the type will be set to
-     * {@link #TYPE_BUNDLE bundle}.
-     */
-    private RestrictionEntry(String key, RestrictionEntry[] restrictionEntries,
-            boolean isBundleArray) {
-        mKey = key;
-        if (isBundleArray) {
-            mType = TYPE_BUNDLE_ARRAY;
-            if (restrictionEntries != null) {
-                for (RestrictionEntry restriction : restrictionEntries) {
-                    if (restriction.getType() != TYPE_BUNDLE) {
-                        throw new IllegalArgumentException("bundle_array restriction can only have "
-                                + "nested restriction entries of type bundle");
-                    }
-                }
-            }
-        } else {
-            mType = TYPE_BUNDLE;
-        }
-        setRestrictions(restrictionEntries);
-    }
-
-    /**
-     * Creates an entry of type {@link #TYPE_BUNDLE}.
-     * @param key the unique key for this restriction
-     * @param restrictionEntries array of nested restriction entries.
-     * @return the newly created restriction
-     */
-    public static RestrictionEntry createBundleEntry(String key,
-            RestrictionEntry[] restrictionEntries) {
-        return new RestrictionEntry(key, restrictionEntries, false);
-    }
-
-    /**
-     * Creates an entry of type {@link #TYPE_BUNDLE_ARRAY}.
-     * @param key the unique key for this restriction
-     * @param restrictionEntries array of nested restriction entries. The array may only contain
-     * elements of type {@link #TYPE_BUNDLE bundle}.
-     * @return the newly created restriction
-     */
-    public static RestrictionEntry createBundleArrayEntry(String key,
-            RestrictionEntry[] restrictionEntries) {
-        return new RestrictionEntry(key, restrictionEntries, true);
+        this.key = key;
+        this.type = TYPE_MULTI_SELECT;
+        this.currentValues = selectedStrings;
     }
 
     /**
@@ -247,7 +140,7 @@ public class RestrictionEntry implements Parcelable {
      * @param type the type for this restriction.
      */
     public void setType(int type) {
-        this.mType = type;
+        this.type = type;
     }
 
     /**
@@ -255,7 +148,7 @@ public class RestrictionEntry implements Parcelable {
      * @return the type for this restriction
      */
     public int getType() {
-        return mType;
+        return type;
     }
 
     /**
@@ -264,7 +157,7 @@ public class RestrictionEntry implements Parcelable {
      * single string values.
      */
     public String getSelectedString() {
-        return mCurrentValue;
+        return currentValue;
     }
 
     /**
@@ -273,7 +166,7 @@ public class RestrictionEntry implements Parcelable {
      *  null otherwise.
      */
     public String[] getAllSelectedStrings() {
-        return mCurrentValues;
+        return currentValues;
     }
 
     /**
@@ -281,23 +174,7 @@ public class RestrictionEntry implements Parcelable {
      * @return the current selected state of the entry.
      */
     public boolean getSelectedState() {
-        return Boolean.parseBoolean(mCurrentValue);
-    }
-
-    /**
-     * Returns the value of the entry as an integer when the type is {@link #TYPE_INTEGER}.
-     * @return the integer value of the entry.
-     */
-    public int getIntValue() {
-        return Integer.parseInt(mCurrentValue);
-    }
-
-    /**
-     * Sets the integer value of the entry when the type is {@link #TYPE_INTEGER}.
-     * @param value the integer value to set.
-     */
-    public void setIntValue(int value) {
-        mCurrentValue = Integer.toString(value);
+        return Boolean.parseBoolean(currentValue);
     }
 
     /**
@@ -306,7 +183,7 @@ public class RestrictionEntry implements Parcelable {
      * @param selectedString the string value to select.
      */
     public void setSelectedString(String selectedString) {
-        mCurrentValue = selectedString;
+        currentValue = selectedString;
     }
 
     /**
@@ -315,7 +192,7 @@ public class RestrictionEntry implements Parcelable {
      * @param state the current selected state
      */
     public void setSelectedState(boolean state) {
-        mCurrentValue = Boolean.toString(state);
+        currentValue = Boolean.toString(state);
     }
 
     /**
@@ -324,7 +201,7 @@ public class RestrictionEntry implements Parcelable {
      * @param allSelectedStrings the current list of selected values.
      */
     public void setAllSelectedStrings(String[] allSelectedStrings) {
-        mCurrentValues = allSelectedStrings;
+        currentValues = allSelectedStrings;
     }
 
     /**
@@ -341,7 +218,7 @@ public class RestrictionEntry implements Parcelable {
      * @see #getAllSelectedStrings()
      */
     public void setChoiceValues(String[] choiceValues) {
-        mChoiceValues = choiceValues;
+        values = choiceValues;
     }
 
     /**
@@ -351,24 +228,8 @@ public class RestrictionEntry implements Parcelable {
      * @param stringArrayResId the resource id for a string array containing the possible values.
      * @see #setChoiceValues(String[])
      */
-    public void setChoiceValues(Context context, @ArrayRes int stringArrayResId) {
-        mChoiceValues = context.getResources().getStringArray(stringArrayResId);
-    }
-
-    /**
-     * Returns array of possible restriction entries that this entry may contain.
-     */
-    public RestrictionEntry[] getRestrictions() {
-        return mRestrictions;
-    }
-
-   /**
-    * Sets an array of possible restriction entries, that this entry may contain.
-    * <p>This method is only relevant for types {@link #TYPE_BUNDLE} and
-    * {@link #TYPE_BUNDLE_ARRAY}
-    */
-    public void setRestrictions(RestrictionEntry[] restrictions) {
-        mRestrictions = restrictions;
+    public void setChoiceValues(Context context, int stringArrayResId) {
+        values = context.getResources().getStringArray(stringArrayResId);
     }
 
     /**
@@ -376,7 +237,7 @@ public class RestrictionEntry implements Parcelable {
      * @return the list of possible values.
      */
     public String[] getChoiceValues() {
-        return mChoiceValues;
+        return values;
     }
 
     /**
@@ -389,7 +250,7 @@ public class RestrictionEntry implements Parcelable {
      * @see #setChoiceValues(String[])
      */
     public void setChoiceEntries(String[] choiceEntries) {
-        mChoiceEntries = choiceEntries;
+        choices = choiceEntries;
     }
 
     /** Sets a list of strings that will be presented as choices to the user. This is similar to
@@ -397,8 +258,8 @@ public class RestrictionEntry implements Parcelable {
      * @param context the application context, used for retrieving the resources.
      * @param stringArrayResId the resource id of a string array containing the possible entries.
      */
-    public void setChoiceEntries(Context context, @ArrayRes int stringArrayResId) {
-        mChoiceEntries = context.getResources().getStringArray(stringArrayResId);
+    public void setChoiceEntries(Context context, int stringArrayResId) {
+        choices = context.getResources().getStringArray(stringArrayResId);
     }
 
     /**
@@ -406,7 +267,7 @@ public class RestrictionEntry implements Parcelable {
      * @return the list of choices presented to the user.
      */
     public String[] getChoiceEntries() {
-        return mChoiceEntries;
+        return choices;
     }
 
     /**
@@ -414,7 +275,7 @@ public class RestrictionEntry implements Parcelable {
      * @return the user-visible description, null if none was set earlier.
      */
     public String getDescription() {
-        return mDescription;
+        return description;
     }
 
     /**
@@ -424,7 +285,7 @@ public class RestrictionEntry implements Parcelable {
      * @param description the user-visible description string.
      */
     public void setDescription(String description) {
-        this.mDescription = description;
+        this.description = description;
     }
 
     /**
@@ -432,7 +293,7 @@ public class RestrictionEntry implements Parcelable {
      * @return the key for the restriction.
      */
     public String getKey() {
-        return mKey;
+        return key;
     }
 
     /**
@@ -440,7 +301,7 @@ public class RestrictionEntry implements Parcelable {
      * @return the user-visible title for the entry, null if none was set earlier.
      */
     public String getTitle() {
-        return mTitle;
+        return title;
     }
 
     /**
@@ -448,7 +309,15 @@ public class RestrictionEntry implements Parcelable {
      * @param title the user-visible title for the entry.
      */
     public void setTitle(String title) {
-        this.mTitle = title;
+        this.title = title;
+    }
+
+    private boolean equalArrays(String[] one, String[] other) {
+        if (one.length != other.length) return false;
+        for (int i = 0; i < one.length; i++) {
+            if (!one[i].equals(other[i])) return false;
+        }
+        return true;
     }
 
     @Override
@@ -456,61 +325,50 @@ public class RestrictionEntry implements Parcelable {
         if (o == this) return true;
         if (!(o instanceof RestrictionEntry)) return false;
         final RestrictionEntry other = (RestrictionEntry) o;
-        if (mType != other.mType || !mKey.equals(other.mKey)) {
-            return false;
-        }
-        if (mCurrentValues == null && other.mCurrentValues == null
-                && mRestrictions == null && other.mRestrictions == null
-                && Objects.equals(mCurrentValue, other.mCurrentValue)) {
-            return true;
-        }
-        if (mCurrentValue == null && other.mCurrentValue == null
-                && mRestrictions == null && other.mRestrictions == null
-                && Arrays.equals(mCurrentValues, other.mCurrentValues)) {
-            return true;
-        }
-        if (mCurrentValue == null && other.mCurrentValue == null
-                && mCurrentValue == null && other.mCurrentValue == null
-                && Arrays.equals(mRestrictions, other.mRestrictions)) {
-            return true;
-        }
-        return false;
+        // Make sure that either currentValue matches or currentValues matches.
+        return type == other.type && key.equals(other.key)
+                &&
+                ((currentValues == null && other.currentValues == null
+                  && currentValue != null && currentValue.equals(other.currentValue))
+                 ||
+                 (currentValue == null && other.currentValue == null
+                  && currentValues != null && equalArrays(currentValues, other.currentValues)));
     }
 
     @Override
     public int hashCode() {
         int result = 17;
-        result = 31 * result + mKey.hashCode();
-        if (mCurrentValue != null) {
-            result = 31 * result + mCurrentValue.hashCode();
-        } else if (mCurrentValues != null) {
-            for (String value : mCurrentValues) {
+        result = 31 * result + key.hashCode();
+        if (currentValue != null) {
+            result = 31 * result + currentValue.hashCode();
+        } else if (currentValues != null) {
+            for (String value : currentValues) {
                 if (value != null) {
                     result = 31 * result + value.hashCode();
                 }
             }
-        } else if (mRestrictions != null) {
-            result = 31 * result + Arrays.hashCode(mRestrictions);
         }
         return result;
     }
 
-    public RestrictionEntry(Parcel in) {
-        mType = in.readInt();
-        mKey = in.readString();
-        mTitle = in.readString();
-        mDescription = in.readString();
-        mChoiceEntries = in.readStringArray();
-        mChoiceValues = in.readStringArray();
-        mCurrentValue = in.readString();
-        mCurrentValues = in.readStringArray();
-        Parcelable[] parcelables = in.readParcelableArray(null);
-        if (parcelables != null) {
-            mRestrictions = new RestrictionEntry[parcelables.length];
-            for (int i = 0; i < parcelables.length; i++) {
-                mRestrictions[i] = (RestrictionEntry) parcelables[i];
-            }
+    private String[] readArray(Parcel in) {
+        int count = in.readInt();
+        String[] values = new String[count];
+        for (int i = 0; i < count; i++) {
+            values[i] = in.readString();
         }
+        return values;
+    }
+
+    public RestrictionEntry(Parcel in) {
+        type = in.readInt();
+        key = in.readString();
+        title = in.readString();
+        description = in.readString();
+        choices = readArray(in);
+        values = readArray(in);
+        currentValue = in.readString();
+        currentValues = readArray(in);
     }
 
     @Override
@@ -518,17 +376,27 @@ public class RestrictionEntry implements Parcelable {
         return 0;
     }
 
+    private void writeArray(Parcel dest, String[] values) {
+        if (values == null) {
+            dest.writeInt(0);
+        } else {
+            dest.writeInt(values.length);
+            for (int i = 0; i < values.length; i++) {
+                dest.writeString(values[i]);
+            }
+        }
+    }
+
     @Override
     public void writeToParcel(Parcel dest, int flags) {
-        dest.writeInt(mType);
-        dest.writeString(mKey);
-        dest.writeString(mTitle);
-        dest.writeString(mDescription);
-        dest.writeStringArray(mChoiceEntries);
-        dest.writeStringArray(mChoiceValues);
-        dest.writeString(mCurrentValue);
-        dest.writeStringArray(mCurrentValues);
-        dest.writeParcelableArray(mRestrictions, 0);
+        dest.writeInt(type);
+        dest.writeString(key);
+        dest.writeString(title);
+        dest.writeString(description);
+        writeArray(dest, choices);
+        writeArray(dest, values);
+        dest.writeString(currentValue);
+        writeArray(dest, currentValues);
     }
 
     public static final Creator<RestrictionEntry> CREATOR = new Creator<RestrictionEntry>() {
@@ -543,16 +411,6 @@ public class RestrictionEntry implements Parcelable {
 
     @Override
     public String toString() {
-        return "RestrictionEntry{" +
-                "mType=" + mType +
-                ", mKey='" + mKey + '\'' +
-                ", mTitle='" + mTitle + '\'' +
-                ", mDescription='" + mDescription + '\'' +
-                ", mChoiceEntries=" + Arrays.toString(mChoiceEntries) +
-                ", mChoiceValues=" + Arrays.toString(mChoiceValues) +
-                ", mCurrentValue='" + mCurrentValue + '\'' +
-                ", mCurrentValues=" + Arrays.toString(mCurrentValues) +
-                ", mRestrictions=" + Arrays.toString(mRestrictions) +
-                '}';
+        return "RestrictionsEntry {type=" + type + ", key=" + key + ", value=" + currentValue + "}";
     }
 }

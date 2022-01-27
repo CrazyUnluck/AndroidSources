@@ -16,7 +16,6 @@
 
 package android.gesture;
 
-import android.annotation.RawRes;
 import android.util.Log;
 import static android.gesture.GestureConstants.*;
 import android.content.Context;
@@ -45,7 +44,7 @@ public final class GestureLibraries {
         return fromFile(context.getFileStreamPath(name));
     }
 
-    public static GestureLibrary fromRawResource(Context context, @RawRes int resourceId) {
+    public static GestureLibrary fromRawResource(Context context, int resourceId) {
         return new ResourceGestureLibrary(context, resourceId);
     }
 

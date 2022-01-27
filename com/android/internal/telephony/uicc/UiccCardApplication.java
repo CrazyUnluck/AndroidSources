@@ -25,12 +25,10 @@ import android.os.RegistrantList;
 import android.telephony.Rlog;
 
 import com.android.internal.telephony.CommandsInterface;
-import com.android.internal.telephony.PhoneConstants;
 import com.android.internal.telephony.uicc.IccCardApplicationStatus.AppState;
 import com.android.internal.telephony.uicc.IccCardApplicationStatus.AppType;
 import com.android.internal.telephony.uicc.IccCardApplicationStatus.PersoSubState;
 import com.android.internal.telephony.uicc.IccCardStatus.PinState;
-import com.android.internal.telephony.SubscriptionController;
 
 import java.io.FileDescriptor;
 import java.io.PrintWriter;
@@ -50,20 +48,11 @@ public class UiccCardApplication {
     private static final int EVENT_QUERY_FACILITY_LOCK_DONE = 6;
     private static final int EVENT_CHANGE_FACILITY_LOCK_DONE = 7;
     private static final int EVENT_PIN2_PUK2_DONE = 8;
-    private static final int EVENT_RADIO_UNAVAILABLE = 9;
-
-    /**
-     * These values are for authContext (parameter P2) per 3GPP TS 31.102 (Section 7.1.2)
-     */
-    public static final int AUTH_CONTEXT_EAP_SIM = PhoneConstants.AUTH_CONTEXT_EAP_SIM;
-    public static final int AUTH_CONTEXT_EAP_AKA = PhoneConstants.AUTH_CONTEXT_EAP_AKA;
-    public static final int AUTH_CONTEXT_UNDEFINED = PhoneConstants.AUTH_CONTEXT_UNDEFINED;
 
     private final Object  mLock = new Object();
     private UiccCard      mUiccCard; //parent
     private AppState      mAppState;
     private AppType       mAppType;
-    private int           mAuthContext;
     private PersoSubState mPersoSubState;
     private String        mAid;
     private String        mAppLabel;
@@ -87,7 +76,7 @@ public class UiccCardApplication {
     private RegistrantList mPinLockedRegistrants = new RegistrantList();
     private RegistrantList mNetworkLockedRegistrants = new RegistrantList();
 
-    public UiccCardApplication(UiccCard uiccCard,
+    UiccCardApplication(UiccCard uiccCard,
                         IccCardApplicationStatus as,
                         Context c,
                         CommandsInterface ci) {
@@ -95,7 +84,6 @@ public class UiccCardApplication {
         mUiccCard = uiccCard;
         mAppState = as.app_state;
         mAppType = as.app_type;
-        mAuthContext = getAuthContext(mAppType);
         mPersoSubState = as.perso_substate;
         mAid = as.aid;
         mAppLabel = as.app_label;
@@ -112,10 +100,9 @@ public class UiccCardApplication {
             queryFdn();
             queryPin1State();
         }
-        mCi.registerForNotAvailable(mHandler, EVENT_RADIO_UNAVAILABLE, null);
     }
 
-    public void update (IccCardApplicationStatus as, Context c, CommandsInterface ci) {
+    void update (IccCardApplicationStatus as, Context c, CommandsInterface ci) {
         synchronized (mLock) {
             if (mDestroyed) {
                 loge("Application updated after destroyed! Fix me!");
@@ -129,7 +116,6 @@ public class UiccCardApplication {
             AppState oldAppState = mAppState;
             PersoSubState oldPersoSubState = mPersoSubState;
             mAppType = as.app_type;
-            mAuthContext = getAuthContext(mAppType);
             mAppState = as.app_state;
             mPersoSubState = as.perso_substate;
             mAid = as.aid;
@@ -172,7 +158,6 @@ public class UiccCardApplication {
             if (mIccFh != null) { mIccFh.dispose();}
             mIccRecords = null;
             mIccFh = null;
-            mCi.unregisterForNotAvailable(mHandler);
         }
     }
 
@@ -207,7 +192,7 @@ public class UiccCardApplication {
     }
 
     /** Assumes mLock is held. */
-    public void queryFdn() {
+    private void queryFdn() {
         //This shouldn't change run-time. So needs to be called only once.
         int serviceClassX;
 
@@ -408,10 +393,6 @@ public class UiccCardApplication {
                     ar = (AsyncResult)msg.obj;
                     onChangeFacilityLock(ar);
                     break;
-                case EVENT_RADIO_UNAVAILABLE:
-                    if (DBG) log("handleMessage (EVENT_RADIO_UNAVAILABLE)");
-                    mAppState = AppState.APPSTATE_UNKNOWN;
-                    break;
                 default:
                     loge("Unknown Event " + msg.what);
             }
@@ -555,39 +536,6 @@ public class UiccCardApplication {
         }
     }
 
-    public int getAuthContext() {
-        synchronized (mLock) {
-            return mAuthContext;
-        }
-    }
-
-    /**
-     * Returns the authContext based on the type of UiccCard.
-     *
-     * @param appType the app type
-     * @return authContext corresponding to the type or AUTH_CONTEXT_UNDEFINED if appType not
-     * supported
-     */
-    private static int getAuthContext(AppType appType) {
-        int authContext;
-
-        switch (appType) {
-            case APPTYPE_SIM:
-                authContext = AUTH_CONTEXT_EAP_SIM;
-                break;
-
-            case APPTYPE_USIM:
-                authContext = AUTH_CONTEXT_EAP_AKA;
-                break;
-
-            default:
-                authContext = AUTH_CONTEXT_UNDEFINED;
-                break;
-        }
-
-        return authContext;
-    }
-
     public PersoSubState getPersoSubState() {
         synchronized (mLock) {
             return mPersoSubState;
@@ -598,10 +546,6 @@ public class UiccCardApplication {
         synchronized (mLock) {
             return mAid;
         }
-    }
-
-    public String getAppLabel() {
-        return mAppLabel;
     }
 
     public PinState getPin1State() {
@@ -854,14 +798,6 @@ public class UiccCardApplication {
         synchronized (mLock) {
             return mPin2State == PinState.PINSTATE_ENABLED_PERM_BLOCKED;
         }
-    }
-
-    public int getPhoneId() {
-        return mUiccCard.getPhoneId();
-    }
-
-    protected UiccCard getUiccCard() {
-        return mUiccCard;
     }
 
     private void log(String msg) {

@@ -21,7 +21,6 @@ import android.text.style.UpdateLayout;
 import android.text.style.WrapTogetherSpan;
 
 import com.android.internal.util.ArrayUtils;
-import com.android.internal.util.GrowingArrayUtils;
 
 import java.lang.ref.WeakReference;
 
@@ -79,9 +78,7 @@ public class DynamicLayout extends Layout
                          boolean includepad,
                          TextUtils.TruncateAt ellipsize, int ellipsizedWidth) {
         this(base, display, paint, width, align, TextDirectionHeuristics.FIRSTSTRONG_LTR,
-                spacingmult, spacingadd, includepad,
-                StaticLayout.BREAK_STRATEGY_SIMPLE, StaticLayout.HYPHENATION_FREQUENCY_NONE,
-                ellipsize, ellipsizedWidth);
+                spacingmult, spacingadd, includepad, ellipsize, ellipsizedWidth);
     }
 
     /**
@@ -97,7 +94,7 @@ public class DynamicLayout extends Layout
                          TextPaint paint,
                          int width, Alignment align, TextDirectionHeuristic textDir,
                          float spacingmult, float spacingadd,
-                         boolean includepad, int breakStrategy, int hyphenationFrequency,
+                         boolean includepad,
                          TextUtils.TruncateAt ellipsize, int ellipsizedWidth) {
         super((ellipsize == null)
                 ? display
@@ -122,8 +119,6 @@ public class DynamicLayout extends Layout
         mObjects = new PackedObjectVector<Directions>(1);
 
         mIncludePad = includepad;
-        mBreakStrategy = breakStrategy;
-        mHyphenationFrequency = hyphenationFrequency;
 
         /*
          * This is annoying, but we can't refer to the layout until
@@ -274,30 +269,22 @@ public class DynamicLayout extends Layout
         // generate new layout for affected text
 
         StaticLayout reflowed;
-        StaticLayout.Builder b;
 
         synchronized (sLock) {
             reflowed = sStaticLayout;
-            b = sBuilder;
             sStaticLayout = null;
-            sBuilder = null;
         }
 
         if (reflowed == null) {
             reflowed = new StaticLayout(null);
-            b = StaticLayout.Builder.obtain(text, where, where + after, getPaint(), getWidth());
+        } else {
+            reflowed.prepare();
         }
 
-        b.setText(text, where, where + after)
-                .setPaint(getPaint())
-                .setWidth(getWidth())
-                .setTextDirection(getTextDirectionHeuristic())
-                .setLineSpacing(getSpacingAdd(), getSpacingMultiplier())
-                .setEllipsizedWidth(mEllipsizedWidth)
-                .setEllipsize(mEllipsizeAt)
-                .setBreakStrategy(mBreakStrategy)
-                .setHyphenationFrequency(mHyphenationFrequency);
-        reflowed.generate(b, false, true);
+        reflowed.generate(text, where, where + after,
+                getPaint(), getWidth(), getTextDirectionHeuristic(), getSpacingMultiplier(),
+                getSpacingAdd(), false,
+                true, mEllipsizedWidth, mEllipsizeAt);
         int n = reflowed.getLineCount();
 
         // If the new layout has a blank line at the end, but it is not
@@ -360,8 +347,6 @@ public class DynamicLayout extends Layout
             ints[DESCENT] = desc;
             objects[0] = reflowed.getLineDirections(i);
 
-            ints[HYPHEN] = reflowed.getHyphen(i);
-
             if (mEllipsize) {
                 ints[ELLIPSIS_START] = reflowed.getEllipsisStart(i);
                 ints[ELLIPSIS_COUNT] = reflowed.getEllipsisCount(i);
@@ -373,10 +358,9 @@ public class DynamicLayout extends Layout
 
         updateBlocks(startline, endline - 1, n);
 
-        b.finish();
         synchronized (sLock) {
             sStaticLayout = reflowed;
-            sBuilder = b;
+            reflowed.finish();
         }
     }
 
@@ -417,7 +401,7 @@ public class DynamicLayout extends Layout
 
         if (mBlockEndLines == null) {
             // Initial creation of the array, no test on previous block ending line
-            mBlockEndLines = ArrayUtils.newUnpaddedIntArray(1);
+            mBlockEndLines = new int[ArrayUtils.idealIntArraySize(1)];
             mBlockEndLines[mNumberOfBlocks] = line;
             mNumberOfBlocks++;
             return;
@@ -425,7 +409,13 @@ public class DynamicLayout extends Layout
 
         final int previousBlockEndLine = mBlockEndLines[mNumberOfBlocks - 1];
         if (line > previousBlockEndLine) {
-            mBlockEndLines = GrowingArrayUtils.append(mBlockEndLines, mNumberOfBlocks, line);
+            if (mNumberOfBlocks == mBlockEndLines.length) {
+                // Grow the array if needed
+                int[] blockEndLines = new int[ArrayUtils.idealIntArraySize(mNumberOfBlocks + 1)];
+                System.arraycopy(mBlockEndLines, 0, blockEndLines, 0, mNumberOfBlocks);
+                mBlockEndLines = blockEndLines;
+            }
+            mBlockEndLines[mNumberOfBlocks] = line;
             mNumberOfBlocks++;
         }
     }
@@ -493,9 +483,9 @@ public class DynamicLayout extends Layout
         }
 
         if (newNumberOfBlocks > mBlockEndLines.length) {
-            int[] blockEndLines = ArrayUtils.newUnpaddedIntArray(
-                    Math.max(mBlockEndLines.length * 2, newNumberOfBlocks));
-            int[] blockIndices = new int[blockEndLines.length];
+            final int newSize = ArrayUtils.idealIntArraySize(newNumberOfBlocks);
+            int[] blockEndLines = new int[newSize];
+            int[] blockIndices = new int[newSize];
             System.arraycopy(mBlockEndLines, 0, blockEndLines, 0, firstBlock);
             System.arraycopy(mBlockIndices, 0, blockIndices, 0, firstBlock);
             System.arraycopy(mBlockEndLines, lastBlock + 1,
@@ -637,14 +627,6 @@ public class DynamicLayout extends Layout
         return mBottomPadding;
     }
 
-    /**
-     * @hide
-     */
-    @Override
-    public int getHyphen(int line) {
-        return mInts.getValue(line, HYPHEN);
-    }
-
     @Override
     public int getEllipsizedWidth() {
         return mEllipsizedWidth;
@@ -721,8 +703,6 @@ public class DynamicLayout extends Layout
     private boolean mEllipsize;
     private int mEllipsizedWidth;
     private TextUtils.TruncateAt mEllipsizeAt;
-    private int mBreakStrategy;
-    private int mHyphenationFrequency;
 
     private PackedIntVector mInts;
     private PackedObjectVector<Directions> mObjects;
@@ -745,8 +725,7 @@ public class DynamicLayout extends Layout
 
     private int mTopPadding, mBottomPadding;
 
-    private static StaticLayout sStaticLayout = null;
-    private static StaticLayout.Builder sBuilder = null;
+    private static StaticLayout sStaticLayout = new StaticLayout(null);
 
     private static final Object[] sLock = new Object[0];
 
@@ -755,12 +734,11 @@ public class DynamicLayout extends Layout
     private static final int TAB = START;
     private static final int TOP = 1;
     private static final int DESCENT = 2;
-    private static final int HYPHEN = 3;
-    private static final int COLUMNS_NORMAL = 4;
+    private static final int COLUMNS_NORMAL = 3;
 
-    private static final int ELLIPSIS_START = 4;
-    private static final int ELLIPSIS_COUNT = 5;
-    private static final int COLUMNS_ELLIPSIZE = 6;
+    private static final int ELLIPSIS_START = 3;
+    private static final int ELLIPSIS_COUNT = 4;
+    private static final int COLUMNS_ELLIPSIZE = 5;
 
     private static final int START_MASK = 0x1FFFFFFF;
     private static final int DIR_SHIFT  = 30;

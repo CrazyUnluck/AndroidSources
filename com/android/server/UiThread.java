@@ -17,7 +17,6 @@
 package com.android.server;
 
 import android.os.Handler;
-import android.os.Trace;
 
 /**
  * Shared singleton thread for showing UI.  This is a foreground thread, and in
@@ -36,7 +35,6 @@ public final class UiThread extends ServiceThread {
         if (sInstance == null) {
             sInstance = new UiThread();
             sInstance.start();
-            sInstance.getLooper().setTraceTag(Trace.TRACE_TAG_ACTIVITY_MANAGER);
             sHandler = new Handler(sInstance.getLooper());
         }
     }

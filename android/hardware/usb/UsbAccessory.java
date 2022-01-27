@@ -16,8 +16,10 @@
 
 package android.hardware.usb;
 
+import android.os.Bundle;
 import android.os.Parcel;
 import android.os.Parcelable;
+import android.util.Log;
 
 /**
  * A class representing a USB accessory, which is an external hardware component

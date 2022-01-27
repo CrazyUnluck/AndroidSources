@@ -21,6 +21,9 @@ import android.database.ContentObserver;
 import android.net.Uri;
 import android.os.Bundle;
 import android.provider.Settings;
+import android.provider.Settings.SettingNotFoundException;
+import android.util.Log;
+
 import java.util.HashMap;
 import java.util.Map;
 
@@ -34,21 +37,11 @@ final class CoreSettingsObserver extends ContentObserver {
     private static final String LOG_TAG = CoreSettingsObserver.class.getSimpleName();
 
     // mapping form property name to its type
-    private static final Map<String, Class<?>> sSecureSettingToTypeMap = new HashMap<
-            String, Class<?>>();
-    private static final Map<String, Class<?>> sSystemSettingToTypeMap = new HashMap<
-            String, Class<?>>();
-    private static final Map<String, Class<?>> sGlobalSettingToTypeMap = new HashMap<
+    private static final Map<String, Class<?>> sCoreSettingToTypeMap = new HashMap<
             String, Class<?>>();
     static {
-        sSecureSettingToTypeMap.put(Settings.Secure.LONG_PRESS_TIMEOUT, int.class);
-        // add other secure settings here...
-
-        sSystemSettingToTypeMap.put(Settings.System.TIME_12_24, String.class);
-        // add other system settings here...
-
-        sGlobalSettingToTypeMap.put(Settings.Global.DEBUG_VIEW_ATTRIBUTES, int.class);
-        // add other global settings here...
+        sCoreSettingToTypeMap.put(Settings.Secure.LONG_PRESS_TIMEOUT, int.class);
+        // add other core settings here...
     }
 
     private final Bundle mCoreSettings = new Bundle();
@@ -74,77 +67,43 @@ final class CoreSettingsObserver extends ContentObserver {
     }
 
     private void sendCoreSettings() {
-        populateSettings(mCoreSettings, sSecureSettingToTypeMap);
-        populateSettings(mCoreSettings, sSystemSettingToTypeMap);
-        populateSettings(mCoreSettings, sGlobalSettingToTypeMap);
+        populateCoreSettings(mCoreSettings);
         mActivityManagerService.onCoreSettingsChange(mCoreSettings);
     }
 
     private void beginObserveCoreSettings() {
-        for (String setting : sSecureSettingToTypeMap.keySet()) {
+        for (String setting : sCoreSettingToTypeMap.keySet()) {
             Uri uri = Settings.Secure.getUriFor(setting);
-            mActivityManagerService.mContext.getContentResolver().registerContentObserver(
-                    uri, false, this);
-        }
-
-        for (String setting : sSystemSettingToTypeMap.keySet()) {
-            Uri uri = Settings.System.getUriFor(setting);
-            mActivityManagerService.mContext.getContentResolver().registerContentObserver(
-                    uri, false, this);
-        }
-
-        for (String setting : sGlobalSettingToTypeMap.keySet()) {
-            Uri uri = Settings.Global.getUriFor(setting);
             mActivityManagerService.mContext.getContentResolver().registerContentObserver(
                     uri, false, this);
         }
     }
 
-    private void populateSettings(Bundle snapshot, Map<String, Class<?>> map) {
+    private void populateCoreSettings(Bundle snapshot) {
         Context context = mActivityManagerService.mContext;
-        for (Map.Entry<String, Class<?>> entry : map.entrySet()) {
+        for (Map.Entry<String, Class<?>> entry : sCoreSettingToTypeMap.entrySet()) {
             String setting = entry.getKey();
             Class<?> type = entry.getValue();
-            if (type == String.class) {
-                final String value;
-                if (map == sSecureSettingToTypeMap) {
-                    value = Settings.Secure.getString(context.getContentResolver(), setting);
-                } else if (map == sSystemSettingToTypeMap) {
-                    value = Settings.System.getString(context.getContentResolver(), setting);
-                } else {
-                    value = Settings.Global.getString(context.getContentResolver(), setting);
+            try {
+                if (type == String.class) {
+                    String value = Settings.Secure.getString(context.getContentResolver(),
+                            setting);
+                    snapshot.putString(setting, value);
+                } else if (type == int.class) {
+                    int value = Settings.Secure.getInt(context.getContentResolver(),
+                            setting);
+                    snapshot.putInt(setting, value);
+                } else if (type == float.class) {
+                    float value = Settings.Secure.getFloat(context.getContentResolver(),
+                            setting);
+                    snapshot.putFloat(setting, value);
+                } else if (type == long.class) {
+                    long value = Settings.Secure.getLong(context.getContentResolver(),
+                            setting);
+                    snapshot.putLong(setting, value);
                 }
-                snapshot.putString(setting, value);
-            } else if (type == int.class) {
-                final int value;
-                if (map == sSecureSettingToTypeMap) {
-                    value = Settings.Secure.getInt(context.getContentResolver(), setting, 0);
-                } else if (map == sSystemSettingToTypeMap) {
-                    value = Settings.System.getInt(context.getContentResolver(), setting, 0);
-                } else {
-                    value = Settings.Global.getInt(context.getContentResolver(), setting, 0);
-                }
-                snapshot.putInt(setting, value);
-            } else if (type == float.class) {
-                final float value;
-                if (map == sSecureSettingToTypeMap) {
-                    value = Settings.Secure.getFloat(context.getContentResolver(), setting, 0);
-                } else if (map == sSystemSettingToTypeMap) {
-                    value = Settings.System.getFloat(context.getContentResolver(), setting, 0);
-                } else {
-                    value = Settings.Global.getFloat(context.getContentResolver(), setting, 0);
-                }
-                snapshot.putFloat(setting, value);
-            } else if (type == long.class) {
-                final long value;
-                if (map == sSecureSettingToTypeMap) {
-                    value = Settings.Secure.getLong(context.getContentResolver(), setting, 0);
-                } else if (map == sSystemSettingToTypeMap) {
-                    value = Settings.System.getLong(context.getContentResolver(), setting, 0);
-                } else {
-                    value = Settings.Global.getLong(context.getContentResolver(), setting, 0);
-                }
-                snapshot.putLong(setting, value);
+            } catch (SettingNotFoundException snfe) {
+                Log.w(LOG_TAG, "Cannot find setting \"" + setting + "\"", snfe);
             }
         }
     }

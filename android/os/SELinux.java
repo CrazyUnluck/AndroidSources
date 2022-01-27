@@ -28,14 +28,8 @@ import java.io.FileDescriptor;
  * {@hide}
  */
 public class SELinux {
-    private static final String TAG = "SELinux";
 
-    /** Keep in sync with ./external/libselinux/include/selinux/android.h */
-    private static final int SELINUX_ANDROID_RESTORECON_NOCHANGE = 1;
-    private static final int SELINUX_ANDROID_RESTORECON_VERBOSE = 2;
-    private static final int SELINUX_ANDROID_RESTORECON_RECURSE = 4;
-    private static final int SELINUX_ANDROID_RESTORECON_FORCE = 8;
-    private static final int SELINUX_ANDROID_RESTORECON_DATADATA = 16;
+    private static final String TAG = "SELinux";
 
     /**
      * Determine whether SELinux is disabled or enabled.
@@ -48,6 +42,13 @@ public class SELinux {
      * @return a boolean indicating whether SELinux is enforcing.
      */
     public static final native boolean isSELinuxEnforced();
+
+    /**
+     * Set whether SELinux is permissive or enforcing.
+     * @param value representing whether to set SELinux to enforcing
+     * @return a boolean representing whether the desired mode was set
+     */
+    public static final native boolean setSELinuxEnforce(boolean value);
 
     /**
      * Sets the security context for newly created file objects.
@@ -92,6 +93,27 @@ public class SELinux {
     public static final native String getPidContext(int pid);
 
     /**
+     * Gets a list of the SELinux boolean names.
+     * @return an array of strings containing the SELinux boolean names.
+     */
+    public static final native String[] getBooleanNames();
+
+    /**
+     * Gets the value for the given SELinux boolean name.
+     * @param name The name of the SELinux boolean.
+     * @return a boolean indicating whether the SELinux boolean is set.
+     */
+    public static final native boolean getBooleanValue(String name);
+
+    /**
+     * Sets the value for the given SELinux boolean name.
+     * @param name The name of the SELinux boolean.
+     * @param value The new value of the SELinux boolean.
+     * @return a boolean indicating whether or not the operation succeeded.
+     */
+    public static final native boolean setBooleanValue(String name, boolean value);
+
+    /**
      * Check permissions between two security contexts.
      * @param scon The source or subject security context.
      * @param tcon The target or object security context.
@@ -114,7 +136,7 @@ public class SELinux {
      */
     public static boolean restorecon(String pathname) throws NullPointerException {
         if (pathname == null) { throw new NullPointerException(); }
-        return native_restorecon(pathname, 0);
+        return native_restorecon(pathname);
     }
 
     /**
@@ -127,7 +149,7 @@ public class SELinux {
      * @param pathname The pathname of the file to be relabeled.
      * @return a boolean indicating whether the relabeling succeeded.
      */
-    private static native boolean native_restorecon(String pathname, int flags);
+    private static native boolean native_restorecon(String pathname);
 
     /**
      * Restores a file to its default SELinux security context.
@@ -142,28 +164,10 @@ public class SELinux {
      */
     public static boolean restorecon(File file) throws NullPointerException {
         try {
-            return native_restorecon(file.getCanonicalPath(), 0);
+            return native_restorecon(file.getCanonicalPath());
         } catch (IOException e) {
             Slog.e(TAG, "Error getting canonical path. Restorecon failed for " +
-                    file.getPath(), e);
-            return false;
-        }
-    }
-
-    /**
-     * Recursively restores all files under the given path to their default
-     * SELinux security context. If the system is not compiled with SELinux,
-     * then {@code true} is automatically returned. If SELinux is compiled in,
-     * but disabled, then {@code true} is returned.
-     *
-     * @return a boolean indicating whether the relabeling succeeded.
-     */
-    public static boolean restoreconRecursive(File file) {
-        try {
-            return native_restorecon(file.getCanonicalPath(), SELINUX_ANDROID_RESTORECON_RECURSE);
-        } catch (IOException e) {
-            Slog.e(TAG, "Error getting canonical path. Restorecon failed for " +
-                    file.getPath(), e);
+                   file.getPath(), e);
             return false;
         }
     }

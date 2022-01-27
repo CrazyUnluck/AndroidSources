@@ -16,9 +16,9 @@
 
 package android.media;
 
+import android.graphics.Bitmap;
 import android.os.Parcel;
 import android.util.Log;
-import android.util.MathUtils;
 
 import java.util.Calendar;
 import java.util.Collections;
@@ -41,9 +41,8 @@ import java.util.TimeZone;
    the right get* method to fetch its value.
    
    @hide
-   @deprecated Use {@link MediaMetadata}.
  */
-@Deprecated public class Metadata
+public class Metadata
 {
     // The metadata are keyed using integers rather than more heavy
     // weight strings. We considered using Bundle to ship the metadata
@@ -333,14 +332,7 @@ import java.util.TimeZone;
             }
 
             // Skip to the next one.
-            try {
-                parcel.setDataPosition(MathUtils.addOrThrow(start, size));
-            } catch (IllegalArgumentException e) {
-                Log.e(TAG, "Invalid size: " + e.getMessage());
-                error = true;
-                break;
-            }
-
+            parcel.setDataPosition(start + size);
             bytesLeft -= size;
             ++recCount;
         }

@@ -15,7 +15,6 @@
  */
 package android.speech.tts;
 
-import android.speech.tts.TextToSpeechService.AudioOutputParams;
 import android.speech.tts.TextToSpeechService.UtteranceProgressDispatcher;
 import android.util.Log;
 
@@ -58,23 +57,26 @@ final class SynthesisPlaybackQueueItem extends PlaybackQueueItem {
      */
     private volatile boolean mStopped;
     private volatile boolean mDone;
-    private volatile int mStatusCode;
+    private volatile boolean mIsError;
 
     private final BlockingAudioTrack mAudioTrack;
-    private final AbstractEventLogger mLogger;
+    private final EventLogger mLogger;
 
-    SynthesisPlaybackQueueItem(AudioOutputParams audioParams, int sampleRate,
-            int audioFormat, int channelCount, UtteranceProgressDispatcher dispatcher,
-            Object callerIdentity, AbstractEventLogger logger) {
+
+    SynthesisPlaybackQueueItem(int streamType, int sampleRate,
+            int audioFormat, int channelCount,
+            float volume, float pan, UtteranceProgressDispatcher dispatcher,
+            Object callerIdentity, EventLogger logger) {
         super(dispatcher, callerIdentity);
 
         mUnconsumedBytes = 0;
 
         mStopped = false;
         mDone = false;
-        mStatusCode = TextToSpeech.SUCCESS;
+        mIsError = false;
 
-        mAudioTrack = new BlockingAudioTrack(audioParams, sampleRate, audioFormat, channelCount);
+        mAudioTrack = new BlockingAudioTrack(streamType, sampleRate, audioFormat,
+                channelCount, volume, pan);
         mLogger = logger;
     }
 
@@ -84,8 +86,9 @@ final class SynthesisPlaybackQueueItem extends PlaybackQueueItem {
         final UtteranceProgressDispatcher dispatcher = getDispatcher();
         dispatcher.dispatchOnStart();
 
+
         if (!mAudioTrack.init()) {
-            dispatcher.dispatchOnError(TextToSpeech.ERROR_OUTPUT);
+            dispatcher.dispatchOnError();
             return;
         }
 
@@ -109,25 +112,23 @@ final class SynthesisPlaybackQueueItem extends PlaybackQueueItem {
 
         mAudioTrack.waitAndRelease();
 
-        if (mStatusCode == TextToSpeech.SUCCESS) {
-            dispatcher.dispatchOnSuccess();
-        } else if(mStatusCode == TextToSpeech.STOPPED) {
-            dispatcher.dispatchOnStop();
+        if (mIsError) {
+            dispatcher.dispatchOnError();
         } else {
-            dispatcher.dispatchOnError(mStatusCode);
+            dispatcher.dispatchOnDone();
         }
 
-        mLogger.onCompleted(mStatusCode);
+        mLogger.onWriteData();
     }
 
     @Override
-    void stop(int statusCode) {
+    void stop(boolean isError) {
         try {
             mListLock.lock();
 
             // Update our internal state.
             mStopped = true;
-            mStatusCode = statusCode;
+            mIsError = isError;
 
             // Wake up the audio playback thread if it was waiting on take().
             // take() will return null since mStopped was true, and will then

@@ -28,6 +28,8 @@ import android.util.AttributeSet;
 import android.util.SparseArray;
 import android.view.View;
 import android.view.ViewGroup;
+import android.view.accessibility.AccessibilityEvent;
+import android.view.accessibility.AccessibilityNodeInfo;
 
 /**
  * An abstract base class for spinner widgets. SDK users will probably not
@@ -62,21 +64,18 @@ public abstract class AbsSpinner extends AdapterView<SpinnerAdapter> {
         this(context, attrs, 0);
     }
 
-    public AbsSpinner(Context context, AttributeSet attrs, int defStyleAttr) {
-        this(context, attrs, defStyleAttr, 0);
-    }
-
-    public AbsSpinner(Context context, AttributeSet attrs, int defStyleAttr, int defStyleRes) {
-        super(context, attrs, defStyleAttr, defStyleRes);
+    public AbsSpinner(Context context, AttributeSet attrs, int defStyle) {
+        super(context, attrs, defStyle);
         initAbsSpinner();
 
-        final TypedArray a = context.obtainStyledAttributes(
-                attrs, R.styleable.AbsSpinner, defStyleAttr, defStyleRes);
+        TypedArray a = context.obtainStyledAttributes(attrs,
+                com.android.internal.R.styleable.AbsSpinner, defStyle, 0);
 
-        final CharSequence[] entries = a.getTextArray(R.styleable.AbsSpinner_entries);
+        CharSequence[] entries = a.getTextArray(R.styleable.AbsSpinner_entries);
         if (entries != null) {
-            final ArrayAdapter<CharSequence> adapter = new ArrayAdapter<CharSequence>(
-                    context, R.layout.simple_spinner_item, entries);
+            ArrayAdapter<CharSequence> adapter =
+                    new ArrayAdapter<CharSequence>(context,
+                            R.layout.simple_spinner_item, entries);
             adapter.setDropDownViewResource(R.layout.simple_spinner_dropdown_item);
             setAdapter(adapter);
         }
@@ -356,18 +355,10 @@ public abstract class AbsSpinner extends AdapterView<SpinnerAdapter> {
                     return mFirstPosition + i;
                 }
             }
-        }
+        } 
         return INVALID_POSITION;
     }
-
-    @Override
-    protected void dispatchRestoreInstanceState(SparseArray<Parcelable> container) {
-        super.dispatchRestoreInstanceState(container);
-        // Restores the selected position when Spinner gets restored,
-        // rather than wait until the next measure/layout pass to do it.
-        handleDataChanged();
-    }
-
+    
     static class SavedState extends BaseSavedState {
         long selectedId;
         int position;
@@ -477,7 +468,14 @@ public abstract class AbsSpinner extends AdapterView<SpinnerAdapter> {
     }
 
     @Override
-    public CharSequence getAccessibilityClassName() {
-        return AbsSpinner.class.getName();
+    public void onInitializeAccessibilityEvent(AccessibilityEvent event) {
+        super.onInitializeAccessibilityEvent(event);
+        event.setClassName(AbsSpinner.class.getName());
+    }
+
+    @Override
+    public void onInitializeAccessibilityNodeInfo(AccessibilityNodeInfo info) {
+        super.onInitializeAccessibilityNodeInfo(info);
+        info.setClassName(AbsSpinner.class.getName());
     }
 }

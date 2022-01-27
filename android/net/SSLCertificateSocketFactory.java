@@ -154,15 +154,7 @@ public class SSLCertificateSocketFactory extends SSLSocketFactory {
      *         for none.  The socket timeout is reset to 0 after the handshake.
      * @param cache The {@link SSLSessionCache} to use, or null for no cache.
      * @return a new SocketFactory with the specified parameters
-     *
-     * @deprecated Use {@link #getDefault()} along with a {@link javax.net.ssl.HttpsURLConnection}
-     *     instead. The Apache HTTP client is no longer maintained and may be removed in a future
-     *     release. Please visit <a href="http://android-developers.blogspot.com/2011/09/androids-http-clients.html">this webpage</a>
-     *     for further details.
-     *
-     * @removed
      */
-    @Deprecated
     public static org.apache.http.conn.ssl.SSLSocketFactory getHttpSocketFactory(
             int handshakeTimeoutMillis, SSLSessionCache cache) {
         return new org.apache.http.conn.ssl.SSLSocketFactory(
@@ -210,7 +202,7 @@ public class SSLCertificateSocketFactory extends SSLSocketFactory {
     private SSLSocketFactory makeSocketFactory(
             KeyManager[] keyManagers, TrustManager[] trustManagers) {
         try {
-            OpenSSLContextImpl sslContext = OpenSSLContextImpl.getPreferred();
+            OpenSSLContextImpl sslContext = new OpenSSLContextImpl();
             sslContext.engineInit(keyManagers, trustManagers, null);
             sslContext.engineGetClientSessionContext().setPersistentCache(mSessionCache);
             return sslContext.engineGetSocketFactory();

@@ -16,7 +16,6 @@
 
 package android.text;
 
-import android.os.Parcel;
 import android.os.Parcelable;
 
 /**
@@ -28,21 +27,5 @@ public interface ParcelableSpan extends Parcelable {
     /**
      * Return a special type identifier for this span class.
      */
-    int getSpanTypeId();
-
-    /**
-     * Internal implementation of {@link #getSpanTypeId()} that is not meant to
-     * be overridden outside of the framework.
-     *
-     * @hide
-     */
-    int getSpanTypeIdInternal();
-
-    /**
-     * Internal implementation of {@link Parcelable#writeToParcel(Parcel, int)}
-     * that is not meant to be overridden outside of the framework.
-     *
-     * @hide
-     */
-    void writeToParcelInternal(Parcel dest, int flags);
+    public abstract int getSpanTypeId();
 }

@@ -8,21 +8,10 @@
 
 package jsr166;
 
+import junit.framework.*;
 import java.util.concurrent.atomic.AtomicLong;
 
-import junit.framework.Test;
-import junit.framework.TestSuite;
-
 public class AtomicLongTest extends JSR166TestCase {
-    // android-note: Removed because the CTS runner does a bad job of
-    // retrying tests that have suite() declarations.
-    //
-    // public static void main(String[] args) {
-    //     main(suite(), args);
-    // }
-    // public static Test suite() {
-    //     return new TestSuite(AtomicLongTest.class);
-    // }
 
     final long[] VALUES = {
         Long.MIN_VALUE,
@@ -109,10 +98,10 @@ public class AtomicLongTest extends JSR166TestCase {
      */
     public void testWeakCompareAndSet() {
         AtomicLong ai = new AtomicLong(1);
-        do {} while (!ai.weakCompareAndSet(1, 2));
-        do {} while (!ai.weakCompareAndSet(2, -4));
+        while (!ai.weakCompareAndSet(1, 2));
+        while (!ai.weakCompareAndSet(2, -4));
         assertEquals(-4, ai.get());
-        do {} while (!ai.weakCompareAndSet(-4, 7));
+        while (!ai.weakCompareAndSet(-4, 7));
         assertEquals(7, ai.get());
     }
 

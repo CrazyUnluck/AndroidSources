@@ -29,16 +29,19 @@ import org.apache.http.client.methods.HttpPut;
 import org.apache.http.client.methods.HttpTrace;
 import org.apache.http.client.methods.HttpUriRequest;
 
-import org.junit.Test;
-import org.junit.runner.RunWith;
-import org.robolectric.RobolectricTestRunner;
+import android.test.AndroidTestCase;
+import android.test.suitebuilder.annotation.SmallTest;
 
-import static org.junit.Assert.*;
+@SmallTest
+public class HttpClientStackTest extends AndroidTestCase {
 
-@RunWith(RobolectricTestRunner.class)
-public class HttpClientStackTest {
+    @Override
+    protected void setUp() throws Exception {
+        super.setUp();
+        mContext = getContext();
+    }
 
-    @Test public void createDeprecatedGetRequest() throws Exception {
+    public void testCreateDeprecatedGetRequest() throws Exception {
         TestRequest.DeprecatedGet request = new TestRequest.DeprecatedGet();
         assertEquals(request.getMethod(), Method.DEPRECATED_GET_OR_POST);
 
@@ -46,7 +49,7 @@ public class HttpClientStackTest {
         assertTrue(httpRequest instanceof HttpGet);
     }
 
-    @Test public void createDeprecatedPostRequest() throws Exception {
+    public void testCreateDeprecatedPostRequest() throws Exception {
         TestRequest.DeprecatedPost request = new TestRequest.DeprecatedPost();
         assertEquals(request.getMethod(), Method.DEPRECATED_GET_OR_POST);
 
@@ -54,7 +57,7 @@ public class HttpClientStackTest {
         assertTrue(httpRequest instanceof HttpPost);
     }
 
-    @Test public void createGetRequest() throws Exception {
+    public void testCreateGetRequest() throws Exception {
         TestRequest.Get request = new TestRequest.Get();
         assertEquals(request.getMethod(), Method.GET);
 
@@ -62,7 +65,7 @@ public class HttpClientStackTest {
         assertTrue(httpRequest instanceof HttpGet);
     }
 
-    @Test public void createPostRequest() throws Exception {
+    public void testCreatePostRequest() throws Exception {
         TestRequest.Post request = new TestRequest.Post();
         assertEquals(request.getMethod(), Method.POST);
 
@@ -70,7 +73,7 @@ public class HttpClientStackTest {
         assertTrue(httpRequest instanceof HttpPost);
     }
 
-    @Test public void createPostRequestWithBody() throws Exception {
+    public void testCreatePostRequestWithBody() throws Exception {
         TestRequest.PostWithBody request = new TestRequest.PostWithBody();
         assertEquals(request.getMethod(), Method.POST);
 
@@ -78,7 +81,7 @@ public class HttpClientStackTest {
         assertTrue(httpRequest instanceof HttpPost);
     }
 
-    @Test public void createPutRequest() throws Exception {
+    public void testCreatePutRequest() throws Exception {
         TestRequest.Put request = new TestRequest.Put();
         assertEquals(request.getMethod(), Method.PUT);
 
@@ -86,7 +89,7 @@ public class HttpClientStackTest {
         assertTrue(httpRequest instanceof HttpPut);
     }
 
-    @Test public void createPutRequestWithBody() throws Exception {
+    public void testCreatePutRequestWithBody() throws Exception {
         TestRequest.PutWithBody request = new TestRequest.PutWithBody();
         assertEquals(request.getMethod(), Method.PUT);
 
@@ -94,7 +97,7 @@ public class HttpClientStackTest {
         assertTrue(httpRequest instanceof HttpPut);
     }
 
-    @Test public void createDeleteRequest() throws Exception {
+    public void testCreateDeleteRequest() throws Exception {
         TestRequest.Delete request = new TestRequest.Delete();
         assertEquals(request.getMethod(), Method.DELETE);
 
@@ -102,7 +105,7 @@ public class HttpClientStackTest {
         assertTrue(httpRequest instanceof HttpDelete);
     }
 
-    @Test public void createHeadRequest() throws Exception {
+    public void testCreateHeadRequest() throws Exception {
         TestRequest.Head request = new TestRequest.Head();
         assertEquals(request.getMethod(), Method.HEAD);
 
@@ -110,7 +113,7 @@ public class HttpClientStackTest {
         assertTrue(httpRequest instanceof HttpHead);
     }
 
-    @Test public void createOptionsRequest() throws Exception {
+    public void testCreateOptionsRequest() throws Exception {
         TestRequest.Options request = new TestRequest.Options();
         assertEquals(request.getMethod(), Method.OPTIONS);
 
@@ -118,7 +121,7 @@ public class HttpClientStackTest {
         assertTrue(httpRequest instanceof HttpOptions);
     }
 
-    @Test public void createTraceRequest() throws Exception {
+    public void testCreateTraceRequest() throws Exception {
         TestRequest.Trace request = new TestRequest.Trace();
         assertEquals(request.getMethod(), Method.TRACE);
 
@@ -126,7 +129,7 @@ public class HttpClientStackTest {
         assertTrue(httpRequest instanceof HttpTrace);
     }
 
-    @Test public void createPatchRequest() throws Exception {
+    public void testCreatePatchRequest() throws Exception {
         TestRequest.Patch request = new TestRequest.Patch();
         assertEquals(request.getMethod(), Method.PATCH);
 
@@ -134,7 +137,7 @@ public class HttpClientStackTest {
         assertTrue(httpRequest instanceof HttpPatch);
     }
 
-    @Test public void createPatchRequestWithBody() throws Exception {
+    public void testCreatePatchRequestWithBody() throws Exception {
         TestRequest.PatchWithBody request = new TestRequest.PatchWithBody();
         assertEquals(request.getMethod(), Method.PATCH);
 

@@ -16,12 +16,8 @@
 
 package android.preference;
 
-import android.annotation.CallSuper;
 import com.android.internal.util.CharSequences;
 
-import android.annotation.DrawableRes;
-import android.annotation.LayoutRes;
-import android.annotation.StringRes;
 import android.content.Context;
 import android.content.Intent;
 import android.content.SharedPreferences;
@@ -192,34 +188,31 @@ public class Preference implements Comparable<Preference> {
 
     /**
      * Perform inflation from XML and apply a class-specific base style. This
-     * constructor of Preference allows subclasses to use their own base style
-     * when they are inflating. For example, a {@link CheckBoxPreference}
+     * constructor of Preference allows subclasses to use their own base
+     * style when they are inflating. For example, a {@link CheckBoxPreference}
      * constructor calls this version of the super class constructor and
-     * supplies {@code android.R.attr.checkBoxPreferenceStyle} for
-     * <var>defStyleAttr</var>. This allows the theme's checkbox preference
-     * style to modify all of the base preference attributes as well as the
-     * {@link CheckBoxPreference} class's attributes.
-     *
+     * supplies {@code android.R.attr.checkBoxPreferenceStyle} for <var>defStyle</var>.
+     * This allows the theme's checkbox preference style to modify all of the base
+     * preference attributes as well as the {@link CheckBoxPreference} class's
+     * attributes.
+     * 
      * @param context The Context this is associated with, through which it can
-     *            access the current theme, resources,
-     *            {@link SharedPreferences}, etc.
-     * @param attrs The attributes of the XML tag that is inflating the
-     *            preference.
-     * @param defStyleAttr An attribute in the current theme that contains a
-     *            reference to a style resource that supplies default values for
-     *            the view. Can be 0 to not look for defaults.
-     * @param defStyleRes A resource identifier of a style resource that
-     *            supplies default values for the view, used only if
-     *            defStyleAttr is 0 or can not be found in the theme. Can be 0
-     *            to not look for defaults.
+     *            access the current theme, resources, {@link SharedPreferences},
+     *            etc.
+     * @param attrs The attributes of the XML tag that is inflating the preference.
+     * @param defStyle The default style to apply to this preference. If 0, no style
+     *            will be applied (beyond what is included in the theme). This
+     *            may either be an attribute resource, whose value will be
+     *            retrieved from the current theme, or an explicit style
+     *            resource.
      * @see #Preference(Context, AttributeSet)
      */
-    public Preference(Context context, AttributeSet attrs, int defStyleAttr, int defStyleRes) {
+    public Preference(Context context, AttributeSet attrs, int defStyle) {
         mContext = context;
 
-        final TypedArray a = context.obtainStyledAttributes(
-                attrs, com.android.internal.R.styleable.Preference, defStyleAttr, defStyleRes);
-        for (int i = a.getIndexCount() - 1; i >= 0; i--) {
+        TypedArray a = context.obtainStyledAttributes(attrs,
+                com.android.internal.R.styleable.Preference, defStyle, 0);
+        for (int i = a.getIndexCount(); i >= 0; i--) {
             int attr = a.getIndex(i); 
             switch (attr) {
                 case com.android.internal.R.styleable.Preference_icon:
@@ -287,30 +280,6 @@ public class Preference implements Comparable<Preference> {
             // For non-framework subclasses, assume the worst and don't cache views.
             mCanRecycleLayout = false;
         }
-    }
-
-    /**
-     * Perform inflation from XML and apply a class-specific base style. This
-     * constructor of Preference allows subclasses to use their own base style
-     * when they are inflating. For example, a {@link CheckBoxPreference}
-     * constructor calls this version of the super class constructor and
-     * supplies {@code android.R.attr.checkBoxPreferenceStyle} for
-     * <var>defStyleAttr</var>. This allows the theme's checkbox preference
-     * style to modify all of the base preference attributes as well as the
-     * {@link CheckBoxPreference} class's attributes.
-     *
-     * @param context The Context this is associated with, through which it can
-     *            access the current theme, resources,
-     *            {@link SharedPreferences}, etc.
-     * @param attrs The attributes of the XML tag that is inflating the
-     *            preference.
-     * @param defStyleAttr An attribute in the current theme that contains a
-     *            reference to a style resource that supplies default values for
-     *            the view. Can be 0 to not look for defaults.
-     * @see #Preference(Context, AttributeSet)
-     */
-    public Preference(Context context, AttributeSet attrs, int defStyleAttr) {
-        this(context, attrs, defStyleAttr, 0);
     }
     
     /**
@@ -428,7 +397,7 @@ public class Preference implements Comparable<Preference> {
      *            a {@link View}.
      * @see #setWidgetLayoutResource(int)
      */
-    public void setLayoutResource(@LayoutRes int layoutResId) {
+    public void setLayoutResource(int layoutResId) {
         if (layoutResId != mLayoutResId) {
             // Layout changed
             mCanRecycleLayout = false;
@@ -442,7 +411,6 @@ public class Preference implements Comparable<Preference> {
      * 
      * @return The layout resource ID.
      */
-    @LayoutRes
     public int getLayoutResource() {
         return mLayoutResId;
     }
@@ -457,7 +425,7 @@ public class Preference implements Comparable<Preference> {
      *            main layout.
      * @see #setLayoutResource(int)
      */
-    public void setWidgetLayoutResource(@LayoutRes int widgetLayoutResId) {
+    public void setWidgetLayoutResource(int widgetLayoutResId) {
         if (widgetLayoutResId != mWidgetLayoutResId) {
             // Layout changed
             mCanRecycleLayout = false;
@@ -470,7 +438,6 @@ public class Preference implements Comparable<Preference> {
      * 
      * @return The layout resource ID.
      */
-    @LayoutRes
     public int getWidgetLayoutResource() {
         return mWidgetLayoutResId;
     }
@@ -509,7 +476,6 @@ public class Preference implements Comparable<Preference> {
      * @return The View that displays this Preference.
      * @see #onBindView(View)
      */
-    @CallSuper
     protected View onCreateView(ViewGroup parent) {
         final LayoutInflater layoutInflater =
             (LayoutInflater) mContext.getSystemService(Context.LAYOUT_INFLATER_SERVICE);
@@ -539,9 +505,9 @@ public class Preference implements Comparable<Preference> {
      * @param view The View that shows this Preference.
      * @see #onCreateView(ViewGroup)
      */
-    @CallSuper
     protected void onBindView(View view) {
-        final TextView titleView = (TextView) view.findViewById(com.android.internal.R.id.title);
+        final TextView titleView = (TextView) view.findViewById(
+                com.android.internal.R.id.title);
         if (titleView != null) {
             final CharSequence title = getTitle();
             if (!TextUtils.isEmpty(title)) {
@@ -564,22 +530,17 @@ public class Preference implements Comparable<Preference> {
             }
         }
 
-        final ImageView imageView = (ImageView) view.findViewById(com.android.internal.R.id.icon);
+        ImageView imageView = (ImageView) view.findViewById(com.android.internal.R.id.icon);
         if (imageView != null) {
             if (mIconResId != 0 || mIcon != null) {
                 if (mIcon == null) {
-                    mIcon = getContext().getDrawable(mIconResId);
+                    mIcon = getContext().getResources().getDrawable(mIconResId);
                 }
                 if (mIcon != null) {
                     imageView.setImageDrawable(mIcon);
                 }
             }
             imageView.setVisibility(mIcon != null ? View.VISIBLE : View.GONE);
-        }
-
-        final View imageFrame = view.findViewById(com.android.internal.R.id.icon_frame);
-        if (imageFrame != null) {
-            imageFrame.setVisibility(mIcon != null ? View.VISIBLE : View.GONE);
         }
 
         if (mShouldDisableView) {
@@ -656,7 +617,7 @@ public class Preference implements Comparable<Preference> {
      * @see #setTitle(CharSequence)
      * @param titleResId The title as a resource ID.
      */
-    public void setTitle(@StringRes int titleResId) {
+    public void setTitle(int titleResId) {
         setTitle(mContext.getString(titleResId));
         mTitleRes = titleResId;
     }
@@ -668,7 +629,6 @@ public class Preference implements Comparable<Preference> {
      * @return The title resource.
      * @see #setTitle(int)
      */
-    @StringRes
     public int getTitleRes() {
         return mTitleRes;
     }
@@ -705,11 +665,9 @@ public class Preference implements Comparable<Preference> {
      * @see #setIcon(Drawable)
      * @param iconResId The icon as a resource ID.
      */
-    public void setIcon(@DrawableRes int iconResId) {
-        if (mIconResId != iconResId) {
-            mIconResId = iconResId;
-            setIcon(mContext.getDrawable(iconResId));
-        }
+    public void setIcon(int iconResId) {
+        mIconResId = iconResId;
+        setIcon(mContext.getResources().getDrawable(iconResId));
     }
 
     /**
@@ -750,7 +708,7 @@ public class Preference implements Comparable<Preference> {
      * @see #setSummary(CharSequence)
      * @param summaryResId The summary as a resource.
      */
-    public void setSummary(@StringRes int summaryResId) {
+    public void setSummary(int summaryResId) {
         setSummary(mContext.getString(summaryResId));
     }
     
@@ -1361,7 +1319,6 @@ public class Preference implements Comparable<Preference> {
      * should remove any references to this Preference that you know about. Make
      * sure to call through to the superclass implementation.
      */
-    @CallSuper
     protected void onPrepareForRemoval() {
         unregisterDependency();
     }
@@ -1438,7 +1395,7 @@ public class Preference implements Comparable<Preference> {
     protected boolean persistString(String value) {
         if (shouldPersist()) {
             // Shouldn't store null
-            if (TextUtils.equals(value, getPersistedString(null))) {
+            if (value == getPersistedString(null)) {
                 // It's already there, so the same as persisting
                 return true;
             }
@@ -1483,9 +1440,11 @@ public class Preference implements Comparable<Preference> {
      * @return True if the Preference is persistent. (This is not whether the
      *         value was persisted, since we may not necessarily commit if there
      *         will be a batch commit later.)
-     * @see #getPersistedStringSet(Set)
+     * @see #getPersistedString(Set)
+     * 
+     * @hide Pending API approval
      */
-    public boolean persistStringSet(Set<String> values) {
+    protected boolean persistStringSet(Set<String> values) {
         if (shouldPersist()) {
             // Shouldn't store null
             if (values.equals(getPersistedStringSet(null))) {
@@ -1514,8 +1473,10 @@ public class Preference implements Comparable<Preference> {
      * @return The value from the SharedPreferences or the default return
      *         value.
      * @see #persistStringSet(Set)
+     * 
+     * @hide Pending API approval
      */
-    public Set<String> getPersistedStringSet(Set<String> defaultReturnValue) {
+    protected Set<String> getPersistedStringSet(Set<String> defaultReturnValue) {
         if (!shouldPersist()) {
             return defaultReturnValue;
         }

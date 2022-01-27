@@ -16,15 +16,16 @@
 
 package android.support.v8.renderscript;
 
-import java.nio.ByteBuffer;
-import java.util.concurrent.locks.ReentrantReadWriteLock;
-
+import java.io.IOException;
+import java.io.InputStream;
 import android.content.res.Resources;
+import android.content.res.AssetManager;
 import android.graphics.Bitmap;
 import android.graphics.BitmapFactory;
 import android.graphics.Canvas;
-import android.util.Log;
 import android.view.Surface;
+import android.util.Log;
+import android.util.TypedValue;
 
 /**
  * <p> This class provides the primary method through which data is passed to
@@ -59,10 +60,8 @@ public class Allocation extends BaseObj {
     Type mType;
     Bitmap mBitmap;
     int mUsage;
-    int mSize;
     Allocation mAdaptedAllocation;
-    ByteBuffer mByteBuffer = null;
-    long mByteBufferStride = 0;
+    int mSize;
 
     boolean mConstrainedLOD;
     boolean mConstrainedFace;
@@ -70,7 +69,6 @@ public class Allocation extends BaseObj {
     boolean mConstrainedZ;
     boolean mReadAllowed = true;
     boolean mWriteAllowed = true;
-    boolean mAutoPadding = false;
     int mSelectedY;
     int mSelectedZ;
     int mSelectedLOD;
@@ -81,70 +79,6 @@ public class Allocation extends BaseObj {
     int mCurrentDimZ;
     int mCurrentCount;
 
-    private Element.DataType validateObjectIsPrimitiveArray(Object d, boolean checkType) {
-        final Class c = d.getClass();
-        if (!c.isArray()) {
-            throw new RSIllegalArgumentException("Object passed is not an array of primitives.");
-        }
-        final Class cmp = c.getComponentType();
-        if (!cmp.isPrimitive()) {
-            throw new RSIllegalArgumentException("Object passed is not an Array of primitives.");
-        }
-
-        if (cmp == Long.TYPE) {
-            if (checkType) {
-                validateIsInt64();
-                return mType.mElement.mType;
-            }
-            return Element.DataType.SIGNED_64;
-        }
-
-        if (cmp == Integer.TYPE) {
-            if (checkType) {
-                validateIsInt32();
-                return mType.mElement.mType;
-            }
-            return Element.DataType.SIGNED_32;
-        }
-
-        if (cmp == Short.TYPE) {
-            if (checkType) {
-                validateIsInt16();
-                return mType.mElement.mType;
-            }
-            return Element.DataType.SIGNED_16;
-        }
-
-        if (cmp == Byte.TYPE) {
-            if (checkType) {
-                validateIsInt8();
-                return mType.mElement.mType;
-            }
-            return Element.DataType.SIGNED_8;
-        }
-
-        if (cmp == Float.TYPE) {
-            if (checkType) {
-                validateIsFloat32();
-            }
-            return Element.DataType.FLOAT_32;
-        }
-
-        if (cmp == Double.TYPE) {
-            if (checkType) {
-                validateIsFloat64();
-            }
-            return Element.DataType.FLOAT_64;
-        }
-        return null;
-    }
-
-    /*
-     * Hold reference to the shared allocation in compat context
-     * for Incremental Support Lib.
-     */
-    long mIncCompatAllocation;
-    boolean mIncAllocDestroyed;
     /**
      * The usage of the Allocation.  These signal to RenderScript where to place
      * the Allocation in memory.
@@ -224,18 +158,8 @@ public class Allocation extends BaseObj {
         }
     }
 
-    /**
-     * Getter & Setter for the dummy allocation for Inc Support Lib.
-     *
-     */
-    public long getIncAllocID() {
-        return mIncCompatAllocation;
-    }
-    public void setIncAllocID(long id) {
-        mIncCompatAllocation = id;
-    }
 
-    private long getIDSafe() {
+    private int getIDSafe() {
         if (mAdaptedAllocation != null) {
             return mAdaptedAllocation.getID(mRS);
         }
@@ -265,68 +189,12 @@ public class Allocation extends BaseObj {
     }
 
     /**
-     * Specifies the mapping between the Allocation's cells and an array's elements
-     * when data is copied from the Allocation to the array, or vice-versa.
-     *
-     * Only applies to an Allocation whose Element is a vector of length 3 (such as
-     * {@link Element#U8_3} or {@link Element#RGB_888}). Enabling this feature may make
-     * copying data from the Allocation to an array or vice-versa less efficient.
-     *
-     * <p> Vec3 Element cells are stored in an Allocation as Vec4 Element cells with
-     * the same {@link android.support.v8.renderscript.Element.DataType}, with the fourth vector
-     * component treated as padding. When this feature is enabled, only the data components,
-     * i.e. the first 3 vector components of each cell, will be mapped between the array
-     * and the Allocation. When disabled, explicit mapping of the padding components
-     * is required, as described in the following example.
-     *
-     * <p> For example, when copying an integer array to an Allocation of two {@link
-     * Element#I32_3} cells using {@link #copyFrom(int[])}:
-     * <p> When disabled:
-     *     The array must have at least 8 integers, with the first 4 integers copied
-     *     to the first cell of the Allocation, and the next 4 integers copied to
-     *     the second cell. The 4th and 8th integers are mapped as the padding components.
-     *
-     * <p> When enabled:
-     *     The array just needs to have at least 6 integers, with the first 3 integers
-     *     copied to the the first cell as data components, and the next 3 copied to
-     *     the second cell. There is no mapping for the padding components.
-     *
-     * <p> Similarly, when copying a byte array to an Allocation of two {@link
-     * Element#I32_3} cells, using {@link #copyFromUnchecked(int[])}:
-     * <p> When disabled:
-     *     The array must have at least 32 bytes, with the first 16 bytes copied
-     *     to the first cell of the Allocation, and the next 16 bytes copied to
-     *     the second cell. The 13th-16th and 29th-32nd bytes are mapped as padding
-     *     components.
-     *
-     * <p> When enabled:
-     *     The array just needs to have at least 24 bytes, with the first 12 bytes copied
-     *     to the first cell of the Allocation, and the next 12 bytes copied to
-     *     the second cell. There is no mapping for the padding components.
-     *
-     * <p> Similar to copying data to an Allocation from an array, when copying data from an
-     * Allocation to an array, the padding components for Vec3 Element cells will not be
-     * copied/mapped to the array if AutoPadding is enabled.
-     *
-     * <p> Default: Disabled.
-     *
-     * @param useAutoPadding True: enable AutoPadding; False: disable AutoPadding
-     *
-     */
-    public void setAutoPadding(boolean useAutoPadding) {
-        mAutoPadding = useAutoPadding;
-    }
-
-    /**
      * Get the size of the Allocation in bytes.
      *
      * @return size of the Allocation in bytes.
      *
      */
     public int getBytesSize() {
-        if (mType.mDimYuv != 0) {
-            return (int)Math.ceil(mType.getCount() * mType.getElement().getBytesSize() * 1.5);
-        }
         return mType.getCount() * mType.getElement().getBytesSize();
     }
 
@@ -347,7 +215,7 @@ public class Allocation extends BaseObj {
         mBitmap = b;
     }
 
-    Allocation(long id, RenderScript rs, Type t, int usage) {
+    Allocation(int id, RenderScript rs, Type t, int usage) {
         super(id, rs);
         if ((usage & ~(USAGE_SCRIPT |
                        USAGE_GRAPHICS_TEXTURE |
@@ -369,14 +237,9 @@ public class Allocation extends BaseObj {
 
         mType = t;
         mUsage = usage;
-        mIncCompatAllocation = 0;
-        mIncAllocDestroyed = false;
+        mSize = mType.getCount() * mType.getElement().getBytesSize();
 
         if (t != null) {
-            // TODO: A3D doesn't have Type info during creation, so we can't
-            // calculate the size ahead of time. We can possibly add a method
-            // to update the size in the future if it seems reasonable.
-            mSize = mType.getCount() * mType.getElement().getBytesSize();
             updateCacheInfo(t);
         }
         if (RenderScript.sUseGCHooks == true) {
@@ -396,14 +259,6 @@ public class Allocation extends BaseObj {
         super.finalize();
     }
 
-    private void validateIsInt64() {
-        if ((mType.mElement.mType == Element.DataType.SIGNED_64) ||
-            (mType.mElement.mType == Element.DataType.UNSIGNED_64)) {
-            return;
-        }
-        throw new RSIllegalArgumentException(
-            "64 bit integer source does not match allocation type " + mType.mElement.mType);
-    }
 
     private void validateIsInt32() {
         if ((mType.mElement.mType == Element.DataType.SIGNED_32) ||
@@ -438,14 +293,6 @@ public class Allocation extends BaseObj {
         }
         throw new RSIllegalArgumentException(
             "32 bit float source does not match allocation type " + mType.mElement.mType);
-    }
-
-    private void validateIsFloat64() {
-        if (mType.mElement.mType == Element.DataType.FLOAT_64) {
-            return;
-        }
-        throw new RSIllegalArgumentException(
-            "64 bit float source does not match allocation type " + mType.mElement.mType);
     }
 
     private void validateIsObject() {
@@ -505,72 +352,10 @@ public class Allocation extends BaseObj {
 
     /**
      * Delete once code is updated.
+     * @hide
      */
     public void ioSendOutput() {
         ioSend();
-    }
-    /**
-     * Gets or creates a ByteBuffer that contains the raw data of the current Allocation.
-     * <p> If the Allocation is created with USAGE_IO_INPUT, the returned ByteBuffer
-     * would contain the up-to-date data as READ ONLY.
-     * For a 2D or 3D Allocation, the raw data maybe padded so that each row of
-     * the Allocation has certain alignment. The size of each row including padding,
-     * called stride, can be queried using the {@link #getStride()} method.
-     *
-     * Note: Operating on the ByteBuffer of a destroyed Allocation will triger errors.
-     *       The ByteBuffer will be Read-Only for devices before Lollopop (API 21).
-     *
-     * @return ByteBuffer The ByteBuffer associated with raw data pointer of the Allocation.
-     */
-    public ByteBuffer getByteBuffer() {
-        int xBytesSize = mType.getX() * mType.getElement().getBytesSize();
-        // When running on devices before L, we need to construct the ByteBuffer
-        // and explicitly copy the data from the allocation to it.
-        if (mRS.getDispatchAPILevel() < 21) {
-            byte[] data = null;
-            if (mType.getZ() > 0) {
-                // TODO: add support for 3D allocations.
-                return null;
-            } else if (mType.getY() > 0) {
-                // 2D Allocation
-                data = new byte[xBytesSize * mType.getY()];
-                copy2DRangeToUnchecked(0, 0, mType.getX(), mType.getY(), data,
-                                       Element.DataType.SIGNED_8, xBytesSize * mType.getY());
-            } else {
-                // 1D Allocation
-                data = new byte[xBytesSize];
-                copy1DRangeToUnchecked(0, mType.getX(), data);
-            }
-            ByteBuffer bBuffer = ByteBuffer.wrap(data).asReadOnlyBuffer();
-            mByteBufferStride = xBytesSize;
-            return bBuffer;
-        }
-        // Create a new ByteBuffer if it is not initialized or using IO_INPUT.
-        if (mByteBuffer == null || (mUsage & USAGE_IO_INPUT) != 0) {
-            mByteBuffer = mRS.nAllocationGetByteBuffer(getID(mRS), xBytesSize, mType.getY(), mType.getZ());
-        }
-        return mByteBuffer;
-    }
-
-    /**
-     * Gets the stride of the Allocation.
-     * For a 2D or 3D Allocation, the raw data maybe padded so that each row of
-     * the Allocation has certain alignment. The size of each row including such
-     * padding is called stride.
-     *
-     * @return the stride. For 1D Allocation, the stride will be the number of
-     *         bytes of this Allocation. For 2D and 3D Allocations, the stride
-     *         will be the stride in X dimension measuring in bytes.
-     */
-    public long getStride() {
-        if (mByteBufferStride ==0) {
-            if (mRS.getDispatchAPILevel() > 21) {
-                mByteBufferStride = mRS.nAllocationGetStride(getID(mRS));
-            } else {
-                mByteBufferStride = mType.getX() * mType.getElement().getBytesSize();
-            }
-        }
-        return mByteBufferStride;
     }
 
     /**
@@ -599,20 +384,11 @@ public class Allocation extends BaseObj {
             throw new RSIllegalArgumentException("Array size mismatch, allocation sizeX = " +
                                                  mCurrentCount + ", array length = " + d.length);
         }
-
-        if (RenderScript.sPointerSize == 8) {
-            long i[] = new long[d.length * 4];
-            for (int ct=0; ct < d.length; ct++) {
-                i[ct * 4] = d[ct].getID(mRS);
-            }
-            copy1DRangeFromUnchecked(0, mCurrentCount, i);
-        } else {
-            int i[] = new int[d.length];
-            for (int ct=0; ct < d.length; ct++) {
-                i[ct] = (int)d[ct].getID(mRS);
-            }
-            copy1DRangeFromUnchecked(0, mCurrentCount, i);
+        int i[] = new int[d.length];
+        for (int ct=0; ct < d.length; ct++) {
+            i[ct] = d[ct].getID(mRS);
         }
+        copy1DRangeFromUnchecked(0, mCurrentCount, i);
     }
 
     private void validateBitmapFormat(Bitmap b) {
@@ -670,277 +446,145 @@ public class Allocation extends BaseObj {
         }
     }
 
-    private void copyFromUnchecked(Object array, Element.DataType dt, int arrayLen) {
+    /**
+     * Copy into this Allocation from an array. This method does not guarantee
+     * that the Allocation is compatible with the input buffer; it copies memory
+     * without reinterpretation.
+     *
+     * @param d the source data array
+     */
+    public void copyFromUnchecked(int[] d) {
         mRS.validate();
         if (mCurrentDimZ > 0) {
-            copy3DRangeFromUnchecked(0, 0, 0, mCurrentDimX, mCurrentDimY, mCurrentDimZ, array, dt, arrayLen);
+            copy3DRangeFromUnchecked(0, 0, 0, mCurrentDimX, mCurrentDimY, mCurrentDimZ, d);
         } else if (mCurrentDimY > 0) {
-            copy2DRangeFromUnchecked(0, 0, mCurrentDimX, mCurrentDimY, array, dt, arrayLen);
+            copy2DRangeFromUnchecked(0, 0, mCurrentDimX, mCurrentDimY, d);
         } else {
-            copy1DRangeFromUnchecked(0, mCurrentCount, array, dt, arrayLen);
+            copy1DRangeFromUnchecked(0, mCurrentCount, d);
+        }
+    }
+    /**
+     * Copy into this Allocation from an array. This method does not guarantee
+     * that the Allocation is compatible with the input buffer; it copies memory
+     * without reinterpretation.
+     *
+     * @param d the source data array
+     */
+    public void copyFromUnchecked(short[] d) {
+        mRS.validate();
+        if (mCurrentDimZ > 0) {
+            copy3DRangeFromUnchecked(0, 0, 0, mCurrentDimX, mCurrentDimY, mCurrentDimZ, d);
+        } else if (mCurrentDimY > 0) {
+            copy2DRangeFromUnchecked(0, 0, mCurrentDimX, mCurrentDimY, d);
+        } else {
+            copy1DRangeFromUnchecked(0, mCurrentCount, d);
+        }
+    }
+    /**
+     * Copy into this Allocation from an array. This method does not guarantee
+     * that the Allocation is compatible with the input buffer; it copies memory
+     * without reinterpretation.
+     *
+     * @param d the source data array
+     */
+    public void copyFromUnchecked(byte[] d) {
+        mRS.validate();
+        if (mCurrentDimZ > 0) {
+            copy3DRangeFromUnchecked(0, 0, 0, mCurrentDimX, mCurrentDimY, mCurrentDimZ, d);
+        } else if (mCurrentDimY > 0) {
+            copy2DRangeFromUnchecked(0, 0, mCurrentDimX, mCurrentDimY, d);
+        } else {
+            copy1DRangeFromUnchecked(0, mCurrentCount, d);
+        }
+    }
+    /**
+     * Copy into this Allocation from an array. This method does not guarantee
+     * that the Allocation is compatible with the input buffer; it copies memory
+     * without reinterpretation.
+     *
+     * @param d the source data array
+     */
+    public void copyFromUnchecked(float[] d) {
+        mRS.validate();
+        if (mCurrentDimZ > 0) {
+            copy3DRangeFromUnchecked(0, 0, 0, mCurrentDimX, mCurrentDimY, mCurrentDimZ, d);
+        } else if (mCurrentDimY > 0) {
+            copy2DRangeFromUnchecked(0, 0, mCurrentDimX, mCurrentDimY, d);
+        } else {
+            copy1DRangeFromUnchecked(0, mCurrentCount, d);
         }
     }
 
     /**
-     * Copy into this Allocation from an array. This method does not guarantee
-     * that the Allocation is compatible with the input buffer; it copies memory
-     * without reinterpretation.
-     *
-     * <p> If the Allocation does not have Vec3 Elements, then the size of the
-     * array in bytes must be at least the size of the Allocation {@link
-     * #getBytesSize getBytesSize()}.
-     *
-     * <p> If the Allocation has Vec3 Elements and {@link #setAutoPadding AutoPadding}
-     * is disabled, then the size of the array in bytes must be at least the size
-     * of the Allocation {@link #getBytesSize getBytesSize()}. The padding bytes for
-     * the cells must be part of the array.
-     *
-     * <p> If the Allocation has Vec3 Elements and {@link #setAutoPadding AutoPadding}
-     * is enabled, then the size of the array in bytes must be at least 3/4 the size
-     * of the Allocation {@link #getBytesSize getBytesSize()}. The padding bytes for
-     * the cells must not be part of the array.
-     *
-     * @param array The source array
-     */
-    public void copyFromUnchecked(Object array) {
-        copyFromUnchecked(array, validateObjectIsPrimitiveArray(array, false),
-                          java.lang.reflect.Array.getLength(array));
-    }
-
-    /**
-     * Copy into this Allocation from an array. This method does not guarantee
-     * that the Allocation is compatible with the input buffer; it copies memory
-     * without reinterpretation.
-     *
-     * <p> If the Allocation does not have Vec3 Elements, then the size of the
-     * array in bytes must be at least the size of the Allocation {@link
-     * #getBytesSize getBytesSize()}.
-     *
-     * <p> If the Allocation has Vec3 Elements and {@link #setAutoPadding AutoPadding}
-     * is disabled, then the size of the array in bytes must be at least the size
-     * of the Allocation {@link #getBytesSize getBytesSize()}. The padding bytes for
-     * the cells must be part of the array.
-     *
-     * <p> If the Allocation has Vec3 Elements and {@link #setAutoPadding AutoPadding}
-     * is enabled, then the size of the array in bytes must be at least 3/4 the size
-     * of the Allocation {@link #getBytesSize getBytesSize()}. The padding bytes for
-     * the cells must not be part of the array.
-     *
-     * @param d the source array
-     */
-    public void copyFromUnchecked(int[] d) {
-        copyFromUnchecked(d, Element.DataType.SIGNED_32, d.length);
-    }
-
-    /**
-     * Copy into this Allocation from an array. This method does not guarantee
-     * that the Allocation is compatible with the input buffer; it copies memory
-     * without reinterpretation.
-     *
-     * <p> If the Allocation does not have Vec3 Elements, then the size of the
-     * array in bytes must be at least the size of the Allocation {@link
-     * #getBytesSize getBytesSize()}.
-     *
-     * <p> If the Allocation has Vec3 Elements and {@link #setAutoPadding AutoPadding}
-     * is disabled, then the size of the array in bytes must be at least the size
-     * of the Allocation {@link #getBytesSize getBytesSize()}. The padding bytes for
-     * the cells must be part of the array.
-     *
-     * <p> If the Allocation has Vec3 Elements and {@link #setAutoPadding AutoPadding}
-     * is enabled, then the size of the array in bytes must be at least 3/4 the size
-     * of the Allocation {@link #getBytesSize getBytesSize()}. The padding bytes for
-     * the cells must not be part of the array.
-     *
-     * @param d the source array
-     */
-    public void copyFromUnchecked(short[] d) {
-        copyFromUnchecked(d, Element.DataType.SIGNED_16, d.length);
-    }
-
-    /**
-     * Copy into this Allocation from an array. This method does not guarantee
-     * that the Allocation is compatible with the input buffer; it copies memory
-     * without reinterpretation.
-     *
-     * <p> If the Allocation does not have Vec3 Elements, then the size of the
-     * array in bytes must be at least the size of the Allocation {@link
-     * #getBytesSize getBytesSize()}.
-     *
-     * <p> If the Allocation has Vec3 Elements and {@link #setAutoPadding AutoPadding}
-     * is disabled, then the size of the array in bytes must be at least the size
-     * of the Allocation {@link #getBytesSize getBytesSize()}. The padding bytes for
-     * the cells must be part of the array.
-     *
-     * <p> If the Allocation has Vec3 Elements and {@link #setAutoPadding AutoPadding}
-     * is enabled, then the size of the array in bytes must be at least 3/4 the size
-     * of the Allocation {@link #getBytesSize getBytesSize()}. The padding bytes for
-     * the cells must not be part of the array.
-     *
-     * @param d the source array
-     */
-    public void copyFromUnchecked(byte[] d) {
-        copyFromUnchecked(d, Element.DataType.SIGNED_8, d.length);
-    }
-
-    /**
-     * Copy into this Allocation from an array. This method does not guarantee
-     * that the Allocation is compatible with the input buffer; it copies memory
-     * without reinterpretation.
-     *
-     * <p> If the Allocation does not have Vec3 Elements, then the size of the
-     * array in bytes must be at least the size of the Allocation {@link
-     * #getBytesSize getBytesSize()}.
-     *
-     * <p> If the Allocation has Vec3 Elements and {@link #setAutoPadding AutoPadding}
-     * is disabled, then the size of the array in bytes must be at least the size
-     * of the Allocation {@link #getBytesSize getBytesSize()}. The padding bytes for
-     * the cells must be part of the array.
-     *
-     * <p> If the Allocation has Vec3 Elements and {@link #setAutoPadding AutoPadding}
-     * is enabled, then the size of the array in bytes must be at least 3/4 the size
-     * of the Allocation {@link #getBytesSize getBytesSize()}. The padding bytes for
-     * the cells must not be part of the array.
-     *
-     * @param d the source array
-     */
-    public void copyFromUnchecked(float[] d) {
-        copyFromUnchecked(d, Element.DataType.FLOAT_32, d.length);
-    }
-
-
-    /**
      * Copy into this Allocation from an array.  This variant is type checked
      * and will generate exceptions if the Allocation's {@link
-     * android.support.v8.renderscript.Element} does not match the array's
-     * primitive type.
+     * android.support.v8.renderscript.Element} is not a 32 bit integer type.
      *
-     * <p> If the Allocation does not have Vec3 Elements, then the size of the
-     * array in bytes must be at least the size of the Allocation {@link
-     * #getBytesSize getBytesSize()}.
-     *
-     * <p> If the Allocation has Vec3 Elements and {@link #setAutoPadding AutoPadding}
-     * is disabled, then the size of the array in bytes must be at least the size
-     * of the Allocation {@link #getBytesSize getBytesSize()}. The padding bytes for
-     * the cells must be part of the array.
-     *
-     * <p> If the Allocation has Vec3 Elements and {@link #setAutoPadding AutoPadding}
-     * is enabled, then the size of the array in bytes must be at least 3/4 the size
-     * of the Allocation {@link #getBytesSize getBytesSize()}. The padding bytes for
-     * the cells must not be part of the array.
-     *
-     * @param array The source array
-     */
-    public void copyFrom(Object array) {
-        copyFromUnchecked(array, validateObjectIsPrimitiveArray(array, true),
-                          java.lang.reflect.Array.getLength(array));
-    }
-
-    /**
-     * Copy into this Allocation from an array.  This variant is type checked
-     * and will generate exceptions if the Allocation's {@link
-     * android.support.v8.renderscript.Element} is not a 32 bit integer nor a vector of 32 bit
-     * integers {@link android.support.v8.renderscript.Element.DataType}.
-     *
-     * <p> If the Allocation does not have Vec3 Elements, then the size of the
-     * array in bytes must be at least the size of the Allocation {@link
-     * #getBytesSize getBytesSize()}.
-     *
-     * <p> If the Allocation has Vec3 Elements and {@link #setAutoPadding AutoPadding}
-     * is disabled, then the size of the array in bytes must be at least the size
-     * of the Allocation {@link #getBytesSize getBytesSize()}. The padding bytes for
-     * the cells must be part of the array.
-     *
-     * <p> If the Allocation has Vec3 Elements and {@link #setAutoPadding AutoPadding}
-     * is enabled, then the size of the array in bytes must be at least 3/4 the size
-     * of the Allocation {@link #getBytesSize getBytesSize()}. The padding bytes for
-     * the cells must not be part of the array.
-     *
-     * @param d the source array
+     * @param d the source data array
      */
     public void copyFrom(int[] d) {
-        validateIsInt32();
-        copyFromUnchecked(d, Element.DataType.SIGNED_32, d.length);
+        mRS.validate();
+        if (mCurrentDimZ > 0) {
+            copy3DRangeFrom(0, 0, 0, mCurrentDimX, mCurrentDimY, mCurrentDimZ, d);
+        } else if (mCurrentDimY > 0) {
+            copy2DRangeFrom(0, 0, mCurrentDimX, mCurrentDimY, d);
+        } else {
+            copy1DRangeFrom(0, mCurrentCount, d);
+        }
     }
 
     /**
      * Copy into this Allocation from an array.  This variant is type checked
      * and will generate exceptions if the Allocation's {@link
-     * android.support.v8.renderscript.Element} is not a 16 bit integer nor a vector of 16 bit
-     * integers {@link android.support.v8.renderscript.Element.DataType}.
+     * android.support.v8.renderscript.Element} is not a 16 bit integer type.
      *
-     * <p> If the Allocation does not have Vec3 Elements, then the size of the
-     * array in bytes must be at least the size of the Allocation {@link
-     * #getBytesSize getBytesSize()}.
-     *
-     * <p> If the Allocation has Vec3 Elements and {@link #setAutoPadding AutoPadding}
-     * is disabled, then the size of the array in bytes must be at least the size
-     * of the Allocation {@link #getBytesSize getBytesSize()}. The padding bytes for
-     * the cells must be part of the array.
-     *
-     * <p> If the Allocation has Vec3 Elements and {@link #setAutoPadding AutoPadding}
-     * is enabled, then the size of the array in bytes must be at least 3/4 the size
-     * of the Allocation {@link #getBytesSize getBytesSize()}. The padding bytes for
-     * the cells must not be part of the array.
-     *
-     * @param d the source array
+     * @param d the source data array
      */
     public void copyFrom(short[] d) {
-        validateIsInt16();
-        copyFromUnchecked(d, Element.DataType.SIGNED_16, d.length);
+        mRS.validate();
+        if (mCurrentDimZ > 0) {
+            copy3DRangeFrom(0, 0, 0, mCurrentDimX, mCurrentDimY, mCurrentDimZ, d);
+        } else if (mCurrentDimY > 0) {
+            copy2DRangeFrom(0, 0, mCurrentDimX, mCurrentDimY, d);
+        } else {
+            copy1DRangeFrom(0, mCurrentCount, d);
+        }
     }
 
     /**
      * Copy into this Allocation from an array.  This variant is type checked
      * and will generate exceptions if the Allocation's {@link
-     * android.support.v8.renderscript.Element} is not an 8 bit integer nor a vector of 8 bit
-     * integers {@link android.support.v8.renderscript.Element.DataType}.
+     * android.support.v8.renderscript.Element} is not an 8 bit integer type.
      *
-     * <p> If the Allocation does not have Vec3 Elements, then the size of the
-     * array in bytes must be at least the size of the Allocation {@link
-     * #getBytesSize getBytesSize()}.
-     *
-     * <p> If the Allocation has Vec3 Elements and {@link #setAutoPadding AutoPadding}
-     * is disabled, then the size of the array in bytes must be at least the size
-     * of the Allocation {@link #getBytesSize getBytesSize()}. The padding bytes for
-     * the cells must be part of the array.
-     *
-     * <p> If the Allocation has Vec3 Elements and {@link #setAutoPadding AutoPadding}
-     * is enabled, then the size of the array in bytes must be at least 3/4 the size
-     * of the Allocation {@link #getBytesSize getBytesSize()}. The padding bytes for
-     * the cells must not be part of the array.
-     *
-     * @param d the source array
+     * @param d the source data array
      */
     public void copyFrom(byte[] d) {
-        validateIsInt8();
-        copyFromUnchecked(d, Element.DataType.SIGNED_8, d.length);
+        mRS.validate();
+        if (mCurrentDimZ > 0) {
+            copy3DRangeFrom(0, 0, 0, mCurrentDimX, mCurrentDimY, mCurrentDimZ, d);
+        } else if (mCurrentDimY > 0) {
+            copy2DRangeFrom(0, 0, mCurrentDimX, mCurrentDimY, d);
+        } else {
+            copy1DRangeFrom(0, mCurrentCount, d);
+        }
     }
 
     /**
      * Copy into this Allocation from an array.  This variant is type checked
      * and will generate exceptions if the Allocation's {@link
-     * android.support.v8.renderscript.Element} is neither a 32 bit float nor a vector of
-     * 32 bit floats {@link android.support.v8.renderscript.Element.DataType}.
+     * android.support.v8.renderscript.Element} is not a 32 bit float type.
      *
-     * <p> If the Allocation does not have Vec3 Elements, then the size of the
-     * array in bytes must be at least the size of the Allocation {@link
-     * #getBytesSize getBytesSize()}.
-     *
-     * <p> If the Allocation has Vec3 Elements and {@link #setAutoPadding AutoPadding}
-     * is disabled, then the size of the array in bytes must be at least the size
-     * of the Allocation {@link #getBytesSize getBytesSize()}. The padding bytes for
-     * the cells must be part of the array.
-     *
-     * <p> If the Allocation has Vec3 Elements and {@link #setAutoPadding AutoPadding}
-     * is enabled, then the size of the array in bytes must be at least 3/4 the size
-     * of the Allocation {@link #getBytesSize getBytesSize()}. The padding bytes for
-     * the cells must not be part of the array.
-     *
-     * @param d the source array
+     * @param d the source data array
      */
     public void copyFrom(float[] d) {
-        validateIsFloat32();
-        copyFromUnchecked(d, Element.DataType.FLOAT_32, d.length);
+        mRS.validate();
+        if (mCurrentDimZ > 0) {
+            copy3DRangeFrom(0, 0, 0, mCurrentDimX, mCurrentDimY, mCurrentDimZ, d);
+        } else if (mCurrentDimY > 0) {
+            copy2DRangeFrom(0, 0, mCurrentDimX, mCurrentDimY, d);
+        } else {
+            copy1DRangeFrom(0, mCurrentCount, d);
+        }
     }
 
     /**
@@ -996,11 +640,10 @@ public class Allocation extends BaseObj {
         mRS.validate();
         int eSize = mType.mElement.getBytesSize();
         final byte[] data = fp.getData();
-        int data_length = fp.getPos();
 
-        int count = data_length / eSize;
-        if ((eSize * count) != data_length) {
-            throw new RSIllegalArgumentException("Field packer length " + data_length +
+        int count = data.length / eSize;
+        if ((eSize * count) != data.length) {
+            throw new RSIllegalArgumentException("Field packer length " + data.length +
                                                " not divisible by element size " + eSize + ".");
         }
         copy1DRangeFromUnchecked(xoff, count, data);
@@ -1024,62 +667,19 @@ public class Allocation extends BaseObj {
         }
 
         final byte[] data = fp.getData();
-        int data_length = fp.getPos();
         int eSize = mType.mElement.mElements[component_number].getBytesSize();
         eSize *= mType.mElement.mArraySizes[component_number];
 
-        if (data_length != eSize) {
-            throw new RSIllegalArgumentException("Field packer sizelength " + data_length +
+        if (data.length != eSize) {
+            throw new RSIllegalArgumentException("Field packer sizelength " + data.length +
                                                " does not match component size " + eSize + ".");
         }
 
         mRS.nAllocationElementData1D(getIDSafe(), xoff, mSelectedLOD,
-                                     component_number, data, data_length);
+                                     component_number, data, data.length);
     }
 
-    /**
-     * @hide
-     * This is only intended to be used by auto-generated code reflected from
-     * the RenderScript script files.
-     *
-     * @param xoff
-     * @param yoff
-     * @param zoff
-     * @param component_number
-     * @param fp
-     */
-    /*
-    public void setFromFieldPacker(int xoff, int yoff, int zoff, int component_number, FieldPacker fp) {
-        mRS.validate();
-        if (component_number >= mType.mElement.mElements.length) {
-            throw new RSIllegalArgumentException("Component_number " + component_number + " out of range.");
-        }
-        if(xoff < 0) {
-            throw new RSIllegalArgumentException("Offset x must be >= 0.");
-        }
-        if(yoff < 0) {
-            throw new RSIllegalArgumentException("Offset y must be >= 0.");
-        }
-        if(zoff < 0) {
-            throw new RSIllegalArgumentException("Offset z must be >= 0.");
-        }
-
-        final byte[] data = fp.getData();
-        int data_length = fp.getPos();
-        int eSize = mType.mElement.mElements[component_number].getBytesSize();
-        eSize *= mType.mElement.mArraySizes[component_number];
-
-        if (data_length != eSize) {
-            throw new RSIllegalArgumentException("Field packer sizelength " + data_length +
-                                               " does not match component size " + eSize + ".");
-        }
-
-        mRS.nAllocationElementData(getIDSafe(), xoff, yoff, zoff, mSelectedLOD,
-                                   component_number, data, data_length);
-    }
-    */
-
-    private void data1DChecks(int off, int count, int len, int dataSize, boolean usePadding) {
+    private void data1DChecks(int off, int count, int len, int dataSize) {
         mRS.validate();
         if(off < 0) {
             throw new RSIllegalArgumentException("Offset must be >= 0.");
@@ -1091,14 +691,8 @@ public class Allocation extends BaseObj {
             throw new RSIllegalArgumentException("Overflow, Available count " + mCurrentCount +
                                                ", got " + count + " at offset " + off + ".");
         }
-        if(usePadding) {
-            if(len < dataSize / 4 * 3) {
-                throw new RSIllegalArgumentException("Array too small for allocation type.");
-            }
-        } else {
-            if(len < dataSize) {
-                throw new RSIllegalArgumentException("Array too small for allocation type.");
-            }
+        if(len < dataSize) {
+            throw new RSIllegalArgumentException("Array too small for allocation type.");
         }
     }
 
@@ -1116,296 +710,113 @@ public class Allocation extends BaseObj {
         mRS.nAllocationGenerateMipmaps(getID(mRS));
     }
 
-    private void copy1DRangeFromUnchecked(int off, int count, Object array,
-                                          Element.DataType dt, int arrayLen) {
-        final int dataSize = mType.mElement.getBytesSize() * count;
-        // AutoPadding for Vec3 Element
-        boolean usePadding = false;
-        if (mAutoPadding && (mType.getElement().getVectorSize() == 3)) {
-            usePadding = true;
-        }
-        data1DChecks(off, count, arrayLen * dt.mSize, dataSize, usePadding);
-        mRS.nAllocationData1D(getIDSafe(), off, mSelectedLOD, count, array, dataSize, dt,
-                              mType.mElement.mType.mSize, usePadding);
-    }
-
     /**
-     * Copy an array into a 1D region of this Allocation.  This method does not
+     * Copy an array into part of this Allocation.  This method does not
      * guarantee that the Allocation is compatible with the input buffer.
-     *
-     * <p> The size of the region is: count * {@link #getElement}.{@link
-     * Element#getBytesSize}.
-     *
-     * <p> If the Allocation does not have Vec3 Elements, then the size of the
-     * array in bytes must be at least the size of the region.
-     *
-     * <p> If the Allocation has Vec3 Elements and {@link #setAutoPadding AutoPadding}
-     * is disabled, then the size of the array in bytes must be at least the size
-     * of the region. The padding bytes for the cells must be part of the array.
-     *
-     * <p> If the Allocation has Vec3 Elements and {@link #setAutoPadding AutoPadding}
-     * is enabled, then the size of the array in bytes must be at least 3/4 the size
-     * of the region. The padding bytes for the cells must not be part of the array.
      *
      * @param off The offset of the first element to be copied.
      * @param count The number of elements to be copied.
-     * @param array The source array
-     */
-    public void copy1DRangeFromUnchecked(int off, int count, Object array) {
-        copy1DRangeFromUnchecked(off, count, array,
-                                 validateObjectIsPrimitiveArray(array, false),
-                                 java.lang.reflect.Array.getLength(array));
-    }
-
-    /**
-     * Copy an array into a 1D region of this Allocation.  This method does not
-     * guarantee that the Allocation is compatible with the input buffer.
-     *
-     * <p> The size of the region is: count * {@link #getElement}.{@link
-     * Element#getBytesSize}.
-     *
-     * <p> If the Allocation does not have Vec3 Elements, then the size of the
-     * array in bytes must be at least the size of the region.
-     *
-     * <p> If the Allocation has Vec3 Elements and {@link #setAutoPadding AutoPadding}
-     * is disabled, then the size of the array in bytes must be at least the size
-     * of the region. The padding bytes for the cells must be part of the array.
-     *
-     * <p> If the Allocation has Vec3 Elements and {@link #setAutoPadding AutoPadding}
-     * is enabled, then the size of the array in bytes must be at least 3/4 the size
-     * of the region. The padding bytes for the cells must not be part of the array.
-     *
-     * @param off The offset of the first element to be copied.
-     * @param count The number of elements to be copied.
-     * @param d the source array
+     * @param d the source data array
      */
     public void copy1DRangeFromUnchecked(int off, int count, int[] d) {
-        copy1DRangeFromUnchecked(off, count, (Object)d, Element.DataType.SIGNED_32, d.length);
+        int dataSize = mType.mElement.getBytesSize() * count;
+        data1DChecks(off, count, d.length * 4, dataSize);
+        mRS.nAllocationData1D(getIDSafe(), off, mSelectedLOD, count, d, dataSize);
     }
-
     /**
-     * Copy an array into a 1D region of this Allocation.  This method does not
+     * Copy an array into part of this Allocation.  This method does not
      * guarantee that the Allocation is compatible with the input buffer.
-     *
-     * <p> The size of the region is: count * {@link #getElement}.{@link
-     * Element#getBytesSize}.
-     *
-     * <p> If the Allocation does not have Vec3 Elements, then the size of the
-     * array in bytes must be at least the size of the region.
-     *
-     * <p> If the Allocation has Vec3 Elements and {@link #setAutoPadding AutoPadding}
-     * is disabled, then the size of the array in bytes must be at least the size
-     * of the region. The padding bytes for the cells must be part of the array.
-     *
-     * <p> If the Allocation has Vec3 Elements and {@link #setAutoPadding AutoPadding}
-     * is enabled, then the size of the array in bytes must be at least 3/4 the size
-     * of the region. The padding bytes for the cells must not be part of the array.
      *
      * @param off The offset of the first element to be copied.
      * @param count The number of elements to be copied.
-     * @param d the source array
+     * @param d the source data array
      */
     public void copy1DRangeFromUnchecked(int off, int count, short[] d) {
-        copy1DRangeFromUnchecked(off, count, (Object)d, Element.DataType.SIGNED_16, d.length);
+        int dataSize = mType.mElement.getBytesSize() * count;
+        data1DChecks(off, count, d.length * 2, dataSize);
+        mRS.nAllocationData1D(getIDSafe(), off, mSelectedLOD, count, d, dataSize);
     }
-
     /**
-     * Copy an array into a 1D region of this Allocation.  This method does not
+     * Copy an array into part of this Allocation.  This method does not
      * guarantee that the Allocation is compatible with the input buffer.
-     *
-     * <p> The size of the region is: count * {@link #getElement}.{@link
-     * Element#getBytesSize}.
-     *
-     * <p> If the Allocation does not have Vec3 Elements, then the size of the
-     * array in bytes must be at least the size of the region.
-     *
-     * <p> If the Allocation has Vec3 Elements and {@link #setAutoPadding AutoPadding}
-     * is disabled, then the size of the array in bytes must be at least the size
-     * of the region. The padding bytes for the cells must be part of the array.
-     *
-     * <p> If the Allocation has Vec3 Elements and {@link #setAutoPadding AutoPadding}
-     * is enabled, then the size of the array in bytes must be at least 3/4 the size
-     * of the region. The padding bytes for the cells must not be part of the array.
      *
      * @param off The offset of the first element to be copied.
      * @param count The number of elements to be copied.
-     * @param d the source array
+     * @param d the source data array
      */
     public void copy1DRangeFromUnchecked(int off, int count, byte[] d) {
-        copy1DRangeFromUnchecked(off, count, (Object)d, Element.DataType.SIGNED_8, d.length);
+        int dataSize = mType.mElement.getBytesSize() * count;
+        data1DChecks(off, count, d.length, dataSize);
+        mRS.nAllocationData1D(getIDSafe(), off, mSelectedLOD, count, d, dataSize);
     }
-
     /**
-     * Copy an array into a 1D region of this Allocation.  This method does not
+     * Copy an array into part of this Allocation.  This method does not
      * guarantee that the Allocation is compatible with the input buffer.
      *
-     * <p> The size of the region is: count * {@link #getElement}.{@link
-     * Element#getBytesSize}.
-     *
-     * <p> If the Allocation does not have Vec3 Elements, then the size of the
-     * array in bytes must be at least the size of the region.
-     *
-     * <p> If the Allocation has Vec3 Elements and {@link #setAutoPadding AutoPadding}
-     * is disabled, then the size of the array in bytes must be at least the size
-     * of the region. The padding bytes for the cells must be part of the array.
-     *
-     * <p> If the Allocation has Vec3 Elements and {@link #setAutoPadding AutoPadding}
-     * is enabled, then the size of the array in bytes must be at least 3/4 the size
-     * of the region. The padding bytes for the cells must not be part of the array.
-     *
      * @param off The offset of the first element to be copied.
      * @param count The number of elements to be copied.
-     * @param d the source array
+     * @param d the source data array
      */
     public void copy1DRangeFromUnchecked(int off, int count, float[] d) {
-        copy1DRangeFromUnchecked(off, count, (Object)d, Element.DataType.FLOAT_32, d.length);
-    }
-
-
-    /**
-     * Copy an array into a 1D region of this Allocation.  This variant is type checked
-     * and will generate exceptions if the Allocation's {@link
-     * android.support.v8.renderscript.Element} does not match the component type
-     * of the array passed in.
-     *
-     * <p> The size of the region is: count * {@link #getElement}.{@link
-     * Element#getBytesSize}.
-     *
-     * <p> If the Allocation does not have Vec3 Elements, then the size of the
-     * array in bytes must be at least the size of the region.
-     *
-     * <p> If the Allocation has Vec3 Elements and {@link #setAutoPadding AutoPadding}
-     * is disabled, then the size of the array in bytes must be at least the size
-     * of the region. The padding bytes for the cells must be part of the array.
-     *
-     * <p> If the Allocation has Vec3 Elements and {@link #setAutoPadding AutoPadding}
-     * is enabled, then the size of the array in bytes must be at least 3/4 the size
-     * of the region. The padding bytes for the cells must not be part of the array.
-     *
-     * @param off The offset of the first element to be copied.
-     * @param count The number of elements to be copied.
-     * @param array The source array.
-     */
-    public void copy1DRangeFrom(int off, int count, Object array) {
-        copy1DRangeFromUnchecked(off, count, array,
-                                 validateObjectIsPrimitiveArray(array, true),
-                                 java.lang.reflect.Array.getLength(array));
+        int dataSize = mType.mElement.getBytesSize() * count;
+        data1DChecks(off, count, d.length * 4, dataSize);
+        mRS.nAllocationData1D(getIDSafe(), off, mSelectedLOD, count, d, dataSize);
     }
 
     /**
-     * Copy an array into a 1D region of this Allocation.  This variant is type checked
-     * and will generate exceptions if the Allocation's {@link
-     * android.support.v8.renderscript.Element} is not an 32 bit integer nor a vector of 32 bit
-     * integers {@link android.support.v8.renderscript.Element.DataType}.
-     *
-     * <p> The size of the region is: count * {@link #getElement}.{@link
-     * Element#getBytesSize}.
-     *
-     * <p> If the Allocation does not have Vec3 Elements, then the size of the
-     * array in bytes must be at least the size of the region.
-     *
-     * <p> If the Allocation has Vec3 Elements and {@link #setAutoPadding AutoPadding}
-     * is disabled, then the size of the array in bytes must be at least the size
-     * of the region. The padding bytes for the cells must be part of the array.
-     *
-     * <p> If the Allocation has Vec3 Elements and {@link #setAutoPadding AutoPadding}
-     * is enabled, then the size of the array in bytes must be at least 3/4 the size
-     * of the region. The padding bytes for the cells must not be part of the array.
+     * Copy an array into part of this Allocation.  This variant is type checked
+     * and will generate exceptions if the Allocation type is not a 32 bit
+     * integer type.
      *
      * @param off The offset of the first element to be copied.
      * @param count The number of elements to be copied.
-     * @param d the source array
+     * @param d the source data array
      */
     public void copy1DRangeFrom(int off, int count, int[] d) {
         validateIsInt32();
-        copy1DRangeFromUnchecked(off, count, d, Element.DataType.SIGNED_32, d.length);
+        copy1DRangeFromUnchecked(off, count, d);
     }
 
     /**
-     * Copy an array into a 1D region of this Allocation.  This variant is type checked
-     * and will generate exceptions if the Allocation's {@link
-     * android.support.v8.renderscript.Element} is not an 16 bit integer nor a vector of 16 bit
-     * integers {@link android.support.v8.renderscript.Element.DataType}.
-     *
-     * <p> The size of the region is: count * {@link #getElement}.{@link
-     * Element#getBytesSize}.
-     *
-     * <p> If the Allocation does not have Vec3 Elements, then the size of the
-     * array in bytes must be at least the size of the region.
-     *
-     * <p> If the Allocation has Vec3 Elements and {@link #setAutoPadding AutoPadding}
-     * is disabled, then the size of the array in bytes must be at least the size
-     * of the region. The padding bytes for the cells must be part of the array.
-     *
-     * <p> If the Allocation has Vec3 Elements and {@link #setAutoPadding AutoPadding}
-     * is enabled, then the size of the array in bytes must be at least 3/4 the size
-     * of the region. The padding bytes for the cells must not be part of the array.
+     * Copy an array into part of this Allocation.  This variant is type checked
+     * and will generate exceptions if the Allocation type is not a 16 bit
+     * integer type.
      *
      * @param off The offset of the first element to be copied.
      * @param count The number of elements to be copied.
-     * @param d the source array
+     * @param d the source data array
      */
     public void copy1DRangeFrom(int off, int count, short[] d) {
         validateIsInt16();
-        copy1DRangeFromUnchecked(off, count, d, Element.DataType.SIGNED_16, d.length);
+        copy1DRangeFromUnchecked(off, count, d);
     }
 
     /**
-     * Copy an array into a 1D region of this Allocation.  This variant is type checked
-     * and will generate exceptions if the Allocation's {@link
-     * android.support.v8.renderscript.Element} is not an 8 bit integer nor a vector of 8 bit
-     * integers {@link android.support.v8.renderscript.Element.DataType}.
-     *
-     * <p> The size of the region is: count * {@link #getElement}.{@link
-     * Element#getBytesSize}.
-     *
-     * <p> If the Allocation does not have Vec3 Elements, then the size of the
-     * array in bytes must be at least the size of the region.
-     *
-     * <p> If the Allocation has Vec3 Elements and {@link #setAutoPadding AutoPadding}
-     * is disabled, then the size of the array in bytes must be at least the size
-     * of the region. The padding bytes for the cells must be part of the array.
-     *
-     * <p> If the Allocation has Vec3 Elements and {@link #setAutoPadding AutoPadding}
-     * is enabled, then the size of the array in bytes must be at least 3/4 the size
-     * of the region. The padding bytes for the cells must not be part of the array.
+     * Copy an array into part of this Allocation.  This variant is type checked
+     * and will generate exceptions if the Allocation type is not an 8 bit
+     * integer type.
      *
      * @param off The offset of the first element to be copied.
      * @param count The number of elements to be copied.
-     * @param d the source array
+     * @param d the source data array
      */
     public void copy1DRangeFrom(int off, int count, byte[] d) {
         validateIsInt8();
-        copy1DRangeFromUnchecked(off, count, d, Element.DataType.SIGNED_8, d.length);
+        copy1DRangeFromUnchecked(off, count, d);
     }
 
     /**
-     * Copy an array into a 1D region of this Allocation.  This variant is type checked
-     * and will generate exceptions if the Allocation's {@link
-     * android.support.v8.renderscript.Element} is neither a 32 bit float nor a vector of
-     * 32 bit floats {@link android.support.v8.renderscript.Element.DataType}.
-     *
-     * <p> The size of the region is: count * {@link #getElement}.{@link
-     * Element#getBytesSize}.
-     *
-     * <p> If the Allocation does not have Vec3 Elements, then the size of the
-     * array in bytes must be at least the size of the region.
-     *
-     * <p> If the Allocation has Vec3 Elements and {@link #setAutoPadding AutoPadding}
-     * is disabled, then the size of the array in bytes must be at least the size
-     * of the region. The padding bytes for the cells must be part of the array.
-     *
-     * <p> If the Allocation has Vec3 Elements and {@link #setAutoPadding AutoPadding}
-     * is enabled, then the size of the array in bytes must be at least 3/4 the size
-     * of the region. The padding bytes for the cells must not be part of the array.
+     * Copy an array into part of this Allocation.  This variant is type checked
+     * and will generate exceptions if the Allocation type is not a 32 bit float
+     * type.
      *
      * @param off The offset of the first element to be copied.
      * @param count The number of elements to be copied.
-     * @param d the source array.
+     * @param d the source data array.
      */
     public void copy1DRangeFrom(int off, int count, float[] d) {
         validateIsFloat32();
-        copy1DRangeFromUnchecked(off, count, d, Element.DataType.FLOAT_32, d.length);
+        copy1DRangeFromUnchecked(off, count, d);
     }
 
      /**
@@ -1441,82 +852,38 @@ public class Allocation extends BaseObj {
         }
     }
 
-    void copy2DRangeFromUnchecked(int xoff, int yoff, int w, int h, Object array,
-                                  Element.DataType dt, int arrayLen) {
+    void copy2DRangeFromUnchecked(int xoff, int yoff, int w, int h, byte[] data) {
         mRS.validate();
         validate2DRange(xoff, yoff, w, h);
-        final int dataSize = mType.mElement.getBytesSize() * w * h;
-        // AutoPadding for Vec3 Element
-        boolean usePadding = false;
-        int sizeBytes = arrayLen * dt.mSize;
-        if (mAutoPadding && (mType.getElement().getVectorSize() == 3)) {
-            if (dataSize / 4 * 3 > sizeBytes) {
-                throw new RSIllegalArgumentException("Array too small for allocation type.");
-            }
-            usePadding = true;
-            sizeBytes = dataSize;
-        } else {
-            if (dataSize > sizeBytes) {
-                throw new RSIllegalArgumentException("Array too small for allocation type.");
-            }
-        }
-        mRS.nAllocationData2D(getIDSafe(), xoff, yoff, mSelectedLOD, mSelectedFace.mID, w, h,
-                              array, sizeBytes, dt,
-                              mType.mElement.mType.mSize, usePadding);
+        mRS.nAllocationData2D(getIDSafe(), xoff, yoff, mSelectedLOD, mSelectedFace.mID,
+                              w, h, data, data.length);
     }
+
+    void copy2DRangeFromUnchecked(int xoff, int yoff, int w, int h, short[] data) {
+        mRS.validate();
+        validate2DRange(xoff, yoff, w, h);
+        mRS.nAllocationData2D(getIDSafe(), xoff, yoff, mSelectedLOD, mSelectedFace.mID,
+                              w, h, data, data.length * 2);
+    }
+
+    void copy2DRangeFromUnchecked(int xoff, int yoff, int w, int h, int[] data) {
+        mRS.validate();
+        validate2DRange(xoff, yoff, w, h);
+        mRS.nAllocationData2D(getIDSafe(), xoff, yoff, mSelectedLOD, mSelectedFace.mID,
+                              w, h, data, data.length * 4);
+    }
+
+    void copy2DRangeFromUnchecked(int xoff, int yoff, int w, int h, float[] data) {
+        mRS.validate();
+        validate2DRange(xoff, yoff, w, h);
+        mRS.nAllocationData2D(getIDSafe(), xoff, yoff, mSelectedLOD, mSelectedFace.mID,
+                              w, h, data, data.length * 4);
+    }
+
 
     /**
      * Copy from an array into a rectangular region in this Allocation.  The
-     * array is assumed to be tightly packed. This variant is type checked
-     * and will generate exceptions if the Allocation's {@link
-     * android.support.v8.renderscript.Element} does not match the input data type.
-     *
-     * <p> The size of the region is: w * h * {@link #getElement}.{@link
-     * Element#getBytesSize}.
-     *
-     * <p> If the Allocation does not have Vec3 Elements, then the size of the
-     * array in bytes must be at least the size of the region.
-     *
-     * <p> If the Allocation has Vec3 Elements and {@link #setAutoPadding AutoPadding}
-     * is disabled, then the size of the array in bytes must be at least the size
-     * of the region. The padding bytes for the cells must be part of the array.
-     *
-     * <p> If the Allocation has Vec3 Elements and {@link #setAutoPadding AutoPadding}
-     * is enabled, then the size of the array in bytes must be at least 3/4 the size
-     * of the region. The padding bytes for the cells must not be part of the array.
-     *
-     * @param xoff X offset of the region to update in this Allocation
-     * @param yoff Y offset of the region to update in this Allocation
-     * @param w Width of the region to update
-     * @param h Height of the region to update
-     * @param array Data to be placed into the Allocation
-     */
-    public void copy2DRangeFrom(int xoff, int yoff, int w, int h, Object array) {
-        copy2DRangeFromUnchecked(xoff, yoff, w, h, array,
-                                 validateObjectIsPrimitiveArray(array, true),
-                                 java.lang.reflect.Array.getLength(array));
-    }
-
-    /**
-     * Copy from an array into a rectangular region in this Allocation.  The
-     * array is assumed to be tightly packed. This variant is type checked
-     * and will generate exceptions if the Allocation's {@link
-     * android.support.v8.renderscript.Element} is not an 8 bit integer nor a vector of 8 bit
-     * integers {@link android.support.v8.renderscript.Element.DataType}.
-     *
-     * <p> The size of the region is: w * h * {@link #getElement}.{@link
-     * Element#getBytesSize}.
-     *
-     * <p> If the Allocation does not have Vec3 Elements, then the size of the
-     * array in bytes must be at least the size of the region.
-     *
-     * <p> If the Allocation has Vec3 Elements and {@link #setAutoPadding AutoPadding}
-     * is disabled, then the size of the array in bytes must be at least the size
-     * of the region. The padding bytes for the cells must be part of the array.
-     *
-     * <p> If the Allocation has Vec3 Elements and {@link #setAutoPadding AutoPadding}
-     * is enabled, then the size of the array in bytes must be at least 3/4 the size
-     * of the region. The padding bytes for the cells must not be part of the array.
+     * array is assumed to be tightly packed.
      *
      * @param xoff X offset of the region to update in this Allocation
      * @param yoff Y offset of the region to update in this Allocation
@@ -1526,30 +893,12 @@ public class Allocation extends BaseObj {
      */
     public void copy2DRangeFrom(int xoff, int yoff, int w, int h, byte[] data) {
         validateIsInt8();
-        copy2DRangeFromUnchecked(xoff, yoff, w, h, data,
-                                 Element.DataType.SIGNED_8, data.length);
+        copy2DRangeFromUnchecked(xoff, yoff, w, h, data);
     }
 
     /**
      * Copy from an array into a rectangular region in this Allocation.  The
-     * array is assumed to be tightly packed. This variant is type checked
-     * and will generate exceptions if the Allocation's {@link
-     * android.support.v8.renderscript.Element} is not a 16 bit integer nor a vector of 16 bit
-     * integers {@link android.support.v8.renderscript.Element.DataType}.
-     *
-     * <p> The size of the region is: w * h * {@link #getElement}.{@link
-     * Element#getBytesSize}.
-     *
-     * <p> If the Allocation does not have Vec3 Elements, then the size of the
-     * array in bytes must be at least the size of the region.
-     *
-     * <p> If the Allocation has Vec3 Elements and {@link #setAutoPadding AutoPadding}
-     * is disabled, then the size of the array in bytes must be at least the size
-     * of the region. The padding bytes for the cells must be part of the array.
-     *
-     * <p> If the Allocation has Vec3 Elements and {@link #setAutoPadding AutoPadding}
-     * is enabled, then the size of the array in bytes must be at least 3/4 the size
-     * of the region. The padding bytes for the cells must not be part of the array.
+     * array is assumed to be tightly packed.
      *
      * @param xoff X offset of the region to update in this Allocation
      * @param yoff Y offset of the region to update in this Allocation
@@ -1559,30 +908,12 @@ public class Allocation extends BaseObj {
      */
     public void copy2DRangeFrom(int xoff, int yoff, int w, int h, short[] data) {
         validateIsInt16();
-        copy2DRangeFromUnchecked(xoff, yoff, w, h, data,
-                                 Element.DataType.SIGNED_16, data.length);
+        copy2DRangeFromUnchecked(xoff, yoff, w, h, data);
     }
 
     /**
      * Copy from an array into a rectangular region in this Allocation.  The
-     * array is assumed to be tightly packed. This variant is type checked
-     * and will generate exceptions if the Allocation's {@link
-     * android.support.v8.renderscript.Element} is not a 32 bit integer nor a vector of 32 bit
-     * integers {@link android.support.v8.renderscript.Element.DataType}.
-     *
-     * <p> The size of the region is: w * h * {@link #getElement}.{@link
-     * Element#getBytesSize}.
-     *
-     * <p> If the Allocation does not have Vec3 Elements, then the size of the
-     * array in bytes must be at least the size of the region.
-     *
-     * <p> If the Allocation has Vec3 Elements and {@link #setAutoPadding AutoPadding}
-     * is disabled, then the size of the array in bytes must be at least the size
-     * of the region. The padding bytes for the cells must be part of the array.
-     *
-     * <p> If the Allocation has Vec3 Elements and {@link #setAutoPadding AutoPadding}
-     * is enabled, then the size of the array in bytes must be at least 3/4 the size
-     * of the region. The padding bytes for the cells must not be part of the array.
+     * array is assumed to be tightly packed.
      *
      * @param xoff X offset of the region to update in this Allocation
      * @param yoff Y offset of the region to update in this Allocation
@@ -1592,30 +923,12 @@ public class Allocation extends BaseObj {
      */
     public void copy2DRangeFrom(int xoff, int yoff, int w, int h, int[] data) {
         validateIsInt32();
-        copy2DRangeFromUnchecked(xoff, yoff, w, h, data,
-                                 Element.DataType.SIGNED_32, data.length);
+        copy2DRangeFromUnchecked(xoff, yoff, w, h, data);
     }
 
     /**
      * Copy from an array into a rectangular region in this Allocation.  The
-     * array is assumed to be tightly packed. This variant is type checked
-     * and will generate exceptions if the Allocation's {@link
-     * android.support.v8.renderscript.Element} is neither a 32 bit float nor a vector of
-     * 32 bit floats {@link android.support.v8.renderscript.Element.DataType}.
-     *
-     * <p> The size of the region is: w * h * {@link #getElement}.{@link
-     * Element#getBytesSize}.
-     *
-     * <p> If the Allocation does not have Vec3 Elements, then the size of the
-     * array in bytes must be at least the size of the region.
-     *
-     * <p> If the Allocation has Vec3 Elements and {@link #setAutoPadding AutoPadding}
-     * is disabled, then the size of the array in bytes must be at least the size
-     * of the region. The padding bytes for the cells must be part of the array.
-     *
-     * <p> If the Allocation has Vec3 Elements and {@link #setAutoPadding AutoPadding}
-     * is enabled, then the size of the array in bytes must be at least 3/4 the size
-     * of the region. The padding bytes for the cells must not be part of the array.
+     * array is assumed to be tightly packed.
      *
      * @param xoff X offset of the region to update in this Allocation
      * @param yoff Y offset of the region to update in this Allocation
@@ -1625,8 +938,7 @@ public class Allocation extends BaseObj {
      */
     public void copy2DRangeFrom(int xoff, int yoff, int w, int h, float[] data) {
         validateIsFloat32();
-        copy2DRangeFromUnchecked(xoff, yoff, w, h, data,
-                                 Element.DataType.FLOAT_32, data.length);
+        copy2DRangeFromUnchecked(xoff, yoff, w, h, data);
     }
 
     /**
@@ -1692,55 +1004,54 @@ public class Allocation extends BaseObj {
     }
 
     /**
-     * Copy a rectangular region from the array into the allocation.
-     * The array is assumed to be tightly packed.
+     * @hide
      *
-     * The data type of the array is not required to be the same as
-     * the element data type.
      */
-    private void copy3DRangeFromUnchecked(int xoff, int yoff, int zoff, int w, int h, int d,
-                                          Object array, Element.DataType dt, int arrayLen) {
+    void copy3DRangeFromUnchecked(int xoff, int yoff, int zoff, int w, int h, int d, byte[] data) {
         mRS.validate();
         validate3DRange(xoff, yoff, zoff, w, h, d);
-        final int dataSize = mType.mElement.getBytesSize() * w * h * d;
-        // AutoPadding for Vec3 Element
-        boolean usePadding = false;
-        int sizeBytes = arrayLen * dt.mSize;
-        if (mAutoPadding && (mType.getElement().getVectorSize() == 3)) {
-            if (dataSize / 4 * 3 > sizeBytes) {
-                throw new RSIllegalArgumentException("Array too small for allocation type.");
-            }
-            usePadding = true;
-            sizeBytes = dataSize;
-        } else {
-            if (dataSize > sizeBytes) {
-                throw new RSIllegalArgumentException("Array too small for allocation type.");
-            }
-        }
-        mRS.nAllocationData3D(getIDSafe(), xoff, yoff, zoff, mSelectedLOD, w, h, d,
-                              array, sizeBytes, dt,
-                              mType.mElement.mType.mSize, usePadding);
+        mRS.nAllocationData3D(getIDSafe(), xoff, yoff, zoff, mSelectedLOD,
+                              w, h, d, data, data.length);
     }
 
     /**
-     * Copy from an array into a 3D region in this Allocation.  The
-     * array is assumed to be tightly packed. This variant is type checked
-     * and will generate exceptions if the Allocation's {@link
-     * android.support.v8.renderscript.Element} does not match the input data type.
+     * @hide
      *
-     * <p> The size of the region is: w * h * d * {@link #getElement}.{@link
-     * Element#getBytesSize}.
+     */
+    void copy3DRangeFromUnchecked(int xoff, int yoff, int zoff, int w, int h, int d, short[] data) {
+        mRS.validate();
+        validate3DRange(xoff, yoff, zoff, w, h, d);
+        mRS.nAllocationData3D(getIDSafe(), xoff, yoff, zoff, mSelectedLOD,
+                              w, h, d, data, data.length * 2);
+    }
+
+    /**
+     * @hide
      *
-     * <p> If the Allocation does not have Vec3 Elements, then the size of the
-     * array in bytes must be at least the size of the region.
+     */
+    void copy3DRangeFromUnchecked(int xoff, int yoff, int zoff, int w, int h, int d, int[] data) {
+        mRS.validate();
+        validate3DRange(xoff, yoff, zoff, w, h, d);
+        mRS.nAllocationData3D(getIDSafe(), xoff, yoff, zoff, mSelectedLOD,
+                              w, h, d, data, data.length * 4);
+    }
+
+    /**
+     * @hide
      *
-     * <p> If the Allocation has Vec3 Elements and {@link #setAutoPadding AutoPadding}
-     * is disabled, then the size of the array in bytes must be at least the size
-     * of the region. The padding bytes for the cells must be part of the array.
-     *
-     * <p> If the Allocation has Vec3 Elements and {@link #setAutoPadding AutoPadding}
-     * is enabled, then the size of the array in bytes must be at least 3/4 the size
-     * of the region. The padding bytes for the cells must not be part of the array.
+     */
+    void copy3DRangeFromUnchecked(int xoff, int yoff, int zoff, int w, int h, int d, float[] data) {
+        mRS.validate();
+        validate3DRange(xoff, yoff, zoff, w, h, d);
+        mRS.nAllocationData3D(getIDSafe(), xoff, yoff, zoff, mSelectedLOD,
+                              w, h, d, data, data.length * 4);
+    }
+
+
+    /**
+     * @hide
+     * Copy a rectangular region from the array into the allocation.
+     * The array is assumed to be tightly packed.
      *
      * @param xoff X offset of the region to update in this Allocation
      * @param yoff Y offset of the region to update in this Allocation
@@ -1748,15 +1059,42 @@ public class Allocation extends BaseObj {
      * @param w Width of the region to update
      * @param h Height of the region to update
      * @param d Depth of the region to update
-     * @param array to be placed into the allocation
+     * @param data to be placed into the allocation
      */
-    public void copy3DRangeFrom(int xoff, int yoff, int zoff, int w, int h, int d, Object array) {
-        copy3DRangeFromUnchecked(xoff, yoff, zoff, w, h, d, array,
-                                 validateObjectIsPrimitiveArray(array, true),
-                                 java.lang.reflect.Array.getLength(array));
+    public void copy3DRangeFrom(int xoff, int yoff, int zoff, int w, int h, int d, byte[] data) {
+        validateIsInt8();
+        copy3DRangeFromUnchecked(xoff, yoff, zoff, w, h, d, data);
     }
 
     /**
+     * @hide
+     *
+     */
+    public void copy3DRangeFrom(int xoff, int yoff, int zoff, int w, int h, int d, short[] data) {
+        validateIsInt16();
+        copy3DRangeFromUnchecked(xoff, yoff, zoff, w, h, d, data);
+    }
+
+    /**
+     * @hide
+     *
+     */
+    public void copy3DRangeFrom(int xoff, int yoff, int zoff, int w, int h, int d, int[] data) {
+        validateIsInt32();
+        copy3DRangeFromUnchecked(xoff, yoff, zoff, w, h, d, data);
+    }
+
+    /**
+     * @hide
+     *
+     */
+    public void copy3DRangeFrom(int xoff, int yoff, int zoff, int w, int h, int d, float[] data) {
+        validateIsFloat32();
+        copy3DRangeFromUnchecked(xoff, yoff, zoff, w, h, d, data);
+    }
+
+    /**
+     * @hide
      * Copy a rectangular region into the allocation from another
      * allocation.
      *
@@ -1794,748 +1132,57 @@ public class Allocation extends BaseObj {
         mRS.nAllocationCopyToBitmap(getID(mRS), b);
     }
 
-    private void copyTo(Object array, Element.DataType dt, int arrayLen) {
-        mRS.validate();
-        boolean usePadding = false;
-        if (mAutoPadding && (mType.getElement().getVectorSize() == 3)) {
-            usePadding = true;
-        }
-        if (usePadding) {
-            if (dt.mSize * arrayLen < mSize / 4 * 3) {
-                throw new RSIllegalArgumentException(
-                    "Size of output array cannot be smaller than size of allocation.");
-            }
-        } else {
-            if (dt.mSize * arrayLen < mSize) {
-                throw new RSIllegalArgumentException(
-                    "Size of output array cannot be smaller than size of allocation.");
-            }
-        }
-        mRS.nAllocationRead(getID(mRS), array, dt, mType.mElement.mType.mSize, usePadding);
-    }
-
     /**
-     * Copy from the Allocation into an array. The method is type checked
-     * and will generate exceptions if the Allocation's {@link
-     * android.support.v8.renderscript.Element} does not match the input data type.
-     *
-     * <p> If the Allocation does not have Vec3 Elements, then the size of the
-     * array in bytes must be at least the size of the Allocation {@link
-     * #getBytesSize getBytesSize()}.
-     *
-     * <p> If the Allocation has Vec3 Elements and {@link #setAutoPadding AutoPadding}
-     * is disabled, then the size of the array in bytes must be at least the size
-     * of the Allocation {@link #getBytesSize getBytesSize()}. The padding bytes for
-     * the cells will be part of the array.
-     *
-     * <p> If the Allocation has Vec3 Elements and {@link #setAutoPadding AutoPadding}
-     * is enabled, then the size of the array in bytes must be at least 3/4 the size
-     * of the Allocation {@link #getBytesSize getBytesSize()}. The padding bytes for
-     * the cells must not be part of the array.
-     *
-     * @param array The array to be set from the Allocation.
-     */
-    public void copyTo(Object array) {
-        copyTo(array, validateObjectIsPrimitiveArray(array, true),
-               java.lang.reflect.Array.getLength(array));
-    }
-
-    /**
-     * Copy from the Allocation into a byte array. This variant is type checked
-     * and will generate exceptions if the Allocation's {@link
-     * android.support.v8.renderscript.Element} is neither an 8 bit integer nor a vector of 8 bit
-     * integers {@link android.support.v8.renderscript.Element.DataType}.
-     *
-     * <p> If the Allocation does not have Vec3 Elements, then the size of the
-     * array in bytes must be at least the size of the Allocation {@link
-     * #getBytesSize getBytesSize()}.
-     *
-     * <p> If the Allocation has Vec3 Elements and {@link #setAutoPadding AutoPadding}
-     * is disabled, then the size of the array in bytes must be at least the size
-     * of the Allocation {@link #getBytesSize getBytesSize()}. The padding bytes for
-     * the cells will be part of the array.
-     *
-     * <p> If the Allocation has Vec3 Elements and {@link #setAutoPadding AutoPadding}
-     * is enabled, then the size of the array in bytes must be at least 3/4 the size
-     * of the Allocation {@link #getBytesSize getBytesSize()}. The padding bytes for
-     * the cells must not be part of the array.
+     * Copy from the Allocation into a byte array.  The array must be at least
+     * as large as the Allocation.  The allocation must be of an 8 bit integer
+     * {@link android.support.v8.renderscript.Element} type.
      *
      * @param d The array to be set from the Allocation.
      */
     public void copyTo(byte[] d) {
         validateIsInt8();
-        copyTo(d, Element.DataType.SIGNED_8, d.length);
+        mRS.validate();
+        mRS.nAllocationRead(getID(mRS), d);
     }
 
     /**
-     * Copy from the Allocation into a short array. This variant is type checked
-     * and will generate exceptions if the Allocation's {@link
-     * android.support.v8.renderscript.Element} is not a 16 bit integer nor a vector of 16 bit
-     * integers {@link android.support.v8.renderscript.Element.DataType}.
-     *
-     * <p> If the Allocation does not have Vec3 Elements, then the size of the
-     * array in bytes must be at least the size of the Allocation {@link
-     * #getBytesSize getBytesSize()}.
-     *
-     * <p> If the Allocation has Vec3 Elements and {@link #setAutoPadding AutoPadding}
-     * is disabled, then the size of the array in bytes must be at least the size
-     * of the Allocation {@link #getBytesSize getBytesSize()}. The padding bytes for
-     * the cells will be part of the array.
-     *
-     * <p> If the Allocation has Vec3 Elements and {@link #setAutoPadding AutoPadding}
-     * is enabled, then the size of the array in bytes must be at least 3/4 the size
-     * of the Allocation {@link #getBytesSize getBytesSize()}. The padding bytes for
-     * the cells must not be part of the array.
+     * Copy from the Allocation into a short array.  The array must be at least
+     * as large as the Allocation.  The allocation must be of an 16 bit integer
+     * {@link android.support.v8.renderscript.Element} type.
      *
      * @param d The array to be set from the Allocation.
      */
     public void copyTo(short[] d) {
         validateIsInt16();
-        copyTo(d, Element.DataType.SIGNED_16, d.length);
+        mRS.validate();
+        mRS.nAllocationRead(getID(mRS), d);
     }
 
     /**
-     * Copy from the Allocation into a int array. This variant is type checked
-     * and will generate exceptions if the Allocation's {@link
-     * android.support.v8.renderscript.Element} is not a 32 bit integer nor a vector of 32 bit
-     * integers {@link android.support.v8.renderscript.Element.DataType}.
-     *
-     * <p> If the Allocation does not have Vec3 Elements, then the size of the
-     * array in bytes must be at least the size of the Allocation {@link
-     * #getBytesSize getBytesSize()}.
-     *
-     * <p> If the Allocation has Vec3 Elements and {@link #setAutoPadding AutoPadding}
-     * is disabled, then the size of the array in bytes must be at least the size
-     * of the Allocation {@link #getBytesSize getBytesSize()}. The padding bytes for
-     * the cells will be part of the array.
-     *
-     * <p> If the Allocation has Vec3 Elements and {@link #setAutoPadding AutoPadding}
-     * is enabled, then the size of the array in bytes must be at least 3/4 the size
-     * of the Allocation {@link #getBytesSize getBytesSize()}. The padding bytes for
-     * the cells must not be part of the array.
+     * Copy from the Allocation into a int array.  The array must be at least as
+     * large as the Allocation.  The allocation must be of an 32 bit integer
+     * {@link android.support.v8.renderscript.Element} type.
      *
      * @param d The array to be set from the Allocation.
      */
     public void copyTo(int[] d) {
         validateIsInt32();
-        copyTo(d, Element.DataType.SIGNED_32, d.length);
+        mRS.validate();
+        mRS.nAllocationRead(getID(mRS), d);
     }
 
     /**
-     * Copy from the Allocation into a float array. This variant is type checked
-     * and will generate exceptions if the Allocation's {@link
-     * android.support.v8.renderscript.Element} is neither a 32 bit float nor a vector of
-     * 32 bit floats {@link android.support.v8.renderscript.Element.DataType}.
-     *
-     * <p> If the Allocation does not have Vec3 Elements, then the size of the
-     * array in bytes must be at least the size of the Allocation {@link
-     * #getBytesSize getBytesSize()}.
-     *
-     * <p> If the Allocation has Vec3 Elements and {@link #setAutoPadding AutoPadding}
-     * is disabled, then the size of the array in bytes must be at least the size
-     * of the Allocation {@link #getBytesSize getBytesSize()}. The padding bytes for
-     * the cells will be part of the array.
-     *
-     * <p> If the Allocation has Vec3 Elements and {@link #setAutoPadding AutoPadding}
-     * is enabled, then the size of the array in bytes must be at least 3/4 the size
-     * of the Allocation {@link #getBytesSize getBytesSize()}. The padding bytes for
-     * the cells must not be part of the array.
+     * Copy from the Allocation into a float array.  The array must be at least
+     * as large as the Allocation.  The allocation must be of an 32 bit float
+     * {@link android.support.v8.renderscript.Element} type.
      *
      * @param d The array to be set from the Allocation.
      */
     public void copyTo(float[] d) {
         validateIsFloat32();
-        copyTo(d, Element.DataType.FLOAT_32, d.length);
-    }
-
-    /**
-     * @hide
-     * This is only intended to be used by auto-generated code reflected from
-     * the RenderScript script files and should not be used by developers.
-     *
-     * @param xoff
-     * @param yoff
-     * @param zoff
-     * @param component_number
-     * @param fp
-     */
-    /*
-    public void copyToFieldPacker(int xoff, int yoff, int zoff, int component_number, FieldPacker fp) {
         mRS.validate();
-        if (component_number >= mType.mElement.mElements.length) {
-            throw new RSIllegalArgumentException("Component_number " + component_number + " out of range.");
-        }
-        if(xoff < 0) {
-            throw new RSIllegalArgumentException("Offset x must be >= 0.");
-        }
-        if(yoff < 0) {
-            throw new RSIllegalArgumentException("Offset y must be >= 0.");
-        }
-        if(zoff < 0) {
-            throw new RSIllegalArgumentException("Offset z must be >= 0.");
-        }
-
-        final byte[] data = fp.getData();
-        int data_length = data.length;
-        int eSize = mType.mElement.mElements[component_number].getBytesSize();
-        eSize *= mType.mElement.mArraySizes[component_number];
-
-        if (data_length != eSize) {
-            throw new RSIllegalArgumentException("Field packer sizelength " + data_length +
-                                               " does not match component size " + eSize + ".");
-        }
-
-        mRS.nAllocationElementRead(getIDSafe(), xoff, yoff, zoff, mSelectedLOD,
-                                   component_number, data, data_length);
+        mRS.nAllocationRead(getID(mRS), d);
     }
-    */
-
-    private void copy1DRangeToUnchecked(int off, int count, Object array,
-                                        Element.DataType dt, int arrayLen) {
-        final int dataSize = mType.mElement.getBytesSize() * count;
-        // AutoPadding for Vec3 Element
-        boolean usePadding = false;
-        if (mAutoPadding && (mType.getElement().getVectorSize() == 3)) {
-            usePadding = true;
-        }
-        data1DChecks(off, count, arrayLen * dt.mSize, dataSize, usePadding);
-        mRS.nAllocationRead1D(getIDSafe(), off, mSelectedLOD, count, array, dataSize, dt,
-                              mType.mElement.mType.mSize, usePadding);
-    }
-
-    /**
-     * Copy a 1D region of this Allocation into an array.  This method does not
-     * guarantee that the Allocation is compatible with the input buffer.
-     *
-     * <p> The size of the region is: count * {@link #getElement}.{@link
-     * Element#getBytesSize}.
-     *
-     * <p> If the Allocation does not have Vec3 Elements, then the size of the
-     * array in bytes must be at least the size of the region.
-     *
-     * <p> If the Allocation has Vec3 Elements and {@link #setAutoPadding AutoPadding}
-     * is disabled, then the size of the array in bytes must be at least the size
-     * of the region. The padding bytes for the cells must be part of the array.
-     *
-     * <p> If the Allocation has Vec3 Elements and {@link #setAutoPadding AutoPadding}
-     * is enabled, then the size of the array in bytes must be at least 3/4 the size
-     * of the region. The padding bytes for the cells must not be part of the array.
-     *
-     * @param off The offset of the first element to be copied.
-     * @param count The number of elements to be copied.
-     * @param array The dest array
-     */
-    public void copy1DRangeToUnchecked(int off, int count, Object array) {
-        copy1DRangeToUnchecked(off, count, array,
-                               validateObjectIsPrimitiveArray(array, false),
-                               java.lang.reflect.Array.getLength(array));
-    }
-
-    /**
-     * Copy a 1D region of this Allocation into an array.  This method does not
-     * guarantee that the Allocation is compatible with the input buffer.
-     *
-     * <p> The size of the region is: count * {@link #getElement}.{@link
-     * Element#getBytesSize}.
-     *
-     * <p> If the Allocation does not have Vec3 Elements, then the size of the
-     * array in bytes must be at least the size of the region.
-     *
-     * <p> If the Allocation has Vec3 Elements and {@link #setAutoPadding AutoPadding}
-     * is disabled, then the size of the array in bytes must be at least the size
-     * of the region. The padding bytes for the cells must be part of the array.
-     *
-     * <p> If the Allocation has Vec3 Elements and {@link #setAutoPadding AutoPadding}
-     * is enabled, then the size of the array in bytes must be at least 3/4 the size
-     * of the region. The padding bytes for the cells must not be part of the array.
-     *
-     * @param off The offset of the first element to be copied.
-     * @param count The number of elements to be copied.
-     * @param d the source array
-     */
-    public void copy1DRangeToUnchecked(int off, int count, int[] d) {
-        copy1DRangeToUnchecked(off, count, (Object)d, Element.DataType.SIGNED_32, d.length);
-    }
-
-    /**
-     * Copy a 1D region of this Allocation into an array.  This method does not
-     * guarantee that the Allocation is compatible with the input buffer.
-     *
-     * <p> The size of the region is: count * {@link #getElement}.{@link
-     * Element#getBytesSize}.
-     *
-     * <p> If the Allocation does not have Vec3 Elements, then the size of the
-     * array in bytes must be at least the size of the region.
-     *
-     * <p> If the Allocation has Vec3 Elements and {@link #setAutoPadding AutoPadding}
-     * is disabled, then the size of the array in bytes must be at least the size
-     * of the region. The padding bytes for the cells must be part of the array.
-     *
-     * <p> If the Allocation has Vec3 Elements and {@link #setAutoPadding AutoPadding}
-     * is enabled, then the size of the array in bytes must be at least 3/4 the size
-     * of the region. The padding bytes for the cells must not be part of the array.
-     *
-     * @param off The offset of the first element to be copied.
-     * @param count The number of elements to be copied.
-     * @param d the source array
-     */
-    public void copy1DRangeToUnchecked(int off, int count, short[] d) {
-        copy1DRangeToUnchecked(off, count, (Object)d, Element.DataType.SIGNED_16, d.length);
-    }
-
-    /**
-     * Copy a 1D region of this Allocation into an array.  This method does not
-     * guarantee that the Allocation is compatible with the input buffer.
-     *
-     * <p> The size of the region is: count * {@link #getElement}.{@link
-     * Element#getBytesSize}.
-     *
-     * <p> If the Allocation does not have Vec3 Elements, then the size of the
-     * array in bytes must be at least the size of the region.
-     *
-     * <p> If the Allocation has Vec3 Elements and {@link #setAutoPadding AutoPadding}
-     * is disabled, then the size of the array in bytes must be at least the size
-     * of the region. The padding bytes for the cells must be part of the array.
-     *
-     * <p> If the Allocation has Vec3 Elements and {@link #setAutoPadding AutoPadding}
-     * is enabled, then the size of the array in bytes must be at least 3/4 the size
-     * of the region. The padding bytes for the cells must not be part of the array.
-     *
-     * @param off The offset of the first element to be copied.
-     * @param count The number of elements to be copied.
-     * @param d the source array
-     */
-    public void copy1DRangeToUnchecked(int off, int count, byte[] d) {
-        copy1DRangeToUnchecked(off, count, (Object)d, Element.DataType.SIGNED_8, d.length);
-    }
-
-    /**
-     * Copy a 1D region of this Allocation into an array.  This method does not
-     * guarantee that the Allocation is compatible with the input buffer.
-     *
-     * <p> The size of the region is: count * {@link #getElement}.{@link
-     * Element#getBytesSize}.
-     *
-     * <p> If the Allocation does not have Vec3 Elements, then the size of the
-     * array in bytes must be at least the size of the region.
-     *
-     * <p> If the Allocation has Vec3 Elements and {@link #setAutoPadding AutoPadding}
-     * is disabled, then the size of the array in bytes must be at least the size
-     * of the region. The padding bytes for the cells must be part of the array.
-     *
-     * <p> If the Allocation has Vec3 Elements and {@link #setAutoPadding AutoPadding}
-     * is enabled, then the size of the array in bytes must be at least 3/4 the size
-     * of the region. The padding bytes for the cells must not be part of the array.
-     *
-     * @param off The offset of the first element to be copied.
-     * @param count The number of elements to be copied.
-     * @param d the source array
-     */
-    public void copy1DRangeToUnchecked(int off, int count, float[] d) {
-        copy1DRangeToUnchecked(off, count, (Object)d, Element.DataType.FLOAT_32, d.length);
-    }
-
-
-    /**
-     * Copy a 1D region of this Allocation into an array.  This method is type checked
-     * and will generate exceptions if the Allocation's {@link
-     * android.support.v8.renderscript.Element} does not match the component type
-     * of the array passed in.
-     *
-     * <p> The size of the region is: count * {@link #getElement}.{@link
-     * Element#getBytesSize}.
-     *
-     * <p> If the Allocation does not have Vec3 Elements, then the size of the
-     * array in bytes must be at least the size of the region.
-     *
-     * <p> If the Allocation has Vec3 Elements and {@link #setAutoPadding AutoPadding}
-     * is disabled, then the size of the array in bytes must be at least the size
-     * of the region. The padding bytes for the cells must be part of the array.
-     *
-     * <p> If the Allocation has Vec3 Elements and {@link #setAutoPadding AutoPadding}
-     * is enabled, then the size of the array in bytes must be at least 3/4 the size
-     * of the region. The padding bytes for the cells must not be part of the array.
-     *
-     * @param off The offset of the first element to be copied.
-     * @param count The number of elements to be copied.
-     * @param array The source array.
-     */
-    public void copy1DRangeTo(int off, int count, Object array) {
-        copy1DRangeToUnchecked(off, count, array,
-                               validateObjectIsPrimitiveArray(array, true),
-                               java.lang.reflect.Array.getLength(array));
-    }
-
-    /**
-     * Copy a 1D region of this Allocation into an array. This variant is type checked
-     * and will generate exceptions if the Allocation's {@link
-     * android.support.v8.renderscript.Element} is neither a 32 bit integer nor a vector of 32 bit
-     * integers {@link android.support.v8.renderscript.Element.DataType}.
-     *
-     * <p> The size of the region is: count * {@link #getElement}.{@link
-     * Element#getBytesSize}.
-     *
-     * <p> If the Allocation does not have Vec3 Elements, then the size of the
-     * array in bytes must be at least the size of the region.
-     *
-     * <p> If the Allocation has Vec3 Elements and {@link #setAutoPadding AutoPadding}
-     * is disabled, then the size of the array in bytes must be at least the size
-     * of the region. The padding bytes for the cells must be part of the array.
-     *
-     * <p> If the Allocation has Vec3 Elements and {@link #setAutoPadding AutoPadding}
-     * is enabled, then the size of the array in bytes must be at least 3/4 the size
-     * of the region. The padding bytes for the cells must not be part of the array.
-     *
-     * @param off The offset of the first element to be copied.
-     * @param count The number of elements to be copied.
-     * @param d the source array
-     */
-    public void copy1DRangeTo(int off, int count, int[] d) {
-        validateIsInt32();
-        copy1DRangeToUnchecked(off, count, d, Element.DataType.SIGNED_32, d.length);
-    }
-
-    /**
-     * Copy a 1D region of this Allocation into an array. This variant is type checked
-     * and will generate exceptions if the Allocation's {@link
-     * android.support.v8.renderscript.Element} is neither a 16 bit integer nor a vector of 16 bit
-     * integers {@link android.support.v8.renderscript.Element.DataType}.
-     *
-     * <p> The size of the region is: count * {@link #getElement}.{@link
-     * Element#getBytesSize}.
-     *
-     * <p> If the Allocation does not have Vec3 Elements, then the size of the
-     * array in bytes must be at least the size of the region.
-     *
-     * <p> If the Allocation has Vec3 Elements and {@link #setAutoPadding AutoPadding}
-     * is disabled, then the size of the array in bytes must be at least the size
-     * of the region. The padding bytes for the cells must be part of the array.
-     *
-     * <p> If the Allocation has Vec3 Elements and {@link #setAutoPadding AutoPadding}
-     * is enabled, then the size of the array in bytes must be at least 3/4 the size
-     * of the region. The padding bytes for the cells must not be part of the array.
-     *
-     * @param off The offset of the first element to be copied.
-     * @param count The number of elements to be copied.
-     * @param d the source array
-     */
-    public void copy1DRangeTo(int off, int count, short[] d) {
-        validateIsInt16();
-        copy1DRangeToUnchecked(off, count, d, Element.DataType.SIGNED_16, d.length);
-    }
-
-    /**
-     * Copy a 1D region of this Allocation into an array. This variant is type checked
-     * and will generate exceptions if the Allocation's {@link
-     * android.support.v8.renderscript.Element} is neither an 8 bit integer nor a vector of 8 bit
-     * integers {@link android.support.v8.renderscript.Element.DataType}.
-     *
-     * <p> The size of the region is: count * {@link #getElement}.{@link
-     * Element#getBytesSize}.
-     *
-     * <p> If the Allocation does not have Vec3 Elements, then the size of the
-     * array in bytes must be at least the size of the region.
-     *
-     * <p> If the Allocation has Vec3 Elements and {@link #setAutoPadding AutoPadding}
-     * is disabled, then the size of the array in bytes must be at least the size
-     * of the region. The padding bytes for the cells must be part of the array.
-     *
-     * <p> If the Allocation has Vec3 Elements and {@link #setAutoPadding AutoPadding}
-     * is enabled, then the size of the array in bytes must be at least 3/4 the size
-     * of the region. The padding bytes for the cells must not be part of the array.
-     *
-     * @param off The offset of the first element to be copied.
-     * @param count The number of elements to be copied.
-     * @param d the source array
-     */
-    public void copy1DRangeTo(int off, int count, byte[] d) {
-        validateIsInt8();
-        copy1DRangeToUnchecked(off, count, d, Element.DataType.SIGNED_8, d.length);
-    }
-
-    /**
-     * Copy a 1D region of this Allocation into an array. This variant is type checked
-     * and will generate exceptions if the Allocation's {@link
-     * android.support.v8.renderscript.Element} is neither a 32 bit float nor a vector of
-     * 32 bit floats {@link android.support.v8.renderscript.Element.DataType}.
-     *
-     * <p> The size of the region is: count * {@link #getElement}.{@link
-     * Element#getBytesSize}.
-     *
-     * <p> If the Allocation does not have Vec3 Elements, then the size of the
-     * array in bytes must be at least the size of the region.
-     *
-     * <p> If the Allocation has Vec3 Elements and {@link #setAutoPadding AutoPadding}
-     * is disabled, then the size of the array in bytes must be at least the size
-     * of the region. The padding bytes for the cells must be part of the array.
-     *
-     * <p> If the Allocation has Vec3 Elements and {@link #setAutoPadding AutoPadding}
-     * is enabled, then the size of the array in bytes must be at least 3/4 the size
-     * of the region. The padding bytes for the cells must not be part of the array.
-     *
-     * @param off The offset of the first element to be copied.
-     * @param count The number of elements to be copied.
-     * @param d the source array.
-     */
-    public void copy1DRangeTo(int off, int count, float[] d) {
-        validateIsFloat32();
-        copy1DRangeToUnchecked(off, count, d, Element.DataType.FLOAT_32, d.length);
-    }
-
-
-    void copy2DRangeToUnchecked(int xoff, int yoff, int w, int h, Object array,
-                                Element.DataType dt, int arrayLen) {
-        mRS.validate();
-        validate2DRange(xoff, yoff, w, h);
-        final int dataSize = mType.mElement.getBytesSize() * w * h;
-        // AutoPadding for Vec3 Element
-        boolean usePadding = false;
-        int sizeBytes = arrayLen * dt.mSize;
-        if (mAutoPadding && (mType.getElement().getVectorSize() == 3)) {
-            if (dataSize / 4 * 3 > sizeBytes) {
-                throw new RSIllegalArgumentException("Array too small for allocation type.");
-            }
-            usePadding = true;
-            sizeBytes = dataSize;
-        } else {
-            if (dataSize > sizeBytes) {
-                throw new RSIllegalArgumentException("Array too small for allocation type.");
-            }
-        }
-        mRS.nAllocationRead2D(getIDSafe(), xoff, yoff, mSelectedLOD, mSelectedFace.mID, w, h,
-                              array, sizeBytes, dt, mType.mElement.mType.mSize, usePadding);
-    }
-
-    /**
-     * Copy from a rectangular region in this Allocation into an array. This
-     * method is type checked and will generate exceptions if the Allocation's
-     * {@link android.support.v8.renderscript.Element} does not match the component type
-     * of the array passed in.
-     *
-     * <p> The size of the region is: w * h * {@link #getElement}.{@link
-     * Element#getBytesSize}.
-     *
-     * <p> If the Allocation does not have Vec3 Elements, then the size of the
-     * array in bytes must be at least the size of the region.
-     *
-     * <p> If the Allocation has Vec3 Elements and {@link #setAutoPadding AutoPadding}
-     * is disabled, then the size of the array in bytes must be at least the size
-     * of the region. The padding bytes for the cells must be part of the array.
-     *
-     * <p> If the Allocation has Vec3 Elements and {@link #setAutoPadding AutoPadding}
-     * is enabled, then the size of the array in bytes must be at least 3/4 the size
-     * of the region. The padding bytes for the cells must not be part of the array.
-     *
-     * @param xoff X offset of the region to copy in this Allocation
-     * @param yoff Y offset of the region to copy in this Allocation
-     * @param w Width of the region to copy
-     * @param h Height of the region to copy
-     * @param array Dest Array to be copied into
-     */
-    public void copy2DRangeTo(int xoff, int yoff, int w, int h, Object array) {
-        copy2DRangeToUnchecked(xoff, yoff, w, h, array,
-                               validateObjectIsPrimitiveArray(array, true),
-                               java.lang.reflect.Array.getLength(array));
-    }
-
-    /**
-     * Copy from a rectangular region in this Allocation into an array. This
-     * variant is type checked and will generate exceptions if the Allocation's
-     * {@link android.support.v8.renderscript.Element} is neither an 8 bit integer nor a vector
-     * of 8 bit integers {@link android.support.v8.renderscript.Element.DataType}.
-     *
-     * <p> The size of the region is: w * h * {@link #getElement}.{@link
-     * Element#getBytesSize}.
-     *
-     * <p> If the Allocation does not have Vec3 Elements, then the size of the
-     * array in bytes must be at least the size of the region.
-     *
-     * <p> If the Allocation has Vec3 Elements and {@link #setAutoPadding AutoPadding}
-     * is disabled, then the size of the array in bytes must be at least the size
-     * of the region. The padding bytes for the cells must be part of the array.
-     *
-     * <p> If the Allocation has Vec3 Elements and {@link #setAutoPadding AutoPadding}
-     * is enabled, then the size of the array in bytes must be at least 3/4 the size
-     * of the region. The padding bytes for the cells must not be part of the array.
-     *
-     * @param xoff X offset of the region to copy in this Allocation
-     * @param yoff Y offset of the region to copy in this Allocation
-     * @param w Width of the region to copy
-     * @param h Height of the region to copy
-     * @param data Dest Array to be copied into
-     */
-    public void copy2DRangeTo(int xoff, int yoff, int w, int h, byte[] data) {
-        validateIsInt8();
-        copy2DRangeToUnchecked(xoff, yoff, w, h, data,
-                               Element.DataType.SIGNED_8, data.length);
-    }
-
-    /**
-     * Copy from a rectangular region in this Allocation into an array. This
-     * variant is type checked and will generate exceptions if the Allocation's
-     * {@link android.support.v8.renderscript.Element} is neither a 16 bit integer nor a vector
-     * of 16 bit integers {@link android.support.v8.renderscript.Element.DataType}.
-     *
-     * <p> The size of the region is: w * h * {@link #getElement}.{@link
-     * Element#getBytesSize}.
-     *
-     * <p> If the Allocation does not have Vec3 Elements, then the size of the
-     * array in bytes must be at least the size of the region.
-     *
-     * <p> If the Allocation has Vec3 Elements and {@link #setAutoPadding AutoPadding}
-     * is disabled, then the size of the array in bytes must be at least the size
-     * of the region. The padding bytes for the cells must be part of the array.
-     *
-     * <p> If the Allocation has Vec3 Elements and {@link #setAutoPadding AutoPadding}
-     * is enabled, then the size of the array in bytes must be at least 3/4 the size
-     * of the region. The padding bytes for the cells must not be part of the array.
-     *
-     * @param xoff X offset of the region to copy in this Allocation
-     * @param yoff Y offset of the region to copy in this Allocation
-     * @param w Width of the region to copy
-     * @param h Height of the region to copy
-     * @param data Dest Array to be copied into
-     */
-    public void copy2DRangeTo(int xoff, int yoff, int w, int h, short[] data) {
-        validateIsInt16();
-        copy2DRangeToUnchecked(xoff, yoff, w, h, data,
-                               Element.DataType.SIGNED_16, data.length);
-    }
-
-    /**
-     * Copy from a rectangular region in this Allocation into an array. This
-     * variant is type checked and will generate exceptions if the Allocation's
-     * {@link android.support.v8.renderscript.Element} is neither a 32 bit integer nor a vector
-     * of 32 bit integers {@link android.support.v8.renderscript.Element.DataType}.
-     *
-     * <p> The size of the region is: w * h * {@link #getElement}.{@link
-     * Element#getBytesSize}.
-     *
-     * <p> If the Allocation does not have Vec3 Elements, then the size of the
-     * array in bytes must be at least the size of the region.
-     *
-     * <p> If the Allocation has Vec3 Elements and {@link #setAutoPadding AutoPadding}
-     * is disabled, then the size of the array in bytes must be at least the size
-     * of the region. The padding bytes for the cells must be part of the array.
-     *
-     * <p> If the Allocation has Vec3 Elements and {@link #setAutoPadding AutoPadding}
-     * is enabled, then the size of the array in bytes must be at least 3/4 the size
-     * of the region. The padding bytes for the cells must not be part of the array.
-     *
-     * @param xoff X offset of the region to copy in this Allocation
-     * @param yoff Y offset of the region to copy in this Allocation
-     * @param w Width of the region to copy
-     * @param h Height of the region to copy
-     * @param data Dest Array to be copied into
-     */
-    public void copy2DRangeTo(int xoff, int yoff, int w, int h, int[] data) {
-        validateIsInt32();
-        copy2DRangeToUnchecked(xoff, yoff, w, h, data,
-                               Element.DataType.SIGNED_32, data.length);
-    }
-
-    /**
-     * Copy from a rectangular region in this Allocation into an array. This
-     * variant is type checked and will generate exceptions if the Allocation's
-     * {@link android.support.v8.renderscript.Element} is neither a 32 bit float nor a vector
-     * of 32 bit floats {@link android.support.v8.renderscript.Element.DataType}.
-     *
-     * <p> The size of the region is: w * h * {@link #getElement}.{@link
-     * Element#getBytesSize}.
-     *
-     * <p> If the Allocation does not have Vec3 Elements, then the size of the
-     * array in bytes must be at least the size of the region.
-     *
-     * <p> If the Allocation has Vec3 Elements and {@link #setAutoPadding AutoPadding}
-     * is disabled, then the size of the array in bytes must be at least the size
-     * of the region. The padding bytes for the cells must be part of the array.
-     *
-     * <p> If the Allocation has Vec3 Elements and {@link #setAutoPadding AutoPadding}
-     * is enabled, then the size of the array in bytes must be at least 3/4 the size
-     * of the region. The padding bytes for the cells must not be part of the array.
-     *
-     * @param xoff X offset of the region to copy in this Allocation
-     * @param yoff Y offset of the region to copy in this Allocation
-     * @param w Width of the region to copy
-     * @param h Height of the region to copy
-     * @param data Dest Array to be copied into
-     */
-    public void copy2DRangeTo(int xoff, int yoff, int w, int h, float[] data) {
-        validateIsFloat32();
-        copy2DRangeToUnchecked(xoff, yoff, w, h, data,
-                               Element.DataType.FLOAT_32, data.length);
-    }
-
-
-    /**
-     * Copy from a 3D region in this Allocation into an array. This method does
-     * not guarantee that the Allocation is compatible with the input buffer.
-     * The array is assumed to be tightly packed.
-     *
-     * The data type of the array is not required to be the same as
-     * the element data type.
-     */
-    /*
-    private void copy3DRangeToUnchecked(int xoff, int yoff, int zoff, int w, int h, int d,
-                                        Object array, Element.DataType dt, int arrayLen) {
-        mRS.validate();
-        validate3DRange(xoff, yoff, zoff, w, h, d);
-        final int dataSize = mType.mElement.getBytesSize() * w * h * d;
-        // AutoPadding for Vec3 Element
-        boolean usePadding = false;
-        int sizeBytes = arrayLen * dt.mSize;
-        if (mAutoPadding && (mType.getElement().getVectorSize() == 3)) {
-            if (dataSize / 4 * 3 > sizeBytes) {
-                throw new RSIllegalArgumentException("Array too small for allocation type.");
-            }
-            usePadding = true;
-            sizeBytes = dataSize;
-        } else {
-            if (dataSize > sizeBytes) {
-                throw new RSIllegalArgumentException("Array too small for allocation type.");
-            }
-        }
-        mRS.nAllocationRead3D(getIDSafe(), xoff, yoff, zoff, mSelectedLOD, w, h, d,
-                              array, sizeBytes, dt, mType.mElement.mType.mSize, usePadding);
-    }
-    */
-
-    /**
-     * @hide
-     * Copy from a 3D region in this Allocation into an array. This
-     * method is type checked and will generate exceptions if the Allocation's
-     * {@link android.support.v8.renderscript.Element} does not match the component type
-     * of the array passed in.
-     *
-     * <p> The size of the region is: w * h * d * {@link #getElement}.{@link
-     * Element#getBytesSize}.
-     *
-     * <p> If the Allocation does not have Vec3 Elements, then the size of the
-     * array in bytes must be at least the size of the region.
-     *
-     * <p> If the Allocation has Vec3 Elements and {@link #setAutoPadding AutoPadding}
-     * is disabled, then the size of the array in bytes must be at least the size
-     * of the region. The padding bytes for the cells must be part of the array.
-     *
-     * <p> If the Allocation has Vec3 Elements and {@link #setAutoPadding AutoPadding}
-     * is enabled, then the size of the array in bytes must be at least 3/4 the size
-     * of the region. The padding bytes for the cells must not be part of the array.
-     *
-     * @param xoff X offset of the region to copy in this Allocation
-     * @param yoff Y offset of the region to copy in this Allocation
-     * @param zoff Z offset of the region to copy in this Allocation
-     * @param w Width of the region to copy
-     * @param h Height of the region to copy
-     * @param d Depth of the region to copy
-     * @param array Dest Array to be copied into
-     */
-    /*
-    public void copy3DRangeTo(int xoff, int yoff, int zoff, int w, int h, int d, Object array) {
-        copy3DRangeToUnchecked(xoff, yoff, zoff, w, h, d, array,
-                                 validateObjectIsPrimitiveArray(array, true),
-                                 java.lang.reflect.Array.getLength(array));
-    }
-    */
 
     // creation
 
@@ -2555,16 +1202,15 @@ public class Allocation extends BaseObj {
      *              utilized
      */
     static public Allocation createTyped(RenderScript rs, Type type, MipmapControl mips, int usage) {
+        if (rs.isNative) {
+            RenderScriptThunker rst = (RenderScriptThunker)rs;
+            return AllocationThunker.createTyped(rst, type, mips, usage);
+        }
         rs.validate();
         if (type.getID(rs) == 0) {
             throw new RSInvalidStateException("Bad Type");
         }
-
-        if(!rs.usingIO() && (usage & (USAGE_IO_INPUT | USAGE_IO_INPUT)) != 0) {
-            throw new RSRuntimeException("USAGE_IO not supported, Allocation creation failed.");
-        }
-
-        long id = rs.nAllocationCreateTyped(type.getID(rs), mips.mID, usage, 0);
+        int id = rs.nAllocationCreateTyped(type.getID(rs), mips.mID, usage, 0);
         if (id == 0) {
             throw new RSRuntimeException("Allocation creation failed.");
         }
@@ -2612,12 +1258,16 @@ public class Allocation extends BaseObj {
      */
     static public Allocation createSized(RenderScript rs, Element e,
                                          int count, int usage) {
+        if (rs.isNative) {
+            RenderScriptThunker rst = (RenderScriptThunker)rs;
+            return AllocationThunker.createSized(rs, e, count, usage);
+        }
         rs.validate();
         Type.Builder b = new Type.Builder(rs, e);
         b.setX(count);
         Type t = b.create();
 
-        long id = rs.nAllocationCreateTyped(t.getID(rs), MipmapControl.MIPMAP_NONE.mID, usage, 0);
+        int id = rs.nAllocationCreateTyped(t.getID(rs), MipmapControl.MIPMAP_NONE.mID, usage, 0);
         if (id == 0) {
             throw new RSRuntimeException("Allocation creation failed.");
         }
@@ -2680,6 +1330,10 @@ public class Allocation extends BaseObj {
     static public Allocation createFromBitmap(RenderScript rs, Bitmap b,
                                               MipmapControl mips,
                                               int usage) {
+        if (rs.isNative) {
+            RenderScriptThunker rst = (RenderScriptThunker)rs;
+            return AllocationThunker.createFromBitmap(rst, b, mips, usage);
+        }
         rs.validate();
 
         // WAR undocumented color formats
@@ -2699,7 +1353,7 @@ public class Allocation extends BaseObj {
         if (mips == MipmapControl.MIPMAP_NONE &&
             t.getElement().isCompatible(Element.RGBA_8888(rs)) &&
             usage == (USAGE_SHARED | USAGE_SCRIPT | USAGE_GRAPHICS_TEXTURE)) {
-            long id = rs.nAllocationCreateBitmapBackedAllocation(t.getID(rs), mips.mID, b, usage);
+            int id = rs.nAllocationCreateBitmapBackedAllocation(t.getID(rs), mips.mID, b, usage);
             if (id == 0) {
                 throw new RSRuntimeException("Load failed.");
             }
@@ -2711,26 +1365,11 @@ public class Allocation extends BaseObj {
         }
 
 
-        long id = rs.nAllocationCreateFromBitmap(t.getID(rs), mips.mID, b, usage);
+        int id = rs.nAllocationCreateFromBitmap(t.getID(rs), mips.mID, b, usage);
         if (id == 0) {
             throw new RSRuntimeException("Load failed.");
         }
         return new Allocation(id, rs, t, usage);
-    }
-
-    /**
-     * Associate a {@link android.view.Surface} with this Allocation. This
-     * operation is only valid for Allocations with {@link #USAGE_IO_OUTPUT}.
-     *
-     * @param sur Surface to associate with allocation
-     */
-    public void setSurface(Surface sur) {
-        mRS.validate();
-        if ((mUsage & USAGE_IO_OUTPUT) == 0) {
-            throw new RSInvalidStateException("Allocation is not USAGE_IO_OUTPUT.");
-        }
-
-        mRS.nAllocationSetSurface(getID(mRS), sur);
     }
 
     /**
@@ -2792,7 +1431,7 @@ public class Allocation extends BaseObj {
         tb.setMipmaps(mips == MipmapControl.MIPMAP_FULL);
         Type t = tb.create();
 
-        long id = rs.nAllocationCubeCreateFromBitmap(t.getID(rs), mips.mID, b, usage);
+        int id = rs.nAllocationCubeCreateFromBitmap(t.getID(rs), mips.mID, b, usage);
         if(id == 0) {
             throw new RSRuntimeException("Load failed for bitmap " + b + " element " + e);
         }
@@ -2994,39 +1633,5 @@ public class Allocation extends BaseObj {
             throw new RSRuntimeException("Could not convert string to utf-8.");
         }
     }
-
-    /**
-     * Frees any native resources associated with this object.  The
-     * primary use is to force immediate cleanup of resources when it is
-     * believed the GC will not respond quickly enough.
-     * For USAGE_IO_OUTPUT, destroy() implies setSurface(null).
-     */
-    @Override
-    public void destroy() {
-        if (mIncCompatAllocation != 0) {
-            boolean shouldDestroy = false;
-            synchronized(this) {
-                if (!mIncAllocDestroyed) {
-                    shouldDestroy = true;
-                    mIncAllocDestroyed = true;
-                }
-            }
-
-            if (shouldDestroy) {
-                // must include nObjDestroy in the critical section
-                ReentrantReadWriteLock.ReadLock rlock = mRS.mRWLock.readLock();
-                rlock.lock();
-                if(mRS.isAlive()) {
-                    mRS.nIncObjDestroy(mIncCompatAllocation);
-                }
-                rlock.unlock();
-                mIncCompatAllocation = 0;
-            }
-        }
-        if ((mUsage & (USAGE_IO_INPUT | USAGE_IO_OUTPUT)) != 0) {
-            setSurface(null);
-        }
-        super.destroy();
-    }
-
 }
+

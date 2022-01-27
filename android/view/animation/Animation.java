@@ -16,9 +16,6 @@
 
 package android.view.animation;
 
-import android.annotation.AnimRes;
-import android.annotation.ColorInt;
-import android.annotation.InterpolatorRes;
 import android.content.Context;
 import android.content.res.TypedArray;
 import android.graphics.RectF;
@@ -93,12 +90,8 @@ public abstract class Animation implements Cloneable {
      */
     public static final int ZORDER_BOTTOM = -1;
 
-    // Use a preload holder to isolate static initialization into inner class, which allows
-    // Animation and its subclasses to be compile-time initialized.
-    private static class NoImagePreloadHolder {
-        public static final boolean USE_CLOSEGUARD
-                = SystemProperties.getBoolean("log.closeguard.Animation", false);
-    }
+    private static final boolean USE_CLOSEGUARD
+            = SystemProperties.getBoolean("log.closeguard.Animation", false);
 
     /**
      * Set by {@link #getTransformation(long, Transformation)} when the animation ends.
@@ -394,7 +387,7 @@ public abstract class Animation implements Cloneable {
      * @param resID The resource identifier of the interpolator to load
      * @attr ref android.R.styleable#Animation_interpolator
      */
-    public void setInterpolator(Context context, @AnimRes @InterpolatorRes int resID) {
+    public void setInterpolator(Context context, int resID) {
         setInterpolator(AnimationUtils.loadInterpolator(context, resID));
     }
 
@@ -629,7 +622,7 @@ public abstract class Animation implements Cloneable {
      * @param bg The background color.  If 0, no background.  Currently must
      * be black, with any desired alpha level.
      */
-    public void setBackgroundColor(@ColorInt int bg) {
+    public void setBackgroundColor(int bg) {
         mBackgroundColor = bg;
     }
 
@@ -760,7 +753,6 @@ public abstract class Animation implements Cloneable {
     /**
      * Returns the background color behind the animation.
      */
-    @ColorInt
     public int getBackgroundColor() {
         return mBackgroundColor;
     }
@@ -854,7 +846,7 @@ public abstract class Animation implements Cloneable {
             normalizedTime = currentTime < mStartTime ? 0.0f : 1.0f;
         }
 
-        final boolean expired = normalizedTime >= 1.0f || isCanceled();
+        final boolean expired = normalizedTime >= 1.0f;
         mMore = !expired;
 
         if (!mFillEnabled) normalizedTime = Math.max(Math.min(normalizedTime, 1.0f), 0.0f);
@@ -863,7 +855,7 @@ public abstract class Animation implements Cloneable {
             if (!mStarted) {
                 fireAnimationStart();
                 mStarted = true;
-                if (NoImagePreloadHolder.USE_CLOSEGUARD) {
+                if (USE_CLOSEGUARD) {
                     guard.open("cancel or detach or getTransformation");
                 }
             }
@@ -879,7 +871,7 @@ public abstract class Animation implements Cloneable {
         }
 
         if (expired) {
-            if (mRepeatCount == mRepeated || isCanceled()) {
+            if (mRepeatCount == mRepeated) {
                 if (!mEnded) {
                     mEnded = true;
                     guard.close();
@@ -907,10 +899,6 @@ public abstract class Animation implements Cloneable {
         }
 
         return mMore;
-    }
-
-    private boolean isCanceled() {
-        return mStartTime == Long.MIN_VALUE;
     }
 
     private void fireAnimationStart() {

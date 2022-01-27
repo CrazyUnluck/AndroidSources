@@ -16,28 +16,26 @@
 
 package com.android.server.pm;
 
-import android.util.ArraySet;
+import java.util.HashSet;
 
 /**
  * Settings data for a particular shared user ID we know about.
  */
-final class SharedUserSetting extends SettingBase {
+final class SharedUserSetting extends GrantedPermissions {
     final String name;
 
     int userId;
 
     // flags that are associated with this uid, regardless of any package flags
     int uidFlags;
-    int uidPrivateFlags;
 
-    final ArraySet<PackageSetting> packages = new ArraySet<PackageSetting>();
+    final HashSet<PackageSetting> packages = new HashSet<PackageSetting>();
 
     final PackageSignatures signatures = new PackageSignatures();
 
-    SharedUserSetting(String _name, int _pkgFlags, int _pkgPrivateFlags) {
-        super(_pkgFlags, _pkgPrivateFlags);
+    SharedUserSetting(String _name, int _pkgFlags) {
+        super(_pkgFlags);
         uidFlags =  _pkgFlags;
-        uidPrivateFlags = _pkgPrivateFlags;
         name = _name;
     }
 
@@ -57,20 +55,12 @@ final class SharedUserSetting extends SettingBase {
                 }
                 setFlags(aggregatedFlags);
             }
-            if ((this.pkgPrivateFlags & packageSetting.pkgPrivateFlags) != 0) {
-                int aggregatedPrivateFlags = uidPrivateFlags;
-                for (PackageSetting ps : packages) {
-                    aggregatedPrivateFlags |= ps.pkgPrivateFlags;
-                }
-                setPrivateFlags(aggregatedPrivateFlags);
-            }
         }
     }
 
     void addPackage(PackageSetting packageSetting) {
         if (packages.add(packageSetting)) {
             setFlags(this.pkgFlags | packageSetting.pkgFlags);
-            setPrivateFlags(this.pkgPrivateFlags | packageSetting.pkgPrivateFlags);
         }
     }
 }

@@ -43,14 +43,6 @@ public class GmsFusedBatchOptions {
         return mOptions.getPeriodInNS();
     }
 
-    public void setSmallestDisplacementMeters(float value) {
-        mOptions.setSmallestDisplacementMeters(value);
-    }
-
-    public float getSmallestDisplacementMeters() {
-        return mOptions.getSmallestDisplacementMeters();
-    }
-
     public void setSourceToUse(int source) {
         mOptions.setSourceToUse(source);
     }

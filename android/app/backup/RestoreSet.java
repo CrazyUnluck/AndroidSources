@@ -16,7 +16,6 @@
 
 package android.app.backup;
 
-import android.annotation.SystemApi;
 import android.os.Parcel;
 import android.os.Parcelable;
 
@@ -26,7 +25,6 @@ import android.os.Parcelable;
  *
  * @hide
  */
-@SystemApi
 public class RestoreSet implements Parcelable {
     /**
      * Name of this restore set.  May be user generated, may simply be the name
@@ -57,6 +55,7 @@ public class RestoreSet implements Parcelable {
         device = _dev;
         token = _token;
     }
+
 
     // Parcelable implementation
     public int describeContents() {

@@ -73,7 +73,7 @@ public class SubMenuBuilder extends MenuBuilder implements SubMenu {
 
     @Override
     public MenuBuilder getRootMenu() {
-        return mParentMenu.getRootMenu();
+        return mParentMenu;
     }
 
     @Override

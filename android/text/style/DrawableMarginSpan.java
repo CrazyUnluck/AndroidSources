@@ -19,6 +19,7 @@ package android.text.style;
 import android.graphics.drawable.Drawable;
 import android.graphics.Paint;
 import android.graphics.Canvas;
+import android.graphics.RectF;
 import android.text.Spanned;
 import android.text.Layout;
 

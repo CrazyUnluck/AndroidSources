@@ -25,11 +25,20 @@ import java.util.Date;
  */
 public class TwilightState {
     private final boolean mIsNight;
-    private final float mAmount;
+    private final long mYesterdaySunset;
+    private final long mTodaySunrise;
+    private final long mTodaySunset;
+    private final long mTomorrowSunrise;
 
-    TwilightState(boolean isNight, float amount) {
+    TwilightState(boolean isNight,
+            long yesterdaySunset,
+            long todaySunrise, long todaySunset,
+            long tomorrowSunrise) {
         mIsNight = isNight;
-        mAmount = amount;
+        mYesterdaySunset = yesterdaySunset;
+        mTodaySunrise = todaySunrise;
+        mTodaySunset = todaySunset;
+        mTomorrowSunrise = tomorrowSunrise;
     }
 
     /**
@@ -40,11 +49,35 @@ public class TwilightState {
     }
 
     /**
-     * For twilight affects that change gradually over time, this is the amount they
-     * should currently be in effect.
+     * Returns the time of yesterday's sunset in the System.currentTimeMillis() timebase,
+     * or -1 if the sun never sets.
      */
-    public float getAmount() {
-        return mAmount;
+    public long getYesterdaySunset() {
+        return mYesterdaySunset;
+    }
+
+    /**
+     * Returns the time of today's sunrise in the System.currentTimeMillis() timebase,
+     * or -1 if the sun never rises.
+     */
+    public long getTodaySunrise() {
+        return mTodaySunrise;
+    }
+
+    /**
+     * Returns the time of today's sunset in the System.currentTimeMillis() timebase,
+     * or -1 if the sun never sets.
+     */
+    public long getTodaySunset() {
+        return mTodaySunset;
+    }
+
+    /**
+     * Returns the time of tomorrow's sunrise in the System.currentTimeMillis() timebase,
+     * or -1 if the sun never rises.
+     */
+    public long getTomorrowSunrise() {
+        return mTomorrowSunrise;
     }
 
     @Override
@@ -55,7 +88,10 @@ public class TwilightState {
     public boolean equals(TwilightState other) {
         return other != null
                 && mIsNight == other.mIsNight
-                && mAmount == other.mAmount;
+                && mYesterdaySunset == other.mYesterdaySunset
+                && mTodaySunrise == other.mTodaySunrise
+                && mTodaySunset == other.mTodaySunset
+                && mTomorrowSunrise == other.mTomorrowSunrise;
     }
 
     @Override
@@ -67,7 +103,10 @@ public class TwilightState {
     public String toString() {
         DateFormat f = DateFormat.getDateTimeInstance();
         return "{TwilightState: isNight=" + mIsNight
-                + ", mAmount=" + mAmount
+                + ", mYesterdaySunset=" + f.format(new Date(mYesterdaySunset))
+                + ", mTodaySunrise=" + f.format(new Date(mTodaySunrise))
+                + ", mTodaySunset=" + f.format(new Date(mTodaySunset))
+                + ", mTomorrowSunrise=" + f.format(new Date(mTomorrowSunrise))
                 + "}";
     }
 }

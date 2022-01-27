@@ -40,15 +40,7 @@ public class WifiInfo implements Parcelable {
      * of <code>DetailedState</code>.
      */
     private static final EnumMap<SupplicantState, DetailedState> stateMap =
-            new EnumMap<SupplicantState, DetailedState>(SupplicantState.class);
-
-    /**
-     * Default MAC address reported to a client that does not have the
-     * android.permission.LOCAL_MAC_ADDRESS permission.
-     *
-     * @hide
-     */
-    public static final String DEFAULT_MAC_ADDRESS = "02:00:00:00:00:00";
+        new EnumMap<SupplicantState, DetailedState>(SupplicantState.class);
 
     static {
         stateMap.put(SupplicantState.DISCONNECTED, DetailedState.DISCONNECTED);
@@ -70,204 +62,31 @@ public class WifiInfo implements Parcelable {
     private String mBSSID;
     private WifiSsid mWifiSsid;
     private int mNetworkId;
-
-    /** @hide **/
-    public static final int INVALID_RSSI = -127;
-
-    /** @hide **/
-    public static final int MIN_RSSI = -126;
-
-    /** @hide **/
-    public static final int MAX_RSSI = 200;
-
-
-    /**
-     * Received Signal Strength Indicator
-     */
+    private boolean mHiddenSSID;
+    /** Received Signal Strength Indicator */
     private int mRssi;
 
-    /**
-     * Link speed in Mbps
-     */
+    /** Link speed in Mbps */
     public static final String LINK_SPEED_UNITS = "Mbps";
     private int mLinkSpeed;
 
-    /**
-     * Frequency in MHz
-     */
-    public static final String FREQUENCY_UNITS = "MHz";
-    private int mFrequency;
-
     private InetAddress mIpAddress;
-    private String mMacAddress = DEFAULT_MAC_ADDRESS;
-
-    private boolean mEphemeral;
+    private String mMacAddress;
 
     /**
-     * @hide
+     * Flag indicating that AP has hinted that upstream connection is metered,
+     * and sensitive to heavy data transfers.
      */
-    public long txBad;
-    /**
-     * @hide
-     */
-    public long txRetries;
-    /**
-     * @hide
-     */
-    public long txSuccess;
-    /**
-     * @hide
-     */
-    public long rxSuccess;
-    /**
-     * @hide
-     */
-    public double txBadRate;
-    /**
-     * @hide
-     */
-    public double txRetriesRate;
-    /**
-     * @hide
-     */
-    public double txSuccessRate;
-    /**
-     * @hide
-     */
-    public double rxSuccessRate;
-
-    /**
-     * @hide
-     */
-    public int badRssiCount;
-
-    /**
-     * @hide
-     */
-    public int linkStuckCount;
-
-    /**
-     * @hide
-     */
-    public int lowRssiCount;
-
-    /**
-     * @hide
-     */
-    public int score;
-
-    /**
-     * TODO: get actual timestamp and calculate true rates
-     * @hide
-     */
-    public void updatePacketRates(WifiLinkLayerStats stats) {
-        if (stats != null) {
-            long txgood = stats.txmpdu_be + stats.txmpdu_bk + stats.txmpdu_vi + stats.txmpdu_vo;
-            long txretries = stats.retries_be + stats.retries_bk
-                    + stats.retries_vi + stats.retries_vo;
-            long rxgood = stats.rxmpdu_be + stats.rxmpdu_bk + stats.rxmpdu_vi + stats.rxmpdu_vo;
-            long txbad = stats.lostmpdu_be + stats.lostmpdu_bk
-                    + stats.lostmpdu_vi + stats.lostmpdu_vo;
-
-            if (txBad <= txbad
-                    && txSuccess <= txgood
-                    && rxSuccess <= rxgood
-                    && txRetries <= txretries) {
-                txBadRate = (txBadRate * 0.5)
-                        + ((double) (txbad - txBad) * 0.5);
-                txSuccessRate = (txSuccessRate * 0.5)
-                        + ((double) (txgood - txSuccess) * 0.5);
-                rxSuccessRate = (rxSuccessRate * 0.5)
-                        + ((double) (rxgood - rxSuccess) * 0.5);
-                txRetriesRate = (txRetriesRate * 0.5)
-                        + ((double) (txretries - txRetries) * 0.5);
-            } else {
-                txBadRate = 0;
-                txSuccessRate = 0;
-                rxSuccessRate = 0;
-                txRetriesRate = 0;
-            }
-            txBad = txbad;
-            txSuccess = txgood;
-            rxSuccess = rxgood;
-            txRetries = txretries;
-        } else {
-            txBad = 0;
-            txSuccess = 0;
-            rxSuccess = 0;
-            txRetries = 0;
-            txBadRate = 0;
-            txSuccessRate = 0;
-            rxSuccessRate = 0;
-            txRetriesRate = 0;
-        }
-    }
-
-
-    /**
-     * This function is less powerful and used if the WifiLinkLayerStats API is not implemented
-     * at the Wifi HAL
-     * @hide
-     */
-    public void updatePacketRates(long txPackets, long rxPackets) {
-        //paranoia
-        txBad = 0;
-        txRetries = 0;
-        txBadRate = 0;
-        txRetriesRate = 0;
-        if (txSuccess <= txPackets && rxSuccess <= rxPackets) {
-            txSuccessRate = (txSuccessRate * 0.5)
-                    + ((double) (txPackets - txSuccess) * 0.5);
-            rxSuccessRate = (rxSuccessRate * 0.5)
-                    + ((double) (rxPackets - rxSuccess) * 0.5);
-        } else {
-            txBadRate = 0;
-            txRetriesRate = 0;
-        }
-        txSuccess = txPackets;
-        rxSuccess = rxPackets;
-    }
-
-        /**
-         * Flag indicating that AP has hinted that upstream connection is metered,
-         * and sensitive to heavy data transfers.
-         */
     private boolean mMeteredHint;
 
-    /** @hide */
-    public WifiInfo() {
+    WifiInfo() {
         mWifiSsid = null;
         mBSSID = null;
         mNetworkId = -1;
         mSupplicantState = SupplicantState.UNINITIALIZED;
-        mRssi = INVALID_RSSI;
+        mRssi = -9999;
         mLinkSpeed = -1;
-        mFrequency = -1;
-    }
-
-    /** @hide */
-    public void reset() {
-        setInetAddress(null);
-        setBSSID(null);
-        setSSID(null);
-        setNetworkId(-1);
-        setRssi(INVALID_RSSI);
-        setLinkSpeed(-1);
-        setFrequency(-1);
-        setMeteredHint(false);
-        setEphemeral(false);
-        txBad = 0;
-        txSuccess = 0;
-        rxSuccess = 0;
-        txRetries = 0;
-        txBadRate = 0;
-        txSuccessRate = 0;
-        rxSuccessRate = 0;
-        txRetriesRate = 0;
-        lowRssiCount = 0;
-        badRssiCount = 0;
-        linkStuckCount = 0;
-        score = 0;
+        mHiddenSSID = false;
     }
 
     /**
@@ -280,38 +99,26 @@ public class WifiInfo implements Parcelable {
             mBSSID = source.mBSSID;
             mWifiSsid = source.mWifiSsid;
             mNetworkId = source.mNetworkId;
+            mHiddenSSID = source.mHiddenSSID;
             mRssi = source.mRssi;
             mLinkSpeed = source.mLinkSpeed;
-            mFrequency = source.mFrequency;
             mIpAddress = source.mIpAddress;
             mMacAddress = source.mMacAddress;
             mMeteredHint = source.mMeteredHint;
-            mEphemeral = source.mEphemeral;
-            txBad = source.txBad;
-            txRetries = source.txRetries;
-            txSuccess = source.txSuccess;
-            rxSuccess = source.rxSuccess;
-            txBadRate = source.txBadRate;
-            txRetriesRate = source.txRetriesRate;
-            txSuccessRate = source.txSuccessRate;
-            rxSuccessRate = source.rxSuccessRate;
-            score = source.score;
-            badRssiCount = source.badRssiCount;
-            lowRssiCount = source.lowRssiCount;
-            linkStuckCount = source.linkStuckCount;
         }
     }
 
-    /** @hide */
-    public void setSSID(WifiSsid wifiSsid) {
+    void setSSID(WifiSsid wifiSsid) {
         mWifiSsid = wifiSsid;
+        // network is considered not hidden by default
+        mHiddenSSID = false;
     }
 
     /**
      * Returns the service set identifier (SSID) of the current 802.11 network.
      * If the SSID can be decoded as UTF-8, it will be returned surrounded by double
      * quotation marks. Otherwise, it is returned as a string of hex digits. The
-     * SSID may be &lt;unknown ssid&gt; if there is no network currently connected.
+     * SSID may be {@code null} if there is no network currently connected.
      * @return the SSID
      */
     public String getSSID() {
@@ -320,8 +127,7 @@ public class WifiInfo implements Parcelable {
             if (!TextUtils.isEmpty(unicode)) {
                 return "\"" + unicode + "\"";
             } else {
-                String hex = mWifiSsid.getHexString();
-                return (hex != null) ? hex : WifiSsid.NONE;
+                return mWifiSsid.getHexString();
             }
         }
         return WifiSsid.NONE;
@@ -332,8 +138,7 @@ public class WifiInfo implements Parcelable {
         return mWifiSsid;
     }
 
-    /** @hide */
-    public void setBSSID(String BSSID) {
+    void setBSSID(String BSSID) {
         mBSSID = BSSID;
     }
 
@@ -348,23 +153,15 @@ public class WifiInfo implements Parcelable {
 
     /**
      * Returns the received signal strength indicator of the current 802.11
-     * network, in dBm.
-     *
-     * <p>Use {@link android.net.wifi.WifiManager#calculateSignalLevel} to convert this number into
-     * an absolute signal level which can be displayed to a user.
-     *
-     * @return the RSSI.
+     * network.
+     * <p><strong>This is not normalized, but should be!</strong></p>
+     * @return the RSSI, in the range ??? to ???
      */
     public int getRssi() {
         return mRssi;
     }
 
-    /** @hide */
-    public void setRssi(int rssi) {
-        if (rssi < INVALID_RSSI)
-            rssi = INVALID_RSSI;
-        if (rssi > MAX_RSSI)
-            rssi = MAX_RSSI;
+    void setRssi(int rssi) {
         mRssi = rssi;
     }
 
@@ -377,61 +174,20 @@ public class WifiInfo implements Parcelable {
         return mLinkSpeed;
     }
 
-    /** @hide */
-    public void setLinkSpeed(int linkSpeed) {
+    void setLinkSpeed(int linkSpeed) {
         this.mLinkSpeed = linkSpeed;
-    }
-
-    /**
-     * Returns the current frequency in {@link #FREQUENCY_UNITS}.
-     * @return the frequency.
-     * @see #FREQUENCY_UNITS
-     */
-    public int getFrequency() {
-        return mFrequency;
-    }
-
-    /** @hide */
-    public void setFrequency(int frequency) {
-        this.mFrequency = frequency;
-    }
-
-    /**
-     * @hide
-     * TODO: makes real freq boundaries
-     */
-    public boolean is24GHz() {
-        return ScanResult.is24GHz(mFrequency);
-    }
-
-    /**
-     * @hide
-     * TODO: makes real freq boundaries
-     */
-    public boolean is5GHz() {
-        return ScanResult.is5GHz(mFrequency);
     }
 
     /**
      * Record the MAC address of the WLAN interface
      * @param macAddress the MAC address in {@code XX:XX:XX:XX:XX:XX} form
-     * @hide
      */
-    public void setMacAddress(String macAddress) {
+    void setMacAddress(String macAddress) {
         this.mMacAddress = macAddress;
     }
 
     public String getMacAddress() {
         return mMacAddress;
-    }
-
-    /**
-     * @return true if {@link #getMacAddress()} has a real MAC address.
-     *
-     * @hide
-     */
-    public boolean hasRealMacAddress() {
-        return mMacAddress != null && !DEFAULT_MAC_ADDRESS.equals(mMacAddress);
     }
 
     /** {@hide} */
@@ -444,18 +200,7 @@ public class WifiInfo implements Parcelable {
         return mMeteredHint;
     }
 
-    /** {@hide} */
-    public void setEphemeral(boolean ephemeral) {
-        mEphemeral = ephemeral;
-    }
-
-    /** {@hide} */
-    public boolean isEphemeral() {
-        return mEphemeral;
-    }
-
-    /** @hide */
-    public void setNetworkId(int id) {
+    void setNetworkId(int id) {
         mNetworkId = id;
     }
 
@@ -478,13 +223,11 @@ public class WifiInfo implements Parcelable {
         return mSupplicantState;
     }
 
-    /** @hide */
-    public void setSupplicantState(SupplicantState state) {
+    void setSupplicantState(SupplicantState state) {
         mSupplicantState = state;
     }
 
-    /** @hide */
-    public void setInetAddress(InetAddress address) {
+    void setInetAddress(InetAddress address) {
         mIpAddress = address;
     }
 
@@ -501,8 +244,12 @@ public class WifiInfo implements Parcelable {
      * SSID-specific probe request must be used for scans.
      */
     public boolean getHiddenSSID() {
-        if (mWifiSsid == null) return false;
-        return mWifiSsid.isHidden();
+        return mHiddenSSID;
+    }
+
+    /** {@hide} */
+    public void setHiddenSSID(boolean hiddenSSID) {
+        mHiddenSSID = hiddenSSID;
     }
 
    /**
@@ -557,11 +304,10 @@ public class WifiInfo implements Parcelable {
             append(", Supplicant state: ").
             append(mSupplicantState == null ? none : mSupplicantState).
             append(", RSSI: ").append(mRssi).
-            append(", Link speed: ").append(mLinkSpeed).append(LINK_SPEED_UNITS).
-            append(", Frequency: ").append(mFrequency).append(FREQUENCY_UNITS).
+            append(", Link speed: ").append(mLinkSpeed).
             append(", Net ID: ").append(mNetworkId).
-            append(", Metered hint: ").append(mMeteredHint).
-            append(", score: ").append(Integer.toString(score));
+            append(", Metered hint: ").append(mMeteredHint);
+
         return sb.toString();
     }
 
@@ -575,7 +321,6 @@ public class WifiInfo implements Parcelable {
         dest.writeInt(mNetworkId);
         dest.writeInt(mRssi);
         dest.writeInt(mLinkSpeed);
-        dest.writeInt(mFrequency);
         if (mIpAddress != null) {
             dest.writeByte((byte)1);
             dest.writeByteArray(mIpAddress.getAddress());
@@ -591,14 +336,6 @@ public class WifiInfo implements Parcelable {
         dest.writeString(mBSSID);
         dest.writeString(mMacAddress);
         dest.writeInt(mMeteredHint ? 1 : 0);
-        dest.writeInt(mEphemeral ? 1 : 0);
-        dest.writeInt(score);
-        dest.writeDouble(txSuccessRate);
-        dest.writeDouble(txRetriesRate);
-        dest.writeDouble(txBadRate);
-        dest.writeDouble(rxSuccessRate);
-        dest.writeInt(badRssiCount);
-        dest.writeInt(lowRssiCount);
         mSupplicantState.writeToParcel(dest, flags);
     }
 
@@ -610,7 +347,6 @@ public class WifiInfo implements Parcelable {
                 info.setNetworkId(in.readInt());
                 info.setRssi(in.readInt());
                 info.setLinkSpeed(in.readInt());
-                info.setFrequency(in.readInt());
                 if (in.readByte() == 1) {
                     try {
                         info.setInetAddress(InetAddress.getByAddress(in.createByteArray()));
@@ -622,14 +358,6 @@ public class WifiInfo implements Parcelable {
                 info.mBSSID = in.readString();
                 info.mMacAddress = in.readString();
                 info.mMeteredHint = in.readInt() != 0;
-                info.mEphemeral = in.readInt() != 0;
-                info.score = in.readInt();
-                info.txSuccessRate = in.readDouble();
-                info.txRetriesRate = in.readDouble();
-                info.txBadRate = in.readDouble();
-                info.rxSuccessRate = in.readDouble();
-                info.badRssiCount = in.readInt();
-                info.lowRssiCount = in.readInt();
                 info.mSupplicantState = SupplicantState.CREATOR.createFromParcel(in);
                 return info;
             }

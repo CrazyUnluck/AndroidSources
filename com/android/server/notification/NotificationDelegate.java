@@ -16,23 +16,12 @@
 
 package com.android.server.notification;
 
-import com.android.internal.statusbar.NotificationVisibility;
-
 public interface NotificationDelegate {
     void onSetDisabled(int status);
-    void onClearAll(int callingUid, int callingPid, int userId);
-    void onNotificationClick(int callingUid, int callingPid, String key);
-    void onNotificationActionClick(int callingUid, int callingPid, String key, int actionIndex);
-    void onNotificationClear(int callingUid, int callingPid,
-            String pkg, String tag, int id, int userId);
-    void onNotificationError(int callingUid, int callingPid,
-            String pkg, String tag, int id,
-            int uid, int initialPid, String message, int userId);
-    void onPanelRevealed(boolean clearEffects, int numItems);
-    void onPanelHidden();
-    void clearEffects();
-    void onNotificationVisibilityChanged(
-            NotificationVisibility[] newlyVisibleKeys,
-            NotificationVisibility[] noLongerVisibleKeys);
-    void onNotificationExpansionChanged(String key, boolean userAction, boolean expanded);
+    void onClearAll();
+    void onNotificationClick(String pkg, String tag, int id);
+    void onNotificationClear(String pkg, String tag, int id);
+    void onNotificationError(String pkg, String tag, int id,
+            int uid, int initialPid, String message);
+    void onPanelRevealed();
 }

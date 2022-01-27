@@ -167,7 +167,7 @@ public final class CdmaInformationRecords {
         public String toString() {
             return "CdmaNumberInfoRec: {" +
                     " id: " + CdmaInformationRecords.idToString(id) +
-                    ", number: <MASKED>" +
+                    ", number: " + number +
                     ", numberType: " + numberType +
                     ", numberPlan: " + numberPlan +
                     ", pi: " + pi +

@@ -18,6 +18,7 @@ package android.view;
 
 import dalvik.system.CloseGuard;
 
+import android.os.Handler;
 import android.os.Looper;
 import android.os.MessageQueue;
 import android.util.Pools.Pool;

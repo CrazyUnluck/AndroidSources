@@ -109,24 +109,6 @@ public class CertBlacklistTest extends TestCase {
                     "3xQAyMuOHm72exJljYFqIsiNvGE0KufCqCuH1PD97IXMrLlwGmKKg5jP349lySBpJjm6RDqCTT+6" +
                     "dUl2jkVbeNmco99Y7AOdtLsOdXBMCo5x8lK8zwQWFrzEms0joHXCpWfGWA==";
 
-    public static final String ANSSI = "" +
-                    "MIIDbDCCAlSgAwIBAgIDAx2nMA0GCSqGSIb3DQEBBQUAMEsxCzAJBgNVBAYTAkZSMQ4wDAYDVQQK" +
-                    "EwVER1RQRTEsMCoGA1UEAxMjQUMgREdUUEUgU2lnbmF0dXJlIEF1dGhlbnRpZmljYXRpb24wHhcN" +
-                    "MTMwNzE4MTAwNTI4WhcNMTQwNzE4MTAwNTI4WjA+MQswCQYDVQQGEwJGUjETMBEGA1UECgwKREcg" +
-                    "VHLDqXNvcjEaMBgGA1UEAwwRQUMgREcgVHLDqXNvciBTU0wwggEiMA0GCSqGSIb3DQEBAQUAA4IB" +
-                    "DwAwggEKAoIBAQDI0WFSUyY+MmtFkqFjTefoFyDgh9b1C/2YvSIvT8oCH62JWT5rpeTCZwaXbqWc" +
-                    "jaNfzggqaFsokqfhBif43HNHNtNJmvKE32VcuLB0SpsLR/1VeTd9F99C1JeHVa+nelumOHEfouX8" +
-                    "rRFrxNXNIYTVeiENT8Y2YqRb/XAril9g7i674uFzLiNR/t/N/F8Exujv9U8m8rmgud/+tG9WDRaD" +
-                    "Jwoj3ZFCOnL5qLnSUEcS6TzWpozLmC2JVO5GZKGGd7qC9FjdBkVilkbVIEGSrYvz2Uz2v5IGqMBI" +
-                    "QaFL/kSYWxGTaedTOk2drFEApp9AEPTfv1NwCWBfegsGQrHUROM3AgMBAAGjZjBkMBIGA1UdEwEB" +
-                    "/wQIMAYBAf8CAQQwHQYDVR0OBBYEFAAMW8lJqJW0DtAv5p3Mjogxvh9lMB8GA1UdIwQYMBaAFOnb" +
-                    "kI/9W5nkFTvwYlyn5A1Y6IeZMA4GA1UdDwEB/wQEAwIBBjANBgkqhkiG9w0BAQUFAAOCAQEAtDfG" +
-                    "HkHOLW2d9fiMtwtkEwDauISJLJyCjoRmawzmQbIZXq7HaLliVfE0sdfKUm0iQ0im1/CpnJLPoTeK" +
-                    "yBHvNu1ubLc2m+9dabAYhF3pVdKC+gNaAzBXZ9Gt0p1CLk1lf8Hg+R10HN2IPCv7V/crz2Ga+c23" +
-                    "4P3pfwYW8+Nd7alGCuvqot6UYXOlheF7zWUkHn6z6tvY+9oMDHKSUAthhA/FB50JgJU89zyTv1eg" +
-                    "Y3ldKwvYBW3W3yNZdTHbPyNsPJdhqA55mDNsteE5YTp1PyySDb1MSVrbxDEruoH6ZE99Hob4Ih8A" +
-                    "mn7MHZatGClECgjXWFZ2Gxa7OUCaQpcH8g==";
-
     public CertBlacklistTest() throws IOException {
         tmpFile = File.createTempFile("test", "");
         DEFAULT_PUBKEYS = getDefaultPubkeys();
@@ -151,7 +133,7 @@ public class CertBlacklistTest extends TestCase {
 
     private Set<String> getPubkeyBlacklist(String path) throws IOException {
         // set our blacklist path
-        CertBlacklist bl = new CertBlacklist(path, "");
+        CertBlacklist bl = new CertBlacklist(path, CertBlacklist.DEFAULT_SERIAL_BLACKLIST_PATH);
         // call readPubkeyBlacklist
         Set<byte[]> arr = bl.pubkeyBlacklist;
         // convert the results to a hashset of strings
@@ -164,7 +146,7 @@ public class CertBlacklistTest extends TestCase {
 
     private Set<String> getSerialBlacklist(String path) throws IOException {
         // set our blacklist path
-        CertBlacklist bl = new CertBlacklist("", path);
+        CertBlacklist bl = new CertBlacklist(CertBlacklist.DEFAULT_PUBKEY_BLACKLIST_PATH, path);
         // call readPubkeyBlacklist
         Set<BigInteger> arr = bl.serialBlacklist;
         // convert the results to a hashset of strings
@@ -249,7 +231,8 @@ public class CertBlacklistTest extends TestCase {
         // write that to the test blacklist
         writeBlacklist(new HashSet<String>());
         // set our blacklist path
-        CertBlacklist bl = new CertBlacklist(tmpFile.getCanonicalPath(), "");
+        CertBlacklist bl = new CertBlacklist(tmpFile.getCanonicalPath(),
+                                             CertBlacklist.DEFAULT_SERIAL_BLACKLIST_PATH);
         // check to make sure it isn't blacklisted
         assertEquals(bl.isPublicKeyBlackListed(pk), false);
     }
@@ -264,7 +247,8 @@ public class CertBlacklistTest extends TestCase {
         testBlackList.add(hash);
         writeBlacklist(testBlackList);
         // set our blacklist path
-        CertBlacklist bl = new CertBlacklist(tmpFile.getCanonicalPath(), "");
+        CertBlacklist bl = new CertBlacklist(tmpFile.getCanonicalPath(),
+                                             CertBlacklist.DEFAULT_SERIAL_BLACKLIST_PATH);
         // check to make sure it isn't blacklited
         assertTrue(bl.isPublicKeyBlackListed(pk));
     }
@@ -401,6 +385,11 @@ public class CertBlacklistTest extends TestCase {
         assertEquals(bl, getCurrentSerialBlacklist());
     }
 
+    public void testTurkTrustIntermediate1SerialBlacklist() throws Exception {
+        CertBlacklist bl = new CertBlacklist();
+        assertEquals(bl.isSerialNumberBlackListed(createSerialNumber(TURKTRUST_1)), true);
+    }
+
     public void testTurkTrustIntermediate1PubkeyBlacklist() throws Exception {
         // build the public key
         PublicKey pk = createPublicKey(TURKTRUST_1);
@@ -412,18 +401,14 @@ public class CertBlacklistTest extends TestCase {
         assertEquals(bl.isPublicKeyBlackListed(pk), true);
     }
 
+    public void testTurkTrustIntermediate2SerialBlacklist() throws Exception {
+        CertBlacklist bl = new CertBlacklist();
+        assertEquals(bl.isSerialNumberBlackListed(createSerialNumber(TURKTRUST_2)), true);
+    }
+
     public void testTurkTrustIntermediate2PubkeyBlacklist() throws Exception {
         // build the public key
         PublicKey pk = createPublicKey(TURKTRUST_2);
-        // set our blacklist path
-        CertBlacklist bl = new CertBlacklist();
-        // check to make sure it isn't blacklisted
-        assertEquals(bl.isPublicKeyBlackListed(pk), true);
-    }
-
-    public void testANSSIIntermediatePubkeyBlacklist() throws Exception {
-        // build the public key
-        PublicKey pk = createPublicKey(ANSSI);
         // set our blacklist path
         CertBlacklist bl = new CertBlacklist();
         // check to make sure it isn't blacklisted

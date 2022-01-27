@@ -16,11 +16,6 @@
 
 package android.os;
 
-import android.annotation.AppIdInt;
-import android.annotation.SystemApi;
-import android.annotation.TestApi;
-import android.annotation.UserIdInt;
-
 import java.io.PrintWriter;
 
 /**
@@ -33,52 +28,35 @@ public final class UserHandle implements Parcelable {
     public static final int PER_USER_RANGE = 100000;
 
     /** @hide A user id to indicate all users on the device */
-    public static final @UserIdInt int USER_ALL = -1;
+    public static final int USER_ALL = -1;
 
     /** @hide A user handle to indicate all users on the device */
     public static final UserHandle ALL = new UserHandle(USER_ALL);
 
     /** @hide A user id to indicate the currently active user */
-    public static final @UserIdInt int USER_CURRENT = -2;
+    public static final int USER_CURRENT = -2;
 
     /** @hide A user handle to indicate the current user of the device */
     public static final UserHandle CURRENT = new UserHandle(USER_CURRENT);
 
     /** @hide A user id to indicate that we would like to send to the current
      *  user, but if this is calling from a user process then we will send it
-     *  to the caller's user instead of failing with a security exception */
-    public static final @UserIdInt int USER_CURRENT_OR_SELF = -3;
+     *  to the caller's user instead of failing wiht a security exception */
+    public static final int USER_CURRENT_OR_SELF = -3;
 
     /** @hide A user handle to indicate that we would like to send to the current
      *  user, but if this is calling from a user process then we will send it
-     *  to the caller's user instead of failing with a security exception */
+     *  to the caller's user instead of failing wiht a security exception */
     public static final UserHandle CURRENT_OR_SELF = new UserHandle(USER_CURRENT_OR_SELF);
 
     /** @hide An undefined user id */
-    public static final @UserIdInt int USER_NULL = -10000;
+    public static final int USER_NULL = -10000;
 
-    /**
-     * @hide A user id constant to indicate the "owner" user of the device
-     * @deprecated Consider using either {@link UserHandle#USER_SYSTEM} constant or
-     * check the target user's flag {@link android.content.pm.UserInfo#isAdmin}.
-     */
-    public static final @UserIdInt int USER_OWNER = 0;
+    /** @hide A user id constant to indicate the "owner" user of the device */
+    public static final int USER_OWNER = 0;
 
-    /**
-     * @hide A user handle to indicate the primary/owner user of the device
-     * @deprecated Consider using either {@link UserHandle#SYSTEM} constant or
-     * check the target user's flag {@link android.content.pm.UserInfo#isAdmin}.
-     */
+    /** @hide A user handle to indicate the primary/owner user of the device */
     public static final UserHandle OWNER = new UserHandle(USER_OWNER);
-
-    /** @hide A user id constant to indicate the "system" user of the device */
-    public static final @UserIdInt int USER_SYSTEM = 0;
-
-    /** @hide A user serial constant to indicate the "system" user of the device */
-    public static final int USER_SERIAL_SYSTEM = 0;
-
-    /** @hide A user handle to indicate the "system" user of the device */
-    public static final UserHandle SYSTEM = new UserHandle(USER_SYSTEM);
 
     /**
      * @hide Enable multi-user related side effects. Set this to false if
@@ -93,7 +71,7 @@ public final class UserHandle implements Parcelable {
      * user.
      * @hide
      */
-    public static boolean isSameUser(int uid1, int uid2) {
+    public static final boolean isSameUser(int uid1, int uid2) {
         return getUserId(uid1) == getUserId(uid2);
     }
 
@@ -105,12 +83,12 @@ public final class UserHandle implements Parcelable {
      * @return whether the appId is the same for both uids
      * @hide
      */
-    public static boolean isSameApp(int uid1, int uid2) {
+    public static final boolean isSameApp(int uid1, int uid2) {
         return getAppId(uid1) == getAppId(uid2);
     }
 
     /** @hide */
-    public static boolean isIsolated(int uid) {
+    public static final boolean isIsolated(int uid) {
         if (uid > 0) {
             final int appId = getAppId(uid);
             return appId >= Process.FIRST_ISOLATED_UID && appId <= Process.LAST_ISOLATED_UID;
@@ -130,42 +108,27 @@ public final class UserHandle implements Parcelable {
     }
 
     /**
-     * Returns the user for a given uid.
-     * @param uid A uid for an application running in a particular user.
-     * @return A {@link UserHandle} for that user.
-     */
-    public static UserHandle getUserHandleForUid(int uid) {
-        return of(getUserId(uid));
-    }
-
-    /**
      * Returns the user id for a given uid.
      * @hide
      */
-    public static @UserIdInt int getUserId(int uid) {
+    public static final int getUserId(int uid) {
         if (MU_ENABLED) {
             return uid / PER_USER_RANGE;
         } else {
-            return UserHandle.USER_SYSTEM;
+            return 0;
         }
     }
 
     /** @hide */
-    public static @UserIdInt int getCallingUserId() {
+    public static final int getCallingUserId() {
         return getUserId(Binder.getCallingUid());
-    }
-
-    /** @hide */
-    @SystemApi
-    public static UserHandle of(@UserIdInt int userId) {
-        return userId == USER_SYSTEM ? SYSTEM : new UserHandle(userId);
     }
 
     /**
      * Returns the uid that is composed from the userId and the appId.
      * @hide
      */
-    public static int getUid(@UserIdInt int userId, @AppIdInt int appId) {
+    public static final int getUid(int userId, int appId) {
         if (MU_ENABLED) {
             return userId * PER_USER_RANGE + (appId % PER_USER_RANGE);
         } else {
@@ -177,39 +140,17 @@ public final class UserHandle implements Parcelable {
      * Returns the app id (or base uid) for a given uid, stripping out the user id from it.
      * @hide
      */
-    @TestApi
-    public static @AppIdInt int getAppId(int uid) {
+    public static final int getAppId(int uid) {
         return uid % PER_USER_RANGE;
-    }
-
-    /**
-     * Returns the gid shared between all apps with this userId.
-     * @hide
-     */
-    public static int getUserGid(@UserIdInt int userId) {
-        return getUid(userId, Process.SHARED_USER_GID);
     }
 
     /**
      * Returns the shared app gid for a given uid or appId.
      * @hide
      */
-    public static int getSharedAppGid(int id) {
+    public static final int getSharedAppGid(int id) {
         return Process.FIRST_SHARED_APPLICATION_GID + (id % PER_USER_RANGE)
                 - Process.FIRST_APPLICATION_UID;
-    }
-
-    /**
-     * Returns the app id for a given shared app gid. Returns -1 if the ID is invalid.
-     * @hide
-     */
-    public static @AppIdInt int getAppIdFromSharedAppGid(int gid) {
-        final int appId = getAppId(gid) + Process.FIRST_APPLICATION_UID
-                - Process.FIRST_SHARED_APPLICATION_GID;
-        if (appId < 0 || appId >= Process.FIRST_SHARED_APPLICATION_GID) {
-            return -1;
-        }
-        return appId;
     }
 
     /**
@@ -242,17 +183,6 @@ public final class UserHandle implements Parcelable {
      * components -- user, app, isolated, etc.
      * @hide
      */
-    public static String formatUid(int uid) {
-        StringBuilder sb = new StringBuilder();
-        formatUid(sb, uid);
-        return sb.toString();
-    }
-
-    /**
-     * Generate a text representation of the uid, breaking out its individual
-     * components -- user, app, isolated, etc.
-     * @hide
-     */
     public static void formatUid(PrintWriter pw, int uid) {
         if (uid < Process.FIRST_APPLICATION_UID) {
             pw.print(uid);
@@ -273,53 +203,13 @@ public final class UserHandle implements Parcelable {
         }
     }
 
-    /** @hide */
-    public static @UserIdInt int parseUserArg(String arg) {
-        int userId;
-        if ("all".equals(arg)) {
-            userId = UserHandle.USER_ALL;
-        } else if ("current".equals(arg) || "cur".equals(arg)) {
-            userId = UserHandle.USER_CURRENT;
-        } else {
-            try {
-                userId = Integer.parseInt(arg);
-            } catch (NumberFormatException e) {
-                throw new IllegalArgumentException("Bad user number: " + arg);
-            }
-        }
-        return userId;
-    }
-
     /**
      * Returns the user id of the current process
      * @return user id of the current process
      * @hide
      */
-    @SystemApi
-    public static @UserIdInt int myUserId() {
+    public static final int myUserId() {
         return getUserId(Process.myUid());
-    }
-
-    /**
-     * Returns true if this UserHandle refers to the owner user; false otherwise.
-     * @return true if this UserHandle refers to the owner user; false otherwise.
-     * @hide
-     * @deprecated please use {@link #isSystem()} or check for
-     * {@link android.content.pm.UserInfo#isPrimary()}
-     * {@link android.content.pm.UserInfo#isAdmin()} based on your particular use case.
-     */
-    @SystemApi
-    public boolean isOwner() {
-        return this.equals(OWNER);
-    }
-
-    /**
-     * @return true if this UserHandle refers to the system user; false otherwise.
-     * @hide
-     */
-    @SystemApi
-    public boolean isSystem() {
-        return this.equals(SYSTEM);
     }
 
     /** @hide */
@@ -327,12 +217,8 @@ public final class UserHandle implements Parcelable {
         mHandle = h;
     }
 
-    /**
-     * Returns the userId stored in this UserHandle.
-     * @hide
-     */
-    @SystemApi
-    public @UserIdInt int getIdentifier() {
+    /** @hide */
+    public int getIdentifier() {
         return mHandle;
     }
 

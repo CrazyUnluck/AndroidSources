@@ -16,6 +16,8 @@
 
 package android.renderscript;
 
+import android.util.Log;
+
 /**
  * Intrinsic for applying a 3x3 convolve to an allocation.
  *
@@ -24,7 +26,7 @@ public final class ScriptIntrinsicConvolve3x3 extends ScriptIntrinsic {
     private final float[] mValues = new float[9];
     private Allocation mInput;
 
-    private ScriptIntrinsicConvolve3x3(long id, RenderScript rs) {
+    private ScriptIntrinsicConvolve3x3(int id, RenderScript rs) {
         super(id, rs);
     }
 
@@ -32,9 +34,10 @@ public final class ScriptIntrinsicConvolve3x3 extends ScriptIntrinsic {
      * Supported elements types are {@link Element#U8}, {@link
      * Element#U8_2}, {@link Element#U8_3}, {@link Element#U8_4},
      * {@link Element#F32}, {@link Element#F32_2}, {@link
-     * Element#F32_3}, and {@link Element#F32_4}.
+     * Element#F32_3}, and {@link Element#F32_4}
      *
-     * <p> The default coefficients are:
+     * The default coefficients are.
+     *
      * <code>
      * <p> [ 0,  0,  0 ]
      * <p> [ 0,  1,  0 ]
@@ -58,7 +61,7 @@ public final class ScriptIntrinsicConvolve3x3 extends ScriptIntrinsic {
             !e.isCompatible(Element.F32_4(rs))) {
             throw new RSIllegalArgumentException("Unsuported element type.");
         }
-        long id = rs.nScriptIntrinsicCreate(1, e.getID(rs));
+        int id = rs.nScriptIntrinsicCreate(1, e.getID(rs));
         ScriptIntrinsicConvolve3x3 si = new ScriptIntrinsicConvolve3x3(id, rs);
         si.setCoefficients(f);
         return si;
@@ -66,7 +69,7 @@ public final class ScriptIntrinsicConvolve3x3 extends ScriptIntrinsic {
     }
 
     /**
-     * Set the input of the 3x3 convolve.
+     * Set the input of the blur.
      * Must match the element type supplied during create.
      *
      * @param ain The input allocation.
@@ -79,7 +82,7 @@ public final class ScriptIntrinsicConvolve3x3 extends ScriptIntrinsic {
     /**
      * Set the coefficients for the convolve.
      *
-     * <p> The convolve layout is:
+     * The convolve layout is
      * <code>
      * <p> [ 0,  1,  2 ]
      * <p> [ 3,  4,  5 ]
@@ -105,19 +108,7 @@ public final class ScriptIntrinsicConvolve3x3 extends ScriptIntrinsic {
      *             type.
      */
     public void forEach(Allocation aout) {
-        forEach(0, (Allocation) null, aout, null);
-    }
-
-    /**
-     * Apply the filter to the input and save to the specified
-     * allocation.
-     *
-     * @param aout Output allocation. Must match creation element
-     *             type.
-     * @param opt LaunchOptions for clipping
-     */
-    public void forEach(Allocation aout, Script.LaunchOptions opt) {
-        forEach(0, (Allocation) null, aout, null, opt);
+        forEach(0, null, aout, null);
     }
 
     /**
@@ -139,3 +130,4 @@ public final class ScriptIntrinsicConvolve3x3 extends ScriptIntrinsic {
     }
 
 }
+

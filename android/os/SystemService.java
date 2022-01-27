@@ -16,6 +16,8 @@
 
 package android.os;
 
+import android.util.Slog;
+
 import com.google.android.collect.Maps;
 
 import java.util.HashMap;

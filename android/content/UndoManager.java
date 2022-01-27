@@ -20,9 +20,9 @@ import android.os.Parcel;
 import android.os.Parcelable;
 import android.os.ParcelableParcel;
 import android.text.TextUtils;
-import android.util.ArrayMap;
 
 import java.util.ArrayList;
+import java.util.HashMap;
 
 /**
  * Top-level class for managing and interacting with the global undo state for
@@ -54,9 +54,7 @@ import java.util.ArrayList;
  * @hide
  */
 public class UndoManager {
-    // The common case is a single undo owner (e.g. for a TextView), so default to that capacity.
-    private final ArrayMap<String, UndoOwner> mOwners =
-            new ArrayMap<String, UndoOwner>(1 /* capacity */);
+    private final HashMap<String, UndoOwner> mOwners = new HashMap<String, UndoOwner>();
     private final ArrayList<UndoState> mUndos = new ArrayList<UndoState>();
     private final ArrayList<UndoState> mRedos = new ArrayList<UndoState>();
     private int mUpdateCount;
@@ -105,7 +103,8 @@ public class UndoManager {
             return owner;
         }
 
-        owner = new UndoOwner(tag, this);
+        owner = new UndoOwner(tag);
+        owner.mManager = this;
         owner.mData = data;
         mOwners.put(tag, owner);
         return owner;
@@ -115,17 +114,20 @@ public class UndoManager {
         // XXX need to figure out how to prune.
         if (false) {
             mOwners.remove(owner.mTag);
+            owner.mManager = null;
         }
     }
 
     /**
-     * Flatten the current undo state into a Parcel object, which can later be restored
-     * with {@link #restoreInstanceState(android.os.Parcel, java.lang.ClassLoader)}.
+     * Flatten the current undo state into a Parcelable object, which can later be restored
+     * with {@link #restoreInstanceState(android.os.Parcelable)}.
      */
-    public void saveInstanceState(Parcel p) {
+    public Parcelable saveInstanceState() {
         if (mUpdateCount > 0) {
             throw new IllegalStateException("Can't save state while updating");
         }
+        ParcelableParcel pp = new ParcelableParcel(getClass().getClassLoader());
+        Parcel p = pp.getParcel();
         mStateSeq++;
         if (mStateSeq <= 0) {
             mStateSeq = 0;
@@ -149,6 +151,7 @@ public class UndoManager {
             mRedos.get(i).writeToParcel(p);
         }
         p.writeInt(0);
+        return pp;
     }
 
     void saveOwner(UndoOwner owner, Parcel out) {
@@ -159,30 +162,31 @@ public class UndoManager {
             owner.mSavedIdx = mNextSavedIdx;
             out.writeInt(owner.mSavedIdx);
             out.writeString(owner.mTag);
-            out.writeInt(owner.mOpCount);
             mNextSavedIdx++;
         }
     }
 
     /**
-     * Restore an undo state previously created with {@link #saveInstanceState(Parcel)}.  This
-     * will restore the UndoManager's state to almost exactly what it was at the point it had
+     * Restore an undo state previously created with {@link #saveInstanceState()}.  This will
+     * restore the UndoManager's state to almost exactly what it was at the point it had
      * been previously saved; the only information not restored is the data object
      * associated with each {@link UndoOwner}, which requires separate calls to
      * {@link #getOwner(String, Object)} to re-associate the owner with its data.
      */
-    public void restoreInstanceState(Parcel p, ClassLoader loader) {
+    public void restoreInstanceState(Parcelable state) {
         if (mUpdateCount > 0) {
             throw new IllegalStateException("Can't save state while updating");
         }
         forgetUndos(null, -1);
         forgetRedos(null, -1);
+        ParcelableParcel pp = (ParcelableParcel)state;
+        Parcel p = pp.getParcel();
         mHistorySize = p.readInt();
         mStateOwners = new UndoOwner[p.readInt()];
 
         int stype;
         while ((stype=p.readInt()) != 0) {
-            UndoState ustate = new UndoState(this, p, loader);
+            UndoState ustate = new UndoState(this, p, pp.getClassLoader());
             if (stype == 1) {
                 mUndos.add(0, ustate);
             } else {
@@ -196,9 +200,7 @@ public class UndoManager {
         UndoOwner owner = mStateOwners[idx];
         if (owner == null) {
             String tag = in.readString();
-            int opCount = in.readInt();
-            owner = new UndoOwner(tag, this);
-            owner.mOpCount = opCount;
+            owner = new UndoOwner(tag);
             mStateOwners[idx] = owner;
             mOwners.put(tag, owner);
         }
@@ -306,15 +308,12 @@ public class UndoManager {
         }
 
         int removed = 0;
-        int i = 0;
-        while (i < mUndos.size() && removed < count) {
+        for (int i=0; i<mUndos.size() && removed < count; i++) {
             UndoState state = mUndos.get(i);
             if (count > 0 && matchOwners(state, owners)) {
                 state.destroy();
                 mUndos.remove(i);
                 removed++;
-            } else {
-                i++;
             }
         }
 
@@ -327,15 +326,12 @@ public class UndoManager {
         }
 
         int removed = 0;
-        int i = 0;
-        while (i < mRedos.size() && removed < count) {
+        for (int i=0; i<mRedos.size() && removed < count; i++) {
             UndoState state = mRedos.get(i);
             if (count > 0 && matchOwners(state, owners)) {
                 state.destroy();
                 mRedos.remove(i);
                 removed++;
-            } else {
-                i++;
             }
         }
 

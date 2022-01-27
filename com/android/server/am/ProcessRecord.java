@@ -16,16 +16,8 @@
 
 package com.android.server.am;
 
-import static android.app.ActivityManager.PROCESS_STATE_NONEXISTENT;
-import static com.android.server.am.ActivityManagerDebugConfig.TAG_AM;
-import static com.android.server.am.ActivityManagerDebugConfig.TAG_WITH_CLASS_NAME;
-
 import android.util.ArraySet;
-import android.util.DebugUtils;
-import android.util.EventLog;
-import android.util.Slog;
-import com.android.internal.app.procstats.ProcessStats;
-import com.android.internal.app.procstats.ProcessState;
+import com.android.internal.app.ProcessStats;
 import com.android.internal.os.BatteryStatsImpl;
 
 import android.app.ActivityManager;
@@ -37,13 +29,10 @@ import android.content.ComponentName;
 import android.content.Context;
 import android.content.pm.ApplicationInfo;
 import android.content.res.CompatibilityInfo;
-import android.os.Binder;
 import android.os.Bundle;
 import android.os.IBinder;
 import android.os.Process;
-import android.os.RemoteException;
 import android.os.SystemClock;
-import android.os.Trace;
 import android.os.UserHandle;
 import android.util.ArrayMap;
 import android.util.PrintWriterPrinter;
@@ -57,8 +46,6 @@ import java.util.ArrayList;
  * is currently running.
  */
 final class ProcessRecord {
-    private static final String TAG = TAG_WITH_CLASS_NAME ? "ProcessRecord" : TAG_AM;
-
     private final BatteryStatsImpl mBatteryStats; // where to collect runtime statistics
     final ApplicationInfo info; // all about the first app in the process
     final boolean isolated;     // true if this is a special isolated process
@@ -66,19 +53,13 @@ final class ProcessRecord {
     final int userId;           // user of process.
     final String processName;   // name of the process
     // List of packages running in the process
-    final ArrayMap<String, ProcessStats.ProcessStateHolder> pkgList = new ArrayMap<>();
-    UidRecord uidRecord;        // overall state of process's uid.
-    ArraySet<String> pkgDeps;   // additional packages we have a dependency on
+    final ArrayMap<String, ProcessStats.ProcessState> pkgList
+            = new ArrayMap<String, ProcessStats.ProcessState>();
     IApplicationThread thread;  // the actual proc...  may be null only if
                                 // 'persistent' is true (in which case we
                                 // are in the process of launching the app)
-    ProcessState baseProcessTracker;
-    BatteryStatsImpl.Uid.Proc curProcBatteryStats;
+    ProcessStats.ProcessState baseProcessTracker;
     int pid;                    // The process of this application; 0 if none
-    String procStatFile;        // path to /proc/<pid>/stat
-    int[] gids;                 // The gids this process was launched with
-    String requiredAbi;         // The ABI this process was launched with
-    String instructionSet;      // The instruction set this process was launched with
     boolean starting;           // True if the process is being started
     long lastActivityTime;      // For managing the LRU list
     long lastPssTime;           // Last time we retrieved PSS data
@@ -86,44 +67,36 @@ final class ProcessRecord {
     long lastStateTime;         // Last time setProcState changed
     long initialIdlePss;        // Initial memory pss of process for idle maintenance.
     long lastPss;               // Last computed memory pss.
-    long lastSwapPss;           // Last computed SwapPss.
     long lastCachedPss;         // Last computed pss when in cached state.
-    long lastCachedSwapPss;     // Last computed SwapPss when in cached state.
     int maxAdj;                 // Maximum OOM adjustment for this process
     int curRawAdj;              // Current OOM unlimited adjustment for this process
     int setRawAdj;              // Last set OOM unlimited adjustment for this process
     int curAdj;                 // Current OOM adjustment for this process
     int setAdj;                 // Last set OOM adjustment for this process
-    int verifiedAdj;            // The last adjustment that was verified as actually being set
     int curSchedGroup;          // Currently desired scheduling class
     int setSchedGroup;          // Last set to background scheduling class
     int trimMemoryLevel;        // Last selected memory trimming level
-    int curProcState = PROCESS_STATE_NONEXISTENT; // Currently computed process state
-    int repProcState = PROCESS_STATE_NONEXISTENT; // Last reported process state
-    int setProcState = PROCESS_STATE_NONEXISTENT; // Last set process state in process tracker
-    int pssProcState = PROCESS_STATE_NONEXISTENT; // Currently requesting pss for
+    int memImportance;          // Importance constant computed from curAdj
+    int curProcState = -1;      // Currently computed process state: ActivityManager.PROCESS_STATE_*
+    int repProcState = -1;      // Last reported process state
+    int setProcState = -1;      // Last set process state in process tracker
+    int pssProcState = -1;      // The proc state we are currently requesting pss for
     boolean serviceb;           // Process currently is on the service B list
     boolean serviceHighRam;     // We are forcing to service B list due to its RAM use
+    boolean keeping;            // Actively running code so don't kill due to that?
     boolean setIsForeground;    // Running foreground UI when last set?
     boolean notCachedSinceIdle; // Has this process not been in a cached state since last idle?
     boolean hasClientActivities;  // Are there any client services with activities?
     boolean hasStartedServices; // Are there any started services running in this process?
     boolean foregroundServices; // Running any services that are foreground?
     boolean foregroundActivities; // Running any activities that are foreground?
-    boolean repForegroundActivities; // Last reported foreground activities.
     boolean systemNoUi;         // This is a system process, but not currently showing UI.
     boolean hasShownUi;         // Has UI been shown in this process since it was started?
     boolean pendingUiClean;     // Want to clean up resources from showing UI?
     boolean hasAboveClient;     // Bound using BIND_ABOVE_CLIENT, so want to be lower
-    boolean treatLikeActivity;  // Bound using BIND_TREAT_LIKE_ACTIVITY
     boolean bad;                // True if disabled in the bad process list
     boolean killedByAm;         // True when proc has been killed by activity manager, not for RAM
-    boolean killed;             // True once we know the process has been killed
     boolean procStateChanged;   // Keep track of whether we changed 'setAdj'.
-    boolean reportedInteraction;// Whether we have told usage stats about it being an interaction
-    boolean unlocked;           // True when proc was started in user unlocked state
-    long interactionEventTime;  // The time we sent the last interaction event
-    long fgInteractionTime;     // When we became foreground for interaction purposes
     String waitingToKill;       // Process is waiting to be killed when in the bg, and reason
     IBinder forcingToForeground;// Token that is forcing this process to be foreground
     int adjSeq;                 // Sequence id for identifying oom_adj assignment cycles
@@ -144,31 +117,33 @@ final class ProcessRecord {
     long curCpuTime;            // How long proc has run CPU most recently
     long lastRequestedGc;       // When we last asked the app to do a gc
     long lastLowMemory;         // When we last told the app that memory is low
-    long lastProviderTime;      // The last time someone else was using a provider in this process.
     boolean reportLowMemory;    // Set to true when waiting to report low mem
     boolean empty;              // Is this an empty background process?
     boolean cached;             // Is this a cached process?
     String adjType;             // Debugging: primary thing impacting oom_adj.
     int adjTypeCode;            // Debugging: adj code to report to app.
     Object adjSource;           // Debugging: option dependent object.
-    int adjSourceProcState;     // Debugging: proc state of adjSource's process.
+    int adjSourceOom;           // Debugging: oom_adj of adjSource's process.
     Object adjTarget;           // Debugging: target component impacting oom_adj.
-    Runnable crashHandler;      // Optional local handler to be invoked in the process crash.
-
-    // all activities running in the process
-    final ArrayList<ActivityRecord> activities = new ArrayList<>();
+    
+    // contains HistoryRecord objects
+    final ArrayList<ActivityRecord> activities = new ArrayList<ActivityRecord>();
     // all ServiceRecord running in this process
-    final ArraySet<ServiceRecord> services = new ArraySet<>();
+    final ArraySet<ServiceRecord> services = new ArraySet<ServiceRecord>();
     // services that are currently executing code (need to remain foreground).
-    final ArraySet<ServiceRecord> executingServices = new ArraySet<>();
+    final ArraySet<ServiceRecord> executingServices
+             = new ArraySet<ServiceRecord>();
     // All ConnectionRecord this process holds
-    final ArraySet<ConnectionRecord> connections = new ArraySet<>();
+    final ArraySet<ConnectionRecord> connections
+            = new ArraySet<ConnectionRecord>();
     // all IIntentReceivers that are registered from this process.
-    final ArraySet<ReceiverList> receivers = new ArraySet<>();
+    final ArraySet<ReceiverList> receivers = new ArraySet<ReceiverList>();
     // class (String) -> ContentProviderRecord
-    final ArrayMap<String, ContentProviderRecord> pubProviders = new ArrayMap<>();
+    final ArrayMap<String, ContentProviderRecord> pubProviders
+            = new ArrayMap<String, ContentProviderRecord>();
     // All ContentProviderRecord process is using
-    final ArrayList<ContentProviderConnection> conProviders = new ArrayList<>();
+    final ArrayList<ContentProviderConnection> conProviders
+            = new ArrayList<ContentProviderConnection>();
 
     boolean execServicesFg;     // do we need to be executing services in the foreground?
     boolean persistent;         // always keep this application running?
@@ -181,10 +156,10 @@ final class ProcessRecord {
     boolean debugging;          // was app launched for debugging?
     boolean waitedForDebugger;  // has process show wait for debugger dialog?
     Dialog waitDialog;          // current wait for debugger dialog
-
+    
     String shortStringName;     // caching of toShortString() result.
     String stringName;          // caching of toString() result.
-
+    
     // These reports are generated & stored when an app gets into an error condition.
     // They will be "null" when all is OK.
     ActivityManager.ProcessErrorStateInfo crashingReport;
@@ -194,11 +169,6 @@ final class ProcessRecord {
     // app that installed the package.
     ComponentName errorReportReceiver;
 
-    // Process is currently hosting a backup agent for backup or restore
-    public boolean inFullBackup;
-    // App is allowed to manage whitelists such as temporary Power Save mode whitelist.
-    boolean whitelistManager;
-
     void dump(PrintWriter pw, String prefix) {
         final long now = SystemClock.uptimeMillis();
 
@@ -207,17 +177,7 @@ final class ProcessRecord {
         if (uid != info.uid) {
             pw.print(" ISOLATED uid="); pw.print(uid);
         }
-        pw.print(" gids={");
-        if (gids != null) {
-            for (int gi=0; gi<gids.length; gi++) {
-                if (gi != 0) pw.print(", ");
-                pw.print(gids[gi]);
-
-            }
-        }
-        pw.println("}");
-        pw.print(prefix); pw.print("requiredAbi="); pw.print(requiredAbi);
-                pw.print(" instructionSet="); pw.println(instructionSet);
+        pw.println();
         if (info.className != null) {
             pw.print(prefix); pw.print("class="); pw.println(info.className);
         }
@@ -234,14 +194,6 @@ final class ProcessRecord {
             pw.print(pkgList.keyAt(i));
         }
         pw.println("}");
-        if (pkgDeps != null) {
-            pw.print(prefix); pw.print("packageDependencies={");
-            for (int i=0; i<pkgDeps.size(); i++) {
-                if (i > 0) pw.print(", ");
-                pw.print(pkgDeps.valueAt(i));
-            }
-            pw.println("}");
-        }
         pw.print(prefix); pw.print("compat="); pw.println(compat);
         if (instrumentationClass != null || instrumentationProfileFile != null
                 || instrumentationArguments != null) {
@@ -269,12 +221,10 @@ final class ProcessRecord {
                 pw.println();
         pw.print(prefix); pw.print("adjSeq="); pw.print(adjSeq);
                 pw.print(" lruSeq="); pw.print(lruSeq);
-                pw.print(" lastPss="); DebugUtils.printSizeValue(pw, lastPss*1024);
-                pw.print(" lastSwapPss="); DebugUtils.printSizeValue(pw, lastSwapPss*1024);
-                pw.print(" lastCachedPss="); DebugUtils.printSizeValue(pw, lastCachedPss*1024);
-                pw.print(" lastCachedSwapPss="); DebugUtils.printSizeValue(pw, lastCachedSwapPss*1024);
-                pw.println();
-        pw.print(prefix); pw.print("cached="); pw.print(cached);
+                pw.print(" lastPss="); pw.print(lastPss);
+                pw.print(" lastCachedPss="); pw.println(lastCachedPss);
+        pw.print(prefix); pw.print("keeping="); pw.print(keeping);
+                pw.print(" cached="); pw.print(cached);
                 pw.print(" empty="); pw.println(empty);
         if (serviceb) {
             pw.print(prefix); pw.print("serviceb="); pw.print(serviceb);
@@ -300,56 +250,37 @@ final class ProcessRecord {
                 pw.print(" lastStateTime=");
                 TimeUtils.formatDuration(lastStateTime, now, pw);
                 pw.println();
-        if (hasShownUi || pendingUiClean || hasAboveClient || treatLikeActivity) {
+        if (hasShownUi || pendingUiClean || hasAboveClient) {
             pw.print(prefix); pw.print("hasShownUi="); pw.print(hasShownUi);
                     pw.print(" pendingUiClean="); pw.print(pendingUiClean);
-                    pw.print(" hasAboveClient="); pw.print(hasAboveClient);
-                    pw.print(" treatLikeActivity="); pw.println(treatLikeActivity);
+                    pw.print(" hasAboveClient="); pw.println(hasAboveClient);
         }
         if (setIsForeground || foregroundServices || forcingToForeground != null) {
             pw.print(prefix); pw.print("setIsForeground="); pw.print(setIsForeground);
                     pw.print(" foregroundServices="); pw.print(foregroundServices);
                     pw.print(" forcingToForeground="); pw.println(forcingToForeground);
         }
-        if (reportedInteraction || fgInteractionTime != 0) {
-            pw.print(prefix); pw.print("reportedInteraction=");
-            pw.print(reportedInteraction);
-            if (interactionEventTime != 0) {
-                pw.print(" time=");
-                TimeUtils.formatDuration(interactionEventTime, SystemClock.elapsedRealtime(), pw);
-            }
-            if (fgInteractionTime != 0) {
-                pw.print(" fgInteractionTime=");
-                TimeUtils.formatDuration(fgInteractionTime, SystemClock.elapsedRealtime(), pw);
-            }
-            pw.println();
-        }
         if (persistent || removed) {
             pw.print(prefix); pw.print("persistent="); pw.print(persistent);
                     pw.print(" removed="); pw.println(removed);
         }
-        if (hasClientActivities || foregroundActivities || repForegroundActivities) {
+        if (hasClientActivities || foregroundActivities) {
             pw.print(prefix); pw.print("hasClientActivities="); pw.print(hasClientActivities);
-                    pw.print(" foregroundActivities="); pw.print(foregroundActivities);
-                    pw.print(" (rep="); pw.print(repForegroundActivities); pw.println(")");
-        }
-        if (lastProviderTime > 0) {
-            pw.print(prefix); pw.print("lastProviderTime=");
-            TimeUtils.formatDuration(lastProviderTime, now, pw);
-            pw.println();
+                    pw.print(" foregroundActivities="); pw.println(foregroundActivities);
         }
         if (hasStartedServices) {
             pw.print(prefix); pw.print("hasStartedServices="); pw.println(hasStartedServices);
         }
-        if (setProcState >= ActivityManager.PROCESS_STATE_SERVICE) {
+        if (!keeping) {
             long wtime;
             synchronized (mBatteryStats) {
                 wtime = mBatteryStats.getProcessWakeTime(info.uid,
                         pid, SystemClock.elapsedRealtime());
             }
+            long timeUsed = wtime - lastWakeTime;
             pw.print(prefix); pw.print("lastWakeTime="); pw.print(lastWakeTime);
                     pw.print(" timeUsed=");
-                    TimeUtils.formatDuration(wtime-lastWakeTime, pw); pw.println("");
+                    TimeUtils.formatDuration(timeUsed, pw); pw.println("");
             pw.print(prefix); pw.print("lastCpuTime="); pw.print(lastCpuTime);
                     pw.print(" timeUsed=");
                     TimeUtils.formatDuration(curCpuTime-lastCpuTime, pw); pw.println("");
@@ -359,9 +290,8 @@ final class ProcessRecord {
                 pw.print(" lastLowMemory=");
                 TimeUtils.formatDuration(lastLowMemory, now, pw);
                 pw.print(" reportLowMemory="); pw.println(reportLowMemory);
-        if (killed || killedByAm || waitingToKill != null) {
-            pw.print(prefix); pw.print("killed="); pw.print(killed);
-                    pw.print(" killedByAm="); pw.print(killedByAm);
+        if (killedByAm || waitingToKill != null) {
+            pw.print(prefix); pw.print("killedByAm="); pw.print(killedByAm);
                     pw.print(" waitingToKill="); pw.println(waitingToKill);
         }
         if (debugging || crashing || crashDialog != null || notResponding
@@ -379,9 +309,6 @@ final class ProcessRecord {
                         pw.print(errorReportReceiver.flattenToShortString());
                     }
                     pw.println();
-        }
-        if (whitelistManager) {
-            pw.print(prefix); pw.print("whitelistManager="); pw.println(whitelistManager);
         }
         if (activities.size() > 0) {
             pw.print(prefix); pw.println("Activities:");
@@ -431,7 +358,7 @@ final class ProcessRecord {
             }
         }
     }
-
+    
     ProcessRecord(BatteryStatsImpl _batteryStats, ApplicationInfo _info,
             String _processName, int _uid) {
         mBatteryStats = _batteryStats;
@@ -440,10 +367,10 @@ final class ProcessRecord {
         uid = _uid;
         userId = UserHandle.getUserId(_uid);
         processName = _processName;
-        pkgList.put(_info.packageName, new ProcessStats.ProcessStateHolder(_info.versionCode));
+        pkgList.put(_info.packageName, null);
         maxAdj = ProcessList.UNKNOWN_ADJ;
-        curRawAdj = setRawAdj = ProcessList.INVALID_ADJ;
-        curAdj = setAdj = verifiedAdj = ProcessList.INVALID_ADJ;
+        curRawAdj = setRawAdj = -100;
+        curAdj = setAdj = -100;
         persistent = false;
         removed = false;
         lastStateTime = lastPssTime = nextPssTime = SystemClock.uptimeMillis();
@@ -451,32 +378,31 @@ final class ProcessRecord {
 
     public void setPid(int _pid) {
         pid = _pid;
-        procStatFile = null;
         shortStringName = null;
         stringName = null;
     }
 
     public void makeActive(IApplicationThread _thread, ProcessStatsService tracker) {
         if (thread == null) {
-            final ProcessState origBase = baseProcessTracker;
+            final ProcessStats.ProcessState origBase = baseProcessTracker;
             if (origBase != null) {
                 origBase.setState(ProcessStats.STATE_NOTHING,
                         tracker.getMemFactorLocked(), SystemClock.uptimeMillis(), pkgList);
                 origBase.makeInactive();
             }
-            baseProcessTracker = tracker.getProcessStateLocked(info.packageName, uid,
-                    info.versionCode, processName);
+            baseProcessTracker = tracker.getProcessStateLocked(info.packageName, info.uid,
+                    processName);
             baseProcessTracker.makeActive();
             for (int i=0; i<pkgList.size(); i++) {
-                ProcessStats.ProcessStateHolder holder = pkgList.valueAt(i);
-                if (holder.state != null && holder.state != origBase) {
-                    holder.state.makeInactive();
+                ProcessStats.ProcessState ps = pkgList.valueAt(i);
+                if (ps != null && ps != origBase) {
+                    ps.makeInactive();
                 }
-                holder.state = tracker.getProcessStateLocked(pkgList.keyAt(i), uid,
-                        info.versionCode, processName);
-                if (holder.state != baseProcessTracker) {
-                    holder.state.makeActive();
+                ps = tracker.getProcessStateLocked(pkgList.keyAt(i), info.uid, processName);
+                if (ps != baseProcessTracker) {
+                    ps.makeActive();
                 }
+                pkgList.setValueAt(i, ps);
             }
         }
         thread = _thread;
@@ -484,7 +410,7 @@ final class ProcessRecord {
 
     public void makeInactive(ProcessStatsService tracker) {
         thread = null;
-        final ProcessState origBase = baseProcessTracker;
+        final ProcessStats.ProcessState origBase = baseProcessTracker;
         if (origBase != null) {
             if (origBase != null) {
                 origBase.setState(ProcessStats.STATE_NOTHING,
@@ -493,11 +419,11 @@ final class ProcessRecord {
             }
             baseProcessTracker = null;
             for (int i=0; i<pkgList.size(); i++) {
-                ProcessStats.ProcessStateHolder holder = pkgList.valueAt(i);
-                if (holder.state != null && holder.state != origBase) {
-                    holder.state.makeInactive();
+                ProcessStats.ProcessState ps = pkgList.valueAt(i);
+                if (ps != null && ps != origBase) {
+                    ps.makeInactive();
                 }
-                holder.state = null;
+                pkgList.setValueAt(i, null);
             }
         }
     }
@@ -516,7 +442,7 @@ final class ProcessRecord {
         }
         return false;
     }
-
+    
     public void stopFreezingAllLocked() {
         int i = activities.size();
         while (i > 0) {
@@ -524,7 +450,7 @@ final class ProcessRecord {
             activities.get(i).stopFreezingScreenLocked(true);
         }
     }
-
+    
     public void unlinkDeathRecipient() {
         if (deathRecipient != null && thread != null) {
             thread.asBinder().unlinkToDeath(deathRecipient, 0);
@@ -565,46 +491,6 @@ final class ProcessRecord {
         return adj;
     }
 
-    void scheduleCrash(String message) {
-        // Checking killedbyAm should keep it from showing the crash dialog if the process
-        // was already dead for a good / normal reason.
-        if (!killedByAm) {
-            if (thread != null) {
-                if (pid == Process.myPid()) {
-                    Slog.w(TAG, "scheduleCrash: trying to crash system process!");
-                    return;
-                }
-                long ident = Binder.clearCallingIdentity();
-                try {
-                    thread.scheduleCrash(message);
-                } catch (RemoteException e) {
-                    // If it's already dead our work is done. If it's wedged just kill it.
-                    // We won't get the crash dialog or the error reporting.
-                    kill("scheduleCrash for '" + message + "' failed", true);
-                } finally {
-                    Binder.restoreCallingIdentity(ident);
-                }
-            }
-        }
-    }
-
-    void kill(String reason, boolean noisy) {
-        if (!killedByAm) {
-            Trace.traceBegin(Trace.TRACE_TAG_ACTIVITY_MANAGER, "kill");
-            if (noisy) {
-                Slog.i(TAG, "Killing " + toShortString() + " (adj " + setAdj + "): " + reason);
-            }
-            EventLog.writeEvent(EventLogTags.AM_KILL, userId, pid, processName, setAdj, reason);
-            Process.killProcessQuiet(pid);
-            ActivityManagerService.killProcessGroup(uid, pid);
-            if (!persistent) {
-                killed = true;
-                killedByAm = true;
-            }
-            Trace.traceEnd(Trace.TRACE_TAG_ACTIVITY_MANAGER);
-        }
-    }
-
     public String toShortString() {
         if (shortStringName != null) {
             return shortStringName;
@@ -613,7 +499,7 @@ final class ProcessRecord {
         toShortString(sb);
         return shortStringName = sb.toString();
     }
-
+    
     void toShortString(StringBuilder sb) {
         sb.append(pid);
         sb.append(':');
@@ -638,7 +524,7 @@ final class ProcessRecord {
             }
         }
     }
-
+    
     public String toString() {
         if (stringName != null) {
             return stringName;
@@ -681,19 +567,17 @@ final class ProcessRecord {
     /*
      *  Return true if package has been added false if not
      */
-    public boolean addPackage(String pkg, int versionCode, ProcessStatsService tracker) {
+    public boolean addPackage(String pkg, ProcessStatsService tracker) {
         if (!pkgList.containsKey(pkg)) {
-            ProcessStats.ProcessStateHolder holder = new ProcessStats.ProcessStateHolder(
-                    versionCode);
             if (baseProcessTracker != null) {
-                holder.state = tracker.getProcessStateLocked(
-                        pkg, uid, versionCode, processName);
-                pkgList.put(pkg, holder);
-                if (holder.state != baseProcessTracker) {
-                    holder.state.makeActive();
+                ProcessStats.ProcessState state = tracker.getProcessStateLocked(
+                        pkg, info.uid, processName);
+                pkgList.put(pkg, state);
+                if (state != baseProcessTracker) {
+                    state.makeActive();
                 }
             } else {
-                pkgList.put(pkg, holder);
+                pkgList.put(pkg, null);
             }
             return true;
         }
@@ -726,29 +610,26 @@ final class ProcessRecord {
                     tracker.getMemFactorLocked(), now, pkgList);
             if (N != 1) {
                 for (int i=0; i<N; i++) {
-                    ProcessStats.ProcessStateHolder holder = pkgList.valueAt(i);
-                    if (holder.state != null && holder.state != baseProcessTracker) {
-                        holder.state.makeInactive();
+                    ProcessStats.ProcessState ps = pkgList.valueAt(i);
+                    if (ps != null && ps != baseProcessTracker) {
+                        ps.makeInactive();
                     }
 
                 }
                 pkgList.clear();
-                ProcessState ps = tracker.getProcessStateLocked(
-                        info.packageName, uid, info.versionCode, processName);
-                ProcessStats.ProcessStateHolder holder = new ProcessStats.ProcessStateHolder(
-                        info.versionCode);
-                holder.state = ps;
-                pkgList.put(info.packageName, holder);
+                ProcessStats.ProcessState ps = tracker.getProcessStateLocked(
+                        info.packageName, info.uid, processName);
+                pkgList.put(info.packageName, ps);
                 if (ps != baseProcessTracker) {
                     ps.makeActive();
                 }
             }
         } else if (N != 1) {
             pkgList.clear();
-            pkgList.put(info.packageName, new ProcessStats.ProcessStateHolder(info.versionCode));
+            pkgList.put(info.packageName, null);
         }
     }
-
+    
     public String[] getPackageList() {
         int size = pkgList.size();
         if (size == 0) {

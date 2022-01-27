@@ -20,8 +20,6 @@ import android.os.Parcel;
 import android.os.Parcelable;
 import android.telephony.Rlog;
 
-import java.util.Objects;
-
 /**
  * CellIdentity to represent a unique UMTS cell
  */
@@ -40,8 +38,6 @@ public final class CellIdentityWcdma implements Parcelable {
     private final int mCid;
     // 9-bit UMTS Primary Scrambling Code described in TS 25.331, 0..511
     private final int mPsc;
-    // 16-bit UMTS Absolute RF Channel Number
-    private final int mUarfcn;
 
     /**
      * @hide
@@ -52,7 +48,6 @@ public final class CellIdentityWcdma implements Parcelable {
         mLac = Integer.MAX_VALUE;
         mCid = Integer.MAX_VALUE;
         mPsc = Integer.MAX_VALUE;
-        mUarfcn = Integer.MAX_VALUE;
     }
     /**
      * public constructor
@@ -65,27 +60,11 @@ public final class CellIdentityWcdma implements Parcelable {
      * @hide
      */
     public CellIdentityWcdma (int mcc, int mnc, int lac, int cid, int psc) {
-        this(mcc, mnc, lac, cid, psc, Integer.MAX_VALUE);
-    }
-
-    /**
-     * public constructor
-     * @param mcc 3-digit Mobile Country Code, 0..999
-     * @param mnc 2 or 3-digit Mobile Network Code, 0..999
-     * @param lac 16-bit Location Area Code, 0..65535
-     * @param cid 28-bit UMTS Cell Identity
-     * @param psc 9-bit UMTS Primary Scrambling Code
-     * @param uarfcn 16-bit UMTS Absolute RF Channel Number
-     *
-     * @hide
-     */
-    public CellIdentityWcdma (int mcc, int mnc, int lac, int cid, int psc, int uarfcn) {
         mMcc = mcc;
         mMnc = mnc;
         mLac = lac;
         mCid = cid;
         mPsc = psc;
-        mUarfcn = uarfcn;
     }
 
     private CellIdentityWcdma(CellIdentityWcdma cid) {
@@ -94,7 +73,6 @@ public final class CellIdentityWcdma implements Parcelable {
         mLac = cid.mLac;
         mCid = cid.mCid;
         mPsc = cid.mPsc;
-        mUarfcn = cid.mUarfcn;
     }
 
     CellIdentityWcdma copy() {
@@ -140,33 +118,27 @@ public final class CellIdentityWcdma implements Parcelable {
 
     @Override
     public int hashCode() {
-        return Objects.hash(mMcc, mMnc, mLac, mCid, mPsc);
-    }
-
-    /**
-     * @return 16-bit UMTS Absolute RF Channel Number, Integer.MAX_VALUE if unknown
-     */
-    public int getUarfcn() {
-        return mUarfcn;
+        int primeNum = 31;
+        return (mMcc * primeNum) + (mMnc * primeNum) + (mLac * primeNum) + (mCid * primeNum) +
+                (mPsc * primeNum);
     }
 
     @Override
     public boolean equals(Object other) {
-        if (this == other) {
-            return true;
-        }
-
-        if (!(other instanceof CellIdentityWcdma)) {
+        if (super.equals(other)) {
+            try {
+                CellIdentityWcdma o = (CellIdentityWcdma)other;
+                return mMcc == o.mMcc &&
+                        mMnc == o.mMnc &&
+                        mLac == o.mLac &&
+                        mCid == o.mCid &&
+                        mPsc == o.mPsc;
+            } catch (ClassCastException e) {
+                return false;
+            }
+        } else {
             return false;
         }
-
-        CellIdentityWcdma o = (CellIdentityWcdma) other;
-        return mMcc == o.mMcc &&
-                mMnc == o.mMnc &&
-                mLac == o.mLac &&
-                mCid == o.mCid &&
-                mPsc == o.mPsc &&
-                mUarfcn == o.mUarfcn;
     }
 
     @Override
@@ -177,7 +149,6 @@ public final class CellIdentityWcdma implements Parcelable {
         sb.append(" mLac=").append(mLac);
         sb.append(" mCid=").append(mCid);
         sb.append(" mPsc=").append(mPsc);
-        sb.append(" mUarfcn=").append(mUarfcn);
         sb.append("}");
 
         return sb.toString();
@@ -198,7 +169,6 @@ public final class CellIdentityWcdma implements Parcelable {
         dest.writeInt(mLac);
         dest.writeInt(mCid);
         dest.writeInt(mPsc);
-        dest.writeInt(mUarfcn);
     }
 
     /** Construct from Parcel, type has already been processed */
@@ -208,7 +178,6 @@ public final class CellIdentityWcdma implements Parcelable {
         mLac = in.readInt();
         mCid = in.readInt();
         mPsc = in.readInt();
-        mUarfcn = in.readInt();
         if (DBG) log("CellIdentityWcdma(Parcel): " + toString());
     }
 

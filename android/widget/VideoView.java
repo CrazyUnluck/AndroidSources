@@ -19,11 +19,10 @@ package android.widget;
 import android.app.AlertDialog;
 import android.content.Context;
 import android.content.DialogInterface;
+import android.content.Intent;
 import android.content.res.Resources;
 import android.graphics.Canvas;
 import android.media.AudioManager;
-import android.media.Cea708CaptionRenderer;
-import android.media.ClosedCaptionRenderer;
 import android.media.MediaFormat;
 import android.media.MediaPlayer;
 import android.media.MediaPlayer.OnCompletionListener;
@@ -32,7 +31,6 @@ import android.media.MediaPlayer.OnInfoListener;
 import android.media.Metadata;
 import android.media.SubtitleController;
 import android.media.SubtitleTrack.RenderingWidget;
-import android.media.TtmlRenderer;
 import android.media.WebVttRenderer;
 import android.net.Uri;
 import android.os.Looper;
@@ -44,6 +42,8 @@ import android.view.MotionEvent;
 import android.view.SurfaceHolder;
 import android.view.SurfaceView;
 import android.view.View;
+import android.view.accessibility.AccessibilityEvent;
+import android.view.accessibility.AccessibilityNodeInfo;
 import android.widget.MediaController.MediaPlayerControl;
 
 import java.io.IOException;
@@ -127,12 +127,8 @@ public class VideoView extends SurfaceView
         initVideoView();
     }
 
-    public VideoView(Context context, AttributeSet attrs, int defStyleAttr) {
-        this(context, attrs, defStyleAttr, 0);
-    }
-
-    public VideoView(Context context, AttributeSet attrs, int defStyleAttr, int defStyleRes) {
-        super(context, attrs, defStyleAttr, defStyleRes);
+    public VideoView(Context context, AttributeSet attrs, int defStyle) {
+        super(context, attrs, defStyle);
         initVideoView();
     }
 
@@ -201,8 +197,15 @@ public class VideoView extends SurfaceView
     }
 
     @Override
-    public CharSequence getAccessibilityClassName() {
-        return VideoView.class.getName();
+    public void onInitializeAccessibilityEvent(AccessibilityEvent event) {
+        super.onInitializeAccessibilityEvent(event);
+        event.setClassName(VideoView.class.getName());
+    }
+
+    @Override
+    public void onInitializeAccessibilityNodeInfo(AccessibilityNodeInfo info) {
+        super.onInitializeAccessibilityNodeInfo(info);
+        info.setClassName(VideoView.class.getName());
     }
 
     public int resolveAdjustedSize(int desiredSize, int measureSpec) {
@@ -222,33 +225,16 @@ public class VideoView extends SurfaceView
         mTargetState  = STATE_IDLE;
     }
 
-    /**
-     * Sets video path.
-     *
-     * @param path the path of the video.
-     */
     public void setVideoPath(String path) {
         setVideoURI(Uri.parse(path));
     }
 
-    /**
-     * Sets video URI.
-     *
-     * @param uri the URI of the video.
-     */
     public void setVideoURI(Uri uri) {
         setVideoURI(uri, null);
     }
 
     /**
-     * Sets video URI using specific headers.
-     *
-     * @param uri     the URI of the video.
-     * @param headers the headers for the URI request.
-     *                Note that the cross domain redirection is allowed by default, but that can be
-     *                changed with key/value pairs through the headers parameter with
-     *                "android-allow-cross-domain-redirect" as the key and "0" or "1" as the value
-     *                to disallow or allow cross domain redirection.
+     * @hide
      */
     public void setVideoURI(Uri uri, Map<String, String> headers) {
         mUri = uri;
@@ -303,8 +289,6 @@ public class VideoView extends SurfaceView
             mMediaPlayer = null;
             mCurrentState = STATE_IDLE;
             mTargetState  = STATE_IDLE;
-            AudioManager am = (AudioManager) mContext.getSystemService(Context.AUDIO_SERVICE);
-            am.abandonAudioFocus(null);
         }
     }
 
@@ -313,13 +297,15 @@ public class VideoView extends SurfaceView
             // not ready for playback just yet, will try again later
             return;
         }
+        // Tell the music playback service to pause
+        // TODO: these constants need to be published somewhere in the framework.
+        Intent i = new Intent("com.android.music.musicservicecommand");
+        i.putExtra("command", "pause");
+        mContext.sendBroadcast(i);
+
         // we shouldn't clear the target state, because somebody might have
         // called start() previously
         release(false);
-
-        AudioManager am = (AudioManager) mContext.getSystemService(Context.AUDIO_SERVICE);
-        am.requestAudioFocus(null, AudioManager.STREAM_MUSIC, AudioManager.AUDIOFOCUS_GAIN);
-
         try {
             mMediaPlayer = new MediaPlayer();
             // TODO: create SubtitleController in MediaPlayer, but we need
@@ -328,9 +314,6 @@ public class VideoView extends SurfaceView
             final SubtitleController controller = new SubtitleController(
                     context, mMediaPlayer.getMediaTimeProvider(), mMediaPlayer);
             controller.registerRenderer(new WebVttRenderer(context));
-            controller.registerRenderer(new TtmlRenderer(context));
-            controller.registerRenderer(new Cea708CaptionRenderer(context));
-            controller.registerRenderer(new ClosedCaptionRenderer(context));
             mMediaPlayer.setSubtitleAnchor(controller, this);
 
             if (mAudioSession != 0) {
@@ -646,8 +629,6 @@ public class VideoView extends SurfaceView
             if (cleartargetstate) {
                 mTargetState  = STATE_IDLE;
             }
-            AudioManager am = (AudioManager) mContext.getSystemService(Context.AUDIO_SERVICE);
-            am.abandonAudioFocus(null);
         }
     }
 

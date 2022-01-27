@@ -80,7 +80,7 @@ public class ViewConfiguration {
      * is a tap or a scroll. If the user does not move within this interval, it is
      * considered to be a tap.
      */
-    private static final int TAP_TIMEOUT = 100;
+    private static final int TAP_TIMEOUT = 180;
 
     /**
      * Defines the duration in milliseconds we will wait to see if a touch event
@@ -211,11 +211,6 @@ public class ViewConfiguration {
      * Max distance in dips to overfling for edge effects
      */
     private static final int OVERFLING_DISTANCE = 6;
-
-    /**
-     * Default duration to hide an action mode for.
-     */
-    private static final long ACTION_MODE_HIDE_DURATION_DEFAULT = 2000;
 
     /**
      * Configuration values for overriding {@link #hasPermanentMenuKey()} behavior.
@@ -734,13 +729,6 @@ public class ViewConfiguration {
      */
     public static float getScrollFriction() {
         return SCROLL_FRICTION;
-    }
-
-    /**
-     * @return the default duration in milliseconds for {@link ActionMode#hide(long)}.
-     */
-    public static long getDefaultActionModeHideDuration() {
-        return ACTION_MODE_HIDE_DURATION_DEFAULT;
     }
 
     /**

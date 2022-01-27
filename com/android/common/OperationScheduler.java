@@ -17,10 +17,10 @@
 package com.android.common;
 
 import android.content.SharedPreferences;
+import android.net.http.AndroidHttpClient;
 import android.text.format.Time;
 
-import java.util.Map;
-import java.util.TreeMap;
+import java.util.TreeSet;
 
 /**
  * Tracks the success/failure history of a particular network operation in
@@ -274,7 +274,7 @@ public class OperationScheduler {
             return true;
         } catch (NumberFormatException nfe) {
             try {
-                setMoratoriumTimeMillis(LegacyHttpDateTime.parse(retryAfter));
+                setMoratoriumTimeMillis(AndroidHttpClient.parseDate(retryAfter));
                 return true;
             } catch (IllegalArgumentException iae) {
                 return false;
@@ -355,23 +355,16 @@ public class OperationScheduler {
      */
     public String toString() {
         StringBuilder out = new StringBuilder("[OperationScheduler:");
-        TreeMap<String, Object> copy = new TreeMap<String, Object>(mStorage.getAll());  // Sort keys
-        for (Map.Entry<String, Object> e : copy.entrySet()) {
-            String key = e.getKey();
+        for (String key : new TreeSet<String>(mStorage.getAll().keySet())) {  // Sort keys
             if (key.startsWith(PREFIX)) {
                 if (key.endsWith("TimeMillis")) {
                     Time time = new Time();
-                    time.set((Long) e.getValue());
+                    time.set(mStorage.getLong(key, 0));
                     out.append(" ").append(key.substring(PREFIX.length(), key.length() - 10));
                     out.append("=").append(time.format("%Y-%m-%d/%H:%M:%S"));
                 } else {
                     out.append(" ").append(key.substring(PREFIX.length()));
-                    Object v = e.getValue();
-                    if (v == null) {
-                        out.append("=(null)");
-                    } else {
-                        out.append("=").append(v.toString());
-                    }
+                    out.append("=").append(mStorage.getAll().get(key).toString());
                 }
             }
         }

@@ -20,112 +20,35 @@ import android.text.TextUtils;
 import android.view.LayoutInflater;
 import android.view.View;
 import android.view.ViewGroup;
-import android.view.ViewTreeObserver;
 import android.widget.TextView;
 
 /**
  * An abstract {@link Presenter} for rendering a detailed description of an
- * item. Typically this Presenter will be used in a {@link DetailsOverviewRowPresenter}
- * or {@link PlaybackControlsRowPresenter}.
+ * item. Typically this Presenter will be used in a DetailsOveriewRowPresenter.
  *
- * <p>Subclasses must override {@link #onBindDescription} to implement the data
+ * <p>Subclasses will override {@link #onBindDescription} to implement the data
  * binding for this Presenter.
  */
 public abstract class AbstractDetailsDescriptionPresenter extends Presenter {
 
-    /**
-     * The ViewHolder for the {@link AbstractDetailsDescriptionPresenter}.
-     */
     public static class ViewHolder extends Presenter.ViewHolder {
         private final TextView mTitle;
         private final TextView mSubtitle;
         private final TextView mBody;
-        private final int mTitleMargin;
-        private final int mUnderTitleBaselineMargin;
-        private final int mUnderSubtitleBaselineMargin;
-        private final int mTitleLineSpacing;
-        private final int mBodyLineSpacing;
-        private final int mBodyMaxLines;
-        private final int mBodyMinLines;
-        private final FontMetricsInt mTitleFontMetricsInt;
-        private final FontMetricsInt mSubtitleFontMetricsInt;
-        private final FontMetricsInt mBodyFontMetricsInt;
-        private final int mTitleMaxLines;
-        private ViewTreeObserver.OnPreDrawListener mPreDrawListener;
+        private final int mUnderTitleSpacing;
+        private final int mUnderSubtitleSpacing;
 
-        public ViewHolder(final View view) {
+        public ViewHolder(View view) {
             super(view);
             mTitle = (TextView) view.findViewById(R.id.lb_details_description_title);
             mSubtitle = (TextView) view.findViewById(R.id.lb_details_description_subtitle);
             mBody = (TextView) view.findViewById(R.id.lb_details_description_body);
-
+            int interTextSpacing = view.getContext().getResources().getDimensionPixelSize(
+                    R.dimen.lb_details_overview_description_intertext_spacing);
             FontMetricsInt titleFontMetricsInt = getFontMetricsInt(mTitle);
-            final int titleAscent = view.getResources().getDimensionPixelSize(
-                    R.dimen.lb_details_description_title_baseline);
-            // Ascent is negative
-            mTitleMargin = titleAscent + titleFontMetricsInt.ascent;
-
-            mUnderTitleBaselineMargin = view.getResources().getDimensionPixelSize(
-                    R.dimen.lb_details_description_under_title_baseline_margin);
-            mUnderSubtitleBaselineMargin = view.getResources().getDimensionPixelSize(
-                    R.dimen.lb_details_description_under_subtitle_baseline_margin);
-
-            mTitleLineSpacing = view.getResources().getDimensionPixelSize(
-                    R.dimen.lb_details_description_title_line_spacing);
-            mBodyLineSpacing = view.getResources().getDimensionPixelSize(
-                    R.dimen.lb_details_description_body_line_spacing);
-
-            mBodyMaxLines = view.getResources().getInteger(
-                    R.integer.lb_details_description_body_max_lines);
-            mBodyMinLines = view.getResources().getInteger(
-                    R.integer.lb_details_description_body_min_lines);
-            mTitleMaxLines = mTitle.getMaxLines();
-
-            mTitleFontMetricsInt = getFontMetricsInt(mTitle);
-            mSubtitleFontMetricsInt = getFontMetricsInt(mSubtitle);
-            mBodyFontMetricsInt = getFontMetricsInt(mBody);
-
-            mTitle.addOnLayoutChangeListener(new View.OnLayoutChangeListener() {
-                @Override
-                public void onLayoutChange(View v, int left, int top, int right, int bottom,
-                                           int oldLeft, int oldTop, int oldRight, int oldBottom) {
-                    addPreDrawListener();
-                }
-            });
-        }
-
-        void addPreDrawListener() {
-            if (mPreDrawListener != null) {
-                return;
-            }
-            mPreDrawListener = new ViewTreeObserver.OnPreDrawListener() {
-                @Override
-                public boolean onPreDraw() {
-                    if (mSubtitle.getVisibility() == View.VISIBLE &&
-                            mSubtitle.getTop() > view.getHeight() &&
-                            mTitle.getLineCount() > 1) {
-                        mTitle.setMaxLines(mTitle.getLineCount() - 1);
-                        return false;
-                    }
-                    final int titleLines = mTitle.getLineCount();
-                    final int maxLines = titleLines > 1 ? mBodyMinLines : mBodyMaxLines;
-                    if (mBody.getMaxLines() != maxLines) {
-                        mBody.setMaxLines(maxLines);
-                        return false;
-                    } else {
-                        removePreDrawListener();
-                        return true;
-                    }
-                }
-            };
-            view.getViewTreeObserver().addOnPreDrawListener(mPreDrawListener);
-        }
-
-        void removePreDrawListener() {
-            if (mPreDrawListener != null) {
-                view.getViewTreeObserver().removeOnPreDrawListener(mPreDrawListener);
-                mPreDrawListener = null;
-            }
+            mUnderTitleSpacing = interTextSpacing - titleFontMetricsInt.descent;
+            FontMetricsInt subtitleFontMetricsInt = getFontMetricsInt(mSubtitle);
+            mUnderSubtitleSpacing = interTextSpacing - subtitleFontMetricsInt.descent;
         }
 
         public TextView getTitle() {
@@ -158,7 +81,8 @@ public abstract class AbstractDetailsDescriptionPresenter extends Presenter {
     @Override
     public final void onBindViewHolder(Presenter.ViewHolder viewHolder, Object item) {
         ViewHolder vh = (ViewHolder) viewHolder;
-        onBindDescription(vh, item);
+        DetailsOverviewRow row = (DetailsOverviewRow) item;
+        onBindDescription(vh, row.getItem());
 
         boolean hasTitle = true;
         if (TextUtils.isEmpty(vh.mTitle.getText())) {
@@ -166,11 +90,7 @@ public abstract class AbstractDetailsDescriptionPresenter extends Presenter {
             hasTitle = false;
         } else {
             vh.mTitle.setVisibility(View.VISIBLE);
-            vh.mTitle.setLineSpacing(vh.mTitleLineSpacing - vh.mTitle.getLineHeight() +
-                    vh.mTitle.getLineSpacingExtra(), vh.mTitle.getLineSpacingMultiplier());
-            vh.mTitle.setMaxLines(vh.mTitleMaxLines);
         }
-        setTopMargin(vh.mTitle, vh.mTitleMargin);
 
         boolean hasSubtitle = true;
         if (TextUtils.isEmpty(vh.mSubtitle.getText())) {
@@ -179,8 +99,7 @@ public abstract class AbstractDetailsDescriptionPresenter extends Presenter {
         } else {
             vh.mSubtitle.setVisibility(View.VISIBLE);
             if (hasTitle) {
-                setTopMargin(vh.mSubtitle, vh.mUnderTitleBaselineMargin +
-                        vh.mSubtitleFontMetricsInt.ascent - vh.mTitleFontMetricsInt.descent);
+                setTopMargin(vh.mSubtitle, vh.mUnderTitleSpacing);
             } else {
                 setTopMargin(vh.mSubtitle, 0);
             }
@@ -190,15 +109,10 @@ public abstract class AbstractDetailsDescriptionPresenter extends Presenter {
             vh.mBody.setVisibility(View.GONE);
         } else {
             vh.mBody.setVisibility(View.VISIBLE);
-            vh.mBody.setLineSpacing(vh.mBodyLineSpacing - vh.mBody.getLineHeight() +
-                    vh.mBody.getLineSpacingExtra(), vh.mBody.getLineSpacingMultiplier());
-
             if (hasSubtitle) {
-                setTopMargin(vh.mBody, vh.mUnderSubtitleBaselineMargin +
-                        vh.mBodyFontMetricsInt.ascent - vh.mSubtitleFontMetricsInt.descent);
+                setTopMargin(vh.mBody, vh.mUnderSubtitleSpacing);
             } else if (hasTitle) {
-                setTopMargin(vh.mBody, vh.mUnderTitleBaselineMargin +
-                        vh.mBodyFontMetricsInt.ascent - vh.mTitleFontMetricsInt.descent);
+                setTopMargin(vh.mBody, vh.mUnderTitleSpacing);
             } else {
                 setTopMargin(vh.mBody, 0);
             }
@@ -206,32 +120,16 @@ public abstract class AbstractDetailsDescriptionPresenter extends Presenter {
     }
 
     /**
-     * Binds the data from the item to the ViewHolder.  The item is typically associated with
-     * a {@link DetailsOverviewRow} or {@link PlaybackControlsRow}.
+     * Binds the data from the item referenced in the DetailsOverviewRow to the
+     * ViewHolder.
      *
      * @param vh The ViewHolder for this details description view.
-     * @param item The item being presented.
+     * @param item The item from the DetailsOverviewRow being presented.
      */
     protected abstract void onBindDescription(ViewHolder vh, Object item);
 
     @Override
     public void onUnbindViewHolder(Presenter.ViewHolder viewHolder) {}
-
-    @Override
-    public void onViewAttachedToWindow(Presenter.ViewHolder holder) {
-        // In case predraw listener was removed in detach, make sure
-        // we have the proper layout.
-        ViewHolder vh = (ViewHolder) holder;
-        vh.addPreDrawListener();
-        super.onViewAttachedToWindow(holder);
-    }
-
-    @Override
-    public void onViewDetachedFromWindow(Presenter.ViewHolder holder) {
-        ViewHolder vh = (ViewHolder) holder;
-        vh.removePreDrawListener();
-        super.onViewDetachedFromWindow(holder);
-    }
 
     private void setTopMargin(TextView textView, int topMargin) {
         ViewGroup.MarginLayoutParams lp = (ViewGroup.MarginLayoutParams) textView.getLayoutParams();

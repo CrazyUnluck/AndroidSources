@@ -14,13 +14,19 @@
  * limitations under the License.
  */
 
+
 package android.hardware;
 
+import android.app.PendingIntent;
 import android.content.Context;
+import android.os.Bundle;
 import android.os.ParcelFileDescriptor;
 import android.os.RemoteException;
+import android.os.SystemProperties;
+import android.util.Log;
 
 import java.io.IOException;
+import java.util.HashMap;
 
 /**
  * @hide
@@ -48,7 +54,8 @@ public class SerialManager {
         try {
             return mService.getSerialPorts();
         } catch (RemoteException e) {
-            throw e.rethrowFromSystemServer();
+            Log.e(TAG, "RemoteException in getSerialPorts", e);
+            return null;
         }
     }
 
@@ -74,7 +81,8 @@ public class SerialManager {
                 throw new IOException("Could not open serial port " + name);
             }
         } catch (RemoteException e) {
-            throw e.rethrowFromSystemServer();
+            Log.e(TAG, "exception in UsbManager.openDevice", e);
         }
+        return null;
     }
 }

@@ -46,10 +46,8 @@ import java.io.IOException;
 import java.io.InputStreamReader;
 import java.io.OutputStreamWriter;
 import java.util.ArrayList;
-import java.util.Collection;
 import java.util.Collections;
 import java.util.Comparator;
-import java.util.HashSet;
 import java.util.List;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
@@ -68,7 +66,7 @@ public class AssetAtlasService extends IAssetAtlas.Stub {
      */
     public static final String ASSET_ATLAS_SERVICE = "assetatlas";
 
-    private static final String LOG_TAG = "AssetAtlas";
+    private static final String LOG_TAG = "Atlas";
 
     // Turns debug logs on/off. Debug logs are kept to a minimum and should
     // remain on to diagnose issues
@@ -79,7 +77,7 @@ public class AssetAtlasService extends IAssetAtlas.Stub {
     private static final boolean DEBUG_ATLAS_TEXTURE = false;
 
     // Minimum size in pixels to consider for the resulting texture
-    private static final int MIN_SIZE = 512;
+    private static final int MIN_SIZE = 768;
     // Maximum size in pixels to consider for the resulting texture
     private static final int MAX_SIZE = 2048;
     // Increment in number of pixels between size variants when looking
@@ -93,7 +91,7 @@ public class AssetAtlasService extends IAssetAtlas.Stub {
     // Defines the number of int fields used to represent a single entry
     // in the atlas map. This number defines the size of the array returned
     // by the getMap(). See the mAtlasMap field for more information
-    private static final int ATLAS_MAP_ENTRY_FIELD_COUNT = 3;
+    private static final int ATLAS_MAP_ENTRY_FIELD_COUNT = 4;
 
     // Specifies how our GraphicBuffer will be used. To get proper swizzling
     // the buffer will be written to using OpenGL (from JNI) so we can leave
@@ -116,10 +114,12 @@ public class AssetAtlasService extends IAssetAtlas.Stub {
 
     // Describes how bitmaps are placed in the atlas. Each bitmap is
     // represented by several entries in the array:
-    // long0: SkBitmap*, the native bitmap object
-    // long1: x position
-    // long2: y position
-    private long[] mAtlasMap;
+    // int0: SkBitmap*, the native bitmap object
+    // int1: x position
+    // int2: y position
+    // int3: rotated, 1 if the bitmap must be rotated, 0 otherwise
+    // NOTE: This will need to be handled differently to support 64 bit pointers
+    private int[] mAtlasMap;
 
     /**
      * Creates a new service. Upon creating, the service will gather the list of
@@ -132,7 +132,7 @@ public class AssetAtlasService extends IAssetAtlas.Stub {
         mContext = context;
         mVersionName = queryVersionName(context);
 
-        Collection<Bitmap> bitmaps = new HashSet<Bitmap>(300);
+        ArrayList<Bitmap> bitmaps = new ArrayList<Bitmap>(300);
         int totalPixelCount = 0;
 
         // We only care about drawables that hold bitmaps
@@ -141,18 +141,16 @@ public class AssetAtlasService extends IAssetAtlas.Stub {
 
         final int count = drawables.size();
         for (int i = 0; i < count; i++) {
-            try {
-                totalPixelCount += drawables.valueAt(i).addAtlasableBitmaps(bitmaps);
-            } catch (Throwable t) {
-                Log.e("AssetAtlas", "Failed to fetch preloaded drawable state", t);
-                throw t;
+            final Bitmap bitmap = drawables.valueAt(i).getBitmap();
+            if (bitmap != null && bitmap.getConfig() == Bitmap.Config.ARGB_8888) {
+                bitmaps.add(bitmap);
+                totalPixelCount += bitmap.getWidth() * bitmap.getHeight();
             }
         }
 
-        ArrayList<Bitmap> sortedBitmaps = new ArrayList<Bitmap>(bitmaps);
         // Our algorithms perform better when the bitmaps are first sorted
         // The comparator will sort the bitmap by width first, then by height
-        Collections.sort(sortedBitmaps, new Comparator<Bitmap>() {
+        Collections.sort(bitmaps, new Comparator<Bitmap>() {
             @Override
             public int compare(Bitmap b1, Bitmap b2) {
                 if (b1.getWidth() == b2.getWidth()) {
@@ -163,7 +161,7 @@ public class AssetAtlasService extends IAssetAtlas.Stub {
         });
 
         // Kick off the packing work on a worker thread
-        new Thread(new Renderer(sortedBitmaps, totalPixelCount)).start();
+        new Thread(new Renderer(bitmaps, totalPixelCount)).start();
     }
 
     /**
@@ -176,8 +174,7 @@ public class AssetAtlasService extends IAssetAtlas.Stub {
     private static String queryVersionName(Context context) {
         try {
             String packageName = context.getPackageName();
-            PackageInfo info = context.getPackageManager().getPackageInfo(packageName,
-                    PackageManager.MATCH_DEBUG_TRIAGED_MISSING);
+            PackageInfo info = context.getPackageManager().getPackageInfo(packageName, 0);
             return info.versionName;
         } catch (PackageManager.NameNotFoundException e) {
             Log.w(LOG_TAG, "Could not get package info", e);
@@ -198,6 +195,11 @@ public class AssetAtlasService extends IAssetAtlas.Stub {
     private class Renderer implements Runnable {
         private final ArrayList<Bitmap> mBitmaps;
         private final int mPixelCount;
+
+        private int mNativeBitmap;
+
+        // Used for debugging only
+        private Bitmap mAtlasBitmap;
 
         Renderer(ArrayList<Bitmap> bitmaps, int pixelCount) {
             mBitmaps = bitmaps;
@@ -236,7 +238,7 @@ public class AssetAtlasService extends IAssetAtlas.Stub {
         /**
          * Renders a list of bitmaps into the atlas. The position of each bitmap
          * was decided by the packing algorithm and will be honored by this
-         * method.
+         * method. If need be this method will also rotate bitmaps.
          *
          * @param buffer The buffer to render the atlas entries into
          * @param atlas The atlas to pack the bitmaps into
@@ -253,55 +255,83 @@ public class AssetAtlasService extends IAssetAtlas.Stub {
 
             // We always render the atlas into a bitmap. This bitmap is then
             // uploaded into the GraphicBuffer using OpenGL to swizzle the content
-            final Bitmap atlasBitmap = Bitmap.createBitmap(
-                    buffer.getWidth(), buffer.getHeight(), Bitmap.Config.ARGB_8888);
-            final Canvas canvas = new Canvas(atlasBitmap);
+            final Canvas canvas = acquireCanvas(buffer.getWidth(), buffer.getHeight());
+            if (canvas == null) return false;
 
             final Atlas.Entry entry = new Atlas.Entry();
 
-            mAtlasMap = new long[packCount * ATLAS_MAP_ENTRY_FIELD_COUNT];
-            long[] atlasMap = mAtlasMap;
+            mAtlasMap = new int[packCount * ATLAS_MAP_ENTRY_FIELD_COUNT];
+            int[] atlasMap = mAtlasMap;
             int mapIndex = 0;
 
             boolean result = false;
-            final long startRender = System.nanoTime();
-            final int count = mBitmaps.size();
+            try {
+                final long startRender = System.nanoTime();
+                final int count = mBitmaps.size();
 
-            for (int i = 0; i < count; i++) {
-                final Bitmap bitmap = mBitmaps.get(i);
-                if (atlas.pack(bitmap.getWidth(), bitmap.getHeight(), entry) != null) {
-                    // We have more bitmaps to pack than the current configuration
-                    // says, we were most likely not able to detect a change in the
-                    // list of preloaded drawables, abort and delete the configuration
-                    if (mapIndex >= mAtlasMap.length) {
-                        deleteDataFile();
-                        break;
+                for (int i = 0; i < count; i++) {
+                    final Bitmap bitmap = mBitmaps.get(i);
+                    if (atlas.pack(bitmap.getWidth(), bitmap.getHeight(), entry) != null) {
+                        // We have more bitmaps to pack than the current configuration
+                        // says, we were most likely not able to detect a change in the
+                        // list of preloaded drawables, abort and delete the configuration
+                        if (mapIndex >= mAtlasMap.length) {
+                            deleteDataFile();
+                            break;
+                        }
+
+                        canvas.save();
+                        canvas.translate(entry.x, entry.y);
+                        if (entry.rotated) {
+                            canvas.translate(bitmap.getHeight(), 0.0f);
+                            canvas.rotate(90.0f);
+                        }
+                        canvas.drawBitmap(bitmap, 0.0f, 0.0f, null);
+                        canvas.restore();
+                        // TODO: Change mAtlasMap to long[] to support 64-bit systems
+                        atlasMap[mapIndex++] = (int) bitmap.mNativeBitmap;
+                        atlasMap[mapIndex++] = entry.x;
+                        atlasMap[mapIndex++] = entry.y;
+                        atlasMap[mapIndex++] = entry.rotated ? 1 : 0;
                     }
-
-                    canvas.save();
-                    canvas.translate(entry.x, entry.y);
-                    canvas.drawBitmap(bitmap, 0.0f, 0.0f, null);
-                    canvas.restore();
-                    atlasMap[mapIndex++] = bitmap.refSkPixelRef();
-                    atlasMap[mapIndex++] = entry.x;
-                    atlasMap[mapIndex++] = entry.y;
                 }
-            }
 
-            final long endRender = System.nanoTime();
-            releaseCanvas(canvas, atlasBitmap);
-            result = nUploadAtlas(buffer, atlasBitmap);
-            atlasBitmap.recycle();
-            final long endUpload = System.nanoTime();
+                final long endRender = System.nanoTime();
+                if (mNativeBitmap != 0) {
+                    result = nUploadAtlas(buffer, mNativeBitmap);
+                }
 
-            if (DEBUG_ATLAS) {
-                float renderDuration = (endRender - startRender) / 1000.0f / 1000.0f;
-                float uploadDuration = (endUpload - endRender) / 1000.0f / 1000.0f;
-                Log.d(LOG_TAG, String.format("Rendered atlas in %.2fms (%.2f+%.2fms)",
-                        renderDuration + uploadDuration, renderDuration, uploadDuration));
+                final long endUpload = System.nanoTime();
+                if (DEBUG_ATLAS) {
+                    float renderDuration = (endRender - startRender) / 1000.0f / 1000.0f;
+                    float uploadDuration = (endUpload - endRender) / 1000.0f / 1000.0f;
+                    Log.d(LOG_TAG, String.format("Rendered atlas in %.2fms (%.2f+%.2fms)",
+                            renderDuration + uploadDuration, renderDuration, uploadDuration));
+                }
+
+            } finally {
+                releaseCanvas(canvas);
             }
 
             return result;
+        }
+
+        /**
+         * Returns a Canvas for the specified buffer. If {@link #DEBUG_ATLAS_TEXTURE}
+         * is turned on, the returned Canvas will render into a local bitmap that
+         * will then be saved out to disk for debugging purposes.
+         * @param width
+         * @param height
+         */
+        private Canvas acquireCanvas(int width, int height) {
+            if (DEBUG_ATLAS_TEXTURE) {
+                mAtlasBitmap = Bitmap.createBitmap(width, height, Bitmap.Config.ARGB_8888);
+                return new Canvas(mAtlasBitmap);
+            } else {
+                Canvas canvas = new Canvas();
+                mNativeBitmap = nAcquireAtlasCanvas(canvas, width, height);
+                return canvas;
+            }
         }
 
         /**
@@ -310,27 +340,34 @@ public class AssetAtlasService extends IAssetAtlas.Stub {
          * is turend on, calling this method will write the content of the atlas
          * to disk in /data/system/atlas.png for debugging.
          */
-        private void releaseCanvas(Canvas canvas, Bitmap atlasBitmap) {
-            canvas.setBitmap(null);
+        private void releaseCanvas(Canvas canvas) {
             if (DEBUG_ATLAS_TEXTURE) {
+                canvas.setBitmap(null);
 
                 File systemDirectory = new File(Environment.getDataDirectory(), "system");
                 File dataFile = new File(systemDirectory, "atlas.png");
 
                 try {
                     FileOutputStream out = new FileOutputStream(dataFile);
-                    atlasBitmap.compress(Bitmap.CompressFormat.PNG, 100, out);
+                    mAtlasBitmap.compress(Bitmap.CompressFormat.PNG, 100, out);
                     out.close();
                 } catch (FileNotFoundException e) {
                     // Ignore
                 } catch (IOException e) {
                     // Ignore
                 }
+
+                mAtlasBitmap.recycle();
+                mAtlasBitmap = null;
+            } else {
+                nReleaseAtlasCanvas(canvas, mNativeBitmap);
             }
         }
     }
 
-    private static native boolean nUploadAtlas(GraphicBuffer buffer, Bitmap bitmap);
+    private static native int nAcquireAtlasCanvas(Canvas canvas, int width, int height);
+    private static native void nReleaseAtlasCanvas(Canvas canvas, int bitmap);
+    private static native boolean nUploadAtlas(GraphicBuffer buffer, int bitmap);
 
     @Override
     public boolean isCompatible(int ppid) {
@@ -343,7 +380,7 @@ public class AssetAtlasService extends IAssetAtlas.Stub {
     }
 
     @Override
-    public long[] getMap() throws RemoteException {
+    public int[] getMap() throws RemoteException {
         return mAtlasReady.get() ? mAtlasMap : null;
     }
 
@@ -364,30 +401,22 @@ public class AssetAtlasService extends IAssetAtlas.Stub {
         if (cpuCount == 1) {
             new ComputeWorker(MIN_SIZE, MAX_SIZE, STEP, bitmaps, pixelCount, results, null).run();
         } else {
-            int start = MIN_SIZE + (cpuCount - 1) * STEP;
-            int end = MAX_SIZE;
+            int start = MIN_SIZE;
+            int end = MAX_SIZE - (cpuCount - 1) * STEP;
             int step = STEP * cpuCount;
 
             final CountDownLatch signal = new CountDownLatch(cpuCount);
 
-            for (int i = 0; i < cpuCount; i++, start -= STEP, end -= STEP) {
+            for (int i = 0; i < cpuCount; i++, start += STEP, end += STEP) {
                 ComputeWorker worker = new ComputeWorker(start, end, step,
                         bitmaps, pixelCount, results, signal);
                 new Thread(worker, "Atlas Worker #" + (i + 1)).start();
             }
 
-            boolean isAllWorkerFinished;
             try {
-                isAllWorkerFinished = signal.await(10, TimeUnit.SECONDS);
+                signal.await(10, TimeUnit.SECONDS);
             } catch (InterruptedException e) {
                 Log.w(LOG_TAG, "Could not complete configuration computation");
-                return null;
-            }
-
-            if (!isAllWorkerFinished) {
-                // We have to abort here, otherwise the async updates on "results" would crash the
-                // sort later.
-                Log.w(LOG_TAG, "Could not complete configuration computation before timeout.");
                 return null;
             }
         }
@@ -404,8 +433,7 @@ public class AssetAtlasService extends IAssetAtlas.Stub {
 
         if (DEBUG_ATLAS) {
             float delay = (System.nanoTime() - begin) / 1000.0f / 1000.0f / 1000.0f;
-            Log.d(LOG_TAG, String.format("Found best atlas configuration (out of %d) in %.2fs",
-                    results.size(), delay));
+            Log.d(LOG_TAG, String.format("Found best atlas configuration in %.2fs", delay));
         }
 
         WorkerResult result = results.get(0);
@@ -665,31 +693,21 @@ public class AssetAtlasService extends IAssetAtlas.Stub {
             if (DEBUG_ATLAS) Log.d(LOG_TAG, "Running " + Thread.currentThread().getName());
 
             Atlas.Entry entry = new Atlas.Entry();
+            for (Atlas.Type type : Atlas.Type.values()) {
+                for (int width = mStart; width < mEnd; width += mStep) {
+                    for (int height = MIN_SIZE; height < MAX_SIZE; height += STEP) {
+                        // If the atlas is not big enough, skip it
+                        if (width * height <= mThreshold) continue;
 
-            for (int width = mEnd; width > mStart; width -= mStep) {
-                for (int height = MAX_SIZE; height > MIN_SIZE; height -= STEP) {
-                    // If the atlas is not big enough, skip it
-                    if (width * height <= mThreshold) continue;
-
-                    boolean packSuccess = false;
-
-                    for (Atlas.Type type : Atlas.Type.values()) {
                         final int count = packBitmaps(type, width, height, entry);
                         if (count > 0) {
                             mResults.add(new WorkerResult(type, width, height, count));
+                            // If we were able to pack everything let's stop here
+                            // Increasing the height further won't make things better
                             if (count == mBitmaps.size()) {
-                                // If we were able to pack everything let's stop here
-                                // Changing the type further won't make things better
-                                packSuccess = true;
                                 break;
                             }
                         }
-                    }
-
-                    // If we were not able to pack everything let's stop here
-                    // Decreasing the height further won't make things better
-                    if (!packSuccess) {
-                        break;
                     }
                 }
             }

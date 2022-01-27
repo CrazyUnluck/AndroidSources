@@ -17,10 +17,11 @@
 package com.android.internal.widget;
 
 import android.animation.LayoutTransition;
-import android.annotation.NonNull;
-import android.annotation.Nullable;
 import android.app.ActionBar;
+import android.app.ActionBar.OnNavigationListener;
 import android.content.Context;
+import android.content.pm.ApplicationInfo;
+import android.content.pm.PackageManager;
 import android.content.res.Configuration;
 import android.content.res.TypedArray;
 import android.graphics.drawable.Drawable;
@@ -40,8 +41,6 @@ import android.view.ViewGroup;
 import android.view.ViewParent;
 import android.view.Window;
 import android.view.accessibility.AccessibilityEvent;
-import android.widget.ActionMenuPresenter;
-import android.widget.ActionMenuView;
 import android.widget.AdapterView;
 import android.widget.FrameLayout;
 import android.widget.ImageView;
@@ -51,7 +50,10 @@ import android.widget.Spinner;
 import android.widget.SpinnerAdapter;
 import android.widget.TextView;
 import com.android.internal.R;
+import com.android.internal.transition.ActionBarTransition;
 import com.android.internal.view.menu.ActionMenuItem;
+import com.android.internal.view.menu.ActionMenuPresenter;
+import com.android.internal.view.menu.ActionMenuView;
 import com.android.internal.view.menu.MenuBuilder;
 import com.android.internal.view.menu.MenuItemImpl;
 import com.android.internal.view.menu.MenuPresenter;
@@ -61,7 +63,7 @@ import com.android.internal.view.menu.SubMenuBuilder;
 /**
  * @hide
  */
-public class ActionBarView extends AbsActionBarView implements DecorToolbar {
+public class ActionBarView extends AbsActionBarView {
     private static final String TAG = "ActionBarView";
 
     /**
@@ -108,14 +110,15 @@ public class ActionBarView extends AbsActionBarView implements DecorToolbar {
     private int mProgressBarPadding;
     private int mItemPadding;
 
-    private final int mTitleStyleRes;
-    private final int mSubtitleStyleRes;
-    private final int mProgressStyle;
-    private final int mIndeterminateProgressStyle;
+    private int mTitleStyleRes;
+    private int mSubtitleStyleRes;
+    private int mProgressStyle;
+    private int mIndeterminateProgressStyle;
 
     private boolean mUserTitle;
     private boolean mIncludeTabs;
-    private boolean mIsCollapsible;
+    private boolean mIsCollapsable;
+    private boolean mIsCollapsed;
     private boolean mWasHomeEnabled; // Was it enabled before action view expansion?
 
     private MenuBuilder mOptionsMenu;
@@ -126,15 +129,26 @@ public class ActionBarView extends AbsActionBarView implements DecorToolbar {
     private ActionMenuItem mLogoNavItem;
 
     private SpinnerAdapter mSpinnerAdapter;
-    private AdapterView.OnItemSelectedListener mNavItemSelectedListener;
+    private OnNavigationListener mCallback;
 
     private Runnable mTabSelector;
 
     private ExpandedActionViewMenuPresenter mExpandedMenuPresenter;
     View mExpandedActionView;
-    private int mDefaultUpDescription = R.string.action_bar_up_description;
 
     Window.Callback mWindowCallback;
+
+    private final AdapterView.OnItemSelectedListener mNavItemSelectedListener =
+            new AdapterView.OnItemSelectedListener() {
+        public void onItemSelected(AdapterView parent, View view, int position, long id) {
+            if (mCallback != null) {
+                mCallback.onNavigationItemSelected(position, id);
+            }
+        }
+        public void onNothingSelected(AdapterView parent) {
+            // Do nothing
+        }
+    };
 
     private final OnClickListener mExpandedActionViewUpListener = new OnClickListener() {
         @Override
@@ -164,6 +178,8 @@ public class ActionBarView extends AbsActionBarView implements DecorToolbar {
         TypedArray a = context.obtainStyledAttributes(attrs, R.styleable.ActionBar,
                 com.android.internal.R.attr.actionBarStyle, 0);
 
+        ApplicationInfo appInfo = context.getApplicationInfo();
+        PackageManager pm = context.getPackageManager();
         mNavigationMode = a.getInt(R.styleable.ActionBar_navigationMode,
                 ActionBar.NAVIGATION_MODE_STANDARD);
         mTitle = a.getText(R.styleable.ActionBar_title);
@@ -185,7 +201,7 @@ public class ActionBarView extends AbsActionBarView implements DecorToolbar {
         mExpandedHomeLayout.setShowUp(true);
         mExpandedHomeLayout.setOnClickListener(mExpandedActionViewUpListener);
         mExpandedHomeLayout.setContentDescription(getResources().getText(
-                mDefaultUpDescription));
+                R.string.action_bar_up_description));
 
         // This needs to highlight/be focusable on its own.
         // TODO: Clean up the handoff between expanded/normal.
@@ -244,7 +260,7 @@ public class ActionBarView extends AbsActionBarView implements DecorToolbar {
         }
 
         if (mHomeDescriptionRes != 0) {
-            setNavigationContentDescription(mHomeDescriptionRes);
+            setHomeActionContentDescription(mHomeDescriptionRes);
         }
 
         if (mTabScrollView != null && mIncludeTabs) {
@@ -297,7 +313,7 @@ public class ActionBarView extends AbsActionBarView implements DecorToolbar {
     }
 
     @Override
-    public void setSplitToolbar(boolean splitActionBar) {
+    public void setSplitActionBar(boolean splitActionBar) {
         if (mSplitActionBar != splitActionBar) {
             if (mMenuView != null) {
                 final ViewGroup oldParent = (ViewGroup) mMenuView.getParent();
@@ -333,23 +349,18 @@ public class ActionBarView extends AbsActionBarView implements DecorToolbar {
                     mActionMenuPresenter.setItemLimit(Integer.MAX_VALUE);
                 }
             }
-            super.setSplitToolbar(splitActionBar);
+            super.setSplitActionBar(splitActionBar);
         }
     }
 
-    public boolean isSplit() {
+    public boolean isSplitActionBar() {
         return mSplitActionBar;
-    }
-
-    public boolean canSplit() {
-        return true;
     }
 
     public boolean hasEmbeddedTabs() {
         return mIncludeTabs;
     }
 
-    @Override
     public void setEmbeddedTabView(ScrollingTabContainerView tabs) {
         if (mTabScrollView != null) {
             removeView(mTabScrollView);
@@ -363,6 +374,10 @@ public class ActionBarView extends AbsActionBarView implements DecorToolbar {
             lp.height = LayoutParams.MATCH_PARENT;
             tabs.setAllowCollapse(true);
         }
+    }
+
+    public void setCallback(OnNavigationListener callback) {
+        mCallback = callback;
     }
 
     public void setMenuPrepared() {
@@ -415,7 +430,6 @@ public class ActionBarView extends AbsActionBarView implements DecorToolbar {
             mActionMenuPresenter.setItemLimit(Integer.MAX_VALUE);
             // Span the whole width
             layoutParams.width = LayoutParams.MATCH_PARENT;
-            layoutParams.height = LayoutParams.WRAP_CONTENT;
             configPresenters(builder);
             menuView = (ActionMenuView) mActionMenuPresenter.getMenuView(this);
             if (mSplitView != null) {
@@ -435,11 +449,11 @@ public class ActionBarView extends AbsActionBarView implements DecorToolbar {
 
     private void configPresenters(MenuBuilder builder) {
         if (builder != null) {
-            builder.addMenuPresenter(mActionMenuPresenter, mPopupContext);
-            builder.addMenuPresenter(mExpandedMenuPresenter, mPopupContext);
+            builder.addMenuPresenter(mActionMenuPresenter);
+            builder.addMenuPresenter(mExpandedMenuPresenter);
         } else {
-            mActionMenuPresenter.initForMenu(mPopupContext, null);
-            mExpandedMenuPresenter.initForMenu(mPopupContext, null);
+            mActionMenuPresenter.initForMenu(mContext, null);
+            mExpandedMenuPresenter.initForMenu(mContext, null);
             mActionMenuPresenter.updateMenuView(true);
             mExpandedMenuPresenter.updateMenuView(true);
         }
@@ -458,8 +472,11 @@ public class ActionBarView extends AbsActionBarView implements DecorToolbar {
         }
     }
 
-    public void setCustomView(View view) {
+    public void setCustomNavigationView(View view) {
         final boolean showCustom = (mDisplayOptions & ActionBar.DISPLAY_SHOW_CUSTOM) != 0;
+        if (showCustom) {
+            ActionBarTransition.beginDelayedTransition(this);
+        }
         if (mCustomNavView != null && showCustom) {
             removeView(mCustomNavView);
         }
@@ -497,6 +514,7 @@ public class ActionBarView extends AbsActionBarView implements DecorToolbar {
     }
 
     private void setTitleImpl(CharSequence title) {
+        ActionBarTransition.beginDelayedTransition(this);
         mTitle = title;
         if (mTitleView != null) {
             mTitleView.setText(title);
@@ -516,6 +534,7 @@ public class ActionBarView extends AbsActionBarView implements DecorToolbar {
     }
 
     public void setSubtitle(CharSequence subtitle) {
+        ActionBarTransition.beginDelayedTransition(this);
         mSubtitle = subtitle;
         if (mSubtitleView != null) {
             mSubtitleView.setText(subtitle);
@@ -572,7 +591,7 @@ public class ActionBarView extends AbsActionBarView implements DecorToolbar {
             homeDesc = mHomeDescription;
         } else {
             if ((mDisplayOptions & ActionBar.DISPLAY_HOME_AS_UP) != 0) {
-                homeDesc = mContext.getResources().getText(mDefaultUpDescription);
+                homeDesc = mContext.getResources().getText(R.string.action_bar_up_description);
             } else {
                 homeDesc = mContext.getResources().getText(R.string.action_bar_home_description);
             }
@@ -600,6 +619,7 @@ public class ActionBarView extends AbsActionBarView implements DecorToolbar {
         mDisplayOptions = options;
 
         if ((flagsChanged & DISPLAY_RELAYOUT_MASK) != 0) {
+            ActionBarTransition.beginDelayedTransition(this);
 
             if ((flagsChanged & ActionBar.DISPLAY_HOME_AS_UP) != 0) {
                 final boolean setUp = (options & ActionBar.DISPLAY_HOME_AS_UP) != 0;
@@ -676,7 +696,7 @@ public class ActionBarView extends AbsActionBarView implements DecorToolbar {
     }
 
     public void setIcon(int resId) {
-        setIcon(resId != 0 ? mContext.getDrawable(resId) : null);
+        setIcon(resId != 0 ? mContext.getResources().getDrawable(resId) : null);
     }
 
     public boolean hasIcon() {
@@ -691,7 +711,7 @@ public class ActionBarView extends AbsActionBarView implements DecorToolbar {
     }
 
     public void setLogo(int resId) {
-        setLogo(resId != 0 ? mContext.getDrawable(resId) : null);
+        setLogo(resId != 0 ? mContext.getResources().getDrawable(resId) : null);
     }
 
     public boolean hasLogo() {
@@ -701,6 +721,7 @@ public class ActionBarView extends AbsActionBarView implements DecorToolbar {
     public void setNavigationMode(int mode) {
         final int oldMode = mNavigationMode;
         if (mode != oldMode) {
+            ActionBarTransition.beginDelayedTransition(this);
             switch (oldMode) {
             case ActionBar.NAVIGATION_MODE_LIST:
                 if (mListNavLayout != null) {
@@ -743,17 +764,15 @@ public class ActionBarView extends AbsActionBarView implements DecorToolbar {
         }
     }
 
-    public void setDropdownParams(SpinnerAdapter adapter, AdapterView.OnItemSelectedListener l) {
+    public void setDropdownAdapter(SpinnerAdapter adapter) {
         mSpinnerAdapter = adapter;
-        mNavItemSelectedListener = l;
         if (mSpinner != null) {
             mSpinner.setAdapter(adapter);
-            mSpinner.setOnItemSelectedListener(l);
         }
     }
 
-    public int getDropdownItemCount() {
-        return mSpinnerAdapter != null ? mSpinnerAdapter.getCount() : 0;
+    public SpinnerAdapter getDropdownAdapter() {
+        return mSpinnerAdapter;
     }
 
     public void setDropdownSelectedPosition(int position) {
@@ -764,7 +783,7 @@ public class ActionBarView extends AbsActionBarView implements DecorToolbar {
         return mSpinner.getSelectedItemPosition();
     }
 
-    public View getCustomView() {
+    public View getCustomNavigationView() {
         return mCustomNavView;
     }
 
@@ -774,11 +793,6 @@ public class ActionBarView extends AbsActionBarView implements DecorToolbar {
 
     public int getDisplayOptions() {
         return mDisplayOptions;
-    }
-
-    @Override
-    public ViewGroup getViewGroup() {
-        return this;
     }
 
     @Override
@@ -815,14 +829,14 @@ public class ActionBarView extends AbsActionBarView implements DecorToolbar {
             mSubtitleView = (TextView) mTitleLayout.findViewById(R.id.action_bar_subtitle);
 
             if (mTitleStyleRes != 0) {
-                mTitleView.setTextAppearance(mTitleStyleRes);
+                mTitleView.setTextAppearance(mContext, mTitleStyleRes);
             }
             if (mTitle != null) {
                 mTitleView.setText(mTitle);
             }
 
             if (mSubtitleStyleRes != 0) {
-                mSubtitleView.setTextAppearance(mSubtitleStyleRes);
+                mSubtitleView.setTextAppearance(mContext, mSubtitleStyleRes);
             }
             if (mSubtitle != null) {
                 mSubtitleView.setText(mSubtitle);
@@ -830,6 +844,7 @@ public class ActionBarView extends AbsActionBarView implements DecorToolbar {
             }
         }
 
+        ActionBarTransition.beginDelayedTransition(this);
         mUpGoerFive.addView(mTitleLayout);
         if (mExpandedActionView != null ||
                 (TextUtils.isEmpty(mTitle) && TextUtils.isEmpty(mSubtitle))) {
@@ -844,8 +859,12 @@ public class ActionBarView extends AbsActionBarView implements DecorToolbar {
         mContextView = view;
     }
 
-    public void setCollapsible(boolean collapsible) {
-        mIsCollapsible = collapsible;
+    public void setCollapsable(boolean collapsable) {
+        mIsCollapsable = collapsable;
+    }
+
+    public boolean isCollapsed() {
+        return mIsCollapsed;
     }
 
     /**
@@ -873,7 +892,7 @@ public class ActionBarView extends AbsActionBarView implements DecorToolbar {
     @Override
     protected void onMeasure(int widthMeasureSpec, int heightMeasureSpec) {
         final int childCount = getChildCount();
-        if (mIsCollapsible) {
+        if (mIsCollapsable) {
             int visibleChildren = 0;
             for (int i = 0; i < childCount; i++) {
                 final View child = getChildAt(i);
@@ -895,9 +914,11 @@ public class ActionBarView extends AbsActionBarView implements DecorToolbar {
             if (visibleChildren == 0) {
                 // No size for an empty action bar when collapsable.
                 setMeasuredDimension(0, 0);
+                mIsCollapsed = true;
                 return;
             }
         }
+        mIsCollapsed = false;
 
         int widthMode = MeasureSpec.getMode(widthMeasureSpec);
         if (widthMode != MeasureSpec.EXACTLY) {
@@ -1301,53 +1322,23 @@ public class ActionBarView extends AbsActionBarView implements DecorToolbar {
         }
     }
 
-    public void setNavigationIcon(Drawable indicator) {
+    public void setHomeAsUpIndicator(Drawable indicator) {
         mHomeLayout.setUpIndicator(indicator);
     }
 
-    @Override
-    public void setDefaultNavigationIcon(Drawable icon) {
-        mHomeLayout.setDefaultUpIndicator(icon);
-    }
-
-    public void setNavigationIcon(int resId) {
+    public void setHomeAsUpIndicator(int resId) {
         mHomeLayout.setUpIndicator(resId);
     }
 
-    public void setNavigationContentDescription(CharSequence description) {
+    public void setHomeActionContentDescription(CharSequence description) {
         mHomeDescription = description;
         updateHomeAccessibility(mUpGoerFive.isEnabled());
     }
 
-    public void setNavigationContentDescription(int resId) {
+    public void setHomeActionContentDescription(int resId) {
         mHomeDescriptionRes = resId;
         mHomeDescription = resId != 0 ? getResources().getText(resId) : null;
         updateHomeAccessibility(mUpGoerFive.isEnabled());
-    }
-
-    @Override
-    public void setDefaultNavigationContentDescription(int defaultNavigationContentDescription) {
-        if (mDefaultUpDescription == defaultNavigationContentDescription) {
-            return;
-        }
-        mDefaultUpDescription = defaultNavigationContentDescription;
-        updateHomeAccessibility(mUpGoerFive.isEnabled());
-    }
-
-    @Override
-    public void setMenuCallbacks(MenuPresenter.Callback presenterCallback,
-            MenuBuilder.Callback menuBuilderCallback) {
-        if (mActionMenuPresenter != null) {
-            mActionMenuPresenter.setCallback(presenterCallback);
-        }
-        if (mOptionsMenu != null) {
-            mOptionsMenu.setCallback(menuBuilderCallback);
-        }
-    }
-
-    @Override
-    public Menu getMenu() {
-        return mOptionsMenu;
     }
 
     static class SavedState extends BaseSavedState {
@@ -1390,7 +1381,6 @@ public class ActionBarView extends AbsActionBarView implements DecorToolbar {
         private int mStartOffset;
         private int mUpIndicatorRes;
         private Drawable mDefaultUpIndicator;
-        private Drawable mUpIndicator;
 
         private static final long DEFAULT_TRANSITION_DURATION = 150;
 
@@ -1420,30 +1410,13 @@ public class ActionBarView extends AbsActionBarView implements DecorToolbar {
         }
 
         public void setUpIndicator(Drawable d) {
-            mUpIndicator = d;
+            mUpView.setImageDrawable(d != null ? d : mDefaultUpIndicator);
             mUpIndicatorRes = 0;
-            updateUpIndicator();
-        }
-
-        public void setDefaultUpIndicator(Drawable d) {
-            mDefaultUpIndicator = d;
-            updateUpIndicator();
         }
 
         public void setUpIndicator(int resId) {
             mUpIndicatorRes = resId;
-            mUpIndicator = null;
-            updateUpIndicator();
-        }
-
-        private void updateUpIndicator() {
-            if (mUpIndicator != null) {
-                mUpView.setImageDrawable(mUpIndicator);
-            } else if (mUpIndicatorRes != 0) {
-                mUpView.setImageDrawable(getContext().getDrawable(mUpIndicatorRes));
-            } else {
-                mUpView.setImageDrawable(mDefaultUpIndicator);
-            }
+            mUpView.setImageDrawable(resId != 0 ? getResources().getDrawable(resId) : null);
         }
 
         @Override
@@ -1451,19 +1424,19 @@ public class ActionBarView extends AbsActionBarView implements DecorToolbar {
             super.onConfigurationChanged(newConfig);
             if (mUpIndicatorRes != 0) {
                 // Reload for config change
-                updateUpIndicator();
+                setUpIndicator(mUpIndicatorRes);
             }
         }
 
         @Override
-        public boolean dispatchPopulateAccessibilityEventInternal(AccessibilityEvent event) {
+        public boolean dispatchPopulateAccessibilityEvent(AccessibilityEvent event) {
             onPopulateAccessibilityEvent(event);
             return true;
         }
 
         @Override
-        public void onPopulateAccessibilityEventInternal(AccessibilityEvent event) {
-            super.onPopulateAccessibilityEventInternal(event);
+        public void onPopulateAccessibilityEvent(AccessibilityEvent event) {
+            super.onPopulateAccessibilityEvent(event);
             final CharSequence cdesc = getContentDescription();
             if (!TextUtils.isEmpty(cdesc)) {
                 event.getText().add(cdesc);
@@ -1595,7 +1568,7 @@ public class ActionBarView extends AbsActionBarView implements DecorToolbar {
         MenuItemImpl mCurrentExpandedItem;
 
         @Override
-        public void initForMenu(@NonNull Context context, @Nullable MenuBuilder menu) {
+        public void initForMenu(Context context, MenuBuilder menu) {
             // Clear the expanded action view when menus change.
             if (mMenu != null && mCurrentExpandedItem != null) {
                 mMenu.collapseItemActionView(mCurrentExpandedItem);
@@ -1652,6 +1625,7 @@ public class ActionBarView extends AbsActionBarView implements DecorToolbar {
 
         @Override
         public boolean expandItemActionView(MenuBuilder menu, MenuItemImpl item) {
+            ActionBarTransition.beginDelayedTransition(ActionBarView.this);
 
             mExpandedActionView = item.getActionView();
             mExpandedHomeLayout.setIcon(mIcon.getConstantState().newDrawable(getResources()));
@@ -1680,6 +1654,7 @@ public class ActionBarView extends AbsActionBarView implements DecorToolbar {
 
         @Override
         public boolean collapseItemActionView(MenuBuilder menu, MenuItemImpl item) {
+            ActionBarTransition.beginDelayedTransition(ActionBarView.this);
 
             // Do this before detaching the actionview from the hierarchy, in case
             // it needs to dismiss the soft keyboard, etc.

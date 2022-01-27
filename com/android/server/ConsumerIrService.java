@@ -16,26 +16,46 @@
 
 package com.android.server;
 
+import android.content.BroadcastReceiver;
 import android.content.Context;
+import android.content.Intent;
+import android.content.IntentFilter;
 import android.content.pm.PackageManager;
+import android.database.ContentObserver;
+import android.hardware.input.InputManager;
 import android.hardware.IConsumerIrService;
+import android.os.Handler;
 import android.os.PowerManager;
+import android.os.Process;
+import android.os.RemoteException;
+import android.os.IBinder;
+import android.os.Binder;
+import android.os.ServiceManager;
+import android.os.SystemClock;
+import android.os.UserHandle;
+import android.os.WorkSource;
+import android.provider.Settings;
+import android.provider.Settings.SettingNotFoundException;
 import android.util.Slog;
+import android.view.InputDevice;
 
 import java.lang.RuntimeException;
+import java.util.ArrayList;
+import java.util.LinkedList;
+import java.util.ListIterator;
 
 public class ConsumerIrService extends IConsumerIrService.Stub {
     private static final String TAG = "ConsumerIrService";
 
     private static final int MAX_XMIT_TIME = 2000000; /* in microseconds */
 
-    private static native long halOpen();
-    private static native int halTransmit(long halObject, int carrierFrequency, int[] pattern);
-    private static native int[] halGetCarrierFrequencies(long halObject);
+    private static native int halOpen();
+    private static native int halTransmit(int halObject, int carrierFrequency, int[] pattern);
+    private static native int[] halGetCarrierFrequencies(int halObject);
 
     private final Context mContext;
     private final PowerManager.WakeLock mWakeLock;
-    private final long mNativeHal;
+    private final int mHal;
     private final Object mHalLock = new Object();
 
     ConsumerIrService(Context context) {
@@ -45,23 +65,23 @@ public class ConsumerIrService extends IConsumerIrService.Stub {
         mWakeLock = pm.newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, TAG);
         mWakeLock.setReferenceCounted(true);
 
-        mNativeHal = halOpen();
+        mHal = halOpen();
         if (mContext.getPackageManager().hasSystemFeature(PackageManager.FEATURE_CONSUMER_IR)) {
-            if (mNativeHal == 0) {
+            if (mHal == 0) {
                 throw new RuntimeException("FEATURE_CONSUMER_IR present, but no IR HAL loaded!");
             }
-        } else if (mNativeHal != 0) {
+        } else if (mHal != 0) {
             throw new RuntimeException("IR HAL present, but FEATURE_CONSUMER_IR is not set!");
         }
     }
 
     @Override
     public boolean hasIrEmitter() {
-        return mNativeHal != 0;
+        return mHal != 0;
     }
 
     private void throwIfNoIrEmitter() {
-        if (mNativeHal == 0) {
+        if (mHal == 0) {
             throw new UnsupportedOperationException("IR emitter not available");
         }
     }
@@ -91,7 +111,7 @@ public class ConsumerIrService extends IConsumerIrService.Stub {
 
         // Right now there is no mechanism to ensure fair queing of IR requests
         synchronized (mHalLock) {
-            int err = halTransmit(mNativeHal, carrierFrequency, pattern);
+            int err = halTransmit(mHal, carrierFrequency, pattern);
 
             if (err < 0) {
                 Slog.e(TAG, "Error transmitting: " + err);
@@ -109,7 +129,7 @@ public class ConsumerIrService extends IConsumerIrService.Stub {
         throwIfNoIrEmitter();
 
         synchronized(mHalLock) {
-            return halGetCarrierFrequencies(mNativeHal);
+            return halGetCarrierFrequencies(mHal);
         }
     }
 }

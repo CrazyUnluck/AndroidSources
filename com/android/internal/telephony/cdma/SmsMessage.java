@@ -21,12 +21,9 @@ import android.os.SystemProperties;
 import android.telephony.PhoneNumberUtils;
 import android.telephony.SmsCbLocation;
 import android.telephony.SmsCbMessage;
-import android.telephony.TelephonyManager;
 import android.telephony.cdma.CdmaSmsCbProgramData;
 import android.telephony.Rlog;
 import android.util.Log;
-import android.text.TextUtils;
-import android.content.res.Resources;
 
 import com.android.internal.telephony.GsmAlphabet.TextEncodingDetails;
 import com.android.internal.telephony.SmsConstants;
@@ -41,7 +38,6 @@ import com.android.internal.telephony.cdma.sms.UserData;
 import com.android.internal.telephony.uicc.IccUtils;
 import com.android.internal.util.BitwiseInputStream;
 import com.android.internal.util.HexDump;
-import com.android.internal.telephony.Sms7BitEncodingTranslator;
 
 import java.io.BufferedOutputStream;
 import java.io.ByteArrayInputStream;
@@ -458,20 +454,11 @@ public class SmsMessage extends SmsMessageBase {
      *
      * @param messageBody the message to encode
      * @param use7bitOnly ignore (but still count) illegal characters if true
-     * @param isEntireMsg indicates if this is entire msg or a segment in multipart msg
      * @return TextEncodingDetails
      */
     public static TextEncodingDetails calculateLength(CharSequence messageBody,
-            boolean use7bitOnly, boolean isEntireMsg) {
-        CharSequence newMsgBody = null;
-        Resources r = Resources.getSystem();
-        if (r.getBoolean(com.android.internal.R.bool.config_sms_force_7bit_encoding)) {
-            newMsgBody  = Sms7BitEncodingTranslator.translate(messageBody);
-        }
-        if (TextUtils.isEmpty(newMsgBody)) {
-            newMsgBody = messageBody;
-        }
-        return BearerData.calcTextEncodingDetails(newMsgBody, use7bitOnly, isEntireMsg);
+            boolean use7bitOnly) {
+        return BearerData.calcTextEncodingDetails(messageBody, use7bitOnly);
     }
 
     /**
@@ -483,7 +470,7 @@ public class SmsMessage extends SmsMessageBase {
      *  {@link com.android.internal.telephony.cdma.sms.SmsEnvelope#TELESERVICE_VMN},
      *  {@link com.android.internal.telephony.cdma.sms.SmsEnvelope#TELESERVICE_WAP}
     */
-    public int getTeleService() {
+    /* package */ int getTeleService() {
         return mEnvelope.teleService;
     }
 
@@ -494,7 +481,7 @@ public class SmsMessage extends SmsMessageBase {
      *  {@link com.android.internal.telephony.cdma.sms.SmsEnvelope#MESSAGE_TYPE_BROADCAST},
      *  {@link com.android.internal.telephony.cdma.sms.SmsEnvelope#MESSAGE_TYPE_ACKNOWLEDGE},
     */
-    public int getMessageType() {
+    /* package */ int getMessageType() {
         // NOTE: mEnvelope.messageType is not set correctly for cell broadcasts with some RILs.
         // Use the service category parameter to detect CMAS and other cell broadcast messages.
         if (mEnvelope.serviceCategory != 0) {
@@ -713,7 +700,7 @@ public class SmsMessage extends SmsMessageBase {
     /**
      * Parses a SMS message from its BearerData stream. (mobile-terminated only)
      */
-    public void parseSms() {
+    protected void parseSms() {
         // Message Waiting Info Record defined in 3GPP2 C.S-0005, 3.7.5.6
         // It contains only an 8-bit number with the number of messages waiting
         if (mEnvelope.teleService == SmsEnvelope.TELESERVICE_MWI) {
@@ -790,7 +777,7 @@ public class SmsMessage extends SmsMessageBase {
     /**
      * Parses a broadcast SMS, possibly containing a CMAS alert.
      */
-    public SmsCbMessage parseBroadcastSms() {
+    SmsCbMessage parseBroadcastSms() {
         BearerData bData = BearerData.decode(mEnvelope.bearerData, mEnvelope.serviceCategory);
         if (bData == null) {
             Rlog.w(LOG_TAG, "BearerData.decode() returned null");
@@ -801,7 +788,7 @@ public class SmsMessage extends SmsMessageBase {
             Rlog.d(LOG_TAG, "MT raw BearerData = " + HexDump.toHexString(mEnvelope.bearerData));
         }
 
-        String plmn = TelephonyManager.getDefault().getNetworkOperator();
+        String plmn = SystemProperties.get(TelephonyProperties.PROPERTY_OPERATOR_NUMERIC);
         SmsCbLocation location = new SmsCbLocation(plmn);
 
         return new SmsCbMessage(SmsCbMessage.MESSAGE_FORMAT_3GPP2,
@@ -830,22 +817,18 @@ public class SmsMessage extends SmsMessageBase {
      * binder-call, and hence should be thread-safe, it has been
      * synchronized.
      */
-    public synchronized static int getNextMessageId() {
+    synchronized static int getNextMessageId() {
         // Testing and dialog with partners has indicated that
         // msgId==0 is (sometimes?) treated specially by lower levels.
         // Specifically, the ID is not preserved for delivery ACKs.
         // Hence, avoid 0 -- constraining the range to 1..65535.
         int msgId = SystemProperties.getInt(TelephonyProperties.PROPERTY_CDMA_MSG_ID, 1);
         String nextMsgId = Integer.toString((msgId % 0xFFFF) + 1);
-        try{
-            SystemProperties.set(TelephonyProperties.PROPERTY_CDMA_MSG_ID, nextMsgId);
-            if (Rlog.isLoggable(LOGGABLE_TAG, Log.VERBOSE)) {
-                Rlog.d(LOG_TAG, "next " + TelephonyProperties.PROPERTY_CDMA_MSG_ID + " = " + nextMsgId);
-                Rlog.d(LOG_TAG, "readback gets " +
-                        SystemProperties.get(TelephonyProperties.PROPERTY_CDMA_MSG_ID));
-            }
-        } catch(RuntimeException ex) {
-            Rlog.e(LOG_TAG, "set nextMessage ID failed: " + ex);
+        SystemProperties.set(TelephonyProperties.PROPERTY_CDMA_MSG_ID, nextMsgId);
+        if (Rlog.isLoggable(LOGGABLE_TAG, Log.VERBOSE)) {
+            Rlog.d(LOG_TAG, "next " + TelephonyProperties.PROPERTY_CDMA_MSG_ID + " = " + nextMsgId);
+            Rlog.d(LOG_TAG, "readback gets " +
+                    SystemProperties.get(TelephonyProperties.PROPERTY_CDMA_MSG_ID));
         }
         return msgId;
     }
@@ -1023,7 +1006,7 @@ public class SmsMessage extends SmsMessageBase {
     /** This function  shall be called to get the number of voicemails.
      * @hide
      */
-    public int getNumOfVoicemails() {
+    /*package*/ int getNumOfVoicemails() {
         return mBearerData.numberOfMessages;
     }
 
@@ -1034,10 +1017,9 @@ public class SmsMessage extends SmsMessageBase {
      * @return byte array uniquely identifying the message.
      * @hide
      */
-    public byte[] getIncomingSmsFingerprint() {
+    /* package */ byte[] getIncomingSmsFingerprint() {
         ByteArrayOutputStream output = new ByteArrayOutputStream();
 
-        output.write(mEnvelope.serviceCategory);
         output.write(mEnvelope.teleService);
         output.write(mEnvelope.origAddress.origBytes, 0, mEnvelope.origAddress.origBytes.length);
         output.write(mEnvelope.bearerData, 0, mEnvelope.bearerData.length);
@@ -1050,9 +1032,8 @@ public class SmsMessage extends SmsMessageBase {
     /**
      * Returns the list of service category program data, if present.
      * @return a list of CdmaSmsCbProgramData objects, or null if not present
-     * @hide
      */
-    public ArrayList<CdmaSmsCbProgramData> getSmsCbProgramData() {
+    ArrayList<CdmaSmsCbProgramData> getSmsCbProgramData() {
         return mBearerData.serviceCategoryProgramData;
     }
 }

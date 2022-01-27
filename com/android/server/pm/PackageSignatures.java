@@ -195,7 +195,7 @@ class PackageSignatures {
             for (int i=0; i<mSignatures.length; i++) {
                 if (i > 0) buf.append(", ");
                 buf.append(Integer.toHexString(
-                        mSignatures[i].hashCode()));
+                        System.identityHashCode(mSignatures[i])));
             }
         }
         buf.append("]}");

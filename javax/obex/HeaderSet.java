@@ -1,5 +1,4 @@
 /*
- * Copyright (c) 2014 The Android Open Source Project
  * Copyright (c) 2008-2009, Motorola, Inc.
  *
  * All rights reserved.
@@ -40,7 +39,7 @@ import java.security.SecureRandom;
 
 /**
  * This class implements the javax.obex.HeaderSet interface for OBEX over
- * RFCOMM or OBEX over l2cap.
+ * RFCOMM.
  * @hide
  */
 public final class HeaderSet {
@@ -178,27 +177,9 @@ public final class HeaderSet {
      */
     public static final int OBJECT_CLASS = 0x4F;
 
-    /**
-     * Represents the OBEX Single Response Mode (SRM). This header is used
-     * for Single response mode, introduced in OBEX 1.5.
-     * <P>
-     * The value of <code>SINGLE_RESPONSE_MODE</code> is 0x97 (151).
-     */
-    public static final int SINGLE_RESPONSE_MODE = 0x97;
-
-    /**
-     * Represents the OBEX Single Response Mode Parameters. This header is used
-     * for Single response mode, introduced in OBEX 1.5.
-     * <P>
-     * The value of <code>SINGLE_RESPONSE_MODE_PARAMETER</code> is 0x98 (152).
-     */
-    public static final int SINGLE_RESPONSE_MODE_PARAMETER = 0x98;
-
     private Long mCount; // 4 byte unsigned integer
 
     private String mName; // null terminated Unicode text string
-
-    private boolean mEmptyName;
 
     private String mType; // null terminated ASCII text string
 
@@ -220,7 +201,7 @@ public final class HeaderSet {
 
     private byte[] mObjectClass; // byte sequence
 
-    private String[] mUnicodeUserDefined; // null terminated unicode string
+    private String[] mUnicodeUserDefined; //null terminated unicode string
 
     private byte[][] mSequenceUserDefined; // byte sequence user defined
 
@@ -228,12 +209,7 @@ public final class HeaderSet {
 
     private Long[] mIntegerUserDefined; // 4 byte unsigned integer
 
-    private SecureRandom mRandom = null;
-
-    private Byte mSingleResponseMode; // byte to indicate enable/disable/support for SRM
-
-    private Byte mSrmParam; // byte representing the SRM parameters - only "wait"
-                            // is supported by Bluetooth
+    private final SecureRandom mRandom;
 
     /*package*/ byte[] nonce;
 
@@ -255,25 +231,7 @@ public final class HeaderSet {
         mByteUserDefined = new Byte[16];
         mIntegerUserDefined = new Long[16];
         responseCode = -1;
-    }
-
-    /**
-     * Sets flag for special "value" of NAME header which should be empty. This
-     * is not the same as NAME header with empty string in which case it will
-     * have length of 5 bytes. It should be 3 bytes with only header id and
-     * length field.
-     */
-    public void setEmptyNameHeader() {
-        mName = null;
-        mEmptyName = true;
-    }
-
-    /**
-     * Gets flag for special "value" of NAME header which should be empty. See
-     * above.
-     */
-    public boolean getEmptyNameHeader() {
-        return mEmptyName;
+        mRandom = new SecureRandom();
     }
 
     /**
@@ -311,7 +269,6 @@ public final class HeaderSet {
                 if ((headerValue != null) && (!(headerValue instanceof String))) {
                     throw new IllegalArgumentException("Name must be a String");
                 }
-                mEmptyName = false;
                 mName = (String)headerValue;
                 break;
             case TYPE:
@@ -410,30 +367,6 @@ public final class HeaderSet {
                     } else {
                         mAppParam = new byte[((byte[])headerValue).length];
                         System.arraycopy(headerValue, 0, mAppParam, 0, mAppParam.length);
-                    }
-                }
-                break;
-            case SINGLE_RESPONSE_MODE:
-                if (headerValue == null) {
-                    mSingleResponseMode = null;
-                } else {
-                    if (!(headerValue instanceof Byte)) {
-                        throw new IllegalArgumentException(
-                                "Single Response Mode must be a Byte");
-                    } else {
-                        mSingleResponseMode = (Byte)headerValue;
-                    }
-                }
-                break;
-            case SINGLE_RESPONSE_MODE_PARAMETER:
-                if (headerValue == null) {
-                    mSrmParam = null;
-                } else {
-                    if (!(headerValue instanceof Byte)) {
-                        throw new IllegalArgumentException(
-                                "Single Response Mode Parameter must be a Byte");
-                    } else {
-                        mSrmParam = (Byte)headerValue;
                     }
                 }
                 break;
@@ -537,10 +470,6 @@ public final class HeaderSet {
                 return mObjectClass;
             case APPLICATION_PARAMETER:
                 return mAppParam;
-            case SINGLE_RESPONSE_MODE:
-                return mSingleResponseMode;
-            case SINGLE_RESPONSE_MODE_PARAMETER:
-                return mSrmParam;
             default:
                 // Verify that it was not a Unicode String user Defined
                 if ((headerID >= 0x30) && (headerID <= 0x3F)) {
@@ -612,12 +541,6 @@ public final class HeaderSet {
         if (mObjectClass != null) {
             out.write(OBJECT_CLASS);
         }
-        if(mSingleResponseMode != null) {
-            out.write(SINGLE_RESPONSE_MODE);
-        }
-        if(mSrmParam != null) {
-            out.write(SINGLE_RESPONSE_MODE_PARAMETER);
-        }
 
         for (int i = 0x30; i < 0x40; i++) {
             if (mUnicodeUserDefined[i - 0x30] != null) {
@@ -679,9 +602,6 @@ public final class HeaderSet {
             throws IOException {
 
         nonce = new byte[16];
-        if(mRandom == null) {
-            mRandom = new SecureRandom();
-        }
         for (int i = 0; i < 16; i++) {
             nonce[i] = (byte)mRandom.nextInt();
         }

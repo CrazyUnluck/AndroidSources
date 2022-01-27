@@ -16,7 +16,6 @@
 
 package android.webkit;
 
-import android.annotation.SystemApi;
 import android.os.Handler;
 
 /**
@@ -31,7 +30,6 @@ public class HttpAuthHandler extends Handler {
     /**
      * @hide Only for use by WebViewProvider implementations.
      */
-    @SystemApi
     public HttpAuthHandler() {
     }
 

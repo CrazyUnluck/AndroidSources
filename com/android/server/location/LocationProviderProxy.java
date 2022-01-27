@@ -18,6 +18,7 @@ package com.android.server.location;
 
 import java.io.FileDescriptor;
 import java.io.PrintWriter;
+import java.util.List;
 
 import android.content.Context;
 import android.location.LocationProvider;

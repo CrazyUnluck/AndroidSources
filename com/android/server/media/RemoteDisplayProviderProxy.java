@@ -190,8 +190,7 @@ final class RemoteDisplayProviderProxy implements ServiceConnection {
             Intent service = new Intent(RemoteDisplayState.SERVICE_INTERFACE);
             service.setComponent(mComponentName);
             try {
-                mBound = mContext.bindServiceAsUser(service, this,
-                        Context.BIND_AUTO_CREATE | Context.BIND_FOREGROUND_SERVICE,
+                mBound = mContext.bindServiceAsUser(service, this, Context.BIND_AUTO_CREATE,
                         new UserHandle(mUserId));
                 if (!mBound && DEBUG) {
                     Slog.d(TAG, this + ": Bind failed");

@@ -16,18 +16,13 @@
 
 package com.android.keyguard;
 
-import android.app.ActivityManager;
-import android.app.AlarmManager;
 import android.content.Context;
-import android.content.res.Configuration;
 import android.content.res.Resources;
-import android.os.UserHandle;
 import android.text.TextUtils;
 import android.text.format.DateFormat;
 import android.util.AttributeSet;
 import android.util.Log;
 import android.util.Slog;
-import android.util.TypedValue;
 import android.view.View;
 import android.widget.GridLayout;
 import android.widget.TextClock;
@@ -38,16 +33,14 @@ import com.android.internal.widget.LockPatternUtils;
 import java.util.Locale;
 
 public class KeyguardStatusView extends GridLayout {
-    private static final boolean DEBUG = KeyguardConstants.DEBUG;
+    private static final boolean DEBUG = KeyguardViewMediator.DEBUG;
     private static final String TAG = "KeyguardStatusView";
 
-    private final LockPatternUtils mLockPatternUtils;
-    private final AlarmManager mAlarmManager;
+    private LockPatternUtils mLockPatternUtils;
 
     private TextView mAlarmStatusView;
     private TextClock mDateView;
     private TextClock mClockView;
-    private TextView mOwnerInfo;
 
     private KeyguardUpdateMonitorCallback mInfoCallback = new KeyguardUpdateMonitorCallback() {
 
@@ -57,29 +50,22 @@ public class KeyguardStatusView extends GridLayout {
         }
 
         @Override
-        public void onKeyguardVisibilityChanged(boolean showing) {
+        void onKeyguardVisibilityChanged(boolean showing) {
             if (showing) {
                 if (DEBUG) Slog.v(TAG, "refresh statusview showing:" + showing);
                 refresh();
-                updateOwnerInfo();
             }
-        }
+        };
 
         @Override
-        public void onStartedWakingUp() {
+        public void onScreenTurnedOn() {
             setEnableMarquee(true);
-        }
+        };
 
         @Override
-        public void onFinishedGoingToSleep(int why) {
+        public void onScreenTurnedOff(int why) {
             setEnableMarquee(false);
-        }
-
-        @Override
-        public void onUserSwitchComplete(int userId) {
-            refresh();
-            updateOwnerInfo();
-        }
+        };
     };
 
     public KeyguardStatusView(Context context) {
@@ -92,14 +78,11 @@ public class KeyguardStatusView extends GridLayout {
 
     public KeyguardStatusView(Context context, AttributeSet attrs, int defStyle) {
         super(context, attrs, defStyle);
-        mAlarmManager = (AlarmManager) context.getSystemService(Context.ALARM_SERVICE);
-        mLockPatternUtils = new LockPatternUtils(getContext());
     }
 
     private void setEnableMarquee(boolean enabled) {
         if (DEBUG) Log.v(TAG, (enabled ? "Enable" : "Disable") + " transport text marquee");
         if (mAlarmStatusView != null) mAlarmStatusView.setSelected(enabled);
-        if (mOwnerInfo != null) mOwnerInfo.setSelected(enabled);
     }
 
     @Override
@@ -108,79 +91,32 @@ public class KeyguardStatusView extends GridLayout {
         mAlarmStatusView = (TextView) findViewById(R.id.alarm_status);
         mDateView = (TextClock) findViewById(R.id.date_view);
         mClockView = (TextClock) findViewById(R.id.clock_view);
-        mDateView.setShowCurrentUserTime(true);
-        mClockView.setShowCurrentUserTime(true);
-        mOwnerInfo = (TextView) findViewById(R.id.owner_info);
-
-        boolean shouldMarquee = KeyguardUpdateMonitor.getInstance(mContext).isDeviceInteractive();
-        setEnableMarquee(shouldMarquee);
+        mLockPatternUtils = new LockPatternUtils(getContext());
+        final boolean screenOn = KeyguardUpdateMonitor.getInstance(mContext).isScreenOn();
+        setEnableMarquee(screenOn);
         refresh();
-        updateOwnerInfo();
-
-        // Disable elegant text height because our fancy colon makes the ymin value huge for no
-        // reason.
-        mClockView.setElegantTextHeight(false);
     }
 
-    @Override
-    protected void onConfigurationChanged(Configuration newConfig) {
-        super.onConfigurationChanged(newConfig);
-        mClockView.setTextSize(TypedValue.COMPLEX_UNIT_PX,
-                getResources().getDimensionPixelSize(R.dimen.widget_big_font_size));
-        mDateView.setTextSize(TypedValue.COMPLEX_UNIT_PX,
-                getResources().getDimensionPixelSize(R.dimen.widget_label_font_size));
-        mOwnerInfo.setTextSize(TypedValue.COMPLEX_UNIT_PX,
-                getResources().getDimensionPixelSize(R.dimen.widget_label_font_size));
-    }
+    protected void refresh() {
+        Patterns.update(mContext);
 
-    public void refreshTime() {
         mDateView.setFormat24Hour(Patterns.dateView);
         mDateView.setFormat12Hour(Patterns.dateView);
 
         mClockView.setFormat12Hour(Patterns.clockView12);
         mClockView.setFormat24Hour(Patterns.clockView24);
+
+        refreshAlarmStatus();
     }
 
-    private void refresh() {
-        AlarmManager.AlarmClockInfo nextAlarm =
-                mAlarmManager.getNextAlarmClock(UserHandle.USER_CURRENT);
-        Patterns.update(mContext, nextAlarm != null);
-
-        refreshTime();
-        refreshAlarmStatus(nextAlarm);
-    }
-
-    void refreshAlarmStatus(AlarmManager.AlarmClockInfo nextAlarm) {
-        if (nextAlarm != null) {
-            String alarm = formatNextAlarm(mContext, nextAlarm);
-            mAlarmStatusView.setText(alarm);
-            mAlarmStatusView.setContentDescription(
-                    getResources().getString(R.string.keyguard_accessibility_next_alarm, alarm));
+    void refreshAlarmStatus() {
+        // Update Alarm status
+        String nextAlarm = mLockPatternUtils.getNextAlarm();
+        if (!TextUtils.isEmpty(nextAlarm)) {
+            mAlarmStatusView.setText(nextAlarm);
             mAlarmStatusView.setVisibility(View.VISIBLE);
         } else {
             mAlarmStatusView.setVisibility(View.GONE);
-        }
-    }
-
-    public static String formatNextAlarm(Context context, AlarmManager.AlarmClockInfo info) {
-        if (info == null) {
-            return "";
-        }
-        String skeleton = DateFormat.is24HourFormat(context, ActivityManager.getCurrentUser())
-                ? "EHm"
-                : "Ehma";
-        String pattern = DateFormat.getBestDateTimePattern(Locale.getDefault(), skeleton);
-        return DateFormat.format(pattern, info.getTriggerTime()).toString();
-    }
-
-    private void updateOwnerInfo() {
-        if (mOwnerInfo == null) return;
-        String ownerInfo = getOwnerInfo();
-        if (!TextUtils.isEmpty(ownerInfo)) {
-            mOwnerInfo.setVisibility(View.VISIBLE);
-            mOwnerInfo.setText(ownerInfo);
-        } else {
-            mOwnerInfo.setVisibility(View.GONE);
         }
     }
 
@@ -196,26 +132,8 @@ public class KeyguardStatusView extends GridLayout {
         KeyguardUpdateMonitor.getInstance(mContext).removeCallback(mInfoCallback);
     }
 
-    private String getOwnerInfo() {
-        String info = null;
-        if (mLockPatternUtils.isDeviceOwnerInfoEnabled()) {
-            // Use the device owner information set by device policy client via
-            // device policy manager.
-            info = mLockPatternUtils.getDeviceOwnerInfo();
-        } else {
-            // Use the current user owner information if enabled.
-            final boolean ownerInfoEnabled = mLockPatternUtils.isOwnerInfoEnabled(
-                    KeyguardUpdateMonitor.getCurrentUser());
-            if (ownerInfoEnabled) {
-                info = mLockPatternUtils.getOwnerInfo(KeyguardUpdateMonitor.getCurrentUser());
-            }
-        }
-        return info;
-    }
-
-    @Override
-    public boolean hasOverlappingRendering() {
-        return false;
+    public int getAppWidgetId() {
+        return LockPatternUtils.ID_DEFAULT_STATUS_WIDGET;
     }
 
     // DateFormat.getBestDateTimePattern is extremely expensive, and refresh is called often.
@@ -226,12 +144,10 @@ public class KeyguardStatusView extends GridLayout {
         static String clockView24;
         static String cacheKey;
 
-        static void update(Context context, boolean hasAlarm) {
+        static void update(Context context) {
             final Locale locale = Locale.getDefault();
             final Resources res = context.getResources();
-            final String dateViewSkel = res.getString(hasAlarm
-                    ? R.string.abbrev_wday_month_day_no_year_alarm
-                    : R.string.abbrev_wday_month_day_no_year);
+            final String dateViewSkel = res.getString(R.string.abbrev_wday_month_day_no_year);
             final String clockView12Skel = res.getString(R.string.clock_12hr_format);
             final String clockView24Skel = res.getString(R.string.clock_24hr_format);
             final String key = locale.toString() + dateViewSkel + clockView12Skel + clockView24Skel;
@@ -247,10 +163,6 @@ public class KeyguardStatusView extends GridLayout {
             }
 
             clockView24 = DateFormat.getBestDateTimePattern(locale, clockView24Skel);
-
-            // Use fancy colon.
-            clockView24 = clockView24.replace(':', '\uee01');
-            clockView12 = clockView12.replace(':', '\uee01');
 
             cacheKey = key;
         }

@@ -16,6 +16,7 @@
 
 package android.net;
 
+import android.os.RemoteException;
 import android.os.ServiceManager;
 import android.util.Log;
 
@@ -30,7 +31,6 @@ import java.net.Proxy.Type;
 import java.net.ProxySelector;
 import java.net.SocketAddress;
 import java.net.URI;
-import java.net.URISyntaxException;
 import java.util.List;
 
 /**
@@ -39,9 +39,6 @@ import java.util.List;
 public class PacProxySelector extends ProxySelector {
     private static final String TAG = "PacProxySelector";
     public static final String PROXY_SERVICE = "com.android.net.IProxyService";
-    private static final String SOCKS = "SOCKS ";
-    private static final String PROXY = "PROXY ";
-
     private IProxyService mProxyService;
     private final List<Proxy> mDefaultList;
 
@@ -68,22 +65,14 @@ public class PacProxySelector extends ProxySelector {
         String response = null;
         String urlString;
         try {
-            // Strip path and username/password from URI so it's not visible to PAC script. The
-            // path often contains credentials the app does not want exposed to a potentially
-            // malicious PAC script.
-            if (!"http".equalsIgnoreCase(uri.getScheme())) {
-                uri = new URI(uri.getScheme(), null, uri.getHost(), uri.getPort(), "/", null, null);
-            }
             urlString = uri.toURL().toString();
-        } catch (URISyntaxException e) {
-            urlString = uri.getHost();
         } catch (MalformedURLException e) {
             urlString = uri.getHost();
         }
         try {
             response = mProxyService.resolvePacFile(uri.getHost(), urlString);
-        } catch (Exception e) {
-            Log.e(TAG, "Error resolving PAC File", e);
+        } catch (RemoteException e) {
+            e.printStackTrace();
         }
         if (response == null) {
             return mDefaultList;
@@ -99,34 +88,22 @@ public class PacProxySelector extends ProxySelector {
             String trimmed = s.trim();
             if (trimmed.equals("DIRECT")) {
                 ret.add(java.net.Proxy.NO_PROXY);
-            } else if (trimmed.startsWith(PROXY)) {
-                Proxy proxy = proxyFromHostPort(Type.HTTP, trimmed.substring(PROXY.length()));
-                if (proxy != null) {
-                    ret.add(proxy);
+            } else if (trimmed.startsWith("PROXY ")) {
+                String[] hostPort = trimmed.substring(6).split(":");
+                String host = hostPort[0];
+                int port;
+                try {
+                    port = Integer.parseInt(hostPort[1]);
+                } catch (Exception e) {
+                    port = 8080;
                 }
-            } else if (trimmed.startsWith(SOCKS)) {
-                Proxy proxy = proxyFromHostPort(Type.SOCKS, trimmed.substring(SOCKS.length()));
-                if (proxy != null) {
-                    ret.add(proxy);
-                }
+                ret.add(new Proxy(Type.HTTP, InetSocketAddress.createUnresolved(host, port)));
             }
         }
         if (ret.size() == 0) {
             ret.add(java.net.Proxy.NO_PROXY);
         }
         return ret;
-    }
-
-    private static Proxy proxyFromHostPort(Proxy.Type type, String hostPortString) {
-        try {
-            String[] hostPort = hostPortString.split(":");
-            String host = hostPort[0];
-            int port = Integer.parseInt(hostPort[1]);
-            return new Proxy(type, InetSocketAddress.createUnresolved(host, port));
-        } catch (NumberFormatException|ArrayIndexOutOfBoundsException e) {
-            Log.d(TAG, "Unable to parse proxy " + hostPortString + " " + e);
-            return null;
-        }
     }
 
     @Override

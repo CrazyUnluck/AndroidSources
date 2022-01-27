@@ -17,9 +17,7 @@
 package android.widget;
 
 import android.content.Context;
-import android.content.res.Resources;
 import android.database.Cursor;
-import android.view.ContextThemeWrapper;
 import android.view.View;
 import android.view.ViewGroup;
 import android.view.LayoutInflater;
@@ -33,10 +31,9 @@ public abstract class ResourceCursorAdapter extends CursorAdapter {
     private int mLayout;
 
     private int mDropDownLayout;
-
+    
     private LayoutInflater mInflater;
-    private LayoutInflater mDropDownInflater;
-
+    
     /**
      * Constructor the enables auto-requery.
      *
@@ -55,9 +52,8 @@ public abstract class ResourceCursorAdapter extends CursorAdapter {
         super(context, c);
         mLayout = mDropDownLayout = layout;
         mInflater = (LayoutInflater) context.getSystemService(Context.LAYOUT_INFLATER_SERVICE);
-        mDropDownInflater = mInflater;
     }
-
+    
     /**
      * Constructor with default behavior as per
      * {@link CursorAdapter#CursorAdapter(Context, Cursor, boolean)}; it is recommended
@@ -78,7 +74,6 @@ public abstract class ResourceCursorAdapter extends CursorAdapter {
         super(context, c, autoRequery);
         mLayout = mDropDownLayout = layout;
         mInflater = (LayoutInflater) context.getSystemService(Context.LAYOUT_INFLATER_SERVICE);
-        mDropDownInflater = mInflater;
     }
 
     /**
@@ -96,37 +91,11 @@ public abstract class ResourceCursorAdapter extends CursorAdapter {
         super(context, c, flags);
         mLayout = mDropDownLayout = layout;
         mInflater = (LayoutInflater) context.getSystemService(Context.LAYOUT_INFLATER_SERVICE);
-        mDropDownInflater = mInflater;
-    }
-
-    /**
-     * Sets the {@link android.content.res.Resources.Theme} against which drop-down views are
-     * inflated.
-     * <p>
-     * By default, drop-down views are inflated against the theme of the
-     * {@link Context} passed to the adapter's constructor.
-     *
-     * @param theme the theme against which to inflate drop-down views or
-     *              {@code null} to use the theme from the adapter's context
-     * @see #newDropDownView(Context, Cursor, ViewGroup)
-     */
-    @Override
-    public void setDropDownViewTheme(Resources.Theme theme) {
-        super.setDropDownViewTheme(theme);
-
-        if (theme == null) {
-            mDropDownInflater = null;
-        } else if (theme == mInflater.getContext().getTheme()) {
-            mDropDownInflater = mInflater;
-        } else {
-            final Context context = new ContextThemeWrapper(mContext, theme);
-            mDropDownInflater = LayoutInflater.from(context);
-        }
     }
 
     /**
      * Inflates view(s) from the specified XML file.
-     *
+     * 
      * @see android.widget.CursorAdapter#newView(android.content.Context,
      *      android.database.Cursor, ViewGroup)
      */
@@ -137,7 +106,7 @@ public abstract class ResourceCursorAdapter extends CursorAdapter {
 
     @Override
     public View newDropDownView(Context context, Cursor cursor, ViewGroup parent) {
-        return mDropDownInflater.inflate(mDropDownLayout, parent, false);
+        return mInflater.inflate(mDropDownLayout, parent, false);
     }
 
     /**

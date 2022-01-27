@@ -40,9 +40,9 @@ public class GsmCellLocation extends CellLocation {
      * Initialize the object from a bundle.
      */
     public GsmCellLocation(Bundle bundle) {
-        mLac = bundle.getInt("lac", -1);
-        mCid = bundle.getInt("cid", -1);
-        mPsc = bundle.getInt("psc", -1);
+        mLac = bundle.getInt("lac", mLac);
+        mCid = bundle.getInt("cid", mCid);
+        mPsc = bundle.getInt("psc", mPsc);
     }
 
     /**
@@ -72,7 +72,6 @@ public class GsmCellLocation extends CellLocation {
     /**
      * Invalidate this object.  The location area code and the cell id are set to -1.
      */
-    @Override
     public void setStateInvalid() {
         mLac = -1;
         mCid = -1;

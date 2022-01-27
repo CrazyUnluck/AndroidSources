@@ -18,11 +18,7 @@ package android.util;
 
 public class TimeFormatException extends RuntimeException
 {
-
-    /**
-     * @hide
-     */
-    public TimeFormatException(String s)
+    TimeFormatException(String s)
     {
         super(s);
     }

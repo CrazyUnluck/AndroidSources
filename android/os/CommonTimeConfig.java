@@ -15,6 +15,7 @@
  */
 package android.os;
 
+import java.net.InetAddress;
 import java.net.InetSocketAddress;
 import java.util.NoSuchElementException;
 

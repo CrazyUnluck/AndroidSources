@@ -16,15 +16,12 @@
 
 package android.bluetooth;
 
-import android.Manifest;
-import android.annotation.RequiresPermission;
 import android.annotation.SdkConstant;
 import android.annotation.SdkConstant.SdkConstantType;
 import android.content.ComponentName;
 import android.content.Context;
 import android.content.Intent;
 import android.content.ServiceConnection;
-import android.media.AudioManager;
 import android.os.IBinder;
 import android.os.ParcelUuid;
 import android.os.RemoteException;
@@ -92,11 +89,6 @@ public final class BluetoothA2dp implements BluetoothProfile {
     @SdkConstant(SdkConstantType.BROADCAST_INTENT_ACTION)
     public static final String ACTION_PLAYING_STATE_CHANGED =
         "android.bluetooth.a2dp.profile.action.PLAYING_STATE_CHANGED";
-
-    /** @hide */
-    @SdkConstant(SdkConstantType.BROADCAST_INTENT_ACTION)
-    public static final String ACTION_AVRCP_CONNECTION_STATE_CHANGED =
-        "android.bluetooth.a2dp.profile.action.AVRCP_CONNECTION_STATE_CHANGED";
 
     /**
      * A2DP sink device is streaming music. This state can be one of
@@ -170,8 +162,7 @@ public final class BluetoothA2dp implements BluetoothProfile {
         Intent intent = new Intent(IBluetoothA2dp.class.getName());
         ComponentName comp = intent.resolveSystemService(mContext.getPackageManager(), 0);
         intent.setComponent(comp);
-        if (comp == null || !mContext.bindServiceAsUser(intent, mConnection, 0,
-                android.os.Process.myUserHandle())) {
+        if (comp == null || !mContext.bindService(intent, mConnection, 0)) {
             Log.e(TAG, "Could not bind to Bluetooth A2DP Service with " + intent);
             return false;
         }
@@ -202,8 +193,7 @@ public final class BluetoothA2dp implements BluetoothProfile {
     }
 
     public void finalize() {
-        // The empty finalize needs to be kept or the
-        // cts signature tests would fail.
+        close();
     }
     /**
      * Initiate connection to a profile of the remote bluetooth device.
@@ -382,7 +372,6 @@ public final class BluetoothA2dp implements BluetoothProfile {
      * @return priority of the device
      * @hide
      */
-    @RequiresPermission(Manifest.permission.BLUETOOTH)
     public int getPriority(BluetoothDevice device) {
         if (VDBG) log("getPriority(" + device + ")");
         if (mService != null && isEnabled()
@@ -419,16 +408,9 @@ public final class BluetoothA2dp implements BluetoothProfile {
     }
 
     /**
-     * Tells remote device to adjust volume. Only if absolute volume is
-     * supported. Uses the following values:
-     * <ul>
-     * <li>{@link AudioManager#ADJUST_LOWER}</li>
-     * <li>{@link AudioManager#ADJUST_RAISE}</li>
-     * <li>{@link AudioManager#ADJUST_MUTE}</li>
-     * <li>{@link AudioManager#ADJUST_UNMUTE}</li>
-     * </ul>
+     * Tells remote device to adjust volume. Only if absolute volume is supported.
      *
-     * @param direction One of the supported adjust values.
+     * @param direction 1 to increase volume, or -1 to decrease volume
      * @hide
      */
     public void adjustAvrcpAbsoluteVolume(int direction) {

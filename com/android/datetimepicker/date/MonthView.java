@@ -176,8 +176,7 @@ public abstract class MonthView extends View {
     protected int mNumRows = DEFAULT_NUM_ROWS;
 
     // Optional listener for handling day click actions
-    protected OnDayClickListener mOnDayClickListener;
-
+    private OnDayClickListener mOnDayClickListener;
     // Whether to prevent setting the accessibility delegate
     private boolean mLockAccessibilityDelegate;
 
@@ -204,7 +203,7 @@ public abstract class MonthView extends View {
         mDayTextColor = res.getColor(R.color.date_picker_text_normal);
         mTodayNumberColor = res.getColor(R.color.blue);
         mDisabledDayTextColor = res.getColor(R.color.date_picker_text_disabled);
-        mMonthTitleColor = res.getColor(android.R.color.white);
+        mMonthTitleColor = res.getColor(R.color.white);
         mMonthTitleBGColor = res.getColor(R.color.circle_background);
 
         mStringBuilder = new StringBuilder(50);
@@ -478,17 +477,17 @@ public abstract class MonthView extends View {
     protected void drawMonthNums(Canvas canvas) {
         int y = (((mRowHeight + MINI_DAY_NUMBER_TEXT_SIZE) / 2) - DAY_SEPARATOR_WIDTH)
                 + getMonthHeaderSize();
-        final float dayWidthHalf = (mWidth - mEdgePadding * 2) / (mNumDays * 2.0f);
+        int dayWidthHalf = (mWidth - mEdgePadding * 2) / (mNumDays * 2);
         int j = findDayOffset();
         for (int dayNumber = 1; dayNumber <= mNumCells; dayNumber++) {
-            final int x = (int)((2 * j + 1) * dayWidthHalf + mEdgePadding);
+            int x = (2 * j + 1) * dayWidthHalf + mEdgePadding;
 
             int yRelativeToDay = (mRowHeight + MINI_DAY_NUMBER_TEXT_SIZE) / 2 - DAY_SEPARATOR_WIDTH;
 
-            final int startX = (int)(x - dayWidthHalf);
-            final int stopX = (int)(x + dayWidthHalf);
-            final int startY = (int)(y - yRelativeToDay);
-            final int stopY = (int)(startY + mRowHeight);
+            int startX = x - dayWidthHalf;
+            int stopX = x + dayWidthHalf;
+            int startY = y - yRelativeToDay;
+            int stopY = startY + mRowHeight;
 
             drawMonthDay(canvas, mYear, mMonth, dayNumber, x, y, startX, stopX, startY, stopY);
 
@@ -531,21 +530,6 @@ public abstract class MonthView extends View {
      * @return The day number, or -1 if the position wasn't in a day
      */
     public int getDayFromLocation(float x, float y) {
-        final int day = getInternalDayFromLocation(x, y);
-        if (day < 1 || day > mNumCells) {
-            return -1;
-        }
-        return day;
-    }
-
-    /**
-     * Calculates the day that the given x position is in, accounting for week
-     * number.
-     *
-     * @param x The x position of the touch event
-     * @return The day number
-     */
-    protected int getInternalDayFromLocation(float x, float y) {
         int dayStart = mEdgePadding;
         if (x < dayStart || x > mWidth - mEdgePadding) {
             return -1;
@@ -556,6 +540,9 @@ public abstract class MonthView extends View {
 
         int day = column - findDayOffset() + 1;
         day += row * mNumDays;
+        if (day < 1 || day > mNumCells) {
+            return -1;
+        }
         return day;
     }
 

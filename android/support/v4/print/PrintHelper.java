@@ -19,7 +19,6 @@ package android.support.v4.print;
 import android.content.Context;
 import android.graphics.Bitmap;
 import android.os.Build;
-
 import android.net.Uri;
 
 import java.io.FileNotFoundException;
@@ -58,19 +57,6 @@ public final class PrintHelper {
      */
     public static final int ORIENTATION_PORTRAIT = 2;
 
-    /**
-     * Callback for observing when a print operation is completed.
-     * When print is finished either the system acquired the
-     * document to print or printing was cancelled.
-     */
-    public interface OnPrintFinishCallback {
-
-        /**
-         * Called when a print operation is finished.
-         */
-        public void onFinish();
-    }
-
     PrintHelperVersionImpl mImpl;
 
     /**
@@ -103,9 +89,9 @@ public final class PrintHelper {
 
         public int getOrientation();
 
-        public void printBitmap(String jobName, Bitmap bitmap, OnPrintFinishCallback callback);
+        public void printBitmap(String jobName, Bitmap bitmap);
 
-        public void printBitmap(String jobName, Uri imageFile, OnPrintFinishCallback callback)
+        public void printBitmap(String jobName, Uri imageFile)
                 throws FileNotFoundException;
     }
 
@@ -143,23 +129,22 @@ public final class PrintHelper {
         }
 
         @Override
-        public void printBitmap(String jobName, Bitmap bitmap, OnPrintFinishCallback callback) {
+        public void printBitmap(String jobName, Bitmap bitmap) {
         }
 
         @Override
-        public void printBitmap(String jobName, Uri imageFile, OnPrintFinishCallback callback) {
+        public void printBitmap(String jobName, Uri imageFile) {
         }
     }
 
     /**
-     * Generic implementation for KitKat to Api24
+     * Implementation used on KitKat (and above)
      */
-    private static class PrintHelperImpl<RealHelper extends PrintHelperKitkat>
-            implements PrintHelperVersionImpl {
-        private final RealHelper mPrintHelper;
+    private static final class PrintHelperKitkatImpl implements PrintHelperVersionImpl {
+        private final PrintHelperKitkat mPrintHelper;
 
-        protected PrintHelperImpl(RealHelper helper) {
-            mPrintHelper = helper;
+        PrintHelperKitkatImpl(Context context) {
+            mPrintHelper = new PrintHelperKitkat(context);
         }
 
         @Override
@@ -193,70 +178,13 @@ public final class PrintHelper {
         }
 
         @Override
-        public void printBitmap(String jobName, Bitmap bitmap,
-                final OnPrintFinishCallback callback) {
-            RealHelper.OnPrintFinishCallback delegateCallback = null;
-            if (callback != null) {
-                delegateCallback = new RealHelper.OnPrintFinishCallback() {
-                    @Override
-                    public void onFinish() {
-                        callback.onFinish();
-                    }
-                };
-            }
-            mPrintHelper.printBitmap(jobName, bitmap, delegateCallback);
+        public void printBitmap(String jobName, Bitmap bitmap) {
+            mPrintHelper.printBitmap(jobName, bitmap);
         }
 
         @Override
-        public void printBitmap(String jobName, Uri imageFile,
-                final OnPrintFinishCallback callback) throws FileNotFoundException {
-            RealHelper.OnPrintFinishCallback delegateCallback = null;
-            if (callback != null) {
-                delegateCallback = new RealHelper.OnPrintFinishCallback() {
-                    @Override
-                    public void onFinish() {
-                        callback.onFinish();
-                    }
-                };
-            }
-            mPrintHelper.printBitmap(jobName, imageFile, delegateCallback);
-        }
-    }
-
-    /**
-     * Implementation used on KitKat
-     */
-    private static final class PrintHelperKitkatImpl extends PrintHelperImpl<PrintHelperKitkat> {
-        PrintHelperKitkatImpl(Context context) {
-            super(new PrintHelperKitkat(context));
-        }
-    }
-
-    /**
-     * Implementation used on Api20 to Api22
-     */
-    private static final class PrintHelperApi20Impl extends PrintHelperImpl<PrintHelperApi20> {
-        PrintHelperApi20Impl(Context context) {
-            super(new PrintHelperApi20(context));
-        }
-    }
-
-    /**
-     * Implementation used on Api23
-     */
-    private static final class PrintHelperApi23Impl extends PrintHelperImpl<PrintHelperApi23> {
-        PrintHelperApi23Impl(Context context) {
-            super(new PrintHelperApi23(context));
-        }
-    }
-
-
-    /**
-     * Implementation used on Api24 and above
-     */
-    private static final class PrintHelperApi24Impl extends PrintHelperImpl<PrintHelperApi24> {
-        PrintHelperApi24Impl(Context context) {
-            super(new PrintHelperApi24(context));
+        public void printBitmap(String jobName, Uri imageFile) throws FileNotFoundException {
+            mPrintHelper.printBitmap(jobName, imageFile);
         }
     }
 
@@ -268,15 +196,7 @@ public final class PrintHelper {
      */
     public PrintHelper(Context context) {
         if (systemSupportsPrint()) {
-            if (Build.VERSION.SDK_INT >= 24) {
-                mImpl = new PrintHelperApi24Impl(context);
-            } else if (Build.VERSION.SDK_INT >= 23) {
-                mImpl = new PrintHelperApi23Impl(context);
-            } else if (Build.VERSION.SDK_INT >= 20) {
-                mImpl = new PrintHelperApi20Impl(context);
-            } else {
-                mImpl = new PrintHelperKitkatImpl(context);
-            }
+            mImpl = new PrintHelperKitkatImpl(context);
         } else {
             mImpl = new PrintHelperStubImpl();
         }
@@ -348,7 +268,6 @@ public final class PrintHelper {
         return mImpl.getOrientation();
     }
 
-
     /**
      * Prints a bitmap.
      *
@@ -356,18 +275,7 @@ public final class PrintHelper {
      * @param bitmap  The bitmap to print.
      */
     public void printBitmap(String jobName, Bitmap bitmap) {
-        mImpl.printBitmap(jobName, bitmap, null);
-    }
-
-    /**
-     * Prints a bitmap.
-     *
-     * @param jobName The print job name.
-     * @param bitmap  The bitmap to print.
-     * @param callback Optional callback to observe when printing is finished.
-     */
-    public void printBitmap(String jobName, Bitmap bitmap, OnPrintFinishCallback callback) {
-        mImpl.printBitmap(jobName, bitmap, callback);
+        mImpl.printBitmap(jobName, bitmap);
     }
 
     /**
@@ -380,21 +288,6 @@ public final class PrintHelper {
      * @throws FileNotFoundException if <code>Uri</code> is not pointing to a valid image.
      */
     public void printBitmap(String jobName, Uri imageFile) throws FileNotFoundException {
-        mImpl.printBitmap(jobName, imageFile, null);
-    }
-
-    /**
-     * Prints an image located at the Uri. Image types supported are those of
-     * {@link android.graphics.BitmapFactory#decodeStream(java.io.InputStream)
-     * android.graphics.BitmapFactory.decodeStream(java.io.InputStream)}
-     *
-     * @param jobName   The print job name.
-     * @param imageFile The <code>Uri</code> pointing to an image to print.
-     * @throws FileNotFoundException if <code>Uri</code> is not pointing to a valid image.
-     * @param callback Optional callback to observe when printing is finished.
-     */
-    public void printBitmap(String jobName, Uri imageFile, OnPrintFinishCallback callback)
-            throws FileNotFoundException {
-        mImpl.printBitmap(jobName, imageFile, callback);
+        mImpl.printBitmap(jobName, imageFile);
     }
 }

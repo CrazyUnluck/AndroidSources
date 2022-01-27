@@ -53,22 +53,6 @@ public class LruCache<K, V> {
     }
 
     /**
-     * Sets the size of the cache.
-     *
-     * @param maxSize The new maximum size.
-     */
-    public void resize(int maxSize) {
-        if (maxSize <= 0) {
-            throw new IllegalArgumentException("maxSize <= 0");
-        }
-
-        synchronized (this) {
-            this.maxSize = maxSize;
-        }
-        trimToSize(maxSize);
-    }
-
-    /**
      * Returns the value for {@code key} if it exists in the cache or can be
      * created by {@code #create}. If a value was returned, it is moved to the
      * head of the queue. This returns null if a value is not cached and cannot
@@ -290,8 +274,7 @@ public class LruCache<K, V> {
     }
 
     /**
-     * Returns the number of times {@link #get} returned a value that was
-     * already present in the cache.
+     * Returns the number of times {@link #get} returned a value.
      */
     public synchronized final int hitCount() {
         return hitCount;

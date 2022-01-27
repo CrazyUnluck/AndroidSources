@@ -28,11 +28,17 @@ import android.content.Context;
  *  <li>Data entered into text fields (e.g. for autocomplete suggestions)</li>
  * </ul>
  */
-public abstract class WebViewDatabase {
+public class WebViewDatabase {
     /**
      * @hide Since API level {@link android.os.Build.VERSION_CODES#JELLY_BEAN_MR1}
      */
     protected static final String LOGTAG = "webviewdatabase";
+
+    /**
+     * @hide Only for use by WebViewProvider implementations.
+     */
+    protected WebViewDatabase() {
+    }
 
     public static WebViewDatabase getInstance(Context context) {
         return WebViewFactory.getProvider().getWebViewDatabase(context);
@@ -48,7 +54,9 @@ public abstract class WebViewDatabase {
      * @deprecated Saving passwords in WebView will not be supported in future versions.
      */
     @Deprecated
-    public abstract boolean hasUsernamePassword();
+    public boolean hasUsernamePassword() {
+        throw new MustOverrideException();
+    }
 
     /**
      * Clears any saved username/password pairs for web forms.
@@ -59,7 +67,9 @@ public abstract class WebViewDatabase {
      * @deprecated Saving passwords in WebView will not be supported in future versions.
      */
     @Deprecated
-    public abstract void clearUsernamePassword();
+    public void clearUsernamePassword() {
+        throw new MustOverrideException();
+    }
 
     /**
      * Gets whether there are any saved credentials for HTTP authentication.
@@ -69,7 +79,9 @@ public abstract class WebViewDatabase {
      * @see WebView#setHttpAuthUsernamePassword
      * @see #clearHttpAuthUsernamePassword
      */
-    public abstract boolean hasHttpAuthUsernamePassword();
+    public boolean hasHttpAuthUsernamePassword() {
+        throw new MustOverrideException();
+    }
 
     /**
      * Clears any saved credentials for HTTP authentication.
@@ -78,7 +90,9 @@ public abstract class WebViewDatabase {
      * @see WebView#setHttpAuthUsernamePassword
      * @see #hasHttpAuthUsernamePassword
      */
-    public abstract void clearHttpAuthUsernamePassword();
+    public void clearHttpAuthUsernamePassword() {
+        throw new MustOverrideException();
+    }
 
     /**
      * Gets whether there is any saved data for web forms.
@@ -86,12 +100,16 @@ public abstract class WebViewDatabase {
      * @return whether there is any saved data for web forms
      * @see #clearFormData
      */
-    public abstract boolean hasFormData();
+    public boolean hasFormData() {
+        throw new MustOverrideException();
+    }
 
     /**
      * Clears any saved data for web forms.
      *
      * @see #hasFormData
      */
-    public abstract void clearFormData();
+    public void clearFormData() {
+        throw new MustOverrideException();
+    }
 }

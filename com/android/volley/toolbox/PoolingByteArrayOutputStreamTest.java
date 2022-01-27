@@ -19,33 +19,33 @@ package com.android.volley.toolbox;
 import java.io.IOException;
 import java.util.Arrays;
 
-import org.junit.Test;
+import android.test.AndroidTestCase;
+import android.test.suitebuilder.annotation.SmallTest;
 
-import static org.junit.Assert.*;
-
-public class PoolingByteArrayOutputStreamTest {
-    @Test public void pooledOneBuffer() throws IOException {
+@SmallTest
+public class PoolingByteArrayOutputStreamTest extends AndroidTestCase {
+    public void testPooledOneBuffer() throws IOException {
         ByteArrayPool pool = new ByteArrayPool(32768);
         writeOneBuffer(pool);
         writeOneBuffer(pool);
         writeOneBuffer(pool);
     }
 
-    @Test public void pooledIndividualWrites() throws IOException {
+    public void testPooledIndividualWrites() throws IOException {
         ByteArrayPool pool = new ByteArrayPool(32768);
         writeBytesIndividually(pool);
         writeBytesIndividually(pool);
         writeBytesIndividually(pool);
     }
 
-    @Test public void unpooled() throws IOException {
+    public void testUnpooled() throws IOException {
         ByteArrayPool pool = new ByteArrayPool(0);
         writeOneBuffer(pool);
         writeOneBuffer(pool);
         writeOneBuffer(pool);
     }
 
-    @Test public void unpooledIndividualWrites() throws IOException {
+    public void testUnpooledIndividualWrites() throws IOException {
         ByteArrayPool pool = new ByteArrayPool(0);
         writeBytesIndividually(pool);
         writeBytesIndividually(pool);

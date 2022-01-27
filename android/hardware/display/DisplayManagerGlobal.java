@@ -17,10 +17,8 @@
 package android.hardware.display;
 
 import android.content.Context;
-import android.content.res.Configuration;
 import android.hardware.display.DisplayManager.DisplayListener;
-import android.media.projection.MediaProjection;
-import android.media.projection.IMediaProjection;
+import android.os.Binder;
 import android.os.Handler;
 import android.os.IBinder;
 import android.os.Looper;
@@ -132,7 +130,8 @@ public final class DisplayManagerGlobal {
                 return info;
             }
         } catch (RemoteException ex) {
-            throw ex.rethrowFromSystemServer();
+            Log.e(TAG, "Could not get display information from display manager.", ex);
+            return null;
         }
     }
 
@@ -158,7 +157,8 @@ public final class DisplayManagerGlobal {
                 return displayIds;
             }
         } catch (RemoteException ex) {
-            throw ex.rethrowFromSystemServer();
+            Log.e(TAG, "Could not get display ids from display manager.", ex);
+            return new int[] { Display.DEFAULT_DISPLAY };
         }
     }
 
@@ -188,6 +188,17 @@ public final class DisplayManagerGlobal {
      */
     public Display getRealDisplay(int displayId) {
         return getCompatibleDisplay(displayId, DisplayAdjustments.DEFAULT_DISPLAY_ADJUSTMENTS);
+    }
+
+    /**
+     * Gets information about a logical display without applying any compatibility metrics.
+     *
+     * @param displayId The logical display id.
+     * @param IBinder the activity token for this display.
+     * @return The display object, or null if there is no display with the given id.
+     */
+    public Display getRealDisplay(int displayId, IBinder token) {
+        return getCompatibleDisplay(displayId, new DisplayAdjustments(token));
     }
 
     public void registerDisplayListener(DisplayListener listener, Handler handler) {
@@ -235,7 +246,8 @@ public final class DisplayManagerGlobal {
             try {
                 mDm.registerCallback(mCallback);
             } catch (RemoteException ex) {
-                throw ex.rethrowFromSystemServer();
+                Log.e(TAG, "Failed to register callback with display manager service.", ex);
+                mCallback = null;
             }
         }
     }
@@ -264,7 +276,7 @@ public final class DisplayManagerGlobal {
                 try {
                     mDm.startWifiDisplayScan();
                 } catch (RemoteException ex) {
-                    throw ex.rethrowFromSystemServer();
+                    Log.e(TAG, "Failed to scan for Wifi displays.", ex);
                 }
             }
         }
@@ -276,7 +288,7 @@ public final class DisplayManagerGlobal {
                 try {
                     mDm.stopWifiDisplayScan();
                 } catch (RemoteException ex) {
-                    throw ex.rethrowFromSystemServer();
+                    Log.e(TAG, "Failed to scan for Wifi displays.", ex);
                 }
             } else if (mWifiDisplayScanNestCount < 0) {
                 Log.wtf(TAG, "Wifi display scan nest count became negative: "
@@ -294,7 +306,7 @@ public final class DisplayManagerGlobal {
         try {
             mDm.connectWifiDisplay(deviceAddress);
         } catch (RemoteException ex) {
-            throw ex.rethrowFromSystemServer();
+            Log.e(TAG, "Failed to connect to Wifi display " + deviceAddress + ".", ex);
         }
     }
 
@@ -302,7 +314,7 @@ public final class DisplayManagerGlobal {
         try {
             mDm.pauseWifiDisplay();
         } catch (RemoteException ex) {
-            throw ex.rethrowFromSystemServer();
+            Log.e(TAG, "Failed to pause Wifi display.", ex);
         }
     }
 
@@ -310,7 +322,7 @@ public final class DisplayManagerGlobal {
         try {
             mDm.resumeWifiDisplay();
         } catch (RemoteException ex) {
-            throw ex.rethrowFromSystemServer();
+            Log.e(TAG, "Failed to resume Wifi display.", ex);
         }
     }
 
@@ -318,7 +330,7 @@ public final class DisplayManagerGlobal {
         try {
             mDm.disconnectWifiDisplay();
         } catch (RemoteException ex) {
-            throw ex.rethrowFromSystemServer();
+            Log.e(TAG, "Failed to disconnect from Wifi display.", ex);
         }
     }
 
@@ -330,7 +342,8 @@ public final class DisplayManagerGlobal {
         try {
             mDm.renameWifiDisplay(deviceAddress, alias);
         } catch (RemoteException ex) {
-            throw ex.rethrowFromSystemServer();
+            Log.e(TAG, "Failed to rename Wifi display " + deviceAddress
+                    + " with alias " + alias + ".", ex);
         }
     }
 
@@ -342,7 +355,7 @@ public final class DisplayManagerGlobal {
         try {
             mDm.forgetWifiDisplay(deviceAddress);
         } catch (RemoteException ex) {
-            throw ex.rethrowFromSystemServer();
+            Log.e(TAG, "Failed to forget Wifi display.", ex);
         }
     }
 
@@ -350,21 +363,13 @@ public final class DisplayManagerGlobal {
         try {
             return mDm.getWifiDisplayStatus();
         } catch (RemoteException ex) {
-            throw ex.rethrowFromSystemServer();
+            Log.e(TAG, "Failed to get Wifi display status.", ex);
+            return new WifiDisplayStatus();
         }
     }
 
-    public void requestColorTransform(int displayId, int colorTransformId) {
-        try {
-            mDm.requestColorTransform(displayId, colorTransformId);
-        } catch (RemoteException ex) {
-            throw ex.rethrowFromSystemServer();
-        }
-    }
-
-    public VirtualDisplay createVirtualDisplay(Context context, MediaProjection projection,
-            String name, int width, int height, int densityDpi, Surface surface, int flags,
-            VirtualDisplay.Callback callback, Handler handler) {
+    public VirtualDisplay createVirtualDisplay(Context context, String name,
+            int width, int height, int densityDpi, Surface surface, int flags) {
         if (TextUtils.isEmpty(name)) {
             throw new IllegalArgumentException("name must be non-null and non-empty");
         }
@@ -373,14 +378,14 @@ public final class DisplayManagerGlobal {
                     + "greater than 0");
         }
 
-        VirtualDisplayCallback callbackWrapper = new VirtualDisplayCallback(callback, handler);
-        IMediaProjection projectionToken = projection != null ? projection.getProjection() : null;
+        Binder token = new Binder();
         int displayId;
         try {
-            displayId = mDm.createVirtualDisplay(callbackWrapper, projectionToken,
-                    context.getPackageName(), name, width, height, densityDpi, surface, flags);
+            displayId = mDm.createVirtualDisplay(token, context.getPackageName(),
+                    name, width, height, densityDpi, surface, flags);
         } catch (RemoteException ex) {
-            throw ex.rethrowFromSystemServer();
+            Log.e(TAG, "Could not create virtual display: " + name, ex);
+            return null;
         }
         if (displayId < 0) {
             Log.e(TAG, "Could not create virtual display: " + name);
@@ -391,37 +396,27 @@ public final class DisplayManagerGlobal {
             Log.wtf(TAG, "Could not obtain display info for newly created "
                     + "virtual display: " + name);
             try {
-                mDm.releaseVirtualDisplay(callbackWrapper);
+                mDm.releaseVirtualDisplay(token);
             } catch (RemoteException ex) {
-                throw ex.rethrowFromSystemServer();
             }
             return null;
         }
-        return new VirtualDisplay(this, display, callbackWrapper, surface);
+        return new VirtualDisplay(this, display, token, surface);
     }
 
-    public void setVirtualDisplaySurface(IVirtualDisplayCallback token, Surface surface) {
+    public void setVirtualDisplaySurface(IBinder token, Surface surface) {
         try {
             mDm.setVirtualDisplaySurface(token, surface);
         } catch (RemoteException ex) {
-            throw ex.rethrowFromSystemServer();
+            Log.w(TAG, "Failed to set virtual display surface.", ex);
         }
     }
 
-    public void resizeVirtualDisplay(IVirtualDisplayCallback token,
-            int width, int height, int densityDpi) {
-        try {
-            mDm.resizeVirtualDisplay(token, width, height, densityDpi);
-        } catch (RemoteException ex) {
-            throw ex.rethrowFromSystemServer();
-        }
-    }
-
-    public void releaseVirtualDisplay(IVirtualDisplayCallback token) {
+    public void releaseVirtualDisplay(IBinder token) {
         try {
             mDm.releaseVirtualDisplay(token);
         } catch (RemoteException ex) {
-            throw ex.rethrowFromSystemServer();
+            Log.w(TAG, "Failed to release virtual display.", ex);
         }
     }
 
@@ -463,66 +458,6 @@ public final class DisplayManagerGlobal {
                     break;
                 case EVENT_DISPLAY_REMOVED:
                     mListener.onDisplayRemoved(msg.arg1);
-                    break;
-            }
-        }
-    }
-
-    private final static class VirtualDisplayCallback extends IVirtualDisplayCallback.Stub {
-        private VirtualDisplayCallbackDelegate mDelegate;
-
-        public VirtualDisplayCallback(VirtualDisplay.Callback callback, Handler handler) {
-            if (callback != null) {
-                mDelegate = new VirtualDisplayCallbackDelegate(callback, handler);
-            }
-        }
-
-        @Override // Binder call
-        public void onPaused() {
-            if (mDelegate != null) {
-                mDelegate.sendEmptyMessage(VirtualDisplayCallbackDelegate.MSG_DISPLAY_PAUSED);
-            }
-        }
-
-        @Override // Binder call
-        public void onResumed() {
-            if (mDelegate != null) {
-                mDelegate.sendEmptyMessage(VirtualDisplayCallbackDelegate.MSG_DISPLAY_RESUMED);
-            }
-        }
-
-        @Override // Binder call
-        public void onStopped() {
-            if (mDelegate != null) {
-                mDelegate.sendEmptyMessage(VirtualDisplayCallbackDelegate.MSG_DISPLAY_STOPPED);
-            }
-        }
-    }
-
-    private final static class VirtualDisplayCallbackDelegate extends Handler {
-        public static final int MSG_DISPLAY_PAUSED = 0;
-        public static final int MSG_DISPLAY_RESUMED = 1;
-        public static final int MSG_DISPLAY_STOPPED = 2;
-
-        private final VirtualDisplay.Callback mCallback;
-
-        public VirtualDisplayCallbackDelegate(VirtualDisplay.Callback callback,
-                Handler handler) {
-            super(handler != null ? handler.getLooper() : Looper.myLooper(), null, true /*async*/);
-            mCallback = callback;
-        }
-
-        @Override
-        public void handleMessage(Message msg) {
-            switch (msg.what) {
-                case MSG_DISPLAY_PAUSED:
-                    mCallback.onPaused();
-                    break;
-                case MSG_DISPLAY_RESUMED:
-                    mCallback.onResumed();
-                    break;
-                case MSG_DISPLAY_STOPPED:
-                    mCallback.onStopped();
                     break;
             }
         }

@@ -16,10 +16,8 @@
 
 package com.android.systemui;
 
-import android.app.Notification;
 import android.content.Context;
 import android.content.res.Configuration;
-import android.os.Bundle;
 
 import java.io.FileDescriptor;
 import java.io.PrintWriter;
@@ -37,9 +35,6 @@ public abstract class SystemUI {
     public void dump(FileDescriptor fd, PrintWriter pw, String[] args) {
     }
 
-    protected void onBootCompleted() {
-    }
-
     @SuppressWarnings("unchecked")
     public <T> T getComponent(Class<T> interfaceType) {
         return (T) (mComponents != null ? mComponents.get(interfaceType) : null);
@@ -49,13 +44,5 @@ public abstract class SystemUI {
         if (mComponents != null) {
             mComponents.put(interfaceType, component);
         }
-    }
-
-    public static void overrideNotificationAppName(Context context, Notification.Builder n) {
-        final Bundle extras = new Bundle();
-        extras.putString(Notification.EXTRA_SUBSTITUTE_APP_NAME,
-                context.getString(com.android.internal.R.string.android_system_label));
-
-        n.addExtras(extras);
     }
 }

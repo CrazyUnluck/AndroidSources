@@ -6,27 +6,16 @@
 
 package jsr166;
 
+import junit.framework.*;
 import java.util.Arrays;
 import java.util.Comparator;
 import java.util.Iterator;
 import java.util.NavigableSet;
-import java.util.Set;
 import java.util.SortedSet;
+import java.util.Set;
 import java.util.TreeSet;
 
-import junit.framework.Test;
-import junit.framework.TestSuite;
-
 public class TreeSubSetTest extends JSR166TestCase {
-    // android-note: Removed because the CTS runner does a bad job of
-    // retrying tests that have suite() declarations.
-    //
-    // public static void main(String[] args) {
-    //     main(suite(), args);
-    // }
-    // public static Test suite() {
-    //     return new TestSuite(TreeSubSetTest.class);
-    // }
 
     static class MyReverseComparator implements Comparator {
         public int compare(Object x, Object y) {
@@ -42,9 +31,9 @@ public class TreeSubSetTest extends JSR166TestCase {
         TreeSet<Integer> q = new TreeSet<Integer>();
         assertTrue(q.isEmpty());
 
-        for (int i = n - 1; i >= 0; i -= 2)
+        for (int i = n-1; i >= 0; i-=2)
             assertTrue(q.add(new Integer(i)));
-        for (int i = (n & 1); i < n; i += 2)
+        for (int i = (n & 1); i < n; i+=2)
             assertTrue(q.add(new Integer(i)));
         assertTrue(q.add(new Integer(-n)));
         assertTrue(q.add(new Integer(n)));
@@ -124,7 +113,7 @@ public class TreeSubSetTest extends JSR166TestCase {
     public void testSize() {
         NavigableSet q = populatedSet(SIZE);
         for (int i = 0; i < SIZE; ++i) {
-            assertEquals(SIZE - i, q.size());
+            assertEquals(SIZE-i, q.size());
             q.pollFirst();
         }
         for (int i = 0; i < SIZE; ++i) {
@@ -137,8 +126,8 @@ public class TreeSubSetTest extends JSR166TestCase {
      * add(null) throws NPE
      */
     public void testAddNull() {
-        NavigableSet q = set0();
         try {
+            NavigableSet q = set0();
             q.add(null);
             shouldThrow();
         } catch (NullPointerException success) {}
@@ -165,8 +154,9 @@ public class TreeSubSetTest extends JSR166TestCase {
      * Add of non-Comparable throws CCE
      */
     public void testAddNonComparable() {
-        NavigableSet q = set0();
         try {
+            NavigableSet q = set0();
+            q.add(new Object());
             q.add(new Object());
             q.add(new Object());
             shouldThrow();
@@ -177,8 +167,8 @@ public class TreeSubSetTest extends JSR166TestCase {
      * addAll(null) throws NPE
      */
     public void testAddAll1() {
-        NavigableSet q = set0();
         try {
+            NavigableSet q = set0();
             q.addAll(null);
             shouldThrow();
         } catch (NullPointerException success) {}
@@ -188,9 +178,9 @@ public class TreeSubSetTest extends JSR166TestCase {
      * addAll of a collection with null elements throws NPE
      */
     public void testAddAll2() {
-        NavigableSet q = set0();
-        Integer[] ints = new Integer[SIZE];
         try {
+            NavigableSet q = set0();
+            Integer[] ints = new Integer[SIZE];
             q.addAll(Arrays.asList(ints));
             shouldThrow();
         } catch (NullPointerException success) {}
@@ -201,11 +191,11 @@ public class TreeSubSetTest extends JSR166TestCase {
      * possibly adding some elements
      */
     public void testAddAll3() {
-        NavigableSet q = set0();
-        Integer[] ints = new Integer[SIZE];
-        for (int i = 0; i < SIZE - 1; ++i)
-            ints[i] = new Integer(i + SIZE);
         try {
+            NavigableSet q = set0();
+            Integer[] ints = new Integer[SIZE];
+            for (int i = 0; i < SIZE-1; ++i)
+                ints[i] = new Integer(i+SIZE);
             q.addAll(Arrays.asList(ints));
             shouldThrow();
         } catch (NullPointerException success) {}
@@ -218,7 +208,7 @@ public class TreeSubSetTest extends JSR166TestCase {
         Integer[] empty = new Integer[0];
         Integer[] ints = new Integer[SIZE];
         for (int i = 0; i < SIZE; ++i)
-            ints[i] = new Integer(SIZE - 1 - i);
+            ints[i] = new Integer(SIZE-1- i);
         NavigableSet q = set0();
         assertFalse(q.addAll(Arrays.asList(empty)));
         assertTrue(q.addAll(Arrays.asList(ints)));
@@ -242,18 +232,18 @@ public class TreeSubSetTest extends JSR166TestCase {
      */
     public void testRemoveElement() {
         NavigableSet q = populatedSet(SIZE);
-        for (int i = 1; i < SIZE; i += 2) {
+        for (int i = 1; i < SIZE; i+=2) {
             assertTrue(q.contains(i));
             assertTrue(q.remove(i));
             assertFalse(q.contains(i));
-            assertTrue(q.contains(i - 1));
+            assertTrue(q.contains(i-1));
         }
-        for (int i = 0; i < SIZE; i += 2) {
+        for (int i = 0; i < SIZE; i+=2) {
             assertTrue(q.contains(i));
             assertTrue(q.remove(i));
             assertFalse(q.contains(i));
-            assertFalse(q.remove(i + 1));
-            assertFalse(q.contains(i + 1));
+            assertFalse(q.remove(i+1));
+            assertFalse(q.contains(i+1));
         }
         assertTrue(q.isEmpty());
     }
@@ -312,7 +302,7 @@ public class TreeSubSetTest extends JSR166TestCase {
                 assertTrue(changed);
 
             assertTrue(q.containsAll(p));
-            assertEquals(SIZE - i, q.size());
+            assertEquals(SIZE-i, q.size());
             p.pollFirst();
         }
     }
@@ -325,10 +315,10 @@ public class TreeSubSetTest extends JSR166TestCase {
             NavigableSet q = populatedSet(SIZE);
             NavigableSet p = populatedSet(i);
             assertTrue(q.removeAll(p));
-            assertEquals(SIZE - i, q.size());
+            assertEquals(SIZE-i, q.size());
             for (int j = 0; j < i; ++j) {
-                Integer x = (Integer)(p.pollFirst());
-                assertFalse(q.contains(x));
+                Integer I = (Integer)(p.pollFirst());
+                assertFalse(q.contains(I));
             }
         }
     }
@@ -432,19 +422,27 @@ public class TreeSubSetTest extends JSR166TestCase {
      */
     public void testIterator() {
         NavigableSet q = populatedSet(SIZE);
+        int i = 0;
         Iterator it = q.iterator();
-        int i;
-        for (i = 0; it.hasNext(); i++)
+        while (it.hasNext()) {
             assertTrue(q.contains(it.next()));
+            ++i;
+        }
         assertEquals(i, SIZE);
-        assertIteratorExhausted(it);
     }
 
     /**
      * iterator of empty set has no elements
      */
     public void testEmptyIterator() {
-        assertIteratorExhausted(set0().iterator());
+        NavigableSet q = set0();
+        int i = 0;
+        Iterator it = q.iterator();
+        while (it.hasNext()) {
+            assertTrue(q.contains(it.next()));
+            ++i;
+        }
+        assertEquals(0, i);
     }
 
     /**
@@ -620,7 +618,7 @@ public class TreeSubSetTest extends JSR166TestCase {
     public void testDescendingSize() {
         NavigableSet q = populatedSet(SIZE);
         for (int i = 0; i < SIZE; ++i) {
-            assertEquals(SIZE - i, q.size());
+            assertEquals(SIZE-i, q.size());
             q.pollFirst();
         }
         for (int i = 0; i < SIZE; ++i) {
@@ -650,8 +648,9 @@ public class TreeSubSetTest extends JSR166TestCase {
      * Add of non-Comparable throws CCE
      */
     public void testDescendingAddNonComparable() {
-        NavigableSet q = dset0();
         try {
+            NavigableSet q = dset0();
+            q.add(new Object());
             q.add(new Object());
             q.add(new Object());
             shouldThrow();
@@ -662,8 +661,8 @@ public class TreeSubSetTest extends JSR166TestCase {
      * addAll(null) throws NPE
      */
     public void testDescendingAddAll1() {
-        NavigableSet q = dset0();
         try {
+            NavigableSet q = dset0();
             q.addAll(null);
             shouldThrow();
         } catch (NullPointerException success) {}
@@ -673,9 +672,9 @@ public class TreeSubSetTest extends JSR166TestCase {
      * addAll of a collection with null elements throws NPE
      */
     public void testDescendingAddAll2() {
-        NavigableSet q = dset0();
-        Integer[] ints = new Integer[SIZE];
         try {
+            NavigableSet q = dset0();
+            Integer[] ints = new Integer[SIZE];
             q.addAll(Arrays.asList(ints));
             shouldThrow();
         } catch (NullPointerException success) {}
@@ -686,11 +685,11 @@ public class TreeSubSetTest extends JSR166TestCase {
      * possibly adding some elements
      */
     public void testDescendingAddAll3() {
-        NavigableSet q = dset0();
-        Integer[] ints = new Integer[SIZE];
-        for (int i = 0; i < SIZE - 1; ++i)
-            ints[i] = new Integer(i + SIZE);
         try {
+            NavigableSet q = dset0();
+            Integer[] ints = new Integer[SIZE];
+            for (int i = 0; i < SIZE-1; ++i)
+                ints[i] = new Integer(i+SIZE);
             q.addAll(Arrays.asList(ints));
             shouldThrow();
         } catch (NullPointerException success) {}
@@ -703,7 +702,7 @@ public class TreeSubSetTest extends JSR166TestCase {
         Integer[] empty = new Integer[0];
         Integer[] ints = new Integer[SIZE];
         for (int i = 0; i < SIZE; ++i)
-            ints[i] = new Integer(SIZE - 1 - i);
+            ints[i] = new Integer(SIZE-1- i);
         NavigableSet q = dset0();
         assertFalse(q.addAll(Arrays.asList(empty)));
         assertTrue(q.addAll(Arrays.asList(ints)));
@@ -727,12 +726,12 @@ public class TreeSubSetTest extends JSR166TestCase {
      */
     public void testDescendingRemoveElement() {
         NavigableSet q = populatedSet(SIZE);
-        for (int i = 1; i < SIZE; i += 2) {
+        for (int i = 1; i < SIZE; i+=2) {
             assertTrue(q.remove(new Integer(i)));
         }
-        for (int i = 0; i < SIZE; i += 2) {
+        for (int i = 0; i < SIZE; i+=2) {
             assertTrue(q.remove(new Integer(i)));
-            assertFalse(q.remove(new Integer(i + 1)));
+            assertFalse(q.remove(new Integer(i+1)));
         }
         assertTrue(q.isEmpty());
     }
@@ -791,7 +790,7 @@ public class TreeSubSetTest extends JSR166TestCase {
                 assertTrue(changed);
 
             assertTrue(q.containsAll(p));
-            assertEquals(SIZE - i, q.size());
+            assertEquals(SIZE-i, q.size());
             p.pollFirst();
         }
     }
@@ -804,10 +803,10 @@ public class TreeSubSetTest extends JSR166TestCase {
             NavigableSet q = populatedSet(SIZE);
             NavigableSet p = populatedSet(i);
             assertTrue(q.removeAll(p));
-            assertEquals(SIZE - i, q.size());
+            assertEquals(SIZE-i, q.size());
             for (int j = 0; j < i; ++j) {
-                Integer x = (Integer)(p.pollFirst());
-                assertFalse(q.contains(x));
+                Integer I = (Integer)(p.pollFirst());
+                assertFalse(q.contains(I));
             }
         }
     }

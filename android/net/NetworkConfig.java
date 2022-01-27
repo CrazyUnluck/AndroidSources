@@ -16,6 +16,7 @@
 
 package android.net;
 
+import android.util.Log;
 import java.util.Locale;
 
 /**

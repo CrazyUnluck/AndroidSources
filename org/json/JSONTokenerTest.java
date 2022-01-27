@@ -402,6 +402,7 @@ public class JSONTokenerTest extends TestCase {
         try {
             new JSONTokener("abc\\u002\"").nextString('"');
             fail();
+        } catch (NumberFormatException e) {
         } catch (JSONException e) {
         }
         try {
@@ -412,13 +413,13 @@ public class JSONTokenerTest extends TestCase {
         try {
             new JSONTokener("abc\\u    \"").nextString('"');
             fail();
-        } catch (JSONException e) {
+        } catch (NumberFormatException e) {
         }
         assertEquals("abc\"def", new JSONTokener("abc\\u0022def\"ghi").nextString('"'));
         try {
             new JSONTokener("abc\\u000G\"").nextString('"');
             fail();
-        } catch (JSONException e) {
+        } catch (NumberFormatException e) {
         }
     }
 

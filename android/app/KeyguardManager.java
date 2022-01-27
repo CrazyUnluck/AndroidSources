@@ -16,25 +16,15 @@
 
 package android.app;
 
-import android.Manifest;
-import android.annotation.RequiresPermission;
-import android.app.trust.ITrustManager;
-import android.content.Context;
-import android.content.Intent;
-import android.content.pm.UserInfo;
 import android.os.Binder;
 import android.os.RemoteException;
 import android.os.IBinder;
-import android.os.IUserManager;
-import android.os.ServiceManager;
-import android.os.UserHandle;
-import android.os.UserManager;
 import android.view.IWindowManager;
 import android.view.IOnKeyguardExitResult;
 import android.view.WindowManagerGlobal;
 
 /**
- * Class that can be used to lock and unlock the keyboard. Get an instance of this
+ * Class that can be used to lock and unlock the keyboard. Get an instance of this 
  * class by calling {@link android.content.Context#getSystemService(java.lang.String)}
  * with argument {@link android.content.Context#KEYGUARD_SERVICE}. The
  * actual class to control the keyboard locking is
@@ -42,76 +32,6 @@ import android.view.WindowManagerGlobal;
  */
 public class KeyguardManager {
     private IWindowManager mWM;
-    private ITrustManager mTrustManager;
-    private IUserManager mUserManager;
-
-    /**
-     * Intent used to prompt user for device credentials.
-     * @hide
-     */
-    public static final String ACTION_CONFIRM_DEVICE_CREDENTIAL =
-            "android.app.action.CONFIRM_DEVICE_CREDENTIAL";
-
-    /**
-     * Intent used to prompt user for device credentials.
-     * @hide
-     */
-    public static final String ACTION_CONFIRM_DEVICE_CREDENTIAL_WITH_USER =
-            "android.app.action.CONFIRM_DEVICE_CREDENTIAL_WITH_USER";
-
-    /**
-     * A CharSequence dialog title to show to the user when used with a
-     * {@link #ACTION_CONFIRM_DEVICE_CREDENTIAL}.
-     * @hide
-     */
-    public static final String EXTRA_TITLE = "android.app.extra.TITLE";
-
-    /**
-     * A CharSequence description to show to the user when used with
-     * {@link #ACTION_CONFIRM_DEVICE_CREDENTIAL}.
-     * @hide
-     */
-    public static final String EXTRA_DESCRIPTION = "android.app.extra.DESCRIPTION";
-
-    /**
-     * Get an intent to prompt the user to confirm credentials (pin, pattern or password)
-     * for the current user of the device. The caller is expected to launch this activity using
-     * {@link android.app.Activity#startActivityForResult(Intent, int)} and check for
-     * {@link android.app.Activity#RESULT_OK} if the user successfully completes the challenge.
-     *
-     * @return the intent for launching the activity or null if no password is required.
-     **/
-    public Intent createConfirmDeviceCredentialIntent(CharSequence title, CharSequence description) {
-        if (!isDeviceSecure()) return null;
-        Intent intent = new Intent(ACTION_CONFIRM_DEVICE_CREDENTIAL);
-        intent.putExtra(EXTRA_TITLE, title);
-        intent.putExtra(EXTRA_DESCRIPTION, description);
-        // For security reasons, only allow this to come from system settings.
-        intent.setPackage("com.android.settings");
-        return intent;
-    }
-
-    /**
-     * Get an intent to prompt the user to confirm credentials (pin, pattern or password)
-     * for the given user. The caller is expected to launch this activity using
-     * {@link android.app.Activity#startActivityForResult(Intent, int)} and check for
-     * {@link android.app.Activity#RESULT_OK} if the user successfully completes the challenge.
-     *
-     * @return the intent for launching the activity or null if no password is required.
-     *
-     * @hide
-     */
-    public Intent createConfirmDeviceCredentialIntent(
-            CharSequence title, CharSequence description, int userId) {
-        if (!isDeviceSecure(userId)) return null;
-        Intent intent = new Intent(ACTION_CONFIRM_DEVICE_CREDENTIAL_WITH_USER);
-        intent.putExtra(EXTRA_TITLE, title);
-        intent.putExtra(EXTRA_DESCRIPTION, description);
-        intent.putExtra(Intent.EXTRA_USER_ID, userId);
-        // For security reasons, only allow this to come from system settings.
-        intent.setPackage("com.android.settings");
-        return intent;
-    }
 
     /**
      * @deprecated Use {@link android.view.WindowManager.LayoutParams#FLAG_DISMISS_KEYGUARD}
@@ -124,8 +44,8 @@ public class KeyguardManager {
      * you to disable / reenable the keyguard.
      */
     public class KeyguardLock {
-        private final IBinder mToken = new Binder();
-        private final String mTag;
+        private IBinder mToken = new Binder();
+        private String mTag;
 
         KeyguardLock(String tag) {
             mTag = tag;
@@ -138,7 +58,7 @@ public class KeyguardManager {
          *
          * A good place to call this is from {@link android.app.Activity#onResume()}
          *
-         * Note: This call has no effect while any {@link android.app.admin.DevicePolicyManager}
+         * Note: This call has no effect while any {@link android.app.admin.DevicePolicyManager} 
          * is enabled that requires a password.
          *
          * <p>This method requires the caller to hold the permission
@@ -146,7 +66,6 @@ public class KeyguardManager {
          *
          * @see #reenableKeyguard()
          */
-        @RequiresPermission(Manifest.permission.DISABLE_KEYGUARD)
         public void disableKeyguard() {
             try {
                 mWM.disableKeyguard(mToken, mTag);
@@ -168,7 +87,6 @@ public class KeyguardManager {
          *
          * @see #disableKeyguard()
          */
-        @RequiresPermission(Manifest.permission.DISABLE_KEYGUARD)
         public void reenableKeyguard() {
             try {
                 mWM.reenableKeyguard(mToken);
@@ -193,10 +111,6 @@ public class KeyguardManager {
 
     KeyguardManager() {
         mWM = WindowManagerGlobal.getWindowManagerService();
-        mTrustManager = ITrustManager.Stub.asInterface(
-                ServiceManager.getService(Context.TRUST_SERVICE));
-        mUserManager = IUserManager.Stub.asInterface(
-                ServiceManager.getService(Context.USER_SERVICE));
     }
 
     /**
@@ -207,7 +121,7 @@ public class KeyguardManager {
      * permissions be requested.
      *
      * Enables you to lock or unlock the keyboard. Get an instance of this class by
-     * calling {@link android.content.Context#getSystemService(java.lang.String) Context.getSystemService()}.
+     * calling {@link android.content.Context#getSystemService(java.lang.String) Context.getSystemService()}. 
      * This class is wrapped by {@link android.app.KeyguardManager KeyguardManager}.
      * @param tag A tag that informally identifies who you are (for debugging who
      *   is disabling he keyguard).
@@ -234,12 +148,9 @@ public class KeyguardManager {
     }
 
     /**
-     * Return whether the keyguard is secured by a PIN, pattern or password or a SIM card
-     * is currently locked.
+     * Return whether the keyguard requires a password to unlock.
      *
-     * <p>See also {@link #isDeviceSecure()} which ignores SIM locked states.
-     *
-     * @return true if a PIN, pattern or password is set or a SIM card is locked.
+     * @return true if keyguard is secure.
      */
     public boolean isKeyguardSecure() {
         try {
@@ -267,65 +178,6 @@ public class KeyguardManager {
     }
 
     /**
-     * Returns whether the device is currently locked and requires a PIN, pattern or
-     * password to unlock.
-     *
-     * @return true if unlocking the device currently requires a PIN, pattern or
-     * password.
-     */
-    public boolean isDeviceLocked() {
-        return isDeviceLocked(UserHandle.getCallingUserId());
-    }
-
-    /**
-     * Per-user version of {@link #isDeviceLocked()}.
-     *
-     * @hide
-     */
-    public boolean isDeviceLocked(int userId) {
-        ITrustManager trustManager = getTrustManager();
-        try {
-            return trustManager.isDeviceLocked(userId);
-        } catch (RemoteException e) {
-            return false;
-        }
-    }
-
-    /**
-     * Returns whether the device is secured with a PIN, pattern or
-     * password.
-     *
-     * <p>See also {@link #isKeyguardSecure} which treats SIM locked states as secure.
-     *
-     * @return true if a PIN, pattern or password was set.
-     */
-    public boolean isDeviceSecure() {
-        return isDeviceSecure(UserHandle.getCallingUserId());
-    }
-
-    /**
-     * Per-user version of {@link #isDeviceSecure()}.
-     *
-     * @hide
-     */
-    public boolean isDeviceSecure(int userId) {
-        ITrustManager trustManager = getTrustManager();
-        try {
-            return trustManager.isDeviceSecure(userId);
-        } catch (RemoteException e) {
-            return false;
-        }
-    }
-
-    private synchronized ITrustManager getTrustManager() {
-        if (mTrustManager == null) {
-            mTrustManager = ITrustManager.Stub.asInterface(
-                    ServiceManager.getService(Context.TRUST_SERVICE));
-        }
-        return mTrustManager;
-    }
-
-    /**
      * @deprecated Use {@link android.view.WindowManager.LayoutParams#FLAG_DISMISS_KEYGUARD}
      * and/or {@link android.view.WindowManager.LayoutParams#FLAG_SHOW_WHEN_LOCKED}
      * instead; this allows you to seamlessly hide the keyguard as your application
@@ -349,7 +201,6 @@ public class KeyguardManager {
      *   once the user has gotten past the keyguard.
      */
     @Deprecated
-    @RequiresPermission(Manifest.permission.DISABLE_KEYGUARD)
     public void exitKeyguardSecurely(final OnKeyguardExitResult callback) {
         try {
             mWM.exitKeyguardSecurely(new IOnKeyguardExitResult.Stub() {

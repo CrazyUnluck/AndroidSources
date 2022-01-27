@@ -37,13 +37,6 @@ import static android.support.v7.media.MediaRouteProviderProtocol.*;
 /**
  * Base class for media route provider services.
  * <p>
- * A media router will bind to media route provider services when a callback is added via
- * {@link MediaRouter#addCallback(MediaRouteSelector, MediaRouter.Callback, int)} with a discovery
- * flag: {@link MediaRouter#CALLBACK_FLAG_REQUEST_DISCOVERY},
- * {@link MediaRouter#CALLBACK_FLAG_FORCE_DISCOVERY}, or
- * {@link MediaRouter#CALLBACK_FLAG_PERFORM_ACTIVE_SCAN}, and will unbind when the callback
- * is removed via {@link MediaRouter#removeCallback(MediaRouter.Callback)}.
- * </p><p>
  * To implement your own media route provider service, extend this class and
  * override the {@link #onCreateMediaRouteProvider} method to return an
  * instance of your {@link MediaRouteProvider}.
@@ -139,14 +132,6 @@ public abstract class MediaRouteProviderService extends Service {
             }
         }
         return null;
-    }
-
-    @Override
-    public boolean onUnbind(Intent intent) {
-        if (mProvider != null) {
-            mProvider.setCallback(null);
-        }
-        return super.onUnbind(intent);
     }
 
     private boolean onRegisterClient(Messenger messenger, int requestId, int version) {
@@ -249,13 +234,13 @@ public abstract class MediaRouteProviderService extends Service {
     }
 
     private boolean onUnselectRoute(Messenger messenger, int requestId,
-            int controllerId, int reason) {
+            int controllerId) {
         ClientRecord client = getClient(messenger);
         if (client != null) {
             MediaRouteProvider.RouteController controller =
                     client.getRouteController(controllerId);
             if (controller != null) {
-                controller.onUnselect(reason);
+                controller.onUnselect();
                 if (DEBUG) {
                     Log.d(TAG, client + ": Route unselected"
                             + ", controllerId=" + controllerId);
@@ -648,11 +633,7 @@ public abstract class MediaRouteProviderService extends Service {
                         return service.onSelectRoute(messenger, requestId, arg);
 
                     case CLIENT_MSG_UNSELECT_ROUTE:
-                        int reason = data == null ?
-                                MediaRouter.UNSELECT_REASON_UNKNOWN
-                                : data.getInt(CLIENT_DATA_UNSELECT_REASON,
-                                        MediaRouter.UNSELECT_REASON_UNKNOWN);
-                        return service.onUnselectRoute(messenger, requestId, arg, reason);
+                        return service.onUnselectRoute(messenger, requestId, arg);
 
                     case CLIENT_MSG_SET_ROUTE_VOLUME: {
                         int volume = data.getInt(CLIENT_DATA_VOLUME, -1);

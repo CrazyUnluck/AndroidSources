@@ -31,7 +31,7 @@ public class TemporaryBuffer {
         }
 
         if (buf == null || buf.length < len) {
-            buf = ArrayUtils.newUnpaddedCharArray(len);
+            buf = new char[ArrayUtils.idealCharArraySize(len)];
         }
 
         return buf;

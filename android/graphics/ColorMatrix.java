@@ -16,49 +16,25 @@
 
 package android.graphics;
 
-import java.util.Arrays;
+import android.util.FloatMath;
 
 /**
- * 4x5 matrix for transforming the color and alpha components of a Bitmap.
- * The matrix can be passed as single array, and is treated as follows:
- *
- * <pre>
+ *  4x5 matrix for transforming the color+alpha components of a Bitmap.
+ *  The matrix is stored in a single array, and its treated as follows:
  *  [ a, b, c, d, e,
  *    f, g, h, i, j,
  *    k, l, m, n, o,
- *    p, q, r, s, t ]</pre>
+ *    p, q, r, s, t ]
  *
- * <p>
- * When applied to a color <code>[R, G, B, A]</code>, the resulting color
- * is computed as:
- * </p>
- *
- * <pre>
- *   R&rsquo; = a*R + b*G + c*B + d*A + e;
- *   G&rsquo; = f*R + g*G + h*B + i*A + j;
- *   B&rsquo; = k*R + l*G + m*B + n*A + o;
- *   A&rsquo; = p*R + q*G + r*B + s*A + t;</pre>
- *
- * <p>
- * That resulting color <code>[R&rsquo;, G&rsquo;, B&rsquo;, A&rsquo;]</code>
- * then has each channel clamped to the <code>0</code> to <code>255</code>
- * range.
- * </p>
- *
- * <p>
- * The sample ColorMatrix below inverts incoming colors by scaling each
- * channel by <code>-1</code>, and then shifting the result up by
- * <code>255</code> to remain in the standard color space.
- * </p>
- *
- * <pre>
- *   [ -1, 0, 0, 0, 255,
- *     0, -1, 0, 0, 255,
- *     0, 0, -1, 0, 255,
- *     0, 0, 0, 1, 0 ]</pre>
+ * When applied to a color [r, g, b, a], the resulting color is computed as
+ * (after clamping)
+ *   R' = a*R + b*G + c*B + d*A + e;
+ *   G' = f*R + g*G + h*B + i*A + j;
+ *   B' = k*R + l*G + m*B + n*A + o;
+ *   A' = p*R + q*G + r*B + s*A + t;
  */
-@SuppressWarnings({ "MismatchedReadAndWriteOfArray", "PointlessArithmeticExpression" })
 public class ColorMatrix {
+
     private final float[] mArray = new float[20];
 
     /**
@@ -70,39 +46,40 @@ public class ColorMatrix {
     }
 
     /**
-     * Create a new colormatrix initialized with the specified array of values.
+        * Create a new colormatrix initialized with the specified array of values.
      */
     public ColorMatrix(float[] src) {
         System.arraycopy(src, 0, mArray, 0, 20);
     }
-
+    
     /**
      * Create a new colormatrix initialized with the specified colormatrix.
      */
     public ColorMatrix(ColorMatrix src) {
         System.arraycopy(src.mArray, 0, mArray, 0, 20);
     }
-
+    
     /**
      * Return the array of floats representing this colormatrix.
      */
     public final float[] getArray() { return mArray; }
-
+    
     /**
      * Set this colormatrix to identity:
-     * <pre>
      * [ 1 0 0 0 0   - red vector
      *   0 1 0 0 0   - green vector
      *   0 0 1 0 0   - blue vector
      *   0 0 0 1 0 ] - alpha vector
-     * </pre>
      */
     public void reset() {
         final float[] a = mArray;
-        Arrays.fill(a, 0);
+        
+        for (int i = 19; i > 0; --i) {
+            a[i] = 0;
+        }
         a[0] = a[6] = a[12] = a[18] = 1;
     }
-
+    
     /**
      * Assign the src colormatrix into this matrix, copying all of its values.
      */
@@ -116,7 +93,7 @@ public class ColorMatrix {
     public void set(float[] src) {
         System.arraycopy(src, 0, mArray, 0, 20);
     }
-
+    
     /**
      * Set this colormatrix to scale by the specified values.
      */
@@ -132,20 +109,18 @@ public class ColorMatrix {
         a[12] = bScale;
         a[18] = aScale;
     }
-
+    
     /**
      * Set the rotation on a color axis by the specified values.
-     * <p>
-     * <code>axis=0</code> correspond to a rotation around the RED color
-     * <code>axis=1</code> correspond to a rotation around the GREEN color
-     * <code>axis=2</code> correspond to a rotation around the BLUE color
-     * </p>
+     * axis=0 correspond to a rotation around the RED color
+     * axis=1 correspond to a rotation around the GREEN color
+     * axis=2 correspond to a rotation around the BLUE color
      */
     public void setRotate(int axis, float degrees) {
         reset();
-        double radians = degrees * Math.PI / 180d;
-        float cosine = (float) Math.cos(radians);
-        float sine = (float) Math.sin(radians);
+        float radians = degrees * (float)Math.PI / 180;
+        float cosine = FloatMath.cos(radians);
+        float sine = FloatMath.sin(radians);
         switch (axis) {
         // Rotation around the red color
         case 0:
@@ -169,23 +144,23 @@ public class ColorMatrix {
             throw new RuntimeException();
         }
     }
-
+    
     /**
      * Set this colormatrix to the concatenation of the two specified
      * colormatrices, such that the resulting colormatrix has the same effect
-     * as applying matB and then applying matA.
-     * <p>
-     * It is legal for either matA or matB to be the same colormatrix as this.
-     * </p>
+     * as applying matB and then applying matA. It is legal for either matA or
+     * matB to be the same colormatrix as this.
      */
     public void setConcat(ColorMatrix matA, ColorMatrix matB) {
-        float[] tmp;
+        float[] tmp = null;
+        
         if (matA == this || matB == this) {
             tmp = new float[20];
-        } else {
+        }
+        else {
             tmp = mArray;
         }
-
+        
         final float[] a = matA.mArray;
         final float[] b = matB.mArray;
         int index = 0;
@@ -198,43 +173,38 @@ public class ColorMatrix {
                            a[j + 2] * b[14] + a[j + 3] * b[19] +
                            a[j + 4];
         }
-
+        
         if (tmp != mArray) {
             System.arraycopy(tmp, 0, mArray, 0, 20);
         }
     }
-
+    
     /**
-     * Concat this colormatrix with the specified prematrix.
-     * <p>
-     * This is logically the same as calling setConcat(this, prematrix);
-     * </p>
+     * Concat this colormatrix with the specified prematrix. This is logically
+     * the same as calling setConcat(this, prematrix);
      */
     public void preConcat(ColorMatrix prematrix) {
         setConcat(this, prematrix);
     }
-
+    
     /**
-     * Concat this colormatrix with the specified postmatrix.
-     * <p>
-     * This is logically the same as calling setConcat(postmatrix, this);
-     * </p>
+     * Concat this colormatrix with the specified postmatrix. This is logically
+     * the same as calling setConcat(postmatrix, this);
      */
     public void postConcat(ColorMatrix postmatrix) {
         setConcat(postmatrix, this);
     }
-
+    
     ///////////////////////////////////////////////////////////////////////////
-
+    
     /**
-     * Set the matrix to affect the saturation of colors.
-     *
-     * @param sat A value of 0 maps the color to gray-scale. 1 is identity.
+     * Set the matrix to affect the saturation of colors. A value of 0 maps the
+     * color to gray-scale. 1 is identity.
      */
     public void setSaturation(float sat) {
         reset();
         float[] m = mArray;
-
+        
         final float invSat = 1 - sat;
         final float R = 0.213f * invSat;
         final float G = 0.715f * invSat;
@@ -244,7 +214,7 @@ public class ColorMatrix {
         m[5] = R;       m[6] = G + sat; m[7] = B;
         m[10] = R;      m[11] = G;      m[12] = B + sat;
     }
-
+    
     /**
      * Set the matrix to convert RGB to YUV
      */
@@ -256,7 +226,7 @@ public class ColorMatrix {
         m[5]  = -0.16874f; m[6]  = -0.33126f; m[7]  = 0.5f;
         m[10] = 0.5f;      m[11] = -0.41869f; m[12] = -0.08131f;
     }
-
+    
     /**
      * Set the matrix to convert from YUV to RGB
      */
@@ -269,3 +239,4 @@ public class ColorMatrix {
         m[10] = 1;  m[11] = 1.772f;     m[12] = 0;
     }
 }
+

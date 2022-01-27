@@ -21,7 +21,9 @@ import android.content.res.TypedArray;
 import android.graphics.drawable.shapes.RectShape;
 import android.graphics.drawable.shapes.Shape;
 import android.util.AttributeSet;
+import android.view.accessibility.AccessibilityEvent;
 import android.view.accessibility.AccessibilityNodeInfo;
+
 import com.android.internal.R;
 
 /**
@@ -41,7 +43,7 @@ import com.android.internal.R;
  * <p>
  * The secondary progress should not be modified by the client as it is used
  * internally as the background for a fractionally filled star.
- *
+ * 
  * @attr ref android.R.styleable#RatingBar_numStars
  * @attr ref android.R.styleable#RatingBar_rating
  * @attr ref android.R.styleable#RatingBar_stepSize
@@ -56,14 +58,14 @@ public class RatingBar extends AbsSeekBar {
      * programmatically.
      */
     public interface OnRatingBarChangeListener {
-
+        
         /**
          * Notification that the rating has changed. Clients can use the
          * fromUser parameter to distinguish user-initiated changes from those
          * that occurred programmatically. This will not be called continuously
          * while the user is dragging, only when the user finalizes a rating by
          * lifting the touch.
-         *
+         * 
          * @param ratingBar The RatingBar whose rating has changed.
          * @param rating The current rating. This will be in the range
          *            0..numStars.
@@ -77,18 +79,14 @@ public class RatingBar extends AbsSeekBar {
     private int mNumStars = 5;
 
     private int mProgressOnStartTracking;
-
+    
     private OnRatingBarChangeListener mOnRatingBarChangeListener;
-
-    public RatingBar(Context context, AttributeSet attrs, int defStyleAttr) {
-        this(context, attrs, defStyleAttr, 0);
-    }
-
-    public RatingBar(Context context, AttributeSet attrs, int defStyleAttr, int defStyleRes) {
-        super(context, attrs, defStyleAttr, defStyleRes);
-
-        final TypedArray a = context.obtainStyledAttributes(
-                attrs, R.styleable.RatingBar, defStyleAttr, defStyleRes);
+    
+    public RatingBar(Context context, AttributeSet attrs, int defStyle) {
+        super(context, attrs, defStyle);
+        
+        TypedArray a = context.obtainStyledAttributes(attrs, R.styleable.RatingBar,
+                defStyle, 0);
         final int numStars = a.getInt(R.styleable.RatingBar_numStars, mNumStars);
         setIsIndicator(a.getBoolean(R.styleable.RatingBar_isIndicator, !mIsUserSeekable));
         final float rating = a.getFloat(R.styleable.RatingBar_rating, -1);
@@ -96,19 +94,19 @@ public class RatingBar extends AbsSeekBar {
         a.recycle();
 
         if (numStars > 0 && numStars != mNumStars) {
-            setNumStars(numStars);
+            setNumStars(numStars);            
         }
-
+        
         if (stepSize >= 0) {
             setStepSize(stepSize);
         } else {
             setStepSize(0.5f);
         }
-
+        
         if (rating >= 0) {
             setRating(rating);
         }
-
+        
         // A touch inside a star fill up to that fractional area (slightly more
         // than 1 so boundaries round up).
         mTouchProgressOffset = 1.1f;
@@ -121,16 +119,16 @@ public class RatingBar extends AbsSeekBar {
     public RatingBar(Context context) {
         this(context, null);
     }
-
+    
     /**
      * Sets the listener to be called when the rating changes.
-     *
+     * 
      * @param listener The listener.
      */
     public void setOnRatingBarChangeListener(OnRatingBarChangeListener listener) {
         mOnRatingBarChangeListener = listener;
     }
-
+    
     /**
      * @return The listener (may be null) that is listening for rating change
      *         events.
@@ -142,7 +140,7 @@ public class RatingBar extends AbsSeekBar {
     /**
      * Whether this rating bar should only be an indicator (thus non-changeable
      * by the user).
-     *
+     * 
      * @param isIndicator Whether it should be an indicator.
      *
      * @attr ref android.R.styleable#RatingBar_isIndicator
@@ -151,7 +149,7 @@ public class RatingBar extends AbsSeekBar {
         mIsUserSeekable = !isIndicator;
         setFocusable(!isIndicator);
     }
-
+    
     /**
      * @return Whether this rating bar is only an indicator.
      *
@@ -160,21 +158,21 @@ public class RatingBar extends AbsSeekBar {
     public boolean isIndicator() {
         return !mIsUserSeekable;
     }
-
+    
     /**
      * Sets the number of stars to show. In order for these to be shown
      * properly, it is recommended the layout width of this widget be wrap
      * content.
-     *
+     * 
      * @param numStars The number of stars.
      */
     public void setNumStars(final int numStars) {
         if (numStars <= 0) {
             return;
         }
-
+        
         mNumStars = numStars;
-
+        
         // This causes the width to change, so re-layout
         requestLayout();
     }
@@ -186,10 +184,10 @@ public class RatingBar extends AbsSeekBar {
     public int getNumStars() {
         return mNumStars;
     }
-
+    
     /**
      * Sets the rating (the number of stars filled).
-     *
+     * 
      * @param rating The rating to set.
      */
     public void setRating(float rating) {
@@ -198,16 +196,16 @@ public class RatingBar extends AbsSeekBar {
 
     /**
      * Gets the current rating (number of stars filled).
-     *
+     * 
      * @return The current rating.
      */
     public float getRating() {
-        return getProgress() / getProgressPerStar();
+        return getProgress() / getProgressPerStar();        
     }
 
     /**
      * Sets the step size (granularity) of this rating bar.
-     *
+     * 
      * @param stepSize The step size of this rating bar. For example, if
      *            half-star granularity is wanted, this would be 0.5.
      */
@@ -215,7 +213,7 @@ public class RatingBar extends AbsSeekBar {
         if (stepSize <= 0) {
             return;
         }
-
+        
         final float newMax = mNumStars / stepSize;
         final int newProgress = (int) (newMax / getMax() * getProgress());
         setMax((int) newMax);
@@ -224,13 +222,13 @@ public class RatingBar extends AbsSeekBar {
 
     /**
      * Gets the step size of this rating bar.
-     *
+     * 
      * @return The step size.
      */
     public float getStepSize() {
         return (float) getNumStars() / getMax();
     }
-
+    
     /**
      * @return The amount of progress that fits into a star
      */
@@ -249,12 +247,12 @@ public class RatingBar extends AbsSeekBar {
     }
 
     @Override
-    void onProgressRefresh(float scale, boolean fromUser, int progress) {
-        super.onProgressRefresh(scale, fromUser, progress);
+    void onProgressRefresh(float scale, boolean fromUser) {
+        super.onProgressRefresh(scale, fromUser);
 
         // Keep secondary progress in sync with primary
-        updateSecondaryProgress(progress);
-
+        updateSecondaryProgress(getProgress());
+        
         if (!fromUser) {
             // Callback for non-user rating changes
             dispatchRatingChange(false);
@@ -265,7 +263,7 @@ public class RatingBar extends AbsSeekBar {
      * The secondary progress is used to differentiate the background of a
      * partially filled star. This method keeps the secondary progress in sync
      * with the progress.
-     *
+     * 
      * @param progress The primary progress level.
      */
     private void updateSecondaryProgress(int progress) {
@@ -276,11 +274,11 @@ public class RatingBar extends AbsSeekBar {
             setSecondaryProgress(secondaryProgress);
         }
     }
-
+    
     @Override
     protected synchronized void onMeasure(int widthMeasureSpec, int heightMeasureSpec) {
         super.onMeasure(widthMeasureSpec, heightMeasureSpec);
-
+        
         if (mSampleTile != null) {
             // TODO: Once ProgressBar's TODOs are gone, this can be done more
             // cleanly than mSampleTile
@@ -293,7 +291,7 @@ public class RatingBar extends AbsSeekBar {
     @Override
     void onStartTrackingTouch() {
         mProgressOnStartTracking = getProgress();
-
+        
         super.onStartTrackingTouch();
     }
 
@@ -325,27 +323,19 @@ public class RatingBar extends AbsSeekBar {
         if (max <= 0) {
             return;
         }
-
+        
         super.setMax(max);
     }
-
+    
     @Override
-    public CharSequence getAccessibilityClassName() {
-        return RatingBar.class.getName();
-    }
-
-    /** @hide */
-    @Override
-    public void onInitializeAccessibilityNodeInfoInternal(AccessibilityNodeInfo info) {
-        super.onInitializeAccessibilityNodeInfoInternal(info);
-
-        if (canUserSetProgress()) {
-            info.addAction(AccessibilityNodeInfo.AccessibilityAction.ACTION_SET_PROGRESS);
-        }
+    public void onInitializeAccessibilityEvent(AccessibilityEvent event) {
+        super.onInitializeAccessibilityEvent(event);
+        event.setClassName(RatingBar.class.getName());
     }
 
     @Override
-    boolean canUserSetProgress() {
-        return super.canUserSetProgress() && !isIndicator();
+    public void onInitializeAccessibilityNodeInfo(AccessibilityNodeInfo info) {
+        super.onInitializeAccessibilityNodeInfo(info);
+        info.setClassName(RatingBar.class.getName());
     }
 }

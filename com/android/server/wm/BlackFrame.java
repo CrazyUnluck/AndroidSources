@@ -16,13 +16,6 @@
 
 package com.android.server.wm;
 
-import static android.graphics.PixelFormat.OPAQUE;
-import static android.view.SurfaceControl.FX_SURFACE_DIM;
-import static com.android.server.wm.WindowManagerDebugConfig.DEBUG_SURFACE_TRACE;
-import static com.android.server.wm.WindowManagerDebugConfig.SHOW_SURFACE_ALLOC;
-import static com.android.server.wm.WindowManagerDebugConfig.SHOW_TRANSACTIONS;
-import static com.android.server.wm.WindowManagerDebugConfig.TAG_WM;
-
 import java.io.PrintWriter;
 
 import android.graphics.Matrix;
@@ -51,20 +44,21 @@ public class BlackFrame {
             int w = r-l;
             int h = b-t;
 
-            if (DEBUG_SURFACE_TRACE) {
-                surface = new WindowSurfaceController.SurfaceTrace(session, "BlackSurface("
+            if (WindowManagerService.DEBUG_SURFACE_TRACE) {
+                surface = new WindowStateAnimator.SurfaceTrace(session, "BlackSurface("
                         + l + ", " + t + ")",
-                        w, h, OPAQUE, FX_SURFACE_DIM | SurfaceControl.HIDDEN);
+                        w, h, PixelFormat.OPAQUE, SurfaceControl.FX_SURFACE_DIM | SurfaceControl.HIDDEN);
             } else {
                 surface = new SurfaceControl(session, "BlackSurface",
-                        w, h, OPAQUE, FX_SURFACE_DIM | SurfaceControl.HIDDEN);
+                        w, h, PixelFormat.OPAQUE, SurfaceControl.FX_SURFACE_DIM | SurfaceControl.HIDDEN);
             }
 
             surface.setAlpha(1);
             surface.setLayerStack(layerStack);
             surface.setLayer(layer);
             surface.show();
-            if (SHOW_TRANSACTIONS || SHOW_SURFACE_ALLOC) Slog.i(TAG_WM,
+            if (WindowManagerService.SHOW_TRANSACTIONS ||
+                    WindowManagerService.SHOW_SURFACE_ALLOC) Slog.i(WindowManagerService.TAG,
                             "  BLACK " + surface + ": CREATE layer=" + layer);
         }
 
@@ -82,7 +76,7 @@ public class BlackFrame {
                     mTmpFloats[Matrix.MSCALE_X], mTmpFloats[Matrix.MSKEW_Y],
                     mTmpFloats[Matrix.MSKEW_X], mTmpFloats[Matrix.MSCALE_Y]);
             if (false) {
-                Slog.i(TAG_WM, "Black Surface @ (" + left + "," + top + "): ("
+                Slog.i(WindowManagerService.TAG, "Black Surface @ (" + left + "," + top + "): ("
                         + mTmpFloats[Matrix.MTRANS_X] + ","
                         + mTmpFloats[Matrix.MTRANS_Y] + ") matrix=["
                         + mTmpFloats[Matrix.MSCALE_X] + ","
@@ -155,8 +149,10 @@ public class BlackFrame {
         if (mBlackSurfaces != null) {
             for (int i=0; i<mBlackSurfaces.length; i++) {
                 if (mBlackSurfaces[i] != null) {
-                    if (SHOW_TRANSACTIONS || SHOW_SURFACE_ALLOC) Slog.i(TAG_WM,
-                            "  BLACK " + mBlackSurfaces[i].surface + ": DESTROY");
+                    if (WindowManagerService.SHOW_TRANSACTIONS ||
+                            WindowManagerService.SHOW_SURFACE_ALLOC) Slog.i(
+                                    WindowManagerService.TAG,
+                                    "  BLACK " + mBlackSurfaces[i].surface + ": DESTROY");
                     mBlackSurfaces[i].surface.destroy();
                     mBlackSurfaces[i] = null;
                 }

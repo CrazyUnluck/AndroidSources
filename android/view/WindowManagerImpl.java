@@ -16,17 +16,6 @@
 
 package android.view;
 
-import android.annotation.NonNull;
-import android.content.Context;
-import android.os.Bundle;
-import android.os.IBinder;
-import android.os.RemoteException;
-
-import com.android.internal.os.IResultReceiver;
-import com.android.internal.R;
-
-import java.util.List;
-
 /**
  * Provides low-level communication with the system window manager for
  * operations that are bound to a particular context, display or parent window.
@@ -55,63 +44,34 @@ import java.util.List;
  */
 public final class WindowManagerImpl implements WindowManager {
     private final WindowManagerGlobal mGlobal = WindowManagerGlobal.getInstance();
-    private final Context mContext;
+    private final Display mDisplay;
     private final Window mParentWindow;
 
-    private IBinder mDefaultToken;
-
-    public WindowManagerImpl(Context context) {
-        this(context, null);
+    public WindowManagerImpl(Display display) {
+        this(display, null);
     }
 
-    private WindowManagerImpl(Context context, Window parentWindow) {
-        mContext = context;
+    private WindowManagerImpl(Display display, Window parentWindow) {
+        mDisplay = display;
         mParentWindow = parentWindow;
     }
 
     public WindowManagerImpl createLocalWindowManager(Window parentWindow) {
-        return new WindowManagerImpl(mContext, parentWindow);
+        return new WindowManagerImpl(mDisplay, parentWindow);
     }
 
-    public WindowManagerImpl createPresentationWindowManager(Context displayContext) {
-        return new WindowManagerImpl(displayContext, mParentWindow);
-    }
-
-    /**
-     * Sets the window token to assign when none is specified by the client or
-     * available from the parent window.
-     *
-     * @param token The default token to assign.
-     */
-    public void setDefaultToken(IBinder token) {
-        mDefaultToken = token;
+    public WindowManagerImpl createPresentationWindowManager(Display display) {
+        return new WindowManagerImpl(display, mParentWindow);
     }
 
     @Override
-    public void addView(@NonNull View view, @NonNull ViewGroup.LayoutParams params) {
-        applyDefaultToken(params);
-        mGlobal.addView(view, params, mContext.getDisplay(), mParentWindow);
+    public void addView(View view, ViewGroup.LayoutParams params) {
+        mGlobal.addView(view, params, mDisplay, mParentWindow);
     }
 
     @Override
-    public void updateViewLayout(@NonNull View view, @NonNull ViewGroup.LayoutParams params) {
-        applyDefaultToken(params);
+    public void updateViewLayout(View view, ViewGroup.LayoutParams params) {
         mGlobal.updateViewLayout(view, params);
-    }
-
-    private void applyDefaultToken(@NonNull ViewGroup.LayoutParams params) {
-        // Only use the default token if we don't have a parent window.
-        if (mDefaultToken != null && mParentWindow == null) {
-            if (!(params instanceof WindowManager.LayoutParams)) {
-                throw new IllegalArgumentException("Params must be WindowManager.LayoutParams");
-            }
-
-            // Only use the default token if we don't already have a token.
-            final WindowManager.LayoutParams wparams = (WindowManager.LayoutParams) params;
-            if (wparams.token == null) {
-                wparams.token = mDefaultToken;
-            }
-        }
     }
 
     @Override
@@ -125,25 +85,7 @@ public final class WindowManagerImpl implements WindowManager {
     }
 
     @Override
-    public void requestAppKeyboardShortcuts(
-            final KeyboardShortcutsReceiver receiver, int deviceId) {
-        IResultReceiver resultReceiver = new IResultReceiver.Stub() {
-            @Override
-            public void send(int resultCode, Bundle resultData) throws RemoteException {
-                List<KeyboardShortcutGroup> result =
-                        resultData.getParcelableArrayList(PARCEL_KEY_SHORTCUTS_ARRAY);
-                receiver.onKeyboardShortcutsReceived(result);
-            }
-        };
-        try {
-            WindowManagerGlobal.getWindowManagerService()
-                .requestAppKeyboardShortcuts(resultReceiver, deviceId);
-        } catch (RemoteException e) {
-        }
-    }
-
-    @Override
     public Display getDefaultDisplay() {
-        return mContext.getDisplay();
+        return mDisplay;
     }
 }

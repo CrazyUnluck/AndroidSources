@@ -17,15 +17,15 @@
 package com.android.server.am;
 
 import android.content.Intent;
+import android.net.Uri;
 import android.os.UserHandle;
-import android.util.ArraySet;
-import android.util.Slog;
+import android.util.Log;
 
-import com.android.server.am.ActivityManagerService.GrantUri;
 import com.google.android.collect.Sets;
 
 import java.io.PrintWriter;
 import java.util.Comparator;
+import java.util.HashSet;
 
 /**
  * Description of a permission granted to an app to access a particular URI.
@@ -43,14 +43,14 @@ final class UriPermission {
     public static final int STRENGTH_GLOBAL = 2;
     public static final int STRENGTH_PERSISTABLE = 3;
 
-    final int targetUserId;
+    final int userHandle;
     final String sourcePkg;
     final String targetPkg;
 
     /** Cached UID of {@link #targetPkg}; should not be persisted */
     final int targetUid;
 
-    final GrantUri uri;
+    final Uri uri;
 
     /**
      * Allowed modes. All permission enforcement should use this field. Must
@@ -61,13 +61,12 @@ final class UriPermission {
      */
     int modeFlags = 0;
 
-    /** Allowed modes with active owner. */
+    /** Allowed modes with explicit owner. */
     int ownedModeFlags = 0;
     /** Allowed modes without explicit owner. */
     int globalModeFlags = 0;
     /** Allowed modes that have been offered for possible persisting. */
     int persistableModeFlags = 0;
-
     /** Allowed modes that should be persisted across device boots. */
     int persistedModeFlags = 0;
 
@@ -79,13 +78,13 @@ final class UriPermission {
 
     private static final long INVALID_TIME = Long.MIN_VALUE;
 
-    private ArraySet<UriPermissionOwner> mReadOwners;
-    private ArraySet<UriPermissionOwner> mWriteOwners;
+    private HashSet<UriPermissionOwner> mReadOwners;
+    private HashSet<UriPermissionOwner> mWriteOwners;
 
     private String stringName;
 
-    UriPermission(String sourcePkg, String targetPkg, int targetUid, GrantUri uri) {
-        this.targetUserId = UserHandle.getUserId(targetUid);
+    UriPermission(String sourcePkg, String targetPkg, int targetUid, Uri uri) {
+        this.userHandle = UserHandle.getUserId(targetUid);
         this.sourcePkg = sourcePkg;
         this.targetPkg = targetPkg;
         this.targetUid = targetUid;
@@ -101,9 +100,6 @@ final class UriPermission {
      * global or owner grants.
      */
     void initPersistedModes(int modeFlags, long createdTime) {
-        modeFlags &= (Intent.FLAG_GRANT_READ_URI_PERMISSION
-                | Intent.FLAG_GRANT_WRITE_URI_PERMISSION);
-
         persistableModeFlags = modeFlags;
         persistedModeFlags = modeFlags;
         persistedCreateTime = createdTime;
@@ -111,11 +107,7 @@ final class UriPermission {
         updateModeFlags();
     }
 
-    void grantModes(int modeFlags, UriPermissionOwner owner) {
-        final boolean persistable = (modeFlags & Intent.FLAG_GRANT_PERSISTABLE_URI_PERMISSION) != 0;
-        modeFlags &= (Intent.FLAG_GRANT_READ_URI_PERMISSION
-                | Intent.FLAG_GRANT_WRITE_URI_PERMISSION);
-
+    void grantModes(int modeFlags, boolean persistable, UriPermissionOwner owner) {
         if (persistable) {
             persistableModeFlags |= modeFlags;
         }
@@ -138,14 +130,10 @@ final class UriPermission {
      * @return if mode changes should trigger persisting.
      */
     boolean takePersistableModes(int modeFlags) {
-        modeFlags &= (Intent.FLAG_GRANT_READ_URI_PERMISSION
-                | Intent.FLAG_GRANT_WRITE_URI_PERMISSION);
-
         if ((modeFlags & persistableModeFlags) != modeFlags) {
-            Slog.w(TAG, "Requested flags 0x"
+            throw new SecurityException("Requested flags 0x"
                     + Integer.toHexString(modeFlags) + ", but only 0x"
                     + Integer.toHexString(persistableModeFlags) + " are allowed");
-            return false;
         }
 
         final int before = persistedModeFlags;
@@ -160,9 +148,6 @@ final class UriPermission {
     }
 
     boolean releasePersistableModes(int modeFlags) {
-        modeFlags &= (Intent.FLAG_GRANT_READ_URI_PERMISSION
-                | Intent.FLAG_GRANT_WRITE_URI_PERMISSION);
-
         final int before = persistedModeFlags;
 
         persistableModeFlags &= ~modeFlags;
@@ -179,11 +164,7 @@ final class UriPermission {
     /**
      * @return if mode changes should trigger persisting.
      */
-    boolean revokeModes(int modeFlags, boolean includingOwners) {
-        final boolean persistable = (modeFlags & Intent.FLAG_GRANT_PERSISTABLE_URI_PERMISSION) != 0;
-        modeFlags &= (Intent.FLAG_GRANT_READ_URI_PERMISSION
-                | Intent.FLAG_GRANT_WRITE_URI_PERMISSION);
-
+    boolean clearModes(int modeFlags, boolean persistable) {
         final int before = persistedModeFlags;
 
         if ((modeFlags & Intent.FLAG_GRANT_READ_URI_PERMISSION) != 0) {
@@ -192,7 +173,7 @@ final class UriPermission {
                 persistedModeFlags &= ~Intent.FLAG_GRANT_READ_URI_PERMISSION;
             }
             globalModeFlags &= ~Intent.FLAG_GRANT_READ_URI_PERMISSION;
-            if (mReadOwners != null && includingOwners) {
+            if (mReadOwners != null) {
                 ownedModeFlags &= ~Intent.FLAG_GRANT_READ_URI_PERMISSION;
                 for (UriPermissionOwner r : mReadOwners) {
                     r.removeReadPermission(this);
@@ -206,7 +187,7 @@ final class UriPermission {
                 persistedModeFlags &= ~Intent.FLAG_GRANT_WRITE_URI_PERMISSION;
             }
             globalModeFlags &= ~Intent.FLAG_GRANT_WRITE_URI_PERMISSION;
-            if (mWriteOwners != null && includingOwners) {
+            if (mWriteOwners != null) {
                 ownedModeFlags &= ~Intent.FLAG_GRANT_WRITE_URI_PERMISSION;
                 for (UriPermissionOwner r : mWriteOwners) {
                     r.removeWritePermission(this);
@@ -227,8 +208,6 @@ final class UriPermission {
      * Return strength of this permission grant for the given flags.
      */
     public int getStrength(int modeFlags) {
-        modeFlags &= (Intent.FLAG_GRANT_READ_URI_PERMISSION
-                | Intent.FLAG_GRANT_WRITE_URI_PERMISSION);
         if ((persistableModeFlags & modeFlags) == modeFlags) {
             return STRENGTH_PERSISTABLE;
         } else if ((globalModeFlags & modeFlags) == modeFlags) {
@@ -242,7 +221,7 @@ final class UriPermission {
 
     private void addReadOwner(UriPermissionOwner owner) {
         if (mReadOwners == null) {
-            mReadOwners = Sets.newArraySet();
+            mReadOwners = Sets.newHashSet();
             ownedModeFlags |= Intent.FLAG_GRANT_READ_URI_PERMISSION;
             updateModeFlags();
         }
@@ -256,7 +235,7 @@ final class UriPermission {
      */
     void removeReadOwner(UriPermissionOwner owner) {
         if (!mReadOwners.remove(owner)) {
-            Slog.wtf(TAG, "Unknown read owner " + owner + " in " + this);
+            Log.wtf(TAG, "Unknown read owner " + owner + " in " + this);
         }
         if (mReadOwners.size() == 0) {
             mReadOwners = null;
@@ -267,7 +246,7 @@ final class UriPermission {
 
     private void addWriteOwner(UriPermissionOwner owner) {
         if (mWriteOwners == null) {
-            mWriteOwners = Sets.newArraySet();
+            mWriteOwners = Sets.newHashSet();
             ownedModeFlags |= Intent.FLAG_GRANT_WRITE_URI_PERMISSION;
             updateModeFlags();
         }
@@ -281,7 +260,7 @@ final class UriPermission {
      */
     void removeWriteOwner(UriPermissionOwner owner) {
         if (!mWriteOwners.remove(owner)) {
-            Slog.wtf(TAG, "Unknown write owner " + owner + " in " + this);
+            Log.wtf(TAG, "Unknown write owner " + owner + " in " + this);
         }
         if (mWriteOwners.size() == 0) {
             mWriteOwners = null;
@@ -306,7 +285,7 @@ final class UriPermission {
 
     void dump(PrintWriter pw, String prefix) {
         pw.print(prefix);
-        pw.print("targetUserId=" + targetUserId);
+        pw.print("userHandle=" + userHandle);
         pw.print(" sourcePkg=" + sourcePkg);
         pw.println(" targetPkg=" + targetPkg);
 
@@ -351,15 +330,15 @@ final class UriPermission {
      * {@link UriPermission#persistedModeFlags} state.
      */
     public static class Snapshot {
-        final int targetUserId;
+        final int userHandle;
         final String sourcePkg;
         final String targetPkg;
-        final GrantUri uri;
+        final Uri uri;
         final int persistedModeFlags;
         final long persistedCreateTime;
 
         private Snapshot(UriPermission perm) {
-            this.targetUserId = perm.targetUserId;
+            this.userHandle = perm.userHandle;
             this.sourcePkg = perm.sourcePkg;
             this.targetPkg = perm.targetPkg;
             this.uri = perm.uri;
@@ -373,6 +352,6 @@ final class UriPermission {
     }
 
     public android.content.UriPermission buildPersistedPublicApiObject() {
-        return new android.content.UriPermission(uri.uri, persistedModeFlags, persistedCreateTime);
+        return new android.content.UriPermission(uri, persistedModeFlags, persistedCreateTime);
     }
 }

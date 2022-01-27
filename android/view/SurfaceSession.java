@@ -24,11 +24,11 @@ package android.view;
  */
 public final class SurfaceSession {
     // Note: This field is accessed by native code.
-    private long mNativeClient; // SurfaceComposerClient*
+    private int mNativeClient; // SurfaceComposerClient*
 
-    private static native long nativeCreate();
-    private static native void nativeDestroy(long ptr);
-    private static native void nativeKill(long ptr);
+    private static native int nativeCreate();
+    private static native void nativeDestroy(int ptr);
+    private static native void nativeKill(int ptr);
 
     /** Create a new connection with the surface flinger. */
     public SurfaceSession() {

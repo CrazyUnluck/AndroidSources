@@ -16,7 +16,6 @@
 
 package android.gesture;
 
-import android.annotation.ColorInt;
 import android.content.Context;
 import android.content.res.TypedArray;
 import android.graphics.Canvas;
@@ -135,16 +134,11 @@ public class GestureOverlayView extends FrameLayout {
         this(context, attrs, com.android.internal.R.attr.gestureOverlayViewStyle);
     }
 
-    public GestureOverlayView(Context context, AttributeSet attrs, int defStyleAttr) {
-        this(context, attrs, defStyleAttr, 0);
-    }
+    public GestureOverlayView(Context context, AttributeSet attrs, int defStyle) {
+        super(context, attrs, defStyle);
 
-    public GestureOverlayView(
-            Context context, AttributeSet attrs, int defStyleAttr, int defStyleRes) {
-        super(context, attrs, defStyleAttr, defStyleRes);
-
-        final TypedArray a = context.obtainStyledAttributes(
-                attrs, R.styleable.GestureOverlayView, defStyleAttr, defStyleRes);
+        TypedArray a = context.obtainStyledAttributes(attrs,
+                R.styleable.GestureOverlayView, defStyle, 0);
 
         mGestureStrokeWidth = a.getFloat(R.styleable.GestureOverlayView_gestureStrokeWidth,
                 mGestureStrokeWidth);
@@ -205,20 +199,18 @@ public class GestureOverlayView extends FrameLayout {
         mOrientation = orientation;
     }
 
-    public void setGestureColor(@ColorInt int color) {
+    public void setGestureColor(int color) {
         mCertainGestureColor = color;
     }
 
-    public void setUncertainGestureColor(@ColorInt int color) {
+    public void setUncertainGestureColor(int color) {
         mUncertainGestureColor = color;
     }
 
-    @ColorInt
     public int getUncertainGestureColor() {
         return mUncertainGestureColor;
     }
 
-    @ColorInt
     public int getGestureColor() {
         return mCertainGestureColor;
     }
@@ -643,7 +635,7 @@ public class GestureOverlayView extends FrameLayout {
             mStrokeBuffer.add(new GesturePoint(x, y, event.getEventTime()));
 
             if (mHandleGestureActions && !mIsGesturing) {
-                mTotalLength += (float) Math.hypot(dx, dy);
+                mTotalLength += (float) Math.sqrt(dx * dx + dy * dy);
 
                 if (mTotalLength > mGestureStrokeLengthThreshold) {
                     final OrientedBoundingBox box =

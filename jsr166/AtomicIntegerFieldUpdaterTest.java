@@ -8,78 +8,13 @@
 
 package jsr166;
 
+import junit.framework.*;
 import java.util.concurrent.atomic.AtomicIntegerFieldUpdater;
-
-import junit.framework.Test;
-import junit.framework.TestSuite;
 
 public class AtomicIntegerFieldUpdaterTest extends JSR166TestCase {
     volatile int x = 0;
-    protected volatile int protectedField;
-    private volatile int privateField;
     int w;
-    float z;
-    // android-note: Removed because the CTS runner does a bad job of
-    // retrying tests that have suite() declarations.
-    //
-    // public static void main(String[] args) {
-    //     main(suite(), args);
-    // }
-    // public static Test suite() {
-    //     return new TestSuite(AtomicIntegerFieldUpdaterTest.class);
-    // }
-
-    // for testing subclass access
-    // android-note: Removed because android doesn't restrict reflection access
-    // static class AtomicIntegerFieldUpdaterTestSubclass extends AtomicIntegerFieldUpdaterTest {
-    //     public void checkPrivateAccess() {
-    //         try {
-    //             AtomicIntegerFieldUpdater<AtomicIntegerFieldUpdaterTest> a =
-    //                 AtomicIntegerFieldUpdater.newUpdater
-    //                 (AtomicIntegerFieldUpdaterTest.class, "privateField");
-    //             shouldThrow();
-    //         } catch (RuntimeException success) {
-    //             assertNotNull(success.getCause());
-    //         }
-    //     }
-
-    //     public void checkCompareAndSetProtectedSub() {
-    //         AtomicIntegerFieldUpdater<AtomicIntegerFieldUpdaterTest> a =
-    //             AtomicIntegerFieldUpdater.newUpdater
-    //             (AtomicIntegerFieldUpdaterTest.class, "protectedField");
-    //         this.protectedField = 1;
-    //         assertTrue(a.compareAndSet(this, 1, 2));
-    //         assertTrue(a.compareAndSet(this, 2, -4));
-    //         assertEquals(-4, a.get(this));
-    //         assertFalse(a.compareAndSet(this, -5, 7));
-    //         assertEquals(-4, a.get(this));
-    //         assertTrue(a.compareAndSet(this, -4, 7));
-    //         assertEquals(7, a.get(this));
-    //     }
-    // }
-
-    // static class UnrelatedClass {
-    //     public void checkPackageAccess(AtomicIntegerFieldUpdaterTest obj) {
-    //         obj.x = 72;
-    //         AtomicIntegerFieldUpdater<AtomicIntegerFieldUpdaterTest> a =
-    //             AtomicIntegerFieldUpdater.newUpdater
-    //             (AtomicIntegerFieldUpdaterTest.class, "x");
-    //         assertEquals(72, a.get(obj));
-    //         assertTrue(a.compareAndSet(obj, 72, 73));
-    //         assertEquals(73, a.get(obj));
-    //     }
-
-    //     public void checkPrivateAccess(AtomicIntegerFieldUpdaterTest obj) {
-    //         try {
-    //             AtomicIntegerFieldUpdater<AtomicIntegerFieldUpdaterTest> a =
-    //                 AtomicIntegerFieldUpdater.newUpdater
-    //                 (AtomicIntegerFieldUpdaterTest.class, "privateField");
-    //             throw new AssertionError("should throw");
-    //         } catch (RuntimeException success) {
-    //             assertNotNull(success.getCause());
-    //         }
-    //     }
-    // }
+    long z;
 
     AtomicIntegerFieldUpdater<AtomicIntegerFieldUpdaterTest> updaterFor(String fieldName) {
         return AtomicIntegerFieldUpdater.newUpdater
@@ -117,26 +52,6 @@ public class AtomicIntegerFieldUpdaterTest extends JSR166TestCase {
             shouldThrow();
         } catch (IllegalArgumentException success) {}
     }
-
-    /**
-     * construction using private field from subclass throws RuntimeException
-     */
-    // android-note: Removed because android doesn't restrict reflection access
-    // public void testPrivateFieldInSubclass() {
-    //     AtomicIntegerFieldUpdaterTestSubclass s =
-    //         new AtomicIntegerFieldUpdaterTestSubclass();
-    //     s.checkPrivateAccess();
-    // }
-
-    /**
-     * construction from unrelated class; package access is allowed,
-     * private access is not
-     */
-    // android-note: Removed because android doesn't restrict reflection access
-    // public void testUnrelatedClassAccess() {
-    //     new UnrelatedClass().checkPackageAccess(this);
-    //     new UnrelatedClass().checkPrivateAccess(this);
-    // }
 
     /**
      * get returns the last value set or assigned
@@ -183,34 +98,6 @@ public class AtomicIntegerFieldUpdaterTest extends JSR166TestCase {
     }
 
     /**
-     * compareAndSet succeeds in changing protected field value if
-     * equal to expected else fails
-     */
-    public void testCompareAndSetProtected() {
-        AtomicIntegerFieldUpdater<AtomicIntegerFieldUpdaterTest> a;
-        a = updaterFor("protectedField");
-        protectedField = 1;
-        assertTrue(a.compareAndSet(this, 1, 2));
-        assertTrue(a.compareAndSet(this, 2, -4));
-        assertEquals(-4, a.get(this));
-        assertFalse(a.compareAndSet(this, -5, 7));
-        assertEquals(-4, a.get(this));
-        assertTrue(a.compareAndSet(this, -4, 7));
-        assertEquals(7, a.get(this));
-    }
-
-    /**
-     * compareAndSet succeeds in changing protected field value if
-     * equal to expected else fails
-     */
-    // android-note: Removed because android doesn't restrict reflection access
-    // public void testCompareAndSetProtectedInSubclass() {
-    //     AtomicIntegerFieldUpdaterTestSubclass s =
-    //         new AtomicIntegerFieldUpdaterTestSubclass();
-    //     s.checkCompareAndSetProtectedSub();
-    // }
-
-    /**
      * compareAndSet in one thread enables another waiting for value
      * to succeed
      */
@@ -240,10 +127,10 @@ public class AtomicIntegerFieldUpdaterTest extends JSR166TestCase {
         AtomicIntegerFieldUpdater<AtomicIntegerFieldUpdaterTest> a;
         a = updaterFor("x");
         x = 1;
-        do {} while (!a.weakCompareAndSet(this, 1, 2));
-        do {} while (!a.weakCompareAndSet(this, 2, -4));
+        while (!a.weakCompareAndSet(this, 1, 2));
+        while (!a.weakCompareAndSet(this, 2, -4));
         assertEquals(-4, a.get(this));
-        do {} while (!a.weakCompareAndSet(this, -4, 7));
+        while (!a.weakCompareAndSet(this, -4, 7));
         assertEquals(7, a.get(this));
     }
 

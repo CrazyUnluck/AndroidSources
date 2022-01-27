@@ -19,16 +19,14 @@ package android.os;
 import com.android.internal.util.FastPrintWriter;
 import com.android.internal.util.TypedProperties;
 
-import android.app.AppGlobals;
-import android.content.Context;
 import android.util.Log;
 
-import java.io.File;
 import java.io.FileDescriptor;
 import java.io.FileNotFoundException;
 import java.io.FileOutputStream;
 import java.io.FileReader;
 import java.io.IOException;
+import java.io.OutputStreamWriter;
 import java.io.PrintWriter;
 import java.io.Reader;
 import java.lang.reflect.Field;
@@ -37,14 +35,13 @@ import java.lang.annotation.Target;
 import java.lang.annotation.ElementType;
 import java.lang.annotation.Retention;
 import java.lang.annotation.RetentionPolicy;
-import java.util.HashMap;
-import java.util.Map;
 
 import org.apache.harmony.dalvik.ddmc.Chunk;
 import org.apache.harmony.dalvik.ddmc.ChunkHandler;
 import org.apache.harmony.dalvik.ddmc.DdmServer;
 
 import dalvik.bytecode.OpcodeInfo;
+import dalvik.bytecode.Opcodes;
 import dalvik.system.VMDebug;
 
 
@@ -68,10 +65,7 @@ public final class Debug
      *
      * TRACE_COUNT_ALLOCS adds the results from startAllocCounting to the
      * trace key file.
-     *
-     * @deprecated Accurate counting is a burden on the runtime and may be removed.
      */
-    @Deprecated
     public static final int TRACE_COUNT_ALLOCS  = VMDebug.TRACE_COUNT_ALLOCS;
 
     /**
@@ -101,12 +95,18 @@ public final class Debug
     /**
      * Default trace file path and file
      */
+    private static final String DEFAULT_TRACE_PATH_PREFIX =
+        Environment.getLegacyExternalStorageDirectory().getPath() + "/";
     private static final String DEFAULT_TRACE_BODY = "dmtrace";
     private static final String DEFAULT_TRACE_EXTENSION = ".trace";
+    private static final String DEFAULT_TRACE_FILE_PATH =
+        DEFAULT_TRACE_PATH_PREFIX + DEFAULT_TRACE_BODY
+        + DEFAULT_TRACE_EXTENSION;
+
 
     /**
      * This class is used to retrieved various statistics about the memory mappings for this
-     * process. The returned info is broken down by dalvik, native, and other. All results are in kB.
+     * process. The returns info broken down by dalvik, native, and other. All results are in kB.
      */
     public static class MemoryInfo implements Parcelable {
         /** The proportional set size for dalvik heap.  (Doesn't include other Dalvik overhead.) */
@@ -127,9 +127,6 @@ public final class Debug
         /** The dirty dalvik pages that have been swapped out. */
         /** @hide We may want to expose this, eventually. */
         public int dalvikSwappedOut;
-        /** The dirty dalvik pages that have been swapped out, proportional. */
-        /** @hide We may want to expose this, eventually. */
-        public int dalvikSwappedOutPss;
 
         /** The proportional set size for the native heap. */
         public int nativePss;
@@ -149,9 +146,6 @@ public final class Debug
         /** The dirty native pages that have been swapped out. */
         /** @hide We may want to expose this, eventually. */
         public int nativeSwappedOut;
-        /** The dirty native pages that have been swapped out, proportional. */
-        /** @hide We may want to expose this, eventually. */
-        public int nativeSwappedOutPss;
 
         /** The proportional set size for everything else. */
         public int otherPss;
@@ -171,81 +165,15 @@ public final class Debug
         /** The dirty pages used by anyting else that have been swapped out. */
         /** @hide We may want to expose this, eventually. */
         public int otherSwappedOut;
-        /** The dirty pages used by anyting else that have been swapped out, proportional. */
-        /** @hide We may want to expose this, eventually. */
-        public int otherSwappedOutPss;
-
-        /** Whether the kernel reports proportional swap usage */
-        /** @hide */
-        public boolean hasSwappedOutPss;
 
         /** @hide */
-        public static final int HEAP_UNKNOWN = 0;
-        /** @hide */
-        public static final int HEAP_DALVIK = 1;
-        /** @hide */
-        public static final int HEAP_NATIVE = 2;
+        public static final int NUM_OTHER_STATS = 16;
 
         /** @hide */
-        public static final int OTHER_DALVIK_OTHER = 0;
-        /** @hide */
-        public static final int OTHER_STACK = 1;
-        /** @hide */
-        public static final int OTHER_CURSOR = 2;
-        /** @hide */
-        public static final int OTHER_ASHMEM = 3;
-        /** @hide */
-        public static final int OTHER_GL_DEV = 4;
-        /** @hide */
-        public static final int OTHER_UNKNOWN_DEV = 5;
-        /** @hide */
-        public static final int OTHER_SO = 6;
-        /** @hide */
-        public static final int OTHER_JAR = 7;
-        /** @hide */
-        public static final int OTHER_APK = 8;
-        /** @hide */
-        public static final int OTHER_TTF = 9;
-        /** @hide */
-        public static final int OTHER_DEX = 10;
-        /** @hide */
-        public static final int OTHER_OAT = 11;
-        /** @hide */
-        public static final int OTHER_ART = 12;
-        /** @hide */
-        public static final int OTHER_UNKNOWN_MAP = 13;
-        /** @hide */
-        public static final int OTHER_GRAPHICS = 14;
-        /** @hide */
-        public static final int OTHER_GL = 15;
-        /** @hide */
-        public static final int OTHER_OTHER_MEMTRACK = 16;
+        public static final int NUM_DVK_STATS = 5;
 
         /** @hide */
-        public static final int OTHER_DALVIK_NORMAL = 17;
-        /** @hide */
-        public static final int OTHER_DALVIK_LARGE = 18;
-        /** @hide */
-        public static final int OTHER_DALVIK_LINEARALLOC = 19;
-        /** @hide */
-        public static final int OTHER_DALVIK_ACCOUNTING = 20;
-        /** @hide */
-        public static final int OTHER_DALVIK_CODE_CACHE = 21;
-        /** @hide */
-        public static final int OTHER_DALVIK_ZYGOTE = 22;
-        /** @hide */
-        public static final int OTHER_DALVIK_NON_MOVING = 23;
-        /** @hide */
-        public static final int OTHER_DALVIK_INDIRECT_REFERENCE_TABLE = 24;
-
-        /** @hide */
-        public static final int NUM_OTHER_STATS = 17;
-
-        /** @hide */
-        public static final int NUM_DVK_STATS = 8;
-
-        /** @hide */
-        public static final int NUM_CATEGORIES = 8;
+        public static final int NUM_CATEGORIES = 7;
 
         /** @hide */
         public static final int offsetPss = 0;
@@ -261,8 +189,6 @@ public final class Debug
         public static final int offsetSharedClean = 5;
         /** @hide */
         public static final int offsetSwappedOut = 6;
-        /** @hide */
-        public static final int offsetSwappedOutPss = 7;
 
         private int[] otherStats = new int[(NUM_OTHER_STATS+NUM_DVK_STATS)*NUM_CATEGORIES];
 
@@ -273,7 +199,7 @@ public final class Debug
          * Return total PSS memory usage in kB.
          */
         public int getTotalPss() {
-            return dalvikPss + nativePss + otherPss + getTotalSwappedOutPss();
+            return dalvikPss + nativePss + otherPss;
         }
 
         /**
@@ -286,8 +212,7 @@ public final class Debug
         }
 
         /**
-         * Return total PSS memory usage in kB mapping a file of one of the following extension:
-         * .so, .jar, .apk, .ttf, .dex, .odex, .oat, .art .
+         * Return total PSS memory usage in kB.
          */
         public int getTotalSwappablePss() {
             return dalvikSwappablePss + nativeSwappablePss + otherSwappablePss;
@@ -329,14 +254,6 @@ public final class Debug
             return dalvikSwappedOut + nativeSwappedOut + otherSwappedOut;
         }
 
-        /**
-         * Return total swapped out memory in kB, proportional.
-         * @hide
-         */
-        public int getTotalSwappedOutPss() {
-            return dalvikSwappedOutPss + nativeSwappedOutPss + otherSwappedOutPss;
-        }
-
         /** @hide */
         public int getOtherPss(int which) {
             return otherStats[which*NUM_CATEGORIES + offsetPss];
@@ -365,11 +282,6 @@ public final class Debug
         }
 
         /** @hide */
-        public int getOtherPrivate(int which) {
-          return getOtherPrivateClean(which) + getOtherPrivateDirty(which);
-        }
-
-        /** @hide */
         public int getOtherSharedClean(int which) {
             return otherStats[which*NUM_CATEGORIES + offsetSharedClean];
         }
@@ -380,309 +292,31 @@ public final class Debug
         }
 
         /** @hide */
-        public int getOtherSwappedOutPss(int which) {
-            return otherStats[which*NUM_CATEGORIES + offsetSwappedOutPss];
-        }
-
-        /** @hide */
         public static String getOtherLabel(int which) {
             switch (which) {
-                case OTHER_DALVIK_OTHER: return "Dalvik Other";
-                case OTHER_STACK: return "Stack";
-                case OTHER_CURSOR: return "Cursor";
-                case OTHER_ASHMEM: return "Ashmem";
-                case OTHER_GL_DEV: return "Gfx dev";
-                case OTHER_UNKNOWN_DEV: return "Other dev";
-                case OTHER_SO: return ".so mmap";
-                case OTHER_JAR: return ".jar mmap";
-                case OTHER_APK: return ".apk mmap";
-                case OTHER_TTF: return ".ttf mmap";
-                case OTHER_DEX: return ".dex mmap";
-                case OTHER_OAT: return ".oat mmap";
-                case OTHER_ART: return ".art mmap";
-                case OTHER_UNKNOWN_MAP: return "Other mmap";
-                case OTHER_GRAPHICS: return "EGL mtrack";
-                case OTHER_GL: return "GL mtrack";
-                case OTHER_OTHER_MEMTRACK: return "Other mtrack";
-                case OTHER_DALVIK_NORMAL: return ".Heap";
-                case OTHER_DALVIK_LARGE: return ".LOS";
-                case OTHER_DALVIK_LINEARALLOC: return ".LinearAlloc";
-                case OTHER_DALVIK_ACCOUNTING: return ".GC";
-                case OTHER_DALVIK_CODE_CACHE: return ".JITCache";
-                case OTHER_DALVIK_ZYGOTE: return ".Zygote";
-                case OTHER_DALVIK_NON_MOVING: return ".NonMoving";
-                case OTHER_DALVIK_INDIRECT_REFERENCE_TABLE: return ".IndirectRef";
+                case 0: return "Dalvik Other";
+                case 1: return "Stack";
+                case 2: return "Cursor";
+                case 3: return "Ashmem";
+                case 4: return "Other dev";
+                case 5: return ".so mmap";
+                case 6: return ".jar mmap";
+                case 7: return ".apk mmap";
+                case 8: return ".ttf mmap";
+                case 9: return ".dex mmap";
+                case 10: return "code mmap";
+                case 11: return "image mmap";
+                case 12: return "Other mmap";
+                case 13: return "Graphics";
+                case 14: return "GL";
+                case 15: return "Memtrack";
+                case 16: return ".Heap";
+                case 17: return ".LOS";
+                case 18: return ".LinearAlloc";
+                case 19: return ".GC";
+                case 20: return ".JITCache";
                 default: return "????";
             }
-        }
-
-      /**
-       * Returns the value of a particular memory statistic or {@code null} if no
-       * such memory statistic exists.
-       *
-       * <p>The following table lists the memory statistics that are supported.
-       * Note that memory statistics may be added or removed in a future API level.</p>
-       *
-       * <table>
-       *     <thead>
-       *         <tr>
-       *             <th>Memory statistic name</th>
-       *             <th>Meaning</th>
-       *             <th>Example</th>
-       *             <th>Supported (API Levels)</th>
-       *         </tr>
-       *     </thead>
-       *     <tbody>
-       *         <tr>
-       *             <td>summary.java-heap</td>
-       *             <td>The private Java Heap usage in kB. This corresponds to the Java Heap field
-       *                 in the App Summary section output by dumpsys meminfo.</td>
-       *             <td>{@code 1442}</td>
-       *             <td>23</td>
-       *         </tr>
-       *         <tr>
-       *             <td>summary.native-heap</td>
-       *             <td>The private Native Heap usage in kB. This corresponds to the Native Heap
-       *                 field in the App Summary section output by dumpsys meminfo.</td>
-       *             <td>{@code 1442}</td>
-       *             <td>23</td>
-       *         </tr>
-       *         <tr>
-       *             <td>summary.code</td>
-       *             <td>The memory usage for static code and resources in kB. This corresponds to
-       *                 the Code field in the App Summary section output by dumpsys meminfo.</td>
-       *             <td>{@code 1442}</td>
-       *             <td>23</td>
-       *         </tr>
-       *         <tr>
-       *             <td>summary.stack</td>
-       *             <td>The stack usage in kB. This corresponds to the Stack field in the
-       *                 App Summary section output by dumpsys meminfo.</td>
-       *             <td>{@code 1442}</td>
-       *             <td>23</td>
-       *         </tr>
-       *         <tr>
-       *             <td>summary.graphics</td>
-       *             <td>The graphics usage in kB. This corresponds to the Graphics field in the
-       *                 App Summary section output by dumpsys meminfo.</td>
-       *             <td>{@code 1442}</td>
-       *             <td>23</td>
-       *         </tr>
-       *         <tr>
-       *             <td>summary.private-other</td>
-       *             <td>Other private memory usage in kB. This corresponds to the Private Other
-       *                 field output in the App Summary section by dumpsys meminfo.</td>
-       *             <td>{@code 1442}</td>
-       *             <td>23</td>
-       *         </tr>
-       *         <tr>
-       *             <td>summary.system</td>
-       *             <td>Shared and system memory usage in kB. This corresponds to the System
-       *                 field output in the App Summary section by dumpsys meminfo.</td>
-       *             <td>{@code 1442}</td>
-       *             <td>23</td>
-       *         </tr>
-       *         <tr>
-       *             <td>summary.total-pss</td>
-       *             <td>Total PPS memory usage in kB.</td>
-       *             <td>{@code 1442}</td>
-       *             <td>23</td>
-       *         </tr>
-       *         <tr>
-       *             <td>summary.total-swap</td>
-       *             <td>Total swap usage in kB.</td>
-       *             <td>{@code 1442}</td>
-       *             <td>23</td>
-       *         </tr>
-       *     </tbody>
-       * </table>
-       */
-       public String getMemoryStat(String statName) {
-            switch(statName) {
-                case "summary.java-heap":
-                    return Integer.toString(getSummaryJavaHeap());
-                case "summary.native-heap":
-                    return Integer.toString(getSummaryNativeHeap());
-                case "summary.code":
-                    return Integer.toString(getSummaryCode());
-                case "summary.stack":
-                    return Integer.toString(getSummaryStack());
-                case "summary.graphics":
-                    return Integer.toString(getSummaryGraphics());
-                case "summary.private-other":
-                    return Integer.toString(getSummaryPrivateOther());
-                case "summary.system":
-                    return Integer.toString(getSummarySystem());
-                case "summary.total-pss":
-                    return Integer.toString(getSummaryTotalPss());
-                case "summary.total-swap":
-                    return Integer.toString(getSummaryTotalSwap());
-                default:
-                    return null;
-            }
-        }
-
-        /**
-         * Returns a map of the names/values of the memory statistics
-         * that {@link #getMemoryStat(String)} supports.
-         *
-         * @return a map of the names/values of the supported memory statistics.
-         */
-        public Map<String, String> getMemoryStats() {
-            Map<String, String> stats = new HashMap<String, String>();
-            stats.put("summary.java-heap", Integer.toString(getSummaryJavaHeap()));
-            stats.put("summary.native-heap", Integer.toString(getSummaryNativeHeap()));
-            stats.put("summary.code", Integer.toString(getSummaryCode()));
-            stats.put("summary.stack", Integer.toString(getSummaryStack()));
-            stats.put("summary.graphics", Integer.toString(getSummaryGraphics()));
-            stats.put("summary.private-other", Integer.toString(getSummaryPrivateOther()));
-            stats.put("summary.system", Integer.toString(getSummarySystem()));
-            stats.put("summary.total-pss", Integer.toString(getSummaryTotalPss()));
-            stats.put("summary.total-swap", Integer.toString(getSummaryTotalSwap()));
-            return stats;
-        }
-
-        /**
-         * Pss of Java Heap bytes in KB due to the application.
-         * Notes:
-         *  * OTHER_ART is the boot image. Anything private here is blamed on
-         *    the application, not the system.
-         *  * dalvikPrivateDirty includes private zygote, which means the
-         *    application dirtied something allocated by the zygote. We blame
-         *    the application for that memory, not the system.
-         *  * Does not include OTHER_DALVIK_OTHER, which is considered VM
-         *    Overhead and lumped into Private Other.
-         *  * We don't include dalvikPrivateClean, because there should be no
-         *    such thing as private clean for the Java Heap.
-         * @hide
-         */
-        public int getSummaryJavaHeap() {
-            return dalvikPrivateDirty + getOtherPrivate(OTHER_ART);
-        }
-
-        /**
-         * Pss of Native Heap bytes in KB due to the application.
-         * Notes:
-         *  * Includes private dirty malloc space.
-         *  * We don't include nativePrivateClean, because there should be no
-         *    such thing as private clean for the Native Heap.
-         * @hide
-         */
-        public int getSummaryNativeHeap() {
-            return nativePrivateDirty;
-        }
-
-        /**
-         * Pss of code and other static resource bytes in KB due to
-         * the application.
-         * @hide
-         */
-        public int getSummaryCode() {
-            return getOtherPrivate(OTHER_SO)
-              + getOtherPrivate(OTHER_JAR)
-              + getOtherPrivate(OTHER_APK)
-              + getOtherPrivate(OTHER_TTF)
-              + getOtherPrivate(OTHER_DEX)
-              + getOtherPrivate(OTHER_OAT);
-        }
-
-        /**
-         * Pss in KB of the stack due to the application.
-         * Notes:
-         *  * Includes private dirty stack, which includes both Java and Native
-         *    stack.
-         *  * Does not include private clean stack, because there should be no
-         *    such thing as private clean for the stack.
-         * @hide
-         */
-        public int getSummaryStack() {
-            return getOtherPrivateDirty(OTHER_STACK);
-        }
-
-        /**
-         * Pss in KB of graphics due to the application.
-         * Notes:
-         *  * Includes private Gfx, EGL, and GL.
-         *  * Warning: These numbers can be misreported by the graphics drivers.
-         *  * We don't include shared graphics. It may make sense to, because
-         *    shared graphics are likely buffers due to the application
-         *    anyway, but it's simpler to implement to just group all shared
-         *    memory into the System category.
-         * @hide
-         */
-        public int getSummaryGraphics() {
-            return getOtherPrivate(OTHER_GL_DEV)
-              + getOtherPrivate(OTHER_GRAPHICS)
-              + getOtherPrivate(OTHER_GL);
-        }
-
-        /**
-         * Pss in KB due to the application that haven't otherwise been
-         * accounted for.
-         * @hide
-         */
-        public int getSummaryPrivateOther() {
-            return getTotalPrivateClean()
-              + getTotalPrivateDirty()
-              - getSummaryJavaHeap()
-              - getSummaryNativeHeap()
-              - getSummaryCode()
-              - getSummaryStack()
-              - getSummaryGraphics();
-        }
-
-        /**
-         * Pss in KB due to the system.
-         * Notes:
-         *  * Includes all shared memory.
-         * @hide
-         */
-        public int getSummarySystem() {
-            return getTotalPss()
-              - getTotalPrivateClean()
-              - getTotalPrivateDirty();
-        }
-
-        /**
-         * Total Pss in KB.
-         * @hide
-         */
-        public int getSummaryTotalPss() {
-            return getTotalPss();
-        }
-
-        /**
-         * Total Swap in KB.
-         * Notes:
-         *  * Some of this memory belongs in other categories, but we don't
-         *    know if the Swap memory is shared or private, so we don't know
-         *    what to blame on the application and what on the system.
-         *    For now, just lump all the Swap in one place.
-         *    For kernels reporting SwapPss {@link #getSummaryTotalSwapPss()}
-         *    will report the application proportional Swap.
-         * @hide
-         */
-        public int getSummaryTotalSwap() {
-            return getTotalSwappedOut();
-        }
-
-        /**
-         * Total proportional Swap in KB.
-         * Notes:
-         *  * Always 0 if {@link #hasSwappedOutPss} is false.
-         * @hide
-         */
-        public int getSummaryTotalSwapPss() {
-            return getTotalSwappedOutPss();
-        }
-
-        /**
-         * Return true if the kernel is reporting pss swapped out...  that is, if
-         * {@link #getSummaryTotalSwapPss()} will return non-0 values.
-         * @hide
-         */
-        public boolean hasSwappedOutPss() {
-            return hasSwappedOutPss;
         }
 
         public int describeContents() {
@@ -711,8 +345,6 @@ public final class Debug
             dest.writeInt(otherPrivateClean);
             dest.writeInt(otherSharedClean);
             dest.writeInt(otherSwappedOut);
-            dest.writeInt(hasSwappedOutPss ? 1 : 0);
-            dest.writeInt(otherSwappedOutPss);
             dest.writeIntArray(otherStats);
         }
 
@@ -738,8 +370,6 @@ public final class Debug
             otherPrivateClean = source.readInt();
             otherSharedClean = source.readInt();
             otherSwappedOut = source.readInt();
-            hasSwappedOutPss = source.readInt() != 0;
-            otherSwappedOutPss = source.readInt();
             otherStats = source.createIntArray();
         }
 
@@ -942,171 +572,109 @@ public final class Debug
     }
 
     /**
-     * Start method tracing with default log name and buffer size.
-     * <p>
-     * By default, the trace file is called "dmtrace.trace" and it's placed
-     * under your package-specific directory on primary shared/external storage,
-     * as returned by {@link Context#getExternalFilesDir(String)}.
-     * <p>
-     * See <a href="{@docRoot}guide/developing/tools/traceview.html">Traceview:
-     * A Graphical Log Viewer</a> for information about reading trace files.
-     * <p class="note">
-     * When method tracing is enabled, the VM will run more slowly than usual,
-     * so the timings from the trace files should only be considered in relative
-     * terms (e.g. was run #1 faster than run #2). The times for native methods
-     * will not change, so don't try to use this to compare the performance of
-     * interpreted and native implementations of the same method. As an
-     * alternative, consider using sampling-based method tracing via
-     * {@link #startMethodTracingSampling(String, int, int)} or "native" tracing
-     * in the emulator via {@link #startNativeTracing()}.
-     * </p>
+     * Start method tracing with default log name and buffer size. See <a
+href="{@docRoot}guide/developing/tools/traceview.html">Traceview: A Graphical Log Viewer</a> for
+     * information about reading these files. Call stopMethodTracing() to stop
+     * tracing.
      */
     public static void startMethodTracing() {
-        VMDebug.startMethodTracing(fixTracePath(null), 0, 0, false, 0);
+        VMDebug.startMethodTracing(DEFAULT_TRACE_FILE_PATH, 0, 0, false, 0);
     }
 
     /**
-     * Start method tracing, specifying the trace log file path.
-     * <p>
-     * When a relative file path is given, the trace file will be placed under
-     * your package-specific directory on primary shared/external storage, as
-     * returned by {@link Context#getExternalFilesDir(String)}.
-     * <p>
-     * See <a href="{@docRoot}guide/developing/tools/traceview.html">Traceview:
-     * A Graphical Log Viewer</a> for information about reading trace files.
-     * <p class="note">
-     * When method tracing is enabled, the VM will run more slowly than usual,
-     * so the timings from the trace files should only be considered in relative
-     * terms (e.g. was run #1 faster than run #2). The times for native methods
-     * will not change, so don't try to use this to compare the performance of
-     * interpreted and native implementations of the same method. As an
-     * alternative, consider using sampling-based method tracing via
-     * {@link #startMethodTracingSampling(String, int, int)} or "native" tracing
-     * in the emulator via {@link #startNativeTracing()}.
-     * </p>
+     * Start method tracing, specifying the trace log file name.  The trace
+     * file will be put under "/sdcard" unless an absolute path is given.
+     * See <a
+       href="{@docRoot}guide/developing/tools/traceview.html">Traceview: A Graphical Log Viewer</a> for
+     * information about reading trace files.
      *
-     * @param tracePath Path to the trace log file to create. If {@code null},
-     *            this will default to "dmtrace.trace". If the file already
-     *            exists, it will be truncated. If the path given does not end
-     *            in ".trace", it will be appended for you.
+     * @param traceName Name for the trace log file to create.
+     * If {@code traceName} is null, this value defaults to "/sdcard/dmtrace.trace".
+     * If the files already exist, they will be truncated.
+     * If the trace file given does not end in ".trace", it will be appended for you.
      */
-    public static void startMethodTracing(String tracePath) {
-        startMethodTracing(tracePath, 0, 0);
+    public static void startMethodTracing(String traceName) {
+        startMethodTracing(traceName, 0, 0);
     }
 
     /**
-     * Start method tracing, specifying the trace log file name and the buffer
-     * size.
-     * <p>
-     * When a relative file path is given, the trace file will be placed under
-     * your package-specific directory on primary shared/external storage, as
-     * returned by {@link Context#getExternalFilesDir(String)}.
-     * <p>
-     * See <a href="{@docRoot}guide/developing/tools/traceview.html">Traceview:
-     * A Graphical Log Viewer</a> for information about reading trace files.
-     * <p class="note">
-     * When method tracing is enabled, the VM will run more slowly than usual,
-     * so the timings from the trace files should only be considered in relative
-     * terms (e.g. was run #1 faster than run #2). The times for native methods
-     * will not change, so don't try to use this to compare the performance of
-     * interpreted and native implementations of the same method. As an
-     * alternative, consider using sampling-based method tracing via
-     * {@link #startMethodTracingSampling(String, int, int)} or "native" tracing
-     * in the emulator via {@link #startNativeTracing()}.
-     * </p>
+     * Start method tracing, specifying the trace log file name and the
+     * buffer size. The trace files will be put under "/sdcard" unless an
+     * absolute path is given. See <a
+       href="{@docRoot}guide/developing/tools/traceview.html">Traceview: A Graphical Log Viewer</a> for
+     * information about reading trace files.
+     * @param traceName    Name for the trace log file to create.
+     * If {@code traceName} is null, this value defaults to "/sdcard/dmtrace.trace".
+     * If the files already exist, they will be truncated.
+     * If the trace file given does not end in ".trace", it will be appended for you.
      *
-     * @param tracePath Path to the trace log file to create. If {@code null},
-     *            this will default to "dmtrace.trace". If the file already
-     *            exists, it will be truncated. If the path given does not end
-     *            in ".trace", it will be appended for you.
-     * @param bufferSize The maximum amount of trace data we gather. If not
-     *            given, it defaults to 8MB.
+     * @param bufferSize    The maximum amount of trace data we gather. If not given, it defaults to 8MB.
      */
-    public static void startMethodTracing(String tracePath, int bufferSize) {
-        startMethodTracing(tracePath, bufferSize, 0);
+    public static void startMethodTracing(String traceName, int bufferSize) {
+        startMethodTracing(traceName, bufferSize, 0);
     }
 
     /**
-     * Start method tracing, specifying the trace log file name, the buffer
-     * size, and flags.
+     * Start method tracing, specifying the trace log file name and the
+     * buffer size. The trace files will be put under "/sdcard" unless an
+     * absolute path is given. See <a
+       href="{@docRoot}guide/developing/tools/traceview.html">Traceview: A Graphical Log Viewer</a> for
+     * information about reading trace files.
+     *
      * <p>
-     * When a relative file path is given, the trace file will be placed under
-     * your package-specific directory on primary shared/external storage, as
-     * returned by {@link Context#getExternalFilesDir(String)}.
-     * <p>
-     * See <a href="{@docRoot}guide/developing/tools/traceview.html">Traceview:
-     * A Graphical Log Viewer</a> for information about reading trace files.
-     * <p class="note">
-     * When method tracing is enabled, the VM will run more slowly than usual,
-     * so the timings from the trace files should only be considered in relative
-     * terms (e.g. was run #1 faster than run #2). The times for native methods
-     * will not change, so don't try to use this to compare the performance of
-     * interpreted and native implementations of the same method. As an
-     * alternative, consider using sampling-based method tracing via
-     * {@link #startMethodTracingSampling(String, int, int)} or "native" tracing
-     * in the emulator via {@link #startNativeTracing()}.
+     * When method tracing is enabled, the VM will run more slowly than
+     * usual, so the timings from the trace files should only be considered
+     * in relative terms (e.g. was run #1 faster than run #2).  The times
+     * for native methods will not change, so don't try to use this to
+     * compare the performance of interpreted and native implementations of the
+     * same method.  As an alternative, consider using "native" tracing in the emulator via
+     * {@link #startNativeTracing()}.
      * </p>
      *
-     * @param tracePath Path to the trace log file to create. If {@code null},
-     *            this will default to "dmtrace.trace". If the file already
-     *            exists, it will be truncated. If the path given does not end
-     *            in ".trace", it will be appended for you.
-     * @param bufferSize The maximum amount of trace data we gather. If not
-     *            given, it defaults to 8MB.
-     * @param flags Flags to control method tracing. The only one that is
-     *            currently defined is {@link #TRACE_COUNT_ALLOCS}.
+     * @param traceName    Name for the trace log file to create.
+     * If {@code traceName} is null, this value defaults to "/sdcard/dmtrace.trace".
+     * If the files already exist, they will be truncated.
+     * If the trace file given does not end in ".trace", it will be appended for you.
+     * @param bufferSize    The maximum amount of trace data we gather. If not given, it defaults to 8MB.
+     * @param flags    Flags to control method tracing. The only one that is currently defined is {@link #TRACE_COUNT_ALLOCS}.
      */
-    public static void startMethodTracing(String tracePath, int bufferSize, int flags) {
-        VMDebug.startMethodTracing(fixTracePath(tracePath), bufferSize, flags, false, 0);
+    public static void startMethodTracing(String traceName, int bufferSize,
+        int flags) {
+        VMDebug.startMethodTracing(fixTraceName(traceName), bufferSize, flags, false, 0);
     }
 
     /**
      * Start sampling-based method tracing, specifying the trace log file name,
-     * the buffer size, and the sampling interval.
-     * <p>
-     * When a relative file path is given, the trace file will be placed under
-     * your package-specific directory on primary shared/external storage, as
-     * returned by {@link Context#getExternalFilesDir(String)}.
-     * <p>
-     * See <a href="{@docRoot}guide/developing/tools/traceview.html">Traceview:
-     * A Graphical Log Viewer</a> for information about reading trace files.
+     * the buffer size, and the sampling interval. The trace files will be put
+     * under "/sdcard" unless an absolute path is given. See <a
+       href="{@docRoot}guide/developing/tools/traceview.html">Traceview: A Graphical Log Viewer</a>
+     * for information about reading trace files.
      *
-     * @param tracePath Path to the trace log file to create. If {@code null},
-     *            this will default to "dmtrace.trace". If the file already
-     *            exists, it will be truncated. If the path given does not end
-     *            in ".trace", it will be appended for you.
-     * @param bufferSize The maximum amount of trace data we gather. If not
-     *            given, it defaults to 8MB.
-     * @param intervalUs The amount of time between each sample in microseconds.
+     * @param traceName    Name for the trace log file to create.
+     * If {@code traceName} is null, this value defaults to "/sdcard/dmtrace.trace".
+     * If the files already exist, they will be truncated.
+     * If the trace file given does not end in ".trace", it will be appended for you.
+     * @param bufferSize    The maximum amount of trace data we gather. If not given, it defaults to 8MB.
+     * @param intervalUs    The amount of time between each sample in microseconds.
+     * @hide
      */
-    public static void startMethodTracingSampling(String tracePath, int bufferSize,
-            int intervalUs) {
-        VMDebug.startMethodTracing(fixTracePath(tracePath), bufferSize, 0, true, intervalUs);
+    public static void startMethodTracingSampling(String traceName,
+        int bufferSize, int intervalUs) {
+        VMDebug.startMethodTracing(fixTraceName(traceName), bufferSize, 0, true, intervalUs);
     }
-    
+
     /**
      * Formats name of trace log file for method tracing.
      */
-    private static String fixTracePath(String tracePath) {
-        if (tracePath == null || tracePath.charAt(0) != '/') {
-            final Context context = AppGlobals.getInitialApplication();
-            final File dir;
-            if (context != null) {
-                dir = context.getExternalFilesDir(null);
-            } else {
-                dir = Environment.getExternalStorageDirectory();
-            }
+    private static String fixTraceName(String traceName) {
+        if (traceName == null)
+            traceName = DEFAULT_TRACE_FILE_PATH;
+        if (traceName.charAt(0) != '/')
+            traceName = DEFAULT_TRACE_PATH_PREFIX + traceName;
+        if (!traceName.endsWith(DEFAULT_TRACE_EXTENSION))
+            traceName = traceName + DEFAULT_TRACE_EXTENSION;
 
-            if (tracePath == null) {
-                tracePath = new File(dir, DEFAULT_TRACE_BODY).getAbsolutePath();
-            } else {
-                tracePath = new File(dir, tracePath).getAbsolutePath();
-            }
-        }
-        if (!tracePath.endsWith(DEFAULT_TRACE_EXTENSION)) {
-            tracePath += DEFAULT_TRACE_EXTENSION;
-        }
-        return tracePath;
+        return traceName;
     }
 
     /**
@@ -1190,7 +758,7 @@ public final class Debug
     /**
      * Stop counting the number and aggregate size of memory allocations.
      *
-     * @deprecated Accurate counting is a burden on the runtime and may be removed.
+     * @see #startAllocCounting()
      */
     @Deprecated
     public static void stopAllocCounting() {
@@ -1200,10 +768,7 @@ public final class Debug
     /**
      * Returns the global count of objects allocated by the runtime between a
      * {@link #startAllocCounting() start} and {@link #stopAllocCounting() stop}.
-     *
-     * @deprecated Accurate counting is a burden on the runtime and may be removed.
      */
-    @Deprecated
     public static int getGlobalAllocCount() {
         return VMDebug.getAllocCount(VMDebug.KIND_GLOBAL_ALLOCATED_OBJECTS);
     }
@@ -1211,10 +776,7 @@ public final class Debug
     /**
      * Clears the global count of objects allocated.
      * @see #getGlobalAllocCount()
-     *
-     * @deprecated Accurate counting is a burden on the runtime and may be removed.
      */
-    @Deprecated
     public static void resetGlobalAllocCount() {
         VMDebug.resetAllocCount(VMDebug.KIND_GLOBAL_ALLOCATED_OBJECTS);
     }
@@ -1222,10 +784,7 @@ public final class Debug
     /**
      * Returns the global size, in bytes, of objects allocated by the runtime between a
      * {@link #startAllocCounting() start} and {@link #stopAllocCounting() stop}.
-     *
-     * @deprecated Accurate counting is a burden on the runtime and may be removed.
      */
-    @Deprecated
     public static int getGlobalAllocSize() {
         return VMDebug.getAllocCount(VMDebug.KIND_GLOBAL_ALLOCATED_BYTES);
     }
@@ -1233,10 +792,7 @@ public final class Debug
     /**
      * Clears the global size of objects allocated.
      * @see #getGlobalAllocSize()
-     *
-     * @deprecated Accurate counting is a burden on the runtime and may be removed.
      */
-    @Deprecated
     public static void resetGlobalAllocSize() {
         VMDebug.resetAllocCount(VMDebug.KIND_GLOBAL_ALLOCATED_BYTES);
     }
@@ -1244,10 +800,7 @@ public final class Debug
     /**
      * Returns the global count of objects freed by the runtime between a
      * {@link #startAllocCounting() start} and {@link #stopAllocCounting() stop}.
-     *
-     * @deprecated Accurate counting is a burden on the runtime and may be removed.
      */
-    @Deprecated
     public static int getGlobalFreedCount() {
         return VMDebug.getAllocCount(VMDebug.KIND_GLOBAL_FREED_OBJECTS);
     }
@@ -1255,10 +808,7 @@ public final class Debug
     /**
      * Clears the global count of objects freed.
      * @see #getGlobalFreedCount()
-     *
-     * @deprecated Accurate counting is a burden on the runtime and may be removed.
      */
-    @Deprecated
     public static void resetGlobalFreedCount() {
         VMDebug.resetAllocCount(VMDebug.KIND_GLOBAL_FREED_OBJECTS);
     }
@@ -1266,10 +816,7 @@ public final class Debug
     /**
      * Returns the global size, in bytes, of objects freed by the runtime between a
      * {@link #startAllocCounting() start} and {@link #stopAllocCounting() stop}.
-     *
-     * @deprecated Accurate counting is a burden on the runtime and may be removed.
      */
-    @Deprecated
     public static int getGlobalFreedSize() {
         return VMDebug.getAllocCount(VMDebug.KIND_GLOBAL_FREED_BYTES);
     }
@@ -1277,10 +824,7 @@ public final class Debug
     /**
      * Clears the global size of objects freed.
      * @see #getGlobalFreedSize()
-     *
-     * @deprecated Accurate counting is a burden on the runtime and may be removed.
      */
-    @Deprecated
     public static void resetGlobalFreedSize() {
         VMDebug.resetAllocCount(VMDebug.KIND_GLOBAL_FREED_BYTES);
     }
@@ -1288,10 +832,7 @@ public final class Debug
     /**
      * Returns the number of non-concurrent GC invocations between a
      * {@link #startAllocCounting() start} and {@link #stopAllocCounting() stop}.
-     *
-     * @deprecated Accurate counting is a burden on the runtime and may be removed.
      */
-    @Deprecated
     public static int getGlobalGcInvocationCount() {
         return VMDebug.getAllocCount(VMDebug.KIND_GLOBAL_GC_INVOCATIONS);
     }
@@ -1299,10 +840,7 @@ public final class Debug
     /**
      * Clears the count of non-concurrent GC invocations.
      * @see #getGlobalGcInvocationCount()
-     *
-     * @deprecated Accurate counting is a burden on the runtime and may be removed.
      */
-    @Deprecated
     public static void resetGlobalGcInvocationCount() {
         VMDebug.resetAllocCount(VMDebug.KIND_GLOBAL_GC_INVOCATIONS);
     }
@@ -1311,10 +849,7 @@ public final class Debug
      * Returns the number of classes successfully initialized (ie those that executed without
      * throwing an exception) between a {@link #startAllocCounting() start} and
      * {@link #stopAllocCounting() stop}.
-     *
-     * @deprecated Accurate counting is a burden on the runtime and may be removed.
      */
-    @Deprecated
     public static int getGlobalClassInitCount() {
         return VMDebug.getAllocCount(VMDebug.KIND_GLOBAL_CLASS_INIT_COUNT);
     }
@@ -1322,10 +857,7 @@ public final class Debug
     /**
      * Clears the count of classes initialized.
      * @see #getGlobalClassInitCount()
-     *
-     * @deprecated Accurate counting is a burden on the runtime and may be removed.
      */
-    @Deprecated
     public static void resetGlobalClassInitCount() {
         VMDebug.resetAllocCount(VMDebug.KIND_GLOBAL_CLASS_INIT_COUNT);
     }
@@ -1333,10 +865,7 @@ public final class Debug
     /**
      * Returns the time spent successfully initializing classes between a
      * {@link #startAllocCounting() start} and {@link #stopAllocCounting() stop}.
-     *
-     * @deprecated Accurate counting is a burden on the runtime and may be removed.
      */
-    @Deprecated
     public static int getGlobalClassInitTime() {
         /* cumulative elapsed time for class initialization, in usec */
         return VMDebug.getAllocCount(VMDebug.KIND_GLOBAL_CLASS_INIT_TIME);
@@ -1345,10 +874,7 @@ public final class Debug
     /**
      * Clears the count of time spent initializing classes.
      * @see #getGlobalClassInitTime()
-     *
-     * @deprecated Accurate counting is a burden on the runtime and may be removed.
      */
-    @Deprecated
     public static void resetGlobalClassInitTime() {
         VMDebug.resetAllocCount(VMDebug.KIND_GLOBAL_CLASS_INIT_TIME);
     }
@@ -1420,10 +946,7 @@ public final class Debug
     /**
      * Returns the thread-local count of objects allocated by the runtime between a
      * {@link #startAllocCounting() start} and {@link #stopAllocCounting() stop}.
-     *
-     * @deprecated Accurate counting is a burden on the runtime and may be removed.
      */
-    @Deprecated
     public static int getThreadAllocCount() {
         return VMDebug.getAllocCount(VMDebug.KIND_THREAD_ALLOCATED_OBJECTS);
     }
@@ -1431,10 +954,7 @@ public final class Debug
     /**
      * Clears the thread-local count of objects allocated.
      * @see #getThreadAllocCount()
-     *
-     * @deprecated Accurate counting is a burden on the runtime and may be removed.
      */
-    @Deprecated
     public static void resetThreadAllocCount() {
         VMDebug.resetAllocCount(VMDebug.KIND_THREAD_ALLOCATED_OBJECTS);
     }
@@ -1443,10 +963,7 @@ public final class Debug
      * Returns the thread-local size of objects allocated by the runtime between a
      * {@link #startAllocCounting() start} and {@link #stopAllocCounting() stop}.
      * @return The allocated size in bytes.
-     *
-     * @deprecated Accurate counting is a burden on the runtime and may be removed.
      */
-    @Deprecated
     public static int getThreadAllocSize() {
         return VMDebug.getAllocCount(VMDebug.KIND_THREAD_ALLOCATED_BYTES);
     }
@@ -1454,10 +971,7 @@ public final class Debug
     /**
      * Clears the thread-local count of objects allocated.
      * @see #getThreadAllocSize()
-     *
-     * @deprecated Accurate counting is a burden on the runtime and may be removed.
      */
-    @Deprecated
     public static void resetThreadAllocSize() {
         VMDebug.resetAllocCount(VMDebug.KIND_THREAD_ALLOCATED_BYTES);
     }
@@ -1497,10 +1011,7 @@ public final class Debug
     /**
      * Returns the number of thread-local non-concurrent GC invocations between a
      * {@link #startAllocCounting() start} and {@link #stopAllocCounting() stop}.
-     *
-     * @deprecated Accurate counting is a burden on the runtime and may be removed.
      */
-    @Deprecated
     public static int getThreadGcInvocationCount() {
         return VMDebug.getAllocCount(VMDebug.KIND_THREAD_GC_INVOCATIONS);
     }
@@ -1508,10 +1019,7 @@ public final class Debug
     /**
      * Clears the thread-local count of non-concurrent GC invocations.
      * @see #getThreadGcInvocationCount()
-     *
-     * @deprecated Accurate counting is a burden on the runtime and may be removed.
      */
-    @Deprecated
     public static void resetThreadGcInvocationCount() {
         VMDebug.resetAllocCount(VMDebug.KIND_THREAD_GC_INVOCATIONS);
     }
@@ -1519,116 +1027,9 @@ public final class Debug
     /**
      * Clears all the global and thread-local memory allocation counters.
      * @see #startAllocCounting()
-     *
-     * @deprecated Accurate counting is a burden on the runtime and may be removed.
      */
-    @Deprecated
     public static void resetAllCounts() {
         VMDebug.resetAllocCount(VMDebug.KIND_ALL_COUNTS);
-    }
-
-    /**
-     * Returns the value of a particular runtime statistic or {@code null} if no
-     * such runtime statistic exists.
-     *
-     * <p>The following table lists the runtime statistics that the runtime supports.
-     * Note runtime statistics may be added or removed in a future API level.</p>
-     *
-     * <table>
-     *     <thead>
-     *         <tr>
-     *             <th>Runtime statistic name</th>
-     *             <th>Meaning</th>
-     *             <th>Example</th>
-     *             <th>Supported (API Levels)</th>
-     *         </tr>
-     *     </thead>
-     *     <tbody>
-     *         <tr>
-     *             <td>art.gc.gc-count</td>
-     *             <td>The number of garbage collection runs.</td>
-     *             <td>{@code 164}</td>
-     *             <td>23</td>
-     *         </tr>
-     *         <tr>
-     *             <td>art.gc.gc-time</td>
-     *             <td>The total duration of garbage collection runs in ms.</td>
-     *             <td>{@code 62364}</td>
-     *             <td>23</td>
-     *         </tr>
-     *         <tr>
-     *             <td>art.gc.bytes-allocated</td>
-     *             <td>The total number of bytes that the application allocated.</td>
-     *             <td>{@code 1463948408}</td>
-     *             <td>23</td>
-     *         </tr>
-     *         <tr>
-     *             <td>art.gc.bytes-freed</td>
-     *             <td>The total number of bytes that garbage collection reclaimed.</td>
-     *             <td>{@code 1313493084}</td>
-     *             <td>23</td>
-     *         </tr>
-     *         <tr>
-     *             <td>art.gc.blocking-gc-count</td>
-     *             <td>The number of blocking garbage collection runs.</td>
-     *             <td>{@code 2}</td>
-     *             <td>23</td>
-     *         </tr>
-     *         <tr>
-     *             <td>art.gc.blocking-gc-time</td>
-     *             <td>The total duration of blocking garbage collection runs in ms.</td>
-     *             <td>{@code 804}</td>
-     *             <td>23</td>
-     *         </tr>
-     *         <tr>
-     *             <td>art.gc.gc-count-rate-histogram</td>
-     *             <td>Every 10 seconds, the gc-count-rate is computed as the number of garbage
-     *                 collection runs that have occurred over the last 10
-     *                 seconds. art.gc.gc-count-rate-histogram is a histogram of the gc-count-rate
-     *                 samples taken since the process began. The histogram can be used to identify
-     *                 instances of high rates of garbage collection runs. For example, a histogram
-     *                 of "0:34503,1:45350,2:11281,3:8088,4:43,5:8" shows that most of the time
-     *                 there are between 0 and 2 garbage collection runs every 10 seconds, but there
-     *                 were 8 distinct 10-second intervals in which 5 garbage collection runs
-     *                 occurred.</td>
-     *             <td>{@code 0:34503,1:45350,2:11281,3:8088,4:43,5:8}</td>
-     *             <td>23</td>
-     *         </tr>
-     *         <tr>
-     *             <td>art.gc.blocking-gc-count-rate-histogram</td>
-     *             <td>Every 10 seconds, the blocking-gc-count-rate is computed as the number of
-     *                 blocking garbage collection runs that have occurred over the last 10
-     *                 seconds. art.gc.blocking-gc-count-rate-histogram is a histogram of the
-     *                 blocking-gc-count-rate samples taken since the process began. The histogram
-     *                 can be used to identify instances of high rates of blocking garbage
-     *                 collection runs. For example, a histogram of "0:99269,1:1,2:1" shows that
-     *                 most of the time there are zero blocking garbage collection runs every 10
-     *                 seconds, but there was one 10-second interval in which one blocking garbage
-     *                 collection run occurred, and there was one interval in which two blocking
-     *                 garbage collection runs occurred.</td>
-     *             <td>{@code 0:99269,1:1,2:1}</td>
-     *             <td>23</td>
-     *         </tr>
-     *     </tbody>
-     * </table>
-     *
-     * @param statName
-     *            the name of the runtime statistic to look up.
-     * @return the value of the specified runtime statistic or {@code null} if the
-     *         runtime statistic doesn't exist.
-     */
-    public static String getRuntimeStat(String statName) {
-        return VMDebug.getRuntimeStat(statName);
-    }
-
-    /**
-     * Returns a map of the names/values of the runtime statistics
-     * that {@link #getRuntimeStat(String)} supports.
-     *
-     * @return a map of the names/values of the supported runtime statistics.
-     */
-    public static Map<String, String> getRuntimeStats() {
-        return VMDebug.getRuntimeStats();
     }
 
     /**
@@ -1651,13 +1052,7 @@ public final class Debug
 
     /**
      * Retrieves information about this processes memory usages. This information is broken down by
-     * how much is in use by dalvik, the native heap, and everything else.
-     *
-     * <p><b>Note:</b> this method directly retrieves memory information for the give process
-     * from low-level data available to it.  It may not be able to retrieve information about
-     * some protected allocations, such as graphics.  If you want to be sure you can see
-     * all information about allocations by the process, use instead
-     * {@link android.app.ActivityManager#getProcessMemoryInfo(int[])}.</p>
+     * how much is in use by dalivk, the native heap, and everything else.
      */
     public static native void getMemoryInfo(MemoryInfo memoryInfo);
 
@@ -1676,12 +1071,10 @@ public final class Debug
 
     /**
      * Retrieves the PSS memory used by the process as given by the
-     * smaps.  Optionally supply a long array of 2 entries to also
-     * receive the Uss and SwapPss of the process, and another array to also
-     * retrieve the separate memtrack size.
-     * @hide
+     * smaps.  Optionally supply a long array of 1 entry to also
+     * receive the uss of the process.  @hide
      */
-    public static native long getPss(int pid, long[] outUssSwapPss, long[] outMemtrack);
+    public static native long getPss(int pid, long[] outUss);
 
     /** @hide */
     public static final int MEMINFO_TOTAL = 0;
@@ -1702,15 +1095,7 @@ public final class Debug
     /** @hide */
     public static final int MEMINFO_ZRAM_TOTAL = 8;
     /** @hide */
-    public static final int MEMINFO_MAPPED = 9;
-    /** @hide */
-    public static final int MEMINFO_VM_ALLOC_USED = 10;
-    /** @hide */
-    public static final int MEMINFO_PAGE_TABLES = 11;
-    /** @hide */
-    public static final int MEMINFO_KERNEL_STACK = 12;
-    /** @hide */
-    public static final int MEMINFO_COUNT = 13;
+    public static final int MEMINFO_COUNT = 9;
 
     /**
      * Retrieves /proc/meminfo.  outSizes is filled with fields
@@ -1890,10 +1275,7 @@ public final class Debug
      *           + icount.globalMethodInvocations());
      *   }
      * </pre>
-     *
-     * @deprecated Instruction counting is no longer supported.
      */
-    @Deprecated
     public static class InstructionCount {
         private static final int NUM_INSTR =
             OpcodeInfo.MAXIMUM_PACKED_VALUE + 1;
@@ -2224,14 +1606,6 @@ public final class Debug
      * @hide
      */
     public static native void dumpNativeBacktraceToFile(int pid, String file);
-
-    /**
-     * Get description of unreachable native memory.
-     * @param limit the number of leaks to provide info on, 0 to only get a summary.
-     * @param contents true to include a hex dump of the contents of unreachable memory.
-     * @return the String containing a description of unreachable memory.
-     * @hide */
-    public static native String getUnreachableMemory(int limit, boolean contents);
 
     /**
      * Return a String describing the calling method and location at a particular stack depth.

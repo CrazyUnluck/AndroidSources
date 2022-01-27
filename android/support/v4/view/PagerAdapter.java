@@ -76,8 +76,7 @@ import android.view.ViewGroup;
  * the method {@link #getItemPosition(Object)}.</p>
  */
 public abstract class PagerAdapter {
-    private final DataSetObservable mObservable = new DataSetObservable();
-    private DataSetObserver mViewPagerObserver;
+    private DataSetObservable mObservable = new DataSetObservable();
 
     public static final int POSITION_UNCHANGED = -1;
     public static final int POSITION_NONE = -2;
@@ -156,7 +155,6 @@ public abstract class PagerAdapter {
      *
      * @deprecated Use {@link #startUpdate(ViewGroup)}
      */
-    @Deprecated
     public void startUpdate(View container) {
     }
 
@@ -173,7 +171,6 @@ public abstract class PagerAdapter {
      *
      * @deprecated Use {@link #instantiateItem(ViewGroup, int)}
      */
-    @Deprecated
     public Object instantiateItem(View container, int position) {
         throw new UnsupportedOperationException(
                 "Required method instantiateItem was not overridden");
@@ -191,7 +188,6 @@ public abstract class PagerAdapter {
      *
      * @deprecated Use {@link #destroyItem(ViewGroup, int, Object)}
      */
-    @Deprecated
     public void destroyItem(View container, int position, Object object) {
         throw new UnsupportedOperationException("Required method destroyItem was not overridden");
     }
@@ -207,7 +203,6 @@ public abstract class PagerAdapter {
      *
      * @deprecated Use {@link #setPrimaryItem(ViewGroup, int, Object)}
      */
-    @Deprecated
     public void setPrimaryItem(View container, int position, Object object) {
     }
 
@@ -220,7 +215,6 @@ public abstract class PagerAdapter {
      *
      * @deprecated Use {@link #finishUpdate(ViewGroup)}
      */
-    @Deprecated
     public void finishUpdate(View container) {
     }
 
@@ -279,11 +273,6 @@ public abstract class PagerAdapter {
      * and associated views should update.
      */
     public void notifyDataSetChanged() {
-        synchronized (this) {
-            if (mViewPagerObserver != null) {
-                mViewPagerObserver.onChanged();
-            }
-        }
         mObservable.notifyChanged();
     }
 
@@ -303,12 +292,6 @@ public abstract class PagerAdapter {
      */
     public void unregisterDataSetObserver(DataSetObserver observer) {
         mObservable.unregisterObserver(observer);
-    }
-
-    void setViewPagerObserver(DataSetObserver observer) {
-        synchronized (this) {
-            mViewPagerObserver = observer;
-        }
     }
 
     /**

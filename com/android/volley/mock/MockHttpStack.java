@@ -63,7 +63,7 @@ public class MockHttpStack implements HttpStack {
             mLastHeaders.putAll(additionalHeaders);
         }
         try {
-            mLastPostBody = request.getBody();
+            mLastPostBody = request.getPostBody();
         } catch (AuthFailureError e) {
             mLastPostBody = null;
         }

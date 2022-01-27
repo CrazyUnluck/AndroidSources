@@ -32,9 +32,4 @@ public final class SinglePresenterSelector extends PresenterSelector {
     public Presenter getPresenter(Object item) {
         return mPresenter;
     }
-
-    @Override
-    public Presenter[] getPresenters() {
-        return new Presenter[]{mPresenter};
-    }
 }

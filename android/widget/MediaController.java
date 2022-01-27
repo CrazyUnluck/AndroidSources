@@ -17,9 +17,10 @@
 package android.widget;
 
 import android.content.Context;
-import android.content.res.Resources;
 import android.graphics.PixelFormat;
 import android.media.AudioManager;
+import android.os.Handler;
+import android.os.Message;
 import android.util.AttributeSet;
 import android.util.Log;
 import android.view.Gravity;
@@ -30,10 +31,11 @@ import android.view.View;
 import android.view.ViewGroup;
 import android.view.Window;
 import android.view.WindowManager;
-import android.view.accessibility.AccessibilityManager;
+import android.view.accessibility.AccessibilityEvent;
+import android.view.accessibility.AccessibilityNodeInfo;
 import android.widget.SeekBar.OnSeekBarChangeListener;
 
-import com.android.internal.policy.PhoneWindow;
+import com.android.internal.policy.PolicyManager;
 
 import java.util.Formatter;
 import java.util.Locale;
@@ -44,7 +46,7 @@ import java.util.Locale;
  * slider. It takes care of synchronizing the controls with the state
  * of the MediaPlayer.
  * <p>
- * The way to use this class is to instantiate it programmatically.
+ * The way to use this class is to instantiate it programatically.
  * The MediaController will create a default set of controls
  * and put them in a window floating above your application. Specifically,
  * the controls will float above the view specified with setAnchorView().
@@ -53,7 +55,7 @@ import java.util.Locale;
  * <p>
  * Functions like show() and hide() have no effect when MediaController
  * is created in an xml layout.
- *
+ * 
  * MediaController will hide and
  * show the buttons according to these rules:
  * <ul>
@@ -68,33 +70,32 @@ import java.util.Locale;
  */
 public class MediaController extends FrameLayout {
 
-    private MediaPlayerControl mPlayer;
-    private final Context mContext;
-    private View mAnchor;
-    private View mRoot;
-    private WindowManager mWindowManager;
-    private Window mWindow;
-    private View mDecor;
+    private MediaPlayerControl  mPlayer;
+    private Context             mContext;
+    private View                mAnchor;
+    private View                mRoot;
+    private WindowManager       mWindowManager;
+    private Window              mWindow;
+    private View                mDecor;
     private WindowManager.LayoutParams mDecorLayoutParams;
-    private ProgressBar mProgress;
-    private TextView mEndTime, mCurrentTime;
-    private boolean mShowing;
-    private boolean mDragging;
-    private static final int sDefaultTimeout = 3000;
-    private final boolean mUseFastForward;
-    private boolean mFromXml;
-    private boolean mListenersSet;
+    private ProgressBar         mProgress;
+    private TextView            mEndTime, mCurrentTime;
+    private boolean             mShowing;
+    private boolean             mDragging;
+    private static final int    sDefaultTimeout = 3000;
+    private static final int    FADE_OUT = 1;
+    private static final int    SHOW_PROGRESS = 2;
+    private boolean             mUseFastForward;
+    private boolean             mFromXml;
+    private boolean             mListenersSet;
     private View.OnClickListener mNextListener, mPrevListener;
-    StringBuilder mFormatBuilder;
-    Formatter mFormatter;
-    private ImageButton mPauseButton;
-    private ImageButton mFfwdButton;
-    private ImageButton mRewButton;
-    private ImageButton mNextButton;
-    private ImageButton mPrevButton;
-    private CharSequence mPlayDescription;
-    private CharSequence mPauseDescription;
-    private final AccessibilityManager mAccessibilityManager;
+    StringBuilder               mFormatBuilder;
+    Formatter                   mFormatter;
+    private ImageButton         mPauseButton;
+    private ImageButton         mFfwdButton;
+    private ImageButton         mRewButton;
+    private ImageButton         mNextButton;
+    private ImageButton         mPrevButton;
 
     public MediaController(Context context, AttributeSet attrs) {
         super(context, attrs);
@@ -102,7 +103,6 @@ public class MediaController extends FrameLayout {
         mContext = context;
         mUseFastForward = true;
         mFromXml = true;
-        mAccessibilityManager = AccessibilityManager.getInstance(context);
     }
 
     @Override
@@ -117,7 +117,6 @@ public class MediaController extends FrameLayout {
         mUseFastForward = useFastForward;
         initFloatingWindowLayout();
         initFloatingWindow();
-        mAccessibilityManager = AccessibilityManager.getInstance(context);
     }
 
     public MediaController(Context context) {
@@ -126,14 +125,14 @@ public class MediaController extends FrameLayout {
 
     private void initFloatingWindow() {
         mWindowManager = (WindowManager)mContext.getSystemService(Context.WINDOW_SERVICE);
-        mWindow = new PhoneWindow(mContext);
+        mWindow = PolicyManager.makeNewWindow(mContext);
         mWindow.setWindowManager(mWindowManager, null, null);
         mWindow.requestFeature(Window.FEATURE_NO_TITLE);
         mDecor = mWindow.getDecorView();
         mDecor.setOnTouchListener(mTouchListener);
         mWindow.setContentView(this);
         mWindow.setBackgroundDrawableResource(android.R.color.transparent);
-
+        
         // While the media controller is up, the volume control keys should
         // affect the media stream type
         mWindow.setVolumeControlStream(AudioManager.STREAM_MUSIC);
@@ -180,9 +179,8 @@ public class MediaController extends FrameLayout {
     }
 
     // This is called whenever mAnchor's layout bound changes
-    private final OnLayoutChangeListener mLayoutChangeListener =
+    private OnLayoutChangeListener mLayoutChangeListener =
             new OnLayoutChangeListener() {
-        @Override
         public void onLayoutChange(View v, int left, int top, int right,
                 int bottom, int oldLeft, int oldTop, int oldRight,
                 int oldBottom) {
@@ -193,8 +191,7 @@ public class MediaController extends FrameLayout {
         }
     };
 
-    private final OnTouchListener mTouchListener = new OnTouchListener() {
-        @Override
+    private OnTouchListener mTouchListener = new OnTouchListener() {
         public boolean onTouch(View v, MotionEvent event) {
             if (event.getAction() == MotionEvent.ACTION_DOWN) {
                 if (mShowing) {
@@ -204,7 +201,7 @@ public class MediaController extends FrameLayout {
             return false;
         }
     };
-
+    
     public void setMediaPlayer(MediaPlayerControl player) {
         mPlayer = player;
         updatePausePlay();
@@ -252,11 +249,6 @@ public class MediaController extends FrameLayout {
     }
 
     private void initControllerView(View v) {
-        Resources res = mContext.getResources();
-        mPlayDescription = res
-                .getText(com.android.internal.R.string.lockscreen_transport_play_description);
-        mPauseDescription = res
-                .getText(com.android.internal.R.string.lockscreen_transport_pause_description);
         mPauseButton = (ImageButton) v.findViewById(com.android.internal.R.id.pause);
         if (mPauseButton != null) {
             mPauseButton.requestFocus();
@@ -279,7 +271,7 @@ public class MediaController extends FrameLayout {
             }
         }
 
-        // By default these are hidden. They will be enabled when setPrevNextListeners() is called
+        // By default these are hidden. They will be enabled when setPrevNextListeners() is called 
         mNextButton = (ImageButton) v.findViewById(com.android.internal.R.id.next);
         if (mNextButton != null && !mFromXml && !mListenersSet) {
             mNextButton.setVisibility(View.GONE);
@@ -329,16 +321,6 @@ public class MediaController extends FrameLayout {
             if (mFfwdButton != null && !mPlayer.canSeekForward()) {
                 mFfwdButton.setEnabled(false);
             }
-            // TODO What we really should do is add a canSeek to the MediaPlayerControl interface;
-            // this scheme can break the case when applications want to allow seek through the
-            // progress bar but disable forward/backward buttons.
-            //
-            // However, currently the flags SEEK_BACKWARD_AVAILABLE, SEEK_FORWARD_AVAILABLE,
-            // and SEEK_AVAILABLE are all (un)set together; as such the aforementioned issue
-            // shouldn't arise in existing applications.
-            if (mProgress != null && !mPlayer.canSeekBackward() && !mPlayer.canSeekForward()) {
-                mProgress.setEnabled(false);
-            }
         } catch (IncompatibleClassChangeError ex) {
             // We were given an old version of the interface, that doesn't have
             // the canPause/canSeekXYZ methods. This is OK, it just means we
@@ -346,7 +328,7 @@ public class MediaController extends FrameLayout {
             // the buttons.
         }
     }
-
+    
     /**
      * Show the controller on screen. It will go away
      * automatically after 'timeout' milliseconds of inactivity.
@@ -365,18 +347,19 @@ public class MediaController extends FrameLayout {
             mShowing = true;
         }
         updatePausePlay();
-
+        
         // cause the progress bar to be updated even if mShowing
         // was already true.  This happens, for example, if we're
         // paused with the progress bar showing the user hits play.
-        post(mShowProgress);
+        mHandler.sendEmptyMessage(SHOW_PROGRESS);
 
-        if (timeout != 0 && !mAccessibilityManager.isTouchExplorationEnabled()) {
-            removeCallbacks(mFadeOut);
-            postDelayed(mFadeOut, timeout);
+        Message msg = mHandler.obtainMessage(FADE_OUT);
+        if (timeout != 0) {
+            mHandler.removeMessages(FADE_OUT);
+            mHandler.sendMessageDelayed(msg, timeout);
         }
     }
-
+    
     public boolean isShowing() {
         return mShowing;
     }
@@ -390,7 +373,7 @@ public class MediaController extends FrameLayout {
 
         if (mShowing) {
             try {
-                removeCallbacks(mShowProgress);
+                mHandler.removeMessages(SHOW_PROGRESS);
                 mWindowManager.removeView(mDecor);
             } catch (IllegalArgumentException ex) {
                 Log.w("MediaController", "already removed");
@@ -399,19 +382,21 @@ public class MediaController extends FrameLayout {
         }
     }
 
-    private final Runnable mFadeOut = new Runnable() {
+    private Handler mHandler = new Handler() {
         @Override
-        public void run() {
-            hide();
-        }
-    };
-
-    private final Runnable mShowProgress = new Runnable() {
-        @Override
-        public void run() {
-            int pos = setProgress();
-            if (!mDragging && mShowing && mPlayer.isPlaying()) {
-                postDelayed(mShowProgress, 1000 - (pos % 1000));
+        public void handleMessage(Message msg) {
+            int pos;
+            switch (msg.what) {
+                case FADE_OUT:
+                    hide();
+                    break;
+                case SHOW_PROGRESS:
+                    pos = setProgress();
+                    if (!mDragging && mShowing && mPlayer.isPlaying()) {
+                        msg = obtainMessage(SHOW_PROGRESS);
+                        sendMessageDelayed(msg, 1000 - (pos % 1000));
+                    }
+                    break;
             }
         }
     };
@@ -457,19 +442,7 @@ public class MediaController extends FrameLayout {
 
     @Override
     public boolean onTouchEvent(MotionEvent event) {
-        switch (event.getAction()) {
-            case MotionEvent.ACTION_DOWN:
-                show(0); // show until hide is called
-                break;
-            case MotionEvent.ACTION_UP:
-                show(sDefaultTimeout); // start timeout
-                break;
-            case MotionEvent.ACTION_CANCEL:
-                hide();
-                break;
-            default:
-                break;
-        }
+        show(sDefaultTimeout);
         return true;
     }
 
@@ -527,8 +500,7 @@ public class MediaController extends FrameLayout {
         return super.dispatchKeyEvent(event);
     }
 
-    private final View.OnClickListener mPauseListener = new View.OnClickListener() {
-        @Override
+    private View.OnClickListener mPauseListener = new View.OnClickListener() {
         public void onClick(View v) {
             doPauseResume();
             show(sDefaultTimeout);
@@ -541,10 +513,8 @@ public class MediaController extends FrameLayout {
 
         if (mPlayer.isPlaying()) {
             mPauseButton.setImageResource(com.android.internal.R.drawable.ic_media_pause);
-            mPauseButton.setContentDescription(mPauseDescription);
         } else {
             mPauseButton.setImageResource(com.android.internal.R.drawable.ic_media_play);
-            mPauseButton.setContentDescription(mPlayDescription);
         }
     }
 
@@ -568,8 +538,7 @@ public class MediaController extends FrameLayout {
     // The second scenario involves the user operating the scroll ball, in this
     // case there WON'T BE onStartTrackingTouch/onStopTrackingTouch notifications,
     // we will simply apply the updated position without suspending regular updates.
-    private final OnSeekBarChangeListener mSeekListener = new OnSeekBarChangeListener() {
-        @Override
+    private OnSeekBarChangeListener mSeekListener = new OnSeekBarChangeListener() {
         public void onStartTrackingTouch(SeekBar bar) {
             show(3600000);
 
@@ -580,10 +549,9 @@ public class MediaController extends FrameLayout {
             // the seekbar and b) once the user is done dragging the thumb
             // we will post one of these messages to the queue again and
             // this ensures that there will be exactly one message queued up.
-            removeCallbacks(mShowProgress);
+            mHandler.removeMessages(SHOW_PROGRESS);
         }
 
-        @Override
         public void onProgressChanged(SeekBar bar, int progress, boolean fromuser) {
             if (!fromuser) {
                 // We're not interested in programmatically generated changes to
@@ -598,7 +566,6 @@ public class MediaController extends FrameLayout {
                 mCurrentTime.setText(stringForTime( (int) newposition));
         }
 
-        @Override
         public void onStopTrackingTouch(SeekBar bar) {
             mDragging = false;
             setProgress();
@@ -608,7 +575,7 @@ public class MediaController extends FrameLayout {
             // Ensure that progress is properly updated in the future,
             // the call to show() does not guarantee this because it is a
             // no-op if we are already showing.
-            post(mShowProgress);
+            mHandler.sendEmptyMessage(SHOW_PROGRESS);
         }
     };
 
@@ -637,12 +604,18 @@ public class MediaController extends FrameLayout {
     }
 
     @Override
-    public CharSequence getAccessibilityClassName() {
-        return MediaController.class.getName();
+    public void onInitializeAccessibilityEvent(AccessibilityEvent event) {
+        super.onInitializeAccessibilityEvent(event);
+        event.setClassName(MediaController.class.getName());
     }
 
-    private final View.OnClickListener mRewListener = new View.OnClickListener() {
-        @Override
+    @Override
+    public void onInitializeAccessibilityNodeInfo(AccessibilityNodeInfo info) {
+        super.onInitializeAccessibilityNodeInfo(info);
+        info.setClassName(MediaController.class.getName());
+    }
+
+    private View.OnClickListener mRewListener = new View.OnClickListener() {
         public void onClick(View v) {
             int pos = mPlayer.getCurrentPosition();
             pos -= 5000; // milliseconds
@@ -653,8 +626,7 @@ public class MediaController extends FrameLayout {
         }
     };
 
-    private final View.OnClickListener mFfwdListener = new View.OnClickListener() {
-        @Override
+    private View.OnClickListener mFfwdListener = new View.OnClickListener() {
         public void onClick(View v) {
             int pos = mPlayer.getCurrentPosition();
             pos += 15000; // milliseconds
@@ -684,7 +656,7 @@ public class MediaController extends FrameLayout {
 
         if (mRoot != null) {
             installPrevNextListeners();
-
+            
             if (mNextButton != null && !mFromXml) {
                 mNextButton.setVisibility(View.VISIBLE);
             }

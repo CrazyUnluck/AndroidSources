@@ -16,8 +16,6 @@
 
 package android.preference;
 
-import android.annotation.SystemApi;
-import android.annotation.XmlRes;
 import android.app.Activity;
 import android.content.Context;
 import android.content.DialogInterface;
@@ -25,8 +23,8 @@ import android.content.Intent;
 import android.content.SharedPreferences;
 import android.content.pm.ActivityInfo;
 import android.content.pm.PackageManager;
-import android.content.pm.PackageManager.NameNotFoundException;
 import android.content.pm.ResolveInfo;
+import android.content.pm.PackageManager.NameNotFoundException;
 import android.content.res.XmlResourceParser;
 import android.os.Bundle;
 import android.util.Log;
@@ -111,13 +109,7 @@ public class PreferenceManager {
      * managed by this instance.
      */
     private int mSharedPreferencesMode;
-
-    private static final int STORAGE_DEFAULT = 0;
-    private static final int STORAGE_DEVICE_PROTECTED = 1;
-    private static final int STORAGE_CREDENTIAL_PROTECTED = 2;
-
-    private int mStorage = STORAGE_DEFAULT;
-
+    
     /**
      * The {@link PreferenceScreen} at the root of the preference hierarchy.
      */
@@ -164,7 +156,7 @@ public class PreferenceManager {
      * should be used ANY time a preference will be displayed, since some preference
      * types need an Activity for managed queries.
      */
-    /*package*/ PreferenceManager(Context context) {
+    private PreferenceManager(Context context) {
         init(context);
     }
 
@@ -271,7 +263,7 @@ public class PreferenceManager {
      *         root).
      * @hide
      */
-    public PreferenceScreen inflateFromResource(Context context, @XmlRes int resId,
+    public PreferenceScreen inflateFromResource(Context context, int resId,
             PreferenceScreen rootPreferences) {
         // Block commits
         setNoCommit(true);
@@ -350,103 +342,6 @@ public class PreferenceManager {
     }
 
     /**
-     * Sets the storage location used internally by this class to be the default
-     * provided by the hosting {@link Context}.
-     */
-    public void setStorageDefault() {
-        mStorage = STORAGE_DEFAULT;
-        mSharedPreferences = null;
-    }
-
-    /**
-     * Explicitly set the storage location used internally by this class to be
-     * device-protected storage.
-     * <p>
-     * On devices with direct boot, data stored in this location is encrypted
-     * with a key tied to the physical device, and it can be accessed
-     * immediately after the device has booted successfully, both
-     * <em>before and after</em> the user has authenticated with their
-     * credentials (such as a lock pattern or PIN).
-     * <p>
-     * Because device-protected data is available without user authentication,
-     * you should carefully limit the data you store using this Context. For
-     * example, storing sensitive authentication tokens or passwords in the
-     * device-protected area is strongly discouraged.
-     *
-     * @see Context#createDeviceProtectedStorageContext()
-     */
-    public void setStorageDeviceProtected() {
-        mStorage = STORAGE_DEVICE_PROTECTED;
-        mSharedPreferences = null;
-    }
-
-    /** @removed */
-    @Deprecated
-    public void setStorageDeviceEncrypted() {
-        setStorageDeviceProtected();
-    }
-
-    /**
-     * Explicitly set the storage location used internally by this class to be
-     * credential-protected storage. This is the default storage area for apps
-     * unless {@code forceDeviceProtectedStorage} was requested.
-     * <p>
-     * On devices with direct boot, data stored in this location is encrypted
-     * with a key tied to user credentials, which can be accessed
-     * <em>only after</em> the user has entered their credentials (such as a
-     * lock pattern or PIN).
-     *
-     * @see Context#createCredentialProtectedStorageContext()
-     * @hide
-     */
-    @SystemApi
-    public void setStorageCredentialProtected() {
-        mStorage = STORAGE_CREDENTIAL_PROTECTED;
-        mSharedPreferences = null;
-    }
-
-    /** @removed */
-    @Deprecated
-    public void setStorageCredentialEncrypted() {
-        setStorageCredentialProtected();
-    }
-
-    /**
-     * Indicates if the storage location used internally by this class is the
-     * default provided by the hosting {@link Context}.
-     *
-     * @see #setStorageDefault()
-     * @see #setStorageDeviceProtected()
-     */
-    public boolean isStorageDefault() {
-        return mStorage == STORAGE_DEFAULT;
-    }
-
-    /**
-     * Indicates if the storage location used internally by this class is backed
-     * by device-protected storage.
-     *
-     * @see #setStorageDefault()
-     * @see #setStorageDeviceProtected()
-     */
-    public boolean isStorageDeviceProtected() {
-        return mStorage == STORAGE_DEVICE_PROTECTED;
-    }
-
-    /**
-     * Indicates if the storage location used internally by this class is backed
-     * by credential-protected storage.
-     *
-     * @see #setStorageDefault()
-     * @see #setStorageDeviceProtected()
-     * @hide
-     */
-    @SystemApi
-    public boolean isStorageCredentialProtected() {
-        return mStorage == STORAGE_CREDENTIAL_PROTECTED;
-    }
-
-    /**
      * Gets a SharedPreferences instance that preferences managed by this will
      * use.
      * 
@@ -455,20 +350,7 @@ public class PreferenceManager {
      */
     public SharedPreferences getSharedPreferences() {
         if (mSharedPreferences == null) {
-            final Context storageContext;
-            switch (mStorage) {
-                case STORAGE_DEVICE_PROTECTED:
-                    storageContext = mContext.createDeviceProtectedStorageContext();
-                    break;
-                case STORAGE_CREDENTIAL_PROTECTED:
-                    storageContext = mContext.createCredentialProtectedStorageContext();
-                    break;
-                default:
-                    storageContext = mContext;
-                    break;
-            }
-
-            mSharedPreferences = storageContext.getSharedPreferences(mSharedPreferencesName,
+            mSharedPreferences = mContext.getSharedPreferences(mSharedPreferencesName,
                     mSharedPreferencesMode);
         }
         
@@ -488,13 +370,7 @@ public class PreferenceManager {
                 getDefaultSharedPreferencesMode());
     }
 
-    /**
-     * Returns the name used for storing default shared preferences.
-     *
-     * @see #getDefaultSharedPreferences(Context)
-     * @see Context#getSharedPreferencesPath(String)
-     */
-    public static String getDefaultSharedPreferencesName(Context context) {
+    private static String getDefaultSharedPreferencesName(Context context) {
         return context.getPackageName() + "_preferences";
     }
 
@@ -562,7 +438,7 @@ public class PreferenceManager {
      *            and clear it followed by a call to this method with this
      *            parameter set to true.
      */
-    public static void setDefaultValues(Context context, @XmlRes int resId, boolean readAgain) {
+    public static void setDefaultValues(Context context, int resId, boolean readAgain) {
         
         // Use the default shared preferences name and mode
         setDefaultValues(context, getDefaultSharedPreferencesName(context),
@@ -745,9 +621,8 @@ public class PreferenceManager {
      * Registers a listener.
      * 
      * @see OnActivityStopListener
-     * @hide
      */
-    public void registerOnActivityStopListener(OnActivityStopListener listener) {
+    void registerOnActivityStopListener(OnActivityStopListener listener) {
         synchronized (this) {
             if (mActivityStopListeners == null) {
                 mActivityStopListeners = new ArrayList<OnActivityStopListener>();
@@ -763,9 +638,8 @@ public class PreferenceManager {
      * Unregisters a listener.
      * 
      * @see OnActivityStopListener
-     * @hide
      */
-    public void unregisterOnActivityStopListener(OnActivityStopListener listener) {
+    void unregisterOnActivityStopListener(OnActivityStopListener listener) {
         synchronized (this) {
             if (mActivityStopListeners != null) {
                 mActivityStopListeners.remove(listener);
@@ -926,10 +800,8 @@ public class PreferenceManager {
      * Interface definition for a callback to be invoked when a
      * {@link Preference} in the hierarchy rooted at this {@link PreferenceScreen} is
      * clicked.
-     *
-     * @hide
      */
-    public interface OnPreferenceTreeClickListener {
+    interface OnPreferenceTreeClickListener {
         /**
          * Called when a preference in the tree rooted at this
          * {@link PreferenceScreen} has been clicked.

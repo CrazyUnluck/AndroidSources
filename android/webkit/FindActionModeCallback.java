@@ -16,7 +16,6 @@
 
 package android.webkit;
 
-import android.annotation.SystemApi;
 import android.content.Context;
 import android.content.res.Resources;
 import android.graphics.Point;
@@ -37,7 +36,6 @@ import android.widget.TextView;
 /**
  * @hide
  */
-@SystemApi
 public class FindActionModeCallback implements ActionMode.Callback, TextWatcher,
         View.OnClickListener, WebView.FindListener {
     private View mCustomView;
@@ -61,7 +59,8 @@ public class FindActionModeCallback implements ActionMode.Callback, TextWatcher,
         setText("");
         mMatches = (TextView) mCustomView.findViewById(
                 com.android.internal.R.id.matches);
-        mInput = context.getSystemService(InputMethodManager.class);
+        mInput = (InputMethodManager)
+                context.getSystemService(Context.INPUT_METHOD_SERVICE);
         mResources = context.getResources();
     }
 
@@ -153,9 +152,9 @@ public class FindActionModeCallback implements ActionMode.Callback, TextWatcher,
     }
 
     public void showSoftInput() {
-        if (mEditText.requestFocus()) {
-            mInput.showSoftInput(mEditText, 0);
-        }
+        mInput.startGettingWindowFocus(mEditText.getRootView());
+        mInput.focusIn(mEditText);
+        mInput.showSoftInput(mEditText, 0);
     }
 
     public void updateMatchCount(int matchIndex, int matchCount, boolean isEmptyFind) {

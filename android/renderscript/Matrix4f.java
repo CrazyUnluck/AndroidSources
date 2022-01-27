@@ -17,6 +17,7 @@
 package android.renderscript;
 
 import java.lang.Math;
+import android.util.Log;
 
 
 /**

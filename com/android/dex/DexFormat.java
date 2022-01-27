@@ -27,7 +27,7 @@ public final class DexFormat {
      * API level to target in order to produce the most modern file
      * format
      */
-    public static final int API_CURRENT = 24;
+    public static final int API_CURRENT = 14;
 
     /** API level to target in order to suppress extended opcode usage */
     public static final int API_NO_EXTENDED_OPCODES = 13;
@@ -44,14 +44,8 @@ public final class DexFormat {
     /** common suffix for all dex file "magic numbers" */
     public static final String MAGIC_SUFFIX = "\0";
 
-    /**
-     * Dex file version number for dalvik.
-     * <p>
-     * Note: Dex version 36 was loadable in some versions of Dalvik but was never fully supported or
-     * completed and is not considered a valid dex file format.
-     * </p>
-     */
-    public static final String VERSION_CURRENT = "037";
+    /** dex file version number for the current format variant */
+    public static final String VERSION_CURRENT = "036";
 
     /** dex file version number for API level 13 and earlier */
     public static final String VERSION_FOR_API_13 = "035";
@@ -94,7 +88,7 @@ public final class DexFormat {
         if (version.equals(VERSION_CURRENT)) {
             return API_CURRENT;
         } else if (version.equals(VERSION_FOR_API_13)) {
-            return API_NO_EXTENDED_OPCODES;
+            return 13;
         }
 
         return -1;
@@ -113,10 +107,5 @@ public final class DexFormat {
         }
 
         return MAGIC_PREFIX + version + MAGIC_SUFFIX;
-    }
-
-    public static boolean isSupportedDexMagic(byte[] magic) {
-        int api = magicToApi(magic);
-        return api == API_NO_EXTENDED_OPCODES || api == API_CURRENT;
     }
 }

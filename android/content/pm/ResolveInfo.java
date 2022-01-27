@@ -21,7 +21,6 @@ import android.content.IntentFilter;
 import android.graphics.drawable.Drawable;
 import android.os.Parcel;
 import android.os.Parcelable;
-import android.os.UserHandle;
 import android.text.TextUtils;
 import android.util.Printer;
 import android.util.Slog;
@@ -45,7 +44,7 @@ public class ResolveInfo implements Parcelable {
      * {@link #providerInfo} will be non-null.
      */
     public ActivityInfo activityInfo;
-
+    
     /**
      * The service that corresponds to this resolution match, if this resolution
      * is for a service. Exactly one of {@link #activityInfo},
@@ -61,37 +60,24 @@ public class ResolveInfo implements Parcelable {
     public ProviderInfo providerInfo;
 
     /**
-     * The ephemeral application that corresponds to this resolution match. This will
-     * only be set in specific circumstances.
-     * @hide
-     */
-    public EphemeralResolveInfo ephemeralResolveInfo;
-
-    /**
-     * A ResolveInfo that points at the ephemeral installer.
-     * @hide
-     */
-    public ResolveInfo ephemeralInstaller;
-
-    /**
      * The IntentFilter that was matched for this ResolveInfo.
      */
     public IntentFilter filter;
-
+    
     /**
      * The declared priority of this match.  Comes from the "priority"
      * attribute or, if not set, defaults to 0.  Higher values are a higher
      * priority.
      */
     public int priority;
-
+    
     /**
      * Order of result according to the user's preference.  If the user
      * has not set a preference for this result, the value is 0; higher
      * values are a higher priority.
      */
     public int preferredOrder;
-
+    
     /**
      * The system's evaluation of how well the activity matches the
      * IntentFilter.  This is a match constant, a combination of
@@ -99,7 +85,7 @@ public class ResolveInfo implements Parcelable {
      * and {@link IntentFilter#MATCH_ADJUSTMENT_MASK IntentFiler.MATCH_ADJUSTMENT_MASK}.
      */
     public int match;
-
+    
     /**
      * Only set when returned by
      * {@link PackageManager#queryIntentActivityOptions}, this tells you
@@ -107,30 +93,29 @@ public class ResolveInfo implements Parcelable {
      * first in the list, < 0 means it came from the generic Intent query.
      */
     public int specificIndex = -1;
-
+    
     /**
      * This filter has specified the Intent.CATEGORY_DEFAULT, meaning it
      * would like to be considered a default action that the user can
      * perform on this data.
      */
     public boolean isDefault;
-
+    
     /**
      * A string resource identifier (in the package's resources) of this
      * match's label.  From the "label" attribute or, if not set, 0.
      */
     public int labelRes;
-
+    
     /**
      * The actual string retrieve from <var>labelRes</var> or null if none
      * was provided.
      */
     public CharSequence nonLocalizedLabel;
-
+    
     /**
      * A drawable resource identifier (in the package's resources) of this
-     * match's icon.  From the "icon" attribute or, if not set, 0. It is
-     * set only if the icon can be obtained by resource id alone.
+     * match's icon.  From the "icon" attribute or, if not set, 0.
      */
     public int icon;
 
@@ -142,38 +127,11 @@ public class ResolveInfo implements Parcelable {
     public String resolvePackageName;
 
     /**
-     * If not equal to UserHandle.USER_CURRENT, then the intent will be forwarded to this user.
-     * @hide
-     */
-    public int targetUserId;
-
-    /**
-     * Set to true if the icon cannot be obtained by resource ids alone.
-     * It is set to true for ResolveInfos from the managed profile: They need to
-     * have their icon badged, so it cannot be obtained by resource ids alone.
-     * @hide
-     */
-    public boolean noResourceId;
-
-    /**
-     * Same as {@link #icon} but it will always correspond to "icon" attribute
-     * regardless of {@link #noResourceId} value.
-     * @hide
-     */
-    public int iconResourceId;
-
-    /**
      * @hide Target comes from system process?
      */
     public boolean system;
 
-    /**
-     * @hide Does the associated IntentFilter comes from a Browser ?
-     */
-    public boolean handleAllWebDataURI;
-
-    /** {@hide} */
-    public ComponentInfo getComponentInfo() {
+    private ComponentInfo getComponentInfo() {
         if (activityInfo != null) return activityInfo;
         if (serviceInfo != null) return serviceInfo;
         if (providerInfo != null) return providerInfo;
@@ -184,10 +142,10 @@ public class ResolveInfo implements Parcelable {
      * Retrieve the current textual label associated with this resolution.  This
      * will call back on the given PackageManager to load the label from
      * the application.
-     *
+     * 
      * @param pm A PackageManager from which the label can be loaded; usually
      * the PackageManager from which you originally retrieved this item.
-     *
+     * 
      * @return Returns a CharSequence containing the resolutions's label.  If the
      * item does not have a label, its name is returned.
      */
@@ -216,69 +174,52 @@ public class ResolveInfo implements Parcelable {
         if (data != null) data = data.toString().trim();
         return data;
     }
-
+    
     /**
      * Retrieve the current graphical icon associated with this resolution.  This
      * will call back on the given PackageManager to load the icon from
      * the application.
-     *
+     * 
      * @param pm A PackageManager from which the icon can be loaded; usually
      * the PackageManager from which you originally retrieved this item.
-     *
+     * 
      * @return Returns a Drawable containing the resolution's icon.  If the
      * item does not have an icon, the default activity icon is returned.
      */
     public Drawable loadIcon(PackageManager pm) {
-        Drawable dr = null;
-        if (resolvePackageName != null && iconResourceId != 0) {
-            dr = pm.getDrawable(resolvePackageName, iconResourceId, null);
+        Drawable dr;
+        if (resolvePackageName != null && icon != 0) {
+            dr = pm.getDrawable(resolvePackageName, icon, null);
+            if (dr != null) {
+                return dr;
+            }
         }
         ComponentInfo ci = getComponentInfo();
-        if (dr == null && iconResourceId != 0) {
-            ApplicationInfo ai = ci.applicationInfo;
-            dr = pm.getDrawable(ci.packageName, iconResourceId, ai);
-        }
-        if (dr != null) {
-            return pm.getUserBadgedIcon(dr, new UserHandle(UserHandle.myUserId()));
+        ApplicationInfo ai = ci.applicationInfo;
+        if (icon != 0) {
+            dr = pm.getDrawable(ci.packageName, icon, ai);
+            if (dr != null) {
+                return dr;
+            }
         }
         return ci.loadIcon(pm);
     }
-
+    
     /**
      * Return the icon resource identifier to use for this match.  If the
      * match defines an icon, that is used; else if the activity defines
      * an icon, that is used; else, the application icon is used.
-     * This function does not check noResourceId flag.
-     *
-     * @return The icon associated with this match.
-     */
-    final int getIconResourceInternal() {
-        if (iconResourceId != 0) return iconResourceId;
-        final ComponentInfo ci = getComponentInfo();
-        if (ci != null) {
-            return ci.getIconResource();
-        }
-        return 0;
-    }
-
-    /**
-     * Return the icon resource identifier to use for this match.  If the
-     * match defines an icon, that is used; else if the activity defines
-     * an icon, that is used; else, the application icon is used.
-     *
+     * 
      * @return The icon associated with this match.
      */
     public final int getIconResource() {
-        if (noResourceId) return 0;
-        return getIconResourceInternal();
+        if (icon != 0) return icon;
+        final ComponentInfo ci = getComponentInfo();
+        if (ci != null) return ci.getIconResource();
+        return 0;
     }
 
     public void dump(Printer pw, String prefix) {
-        dump(pw, prefix, PackageItemInfo.DUMP_FLAG_ALL);
-    }
-
-    /** @hide */
-    public void dump(Printer pw, String prefix, int flags) {
         if (filter != null) {
             pw.println(prefix + "Filter:");
             filter.dump(pw, prefix + "  ");
@@ -298,18 +239,17 @@ public class ResolveInfo implements Parcelable {
         }
         if (activityInfo != null) {
             pw.println(prefix + "ActivityInfo:");
-            activityInfo.dump(pw, prefix + "  ", flags);
+            activityInfo.dump(pw, prefix + "  ");
         } else if (serviceInfo != null) {
             pw.println(prefix + "ServiceInfo:");
-            serviceInfo.dump(pw, prefix + "  ", flags);
+            serviceInfo.dump(pw, prefix + "  ");
         } else if (providerInfo != null) {
             pw.println(prefix + "ProviderInfo:");
-            providerInfo.dump(pw, prefix + "  ", flags);
+            providerInfo.dump(pw, prefix + "  ");
         }
     }
-
+    
     public ResolveInfo() {
-        targetUserId = UserHandle.USER_CURRENT;
     }
 
     public ResolveInfo(ResolveInfo orig) {
@@ -325,11 +265,7 @@ public class ResolveInfo implements Parcelable {
         nonLocalizedLabel = orig.nonLocalizedLabel;
         icon = orig.icon;
         resolvePackageName = orig.resolvePackageName;
-        noResourceId = orig.noResourceId;
-        iconResourceId = orig.iconResourceId;
         system = orig.system;
-        targetUserId = orig.targetUserId;
-        handleAllWebDataURI = orig.handleAllWebDataURI;
     }
 
     public String toString() {
@@ -349,10 +285,6 @@ public class ResolveInfo implements Parcelable {
         }
         sb.append(" m=0x");
         sb.append(Integer.toHexString(match));
-        if (targetUserId != UserHandle.USER_CURRENT) {
-            sb.append(" targetUserId=");
-            sb.append(targetUserId);
-        }
         sb.append('}');
         return sb.toString();
     }
@@ -388,11 +320,7 @@ public class ResolveInfo implements Parcelable {
         TextUtils.writeToParcel(nonLocalizedLabel, dest, parcelableFlags);
         dest.writeInt(icon);
         dest.writeString(resolvePackageName);
-        dest.writeInt(targetUserId);
         dest.writeInt(system ? 1 : 0);
-        dest.writeInt(noResourceId ? 1 : 0);
-        dest.writeInt(iconResourceId);
-        dest.writeInt(handleAllWebDataURI ? 1 : 0);
     }
 
     public static final Creator<ResolveInfo> CREATOR
@@ -435,13 +363,9 @@ public class ResolveInfo implements Parcelable {
                 = TextUtils.CHAR_SEQUENCE_CREATOR.createFromParcel(source);
         icon = source.readInt();
         resolvePackageName = source.readString();
-        targetUserId = source.readInt();
         system = source.readInt() != 0;
-        noResourceId = source.readInt() != 0;
-        iconResourceId = source.readInt();
-        handleAllWebDataURI = source.readInt() != 0;
     }
-
+    
     public static class DisplayNameComparator
             implements Comparator<ResolveInfo> {
         public DisplayNameComparator(PackageManager pm) {
@@ -450,13 +374,6 @@ public class ResolveInfo implements Parcelable {
         }
 
         public final int compare(ResolveInfo a, ResolveInfo b) {
-            // We want to put the one targeted to another user at the end of the dialog.
-            if (a.targetUserId != UserHandle.USER_CURRENT) {
-                return 1;
-            }
-            if (b.targetUserId != UserHandle.USER_CURRENT) {
-                return -1;
-            }
             CharSequence  sa = a.loadLabel(mPM);
             if (sa == null) sa = a.activityInfo.name;
             CharSequence  sb = b.loadLabel(mPM);

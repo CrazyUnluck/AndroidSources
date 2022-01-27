@@ -60,11 +60,6 @@ public class BulletSpan implements LeadingMarginSpan, ParcelableSpan {
     }
 
     public int getSpanTypeId() {
-        return getSpanTypeIdInternal();
-    }
-
-    /** @hide */
-    public int getSpanTypeIdInternal() {
         return TextUtils.BULLET_SPAN;
     }
 
@@ -73,11 +68,6 @@ public class BulletSpan implements LeadingMarginSpan, ParcelableSpan {
     }
 
     public void writeToParcel(Parcel dest, int flags) {
-        writeToParcelInternal(dest, flags);
-    }
-
-    /** @hide */
-    public void writeToParcelInternal(Parcel dest, int flags) {
         dest.writeInt(mGapWidth);
         dest.writeInt(mWantColor ? 1 : 0);
         dest.writeInt(mColor);

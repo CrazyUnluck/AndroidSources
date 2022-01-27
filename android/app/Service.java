@@ -16,8 +16,6 @@
 
 package android.app;
 
-import android.annotation.IntDef;
-import android.annotation.Nullable;
 import android.content.ComponentCallbacks2;
 import android.content.ComponentName;
 import android.content.Intent;
@@ -31,8 +29,6 @@ import android.util.Log;
 
 import java.io.FileDescriptor;
 import java.io.PrintWriter;
-import java.lang.annotation.Retention;
-import java.lang.annotation.RetentionPolicy;
 
 /**
  * A Service is an application component representing either an application's desire
@@ -196,7 +192,7 @@ import java.lang.annotation.RetentionPolicy;
  * When running low on memory and needing to kill existing processes, the
  * priority of a process hosting the service will be the higher of the
  * following possibilities:
- *
+ * 
  * <ul>
  * <li><p>If the service is currently executing code in its
  * {@link #onCreate onCreate()}, {@link #onStartCommand onStartCommand()},
@@ -207,19 +203,11 @@ import java.lang.annotation.RetentionPolicy;
  * to be less important than any processes that are currently visible to the
  * user on-screen, but more important than any process not visible.  Because
  * only a few processes are generally visible to the user, this means that
- * the service should not be killed except in low memory conditions.  However, since
- * the user is not directly aware of a background service, in that state it <em>is</em>
- * considered a valid candidate to kill, and you should be prepared for this to
- * happen.  In particular, long-running services will be increasingly likely to
- * kill and are guaranteed to be killed (and restarted if appropriate) if they
- * remain started long enough.
+ * the service should not be killed except in extreme low memory conditions.
  * <li><p>If there are clients bound to the service, then the service's hosting
  * process is never less important than the most important client.  That is,
  * if one of its clients is visible to the user, then the service itself is
- * considered to be visible.  The way a client's importance impacts the service's
- * importance can be adjusted through {@link Context#BIND_ABOVE_CLIENT},
- * {@link Context#BIND_ALLOW_OOM_MANAGEMENT}, {@link Context#BIND_WAIVE_PRIORITY},
- * {@link Context#BIND_IMPORTANT}, and {@link Context#BIND_ADJUST_WITH_ACTIVITY}.
+ * considered to be visible.
  * <li><p>A started service can use the {@link #startForeground(int, Notification)}
  * API to put the service in a foreground state, where the system considers
  * it to be something the user is actively aware of and thus not a candidate
@@ -303,32 +291,6 @@ import java.lang.annotation.RetentionPolicy;
 public abstract class Service extends ContextWrapper implements ComponentCallbacks2 {
     private static final String TAG = "Service";
 
-    /**
-     * Flag for {@link #stopForeground(int)}: if set, the notification previously provided
-     * to {@link #startForeground} will be removed.  Otherwise it will remain
-     * until a later call (to {@link #startForeground(int, Notification)} or
-     * {@link #stopForeground(int)} removes it, or the service is destroyed.
-     */
-    public static final int STOP_FOREGROUND_REMOVE = 1<<0;
-
-    /**
-     * Flag for {@link #stopForeground(int)}: if set, the notification previously provided
-     * to {@link #startForeground} will be detached from the service.  Only makes sense
-     * when {@link #STOP_FOREGROUND_REMOVE} is <b>not</b> set -- in this case, the notification
-     * will remain shown, but be completely detached from the service and so no longer changed
-     * except through direct calls to the notification manager.
-     */
-    public static final int STOP_FOREGROUND_DETACH = 1<<1;
-
-    /** @hide */
-    @IntDef(flag = true,
-            value = {
-                STOP_FOREGROUND_REMOVE,
-                STOP_FOREGROUND_DETACH
-            })
-    @Retention(RetentionPolicy.SOURCE)
-    public @interface StopForegroundFlags {}
-
     public Service() {
         super(null);
     }
@@ -406,7 +368,7 @@ public abstract class Service extends ContextWrapper implements ComponentCallbac
      * alarm goes off.
      */
     public static final int START_NOT_STICKY = 2;
-
+    
     /**
      * Constant to return from {@link #onStartCommand}: if this service's
      * process is killed while it is started (after returning from
@@ -421,18 +383,7 @@ public abstract class Service extends ContextWrapper implements ComponentCallbac
      * pending events will be delivered at the point of restart).
      */
     public static final int START_REDELIVER_INTENT = 3;
-
-    /** @hide */
-    @IntDef(flag = false,
-            value = {
-                START_STICKY_COMPATIBILITY,
-                START_STICKY,
-                START_NOT_STICKY,
-                START_REDELIVER_INTENT,
-            })
-    @Retention(RetentionPolicy.SOURCE)
-    public @interface StartResult {}
-
+    
     /**
      * Special constant for reporting that we are done processing
      * {@link #onTaskRemoved(Intent)}.
@@ -450,21 +401,11 @@ public abstract class Service extends ContextWrapper implements ComponentCallbac
     
     /**
      * This flag is set in {@link #onStartCommand} if the Intent is a
-     * retry because the original attempt never got to or returned from
+     * a retry because the original attempt never got to or returned from
      * {@link #onStartCommand(Intent, int, int)}.
      */
     public static final int START_FLAG_RETRY = 0x0002;
-
-    /** @hide */
-    @IntDef(flag = true,
-            value = {
-                START_FLAG_REDELIVERY,
-                START_FLAG_RETRY,
-            })
-    @Retention(RetentionPolicy.SOURCE)
-    public @interface StartArgFlags {}
-
-
+    
     /**
      * Called by the system every time a client explicitly starts the service by calling 
      * {@link android.content.Context#startService}, providing the arguments it supplied and a 
@@ -505,7 +446,7 @@ public abstract class Service extends ContextWrapper implements ComponentCallbac
      * 
      * @see #stopSelfResult(int)
      */
-    public @StartResult int onStartCommand(Intent intent, @StartArgFlags int flags, int startId) {
+    public int onStartCommand(Intent intent, int flags, int startId) {
         onStart(intent, startId);
         return mStartCompatibility ? START_STICKY_COMPATIBILITY : START_STICKY;
     }
@@ -549,7 +490,6 @@ public abstract class Service extends ContextWrapper implements ComponentCallbac
      * @return Return an IBinder through which clients can call on to the 
      *         service.
      */
-    @Nullable
     public abstract IBinder onBind(Intent intent);
 
     /**
@@ -702,37 +642,28 @@ public abstract class Service extends ContextWrapper implements ComponentCallbac
         try {
             mActivityManager.setServiceForeground(
                     new ComponentName(this, mClassName), mToken, id,
-                    notification, 0);
+                    notification, true);
         } catch (RemoteException ex) {
         }
     }
     
     /**
-     * Synonym for {@link #stopForeground(int)}.
-     * @param removeNotification If true, the {@link #STOP_FOREGROUND_REMOVE} flag
-     * will be supplied.
-     * @see #stopForeground(int)
+     * Remove this service from foreground state, allowing it to be killed if
+     * more memory is needed.
+     * @param removeNotification If true, the notification previously provided
+     * to {@link #startForeground} will be removed.  Otherwise it will remain
+     * until a later call removes it (or the service is destroyed).
      * @see #startForeground(int, Notification)
      */
     public final void stopForeground(boolean removeNotification) {
-        stopForeground(removeNotification ? STOP_FOREGROUND_REMOVE : 0);
-    }
-
-    /**
-     * Remove this service from foreground state, allowing it to be killed if
-     * more memory is needed.
-     * @param flags Additional behavior options: {@link #STOP_FOREGROUND_REMOVE},
-     * {@link #STOP_FOREGROUND_DETACH}.
-     * @see #startForeground(int, Notification)
-     */
-    public final void stopForeground(@StopForegroundFlags int flags) {
         try {
             mActivityManager.setServiceForeground(
-                    new ComponentName(this, mClassName), mToken, 0, null, flags);
+                    new ComponentName(this, mClassName), mToken, 0, null,
+                    removeNotification);
         } catch (RemoteException ex) {
         }
     }
-
+    
     /**
      * Print the Service's state into the given stream.  This gets invoked if
      * you run "adb shell dumpsys activity service &lt;yourservicename&gt;"

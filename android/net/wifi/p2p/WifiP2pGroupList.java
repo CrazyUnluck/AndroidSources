@@ -42,13 +42,11 @@ public class WifiP2pGroupList implements Parcelable {
         public void onDeleteGroup(int netId);
     }
 
-    /** @hide */
-    public WifiP2pGroupList() {
+    WifiP2pGroupList() {
         this(null, null);
     }
 
-    /** @hide */
-    public WifiP2pGroupList(WifiP2pGroupList source, GroupDeleteListener listener) {
+    WifiP2pGroupList(WifiP2pGroupList source, GroupDeleteListener listener) {
         mListener = listener;
         mGroups = new LruCache<Integer, WifiP2pGroup>(CREDENTIAL_MAX_NUM) {
             @Override
@@ -80,9 +78,8 @@ public class WifiP2pGroupList implements Parcelable {
      * Add the specified group to this group list.
      *
      * @param group
-     * @hide
      */
-    public void add(WifiP2pGroup group) {
+    void add(WifiP2pGroup group) {
         mGroups.put(group.getNetworkId(), group);
     }
 
@@ -90,9 +87,8 @@ public class WifiP2pGroupList implements Parcelable {
      * Remove the group with the specified network id from this group list.
      *
      * @param netId
-     * @hide
      */
-    public void remove(int netId) {
+    void remove(int netId) {
         mGroups.remove(netId);
     }
 
@@ -107,9 +103,8 @@ public class WifiP2pGroupList implements Parcelable {
 
     /**
      * Clear the group.
-     * @hide
      */
-    public boolean clear() {
+    boolean clear() {
         if (mGroups.size() == 0) return false;
         isClearCalled = true;
         mGroups.evictAll();
@@ -125,9 +120,8 @@ public class WifiP2pGroupList implements Parcelable {
      *
      * @param deviceAddress p2p device address.
      * @return the network id. if not found, return -1.
-     * @hide
      */
-    public int getNetworkId(String deviceAddress) {
+    int getNetworkId(String deviceAddress) {
         if (deviceAddress == null) return -1;
 
         final Collection<WifiP2pGroup> groups = mGroups.snapshot().values();
@@ -148,9 +142,8 @@ public class WifiP2pGroupList implements Parcelable {
      * @param deviceAddress p2p device address.
      * @param ssid ssid.
      * @return the network id. if not found, return -1.
-     * @hide
      */
-    public int getNetworkId(String deviceAddress, String ssid) {
+    int getNetworkId(String deviceAddress, String ssid) {
         if (deviceAddress == null || ssid == null) {
             return -1;
         }
@@ -173,9 +166,8 @@ public class WifiP2pGroupList implements Parcelable {
      *
      * @param netId network id.
      * @return the address. if not found, return null.
-     * @hide
      */
-    public String getOwnerAddr(int netId) {
+    String getOwnerAddr(int netId) {
         WifiP2pGroup grp = mGroups.get(netId);
         if (grp != null) {
             return grp.getOwner().deviceAddress;
@@ -190,9 +182,8 @@ public class WifiP2pGroupList implements Parcelable {
      *
      * @param netId network id.
      * @return true if the specified network id is present in this group list.
-     * @hide
      */
-    public boolean contains(int netId) {
+    boolean contains(int netId) {
         final Collection<WifiP2pGroup> groups = mGroups.snapshot().values();
         for (WifiP2pGroup grp: groups) {
             if (netId == grp.getNetworkId()) {

@@ -20,7 +20,6 @@ import android.app.backup.IBackupManager;
 import android.os.ParcelFileDescriptor;
 import android.os.RemoteException;
 import android.os.ServiceManager;
-import android.system.OsConstants;
 import android.util.Log;
 
 import java.io.IOException;
@@ -51,11 +50,13 @@ public final class Backup {
             return;
         }
 
+        int socketFd = Integer.parseInt(nextArg());
+
         String arg = nextArg();
         if (arg.equals("backup")) {
-            doFullBackup(OsConstants.STDOUT_FILENO);
+            doFullBackup(socketFd);
         } else if (arg.equals("restore")) {
-            doFullRestore(OsConstants.STDIN_FILENO);
+            doFullRestore(socketFd);
         } else {
             Log.e(TAG, "Invalid operation '" + arg + "'");
         }
@@ -67,9 +68,7 @@ public final class Backup {
         boolean saveObbs = false;
         boolean saveShared = false;
         boolean doEverything = false;
-        boolean doWidgets = false;
         boolean allIncludesSystem = true;
-        boolean doCompress = true;
 
         String arg;
         while ((arg = nextArg()) != null) {
@@ -90,16 +89,8 @@ public final class Backup {
                     allIncludesSystem = true;
                 } else if ("-nosystem".equals(arg)) {
                     allIncludesSystem = false;
-                } else if ("-widgets".equals(arg)) {
-                    doWidgets = true;
-                } else if ("-nowidgets".equals(arg)) {
-                    doWidgets = false;
                 } else if ("-all".equals(arg)) {
                     doEverything = true;
-                } else if ("-compress".equals(arg)) {
-                    doCompress = true;
-                } else if ("-nocompress".equals(arg)) {
-                    doCompress = false;
                 } else {
                     Log.w(TAG, "Unknown backup flag " + arg);
                     continue;
@@ -123,8 +114,8 @@ public final class Backup {
         try {
             fd = ParcelFileDescriptor.adoptFd(socketFd);
             String[] packArray = new String[packages.size()];
-            mBackupManager.fullBackup(fd, saveApks, saveObbs, saveShared, doWidgets,
-                    doEverything, allIncludesSystem, doCompress, packages.toArray(packArray));
+            mBackupManager.fullBackup(fd, saveApks, saveObbs, saveShared, doEverything,
+                    allIncludesSystem, packages.toArray(packArray));
         } catch (RemoteException e) {
             Log.e(TAG, "Unable to invoke backup manager for backup");
         } finally {

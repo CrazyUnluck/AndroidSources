@@ -195,10 +195,9 @@ public class LoadAverageService extends Service {
             int systemW = (systemTime*W)/totalTime;
             int irqW = ((iowaitTime+irqTime+softIrqTime)*W)/totalTime;
 
-            int paddingRight = getPaddingRight();
-            int x = RIGHT - paddingRight;
-            int top = getPaddingTop() + 2;
-            int bottom = getPaddingTop() + mFH - 2;
+            int x = RIGHT - mPaddingRight;
+            int top = mPaddingTop + 2;
+            int bottom = mPaddingTop + mFH - 2;
 
             if (irqW > 0) {
                 canvas.drawRect(x-irqW, top, x, bottom, mIrqPaint);
@@ -213,16 +212,16 @@ public class LoadAverageService extends Service {
                 x -= userW;
             }
 
-            int y = getPaddingTop() - (int)mAscent;
-            canvas.drawText(stats.mLoadText, RIGHT-paddingRight-stats.mLoadWidth-1,
+            int y = mPaddingTop - (int)mAscent;
+            canvas.drawText(stats.mLoadText, RIGHT-mPaddingRight-stats.mLoadWidth-1,
                     y-1, mShadowPaint);
-            canvas.drawText(stats.mLoadText, RIGHT-paddingRight-stats.mLoadWidth-1,
+            canvas.drawText(stats.mLoadText, RIGHT-mPaddingRight-stats.mLoadWidth-1,
                     y+1, mShadowPaint);
-            canvas.drawText(stats.mLoadText, RIGHT-paddingRight-stats.mLoadWidth+1,
+            canvas.drawText(stats.mLoadText, RIGHT-mPaddingRight-stats.mLoadWidth+1,
                     y-1, mShadow2Paint);
-            canvas.drawText(stats.mLoadText, RIGHT-paddingRight-stats.mLoadWidth+1,
+            canvas.drawText(stats.mLoadText, RIGHT-mPaddingRight-stats.mLoadWidth+1,
                     y+1, mShadow2Paint);
-            canvas.drawText(stats.mLoadText, RIGHT-paddingRight-stats.mLoadWidth,
+            canvas.drawText(stats.mLoadText, RIGHT-mPaddingRight-stats.mLoadWidth,
                     y, mLoadPaint);
 
             int N = stats.countWorkingStats();
@@ -234,7 +233,7 @@ public class LoadAverageService extends Service {
 
                 userW = (st.rel_utime*W)/totalTime;
                 systemW = (st.rel_stime*W)/totalTime;
-                x = RIGHT - paddingRight;
+                x = RIGHT - mPaddingRight;
                 if (systemW > 0) {
                     canvas.drawRect(x-systemW, top, x, bottom, mSystemPaint);
                     x -= systemW;
@@ -244,18 +243,18 @@ public class LoadAverageService extends Service {
                     x -= userW;
                 }
 
-                canvas.drawText(st.name, RIGHT-paddingRight-st.nameWidth-1,
+                canvas.drawText(st.name, RIGHT-mPaddingRight-st.nameWidth-1,
                         y-1, mShadowPaint);
-                canvas.drawText(st.name, RIGHT-paddingRight-st.nameWidth-1,
+                canvas.drawText(st.name, RIGHT-mPaddingRight-st.nameWidth-1,
                         y+1, mShadowPaint);
-                canvas.drawText(st.name, RIGHT-paddingRight-st.nameWidth+1,
+                canvas.drawText(st.name, RIGHT-mPaddingRight-st.nameWidth+1,
                         y-1, mShadow2Paint);
-                canvas.drawText(st.name, RIGHT-paddingRight-st.nameWidth+1,
+                canvas.drawText(st.name, RIGHT-mPaddingRight-st.nameWidth+1,
                         y+1, mShadow2Paint);
                 Paint p = mLoadPaint;
                 if (st.added) p = mAddedPaint;
                 if (st.removed) p = mRemovedPaint;
-                canvas.drawText(st.name, RIGHT-paddingRight-st.nameWidth, y, p);
+                canvas.drawText(st.name, RIGHT-mPaddingRight-st.nameWidth, y, p);
             }
         }
 
@@ -271,8 +270,8 @@ public class LoadAverageService extends Service {
                 }
             }
 
-            int neededWidth = getPaddingLeft() + getPaddingRight() + maxWidth;
-            int neededHeight = getPaddingTop() + getPaddingBottom() + (mFH*(1+NW));
+            int neededWidth = mPaddingLeft + mPaddingRight + maxWidth;
+            int neededHeight = mPaddingTop + mPaddingBottom + (mFH*(1+NW));
             if (neededWidth != mNeededWidth || neededHeight != mNeededHeight) {
                 mNeededWidth = neededWidth;
                 mNeededHeight = neededHeight;

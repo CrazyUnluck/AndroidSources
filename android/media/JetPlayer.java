@@ -169,11 +169,9 @@ public class JetPlayer
                             
             native_setup(new WeakReference<JetPlayer>(this),
                     JetPlayer.getMaxTracks(),
-                    // bytes to frame conversion:
+                    // bytes to frame conversion: sample format is ENCODING_PCM_16BIT, 2 channels
                     // 1200 == minimum buffer size in frames on generation 1 hardware
-                    Math.max(1200, buffSizeInBytes /
-                            (AudioFormat.getBytesPerSample(AudioFormat.ENCODING_PCM_16BIT) *
-                            2 /*channels*/)));
+                    Math.max(1200, buffSizeInBytes / 4));
         }
     }
     

@@ -46,6 +46,7 @@ import java.util.ArrayList;
 /** This class calls its monitor every minute. Killing this process if they don't return **/
 public class Watchdog extends Thread {
     static final String TAG = "Watchdog";
+    static final boolean localLOGV = false || false;
 
     // Set this to true to use debug default values.
     static final boolean DB = false;
@@ -64,22 +65,15 @@ public class Watchdog extends Thread {
 
     // Which native processes to dump into dropbox's stack traces
     public static final String[] NATIVE_STACKS_OF_INTEREST = new String[] {
-        "/system/bin/audioserver",
-        "/system/bin/cameraserver",
-        "/system/bin/drmserver",
-        "/system/bin/mediadrmserver",
         "/system/bin/mediaserver",
         "/system/bin/sdcard",
-        "/system/bin/surfaceflinger",
-        "media.codec",     // system/bin/mediacodec
-        "media.extractor", // system/bin/mediaextractor
-        "com.android.bluetooth",  // Bluetooth service
+        "/system/bin/surfaceflinger"
     };
 
     static Watchdog sWatchdog;
 
     /* This handler will be used to post message back onto the main thread */
-    final ArrayList<HandlerChecker> mHandlerCheckers = new ArrayList<>();
+    final ArrayList<HandlerChecker> mHandlerCheckers = new ArrayList<HandlerChecker>();
     final HandlerChecker mMonitorChecker;
     ContentResolver mResolver;
     ActivityManagerService mActivity;
@@ -112,8 +106,8 @@ public class Watchdog extends Thread {
         }
 
         public void scheduleCheckLocked() {
-            if (mMonitors.size() == 0 && mHandler.getLooper().getQueue().isPolling()) {
-                // If the target looper has recently been polling, then
+            if (mMonitors.size() == 0 && mHandler.getLooper().isIdling()) {
+                // If the target looper is or just recently was idling, then
                 // there is no reason to enqueue our checker on it since that
                 // is as good as it not being deadlocked.  This avoid having
                 // to do a context switch to check the thread.  Note that we
@@ -197,17 +191,6 @@ public class Watchdog extends Thread {
         }
     }
 
-    /** Monitor for checking the availability of binder threads. The monitor will block until
-     * there is a binder thread available to process in coming IPCs to make sure other processes
-     * can still communicate with the service.
-     */
-    private static final class BinderThreadMonitor implements Watchdog.Monitor {
-        @Override
-        public void monitor() {
-            Binder.blockUntilThreadAvailable();
-        }
-    }
-
     public interface Monitor {
         void monitor();
     }
@@ -245,9 +228,6 @@ public class Watchdog extends Thread {
         // And the display thread.
         mHandlerCheckers.add(new HandlerChecker(DisplayThread.getHandler(),
                 "display thread", DEFAULT_TIMEOUT));
-
-        // Initialize monitor for Binder threads.
-        addMonitor(new BinderThreadMonitor());
     }
 
     public void init(Context context, ActivityManagerService activity) {
@@ -352,7 +332,6 @@ public class Watchdog extends Thread {
             final ArrayList<HandlerChecker> blockedCheckers;
             final String subject;
             final boolean allowRestart;
-            int debuggerWasConnected = 0;
             synchronized (this) {
                 long timeout = CHECK_INTERVAL;
                 // Make sure we (re)spin the checkers that have become idle within
@@ -362,26 +341,16 @@ public class Watchdog extends Thread {
                     hc.scheduleCheckLocked();
                 }
 
-                if (debuggerWasConnected > 0) {
-                    debuggerWasConnected--;
-                }
-
                 // NOTE: We use uptimeMillis() here because we do not want to increment the time we
                 // wait while asleep. If the device is asleep then the thing that we are waiting
                 // to timeout on is asleep as well and won't have a chance to run, causing a false
                 // positive on when to kill things.
                 long start = SystemClock.uptimeMillis();
                 while (timeout > 0) {
-                    if (Debug.isDebuggerConnected()) {
-                        debuggerWasConnected = 2;
-                    }
                     try {
                         wait(timeout);
                     } catch (InterruptedException e) {
                         Log.wtf(TAG, e);
-                    }
-                    if (Debug.isDebuggerConnected()) {
-                        debuggerWasConnected = 2;
                     }
                     timeout = CHECK_INTERVAL - (SystemClock.uptimeMillis() - start);
                 }
@@ -435,9 +404,15 @@ public class Watchdog extends Thread {
                 dumpKernelStackTraces();
             }
 
-            // Trigger the kernel to dump all blocked threads, and backtraces on all CPUs to the kernel log
-            doSysRq('w');
-            doSysRq('l');
+            // Trigger the kernel to dump all blocked threads to the kernel log
+            try {
+                FileWriter sysrq_trigger = new FileWriter("/proc/sysrq-trigger");
+                sysrq_trigger.write("w");
+                sysrq_trigger.close();
+            } catch (IOException e) {
+                Slog.e(TAG, "Failed to write to /proc/sysrq-trigger");
+                Slog.e(TAG, e.getMessage());
+            }
 
             // Try to add the error to the dropbox, but assuming that the ActivityManager
             // itself may be deadlocked.  (which has happened, causing this statement to
@@ -475,12 +450,7 @@ public class Watchdog extends Thread {
 
             // Only kill the process if the debugger is not attached.
             if (Debug.isDebuggerConnected()) {
-                debuggerWasConnected = 2;
-            }
-            if (debuggerWasConnected >= 2) {
                 Slog.w(TAG, "Debugger connected: Watchdog is *not* killing the system process");
-            } else if (debuggerWasConnected > 0) {
-                Slog.w(TAG, "Debugger was connected: Watchdog is *not* killing the system process");
             } else if (!allowRestart) {
                 Slog.w(TAG, "Restart not allowed: Watchdog is *not* killing the system process");
             } else {
@@ -499,16 +469,6 @@ public class Watchdog extends Thread {
             }
 
             waitedHalf = false;
-        }
-    }
-
-    private void doSysRq(char c) {
-        try {
-            FileWriter sysrq_trigger = new FileWriter("/proc/sysrq-trigger");
-            sysrq_trigger.write(c);
-            sysrq_trigger.close();
-        } catch (IOException e) {
-            Slog.w(TAG, "Failed to write to /proc/sysrq-trigger", e);
         }
     }
 

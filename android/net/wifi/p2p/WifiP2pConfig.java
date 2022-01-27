@@ -60,8 +60,7 @@ public class WifiP2pConfig implements Parcelable {
         wps.setup = WpsInfo.PBC;
     }
 
-    /** @hide */
-    public void invalidate() {
+    void invalidate() {
         deviceAddress = "";
     }
 

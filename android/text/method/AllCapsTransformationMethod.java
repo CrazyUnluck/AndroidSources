@@ -19,7 +19,6 @@ import android.content.Context;
 import android.graphics.Rect;
 import android.util.Log;
 import android.view.View;
-import android.widget.TextView;
 
 import java.util.Locale;
 
@@ -40,23 +39,11 @@ public class AllCapsTransformationMethod implements TransformationMethod2 {
 
     @Override
     public CharSequence getTransformation(CharSequence source, View view) {
-        if (!mEnabled) {
-            Log.w(TAG, "Caller did not enable length changes; not transforming text");
-            return source;
+        if (mEnabled) {
+            return source != null ? source.toString().toUpperCase(mLocale) : null;
         }
-
-        if (source == null) {
-            return null;
-        }
-
-        Locale locale = null;
-        if (view instanceof TextView) {
-            locale = ((TextView)view).getTextLocale();
-        }
-        if (locale == null) {
-            locale = mLocale;
-        }
-        return source.toString().toUpperCase(locale);
+        Log.w(TAG, "Caller did not enable length changes; not transforming text");
+        return source;
     }
 
     @Override

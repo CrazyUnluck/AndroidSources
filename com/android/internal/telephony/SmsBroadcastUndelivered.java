@@ -16,15 +16,12 @@
 
 package com.android.internal.telephony;
 
-import android.content.BroadcastReceiver;
 import android.content.ContentResolver;
 import android.content.Context;
-import android.content.Intent;
-import android.content.IntentFilter;
 import android.database.Cursor;
 import android.database.SQLException;
-import android.os.UserHandle;
-import android.os.UserManager;
+import android.net.Uri;
+import android.provider.Telephony;
 import android.telephony.Rlog;
 
 import com.android.internal.telephony.cdma.CdmaInboundSmsHandler;
@@ -34,13 +31,13 @@ import java.util.HashMap;
 import java.util.HashSet;
 
 /**
- * Called when the credential-encrypted storage is unlocked, collecting all acknowledged messages
- * and deleting any partial message segments older than 30 days. Called from a worker thread to
- * avoid delaying phone app startup. The last step is to broadcast the first pending message from
- * the main thread, then the remaining pending messages will be broadcast after the previous
- * ordered broadcast completes.
+ * Called at boot time to clean out the raw table, collecting all acknowledged messages and
+ * deleting any partial message segments older than 30 days. Called from a worker thread to
+ * avoid delaying phone app startup. The last step is to broadcast the first pending message
+ * from the main thread, then the remaining pending messages will be broadcast after the
+ * previous ordered broadcast completes.
  */
-public class SmsBroadcastUndelivered {
+public class SmsBroadcastUndelivered implements Runnable {
     private static final String TAG = "SmsBroadcastUndelivered";
     private static final boolean DBG = InboundSmsHandler.DBG;
 
@@ -59,11 +56,11 @@ public class SmsBroadcastUndelivered {
             "reference_number",
             "count",
             "address",
-            "_id",
-            "message_body"
+            "_id"
     };
 
-    private static SmsBroadcastUndelivered instance;
+    /** URI for raw table from SmsProvider. */
+    private static final Uri sRawUri = Uri.withAppendedPath(Telephony.Sms.CONTENT_URI, "raw");
 
     /** Content resolver to use to access raw table from SmsProvider. */
     private final ContentResolver mResolver;
@@ -74,65 +71,23 @@ public class SmsBroadcastUndelivered {
     /** Handler for 3GPP2-format messages (may be null). */
     private final CdmaInboundSmsHandler mCdmaInboundSmsHandler;
 
-    /** Broadcast receiver that processes the raw table when the user unlocks the phone for the
-     *  first time after reboot and the credential-encrypted storage is available.
-     */
-    private final BroadcastReceiver mBroadcastReceiver = new BroadcastReceiver() {
-        @Override
-        public void onReceive(final Context context, Intent intent) {
-            Rlog.d(TAG, "Received broadcast " + intent.getAction());
-            if (Intent.ACTION_USER_UNLOCKED.equals(intent.getAction())) {
-                new ScanRawTableThread(context).start();
-            }
-        }
-    };
-
-    private class ScanRawTableThread extends Thread {
-        private final Context context;
-
-        private ScanRawTableThread(Context context) {
-            this.context = context;
-        }
-
-        @Override
-        public void run() {
-            scanRawTable();
-            InboundSmsHandler.cancelNewMessageNotification(context);
-        }
-    }
-
-    public static void initialize(Context context, GsmInboundSmsHandler gsmInboundSmsHandler,
-        CdmaInboundSmsHandler cdmaInboundSmsHandler) {
-        if (instance == null) {
-            instance = new SmsBroadcastUndelivered(
-                context, gsmInboundSmsHandler, cdmaInboundSmsHandler);
-        }
-
-        // Tell handlers to start processing new messages and transit from the startup state to the
-        // idle state. This method may be called multiple times for multi-sim devices. We must make
-        // sure the state transition happen to all inbound sms handlers.
-        if (gsmInboundSmsHandler != null) {
-            gsmInboundSmsHandler.sendMessage(InboundSmsHandler.EVENT_START_ACCEPTING_SMS);
-        }
-        if (cdmaInboundSmsHandler != null) {
-            cdmaInboundSmsHandler.sendMessage(InboundSmsHandler.EVENT_START_ACCEPTING_SMS);
-        }
-    }
-
-    private SmsBroadcastUndelivered(Context context, GsmInboundSmsHandler gsmInboundSmsHandler,
+    public SmsBroadcastUndelivered(Context context, GsmInboundSmsHandler gsmInboundSmsHandler,
             CdmaInboundSmsHandler cdmaInboundSmsHandler) {
         mResolver = context.getContentResolver();
         mGsmInboundSmsHandler = gsmInboundSmsHandler;
         mCdmaInboundSmsHandler = cdmaInboundSmsHandler;
+    }
 
-        UserManager userManager = (UserManager) context.getSystemService(Context.USER_SERVICE);
-
-        if (userManager.isUserUnlocked()) {
-            new ScanRawTableThread(context).start();
-        } else {
-            IntentFilter userFilter = new IntentFilter();
-            userFilter.addAction(Intent.ACTION_USER_UNLOCKED);
-            context.registerReceiver(mBroadcastReceiver, userFilter);
+    @Override
+    public void run() {
+        if (DBG) Rlog.d(TAG, "scanning raw table for undelivered messages");
+        scanRawTable();
+        // tell handlers to start processing new messages
+        if (mGsmInboundSmsHandler != null) {
+            mGsmInboundSmsHandler.sendMessage(InboundSmsHandler.EVENT_START_ACCEPTING_SMS);
+        }
+        if (mCdmaInboundSmsHandler != null) {
+            mCdmaInboundSmsHandler.sendMessage(InboundSmsHandler.EVENT_START_ACCEPTING_SMS);
         }
     }
 
@@ -140,17 +95,13 @@ public class SmsBroadcastUndelivered {
      * Scan the raw table for complete SMS messages to broadcast, and old PDUs to delete.
      */
     private void scanRawTable() {
-        if (DBG) Rlog.d(TAG, "scanning raw table for undelivered messages");
         long startTime = System.nanoTime();
         HashMap<SmsReferenceKey, Integer> multiPartReceivedCount =
                 new HashMap<SmsReferenceKey, Integer>(4);
         HashSet<SmsReferenceKey> oldMultiPartMessages = new HashSet<SmsReferenceKey>(4);
         Cursor cursor = null;
         try {
-            // query only non-deleted ones
-            cursor = mResolver.query(InboundSmsHandler.sRawUri, PDU_PENDING_MESSAGE_PROJECTION,
-                    "deleted = 0", null,
-                    null);
+            cursor = mResolver.query(sRawUri, PDU_PENDING_MESSAGE_PROJECTION, null, null, null);
             if (cursor == null) {
                 Rlog.e(TAG, "error getting pending message cursor");
                 return;
@@ -160,8 +111,7 @@ public class SmsBroadcastUndelivered {
             while (cursor.moveToNext()) {
                 InboundSmsTracker tracker;
                 try {
-                    tracker = TelephonyComponentFactory.getInstance().makeInboundSmsTracker(cursor,
-                            isCurrentFormat3gpp2);
+                    tracker = new InboundSmsTracker(cursor, isCurrentFormat3gpp2);
                 } catch (IllegalArgumentException e) {
                     Rlog.e(TAG, "error loading SmsTracker: " + e);
                     continue;
@@ -197,9 +147,8 @@ public class SmsBroadcastUndelivered {
             }
             // Delete old incomplete message segments
             for (SmsReferenceKey message : oldMultiPartMessages) {
-                // delete permanently
-                int rows = mResolver.delete(InboundSmsHandler.sRawUriPermanentDelete,
-                        InboundSmsHandler.SELECT_BY_REFERENCE, message.getDeleteWhereArgs());
+                int rows = mResolver.delete(sRawUri, InboundSmsHandler.SELECT_BY_REFERENCE,
+                        message.getDeleteWhereArgs());
                 if (rows == 0) {
                     Rlog.e(TAG, "No rows were deleted from raw table!");
                 } else if (DBG) {

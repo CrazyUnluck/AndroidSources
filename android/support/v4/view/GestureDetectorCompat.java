@@ -45,7 +45,7 @@ import android.view.ViewConfiguration;
  *          will be executed when the events occur.
  * </ul>
  */
-public final class GestureDetectorCompat {
+public class GestureDetectorCompat {
     interface GestureDetectorCompatImpl {
         boolean isLongpressEnabled();
         boolean onTouchEvent(MotionEvent ev);

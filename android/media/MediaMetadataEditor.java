@@ -17,8 +17,8 @@
 package android.media;
 
 import android.graphics.Bitmap;
-import android.media.session.MediaSession;
 import android.os.Bundle;
+import android.os.Parcel;
 import android.os.Parcelable;
 import android.util.Log;
 import android.util.SparseIntArray;
@@ -27,10 +27,8 @@ import android.util.SparseIntArray;
  * An abstract class for editing and storing metadata that can be published by
  * {@link RemoteControlClient}. See the {@link RemoteControlClient#editMetadata(boolean)}
  * method to instantiate a {@link RemoteControlClient.MetadataEditor} object.
- *
- * @deprecated Use {@link MediaMetadata} instead together with {@link MediaSession}.
  */
-@Deprecated public abstract class MediaMetadataEditor {
+public abstract class MediaMetadataEditor {
 
     private final static String TAG = "MediaMetadataEditor";
     /**
@@ -73,8 +71,7 @@ import android.util.SparseIntArray;
 
     /**
      * Applies all of the metadata changes that have been set since the MediaMetadataEditor instance
-     * was created or since {@link #clear()} was called. Subclasses should synchronize on
-     * {@code this} for thread safety.
+     * was created or since {@link #clear()} was called.
      */
     public abstract void apply();
 
@@ -110,10 +107,6 @@ import android.util.SparseIntArray;
      */
     protected Bundle mEditorMetadata;
 
-    /**
-     * @hide
-     */
-    protected MediaMetadata.Builder mMetadataBuilder;
 
     /**
      * Clears all the pending metadata changes set since the MediaMetadataEditor instance was
@@ -128,7 +121,6 @@ import android.util.SparseIntArray;
         }
         mEditorMetadata.clear();
         mEditorArtwork = null;
-        mMetadataBuilder = new MediaMetadata.Builder();
     }
 
     /**

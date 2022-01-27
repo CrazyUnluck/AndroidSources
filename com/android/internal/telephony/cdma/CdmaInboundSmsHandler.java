@@ -18,9 +18,11 @@ package com.android.internal.telephony.cdma;
 
 import android.app.Activity;
 import android.content.Context;
+import android.content.SharedPreferences;
 import android.content.res.Resources;
 import android.os.Message;
 import android.os.SystemProperties;
+import android.preference.PreferenceManager;
 import android.provider.Telephony.Sms.Intents;
 import android.telephony.SmsCbMessage;
 
@@ -28,15 +30,13 @@ import com.android.internal.telephony.CellBroadcastHandler;
 import com.android.internal.telephony.CommandsInterface;
 import com.android.internal.telephony.InboundSmsHandler;
 import com.android.internal.telephony.InboundSmsTracker;
-import com.android.internal.telephony.Phone;
+import com.android.internal.telephony.PhoneBase;
 import com.android.internal.telephony.SmsConstants;
 import com.android.internal.telephony.SmsMessageBase;
 import com.android.internal.telephony.SmsStorageMonitor;
-import com.android.internal.telephony.TelephonyComponentFactory;
 import com.android.internal.telephony.TelephonyProperties;
 import com.android.internal.telephony.WspTypeDecoder;
 import com.android.internal.telephony.cdma.sms.SmsEnvelope;
-import com.android.internal.util.HexDump;
 
 import java.util.Arrays;
 
@@ -58,9 +58,9 @@ public class CdmaInboundSmsHandler extends InboundSmsHandler {
      * Create a new inbound SMS handler for CDMA.
      */
     private CdmaInboundSmsHandler(Context context, SmsStorageMonitor storageMonitor,
-            Phone phone, CdmaSMSDispatcher smsDispatcher) {
+            PhoneBase phone, CdmaSMSDispatcher smsDispatcher) {
         super("CdmaInboundSmsHandler", context, storageMonitor, phone,
-                CellBroadcastHandler.makeCellBroadcastHandler(context, phone));
+                CellBroadcastHandler.makeCellBroadcastHandler(context));
         mSmsDispatcher = smsDispatcher;
         mServiceCategoryProgramHandler = CdmaServiceCategoryProgramHandler.makeScpHandler(context,
                 phone.mCi);
@@ -83,11 +83,20 @@ public class CdmaInboundSmsHandler extends InboundSmsHandler {
      * Wait for state machine to enter startup state. We can't send any messages until then.
      */
     public static CdmaInboundSmsHandler makeInboundSmsHandler(Context context,
-            SmsStorageMonitor storageMonitor, Phone phone, CdmaSMSDispatcher smsDispatcher) {
+            SmsStorageMonitor storageMonitor, PhoneBase phone, CdmaSMSDispatcher smsDispatcher) {
         CdmaInboundSmsHandler handler = new CdmaInboundSmsHandler(context, storageMonitor,
                 phone, smsDispatcher);
         handler.start();
         return handler;
+    }
+
+    /**
+     * Return whether the device is in Emergency Call Mode (only for 3GPP2).
+     * @return true if the device is in ECM; false otherwise
+     */
+    private static boolean isInEmergencyCallMode() {
+        String inEcm = SystemProperties.get(TelephonyProperties.PROPERTY_INECM_MODE, "false");
+        return "true".equals(inEcm);
     }
 
     /**
@@ -106,6 +115,10 @@ public class CdmaInboundSmsHandler extends InboundSmsHandler {
      */
     @Override
     protected int dispatchMessageRadioSpecific(SmsMessageBase smsb) {
+        if (isInEmergencyCallMode()) {
+            return Activity.RESULT_OK;
+        }
+
         SmsMessage sms = (SmsMessage) smsb;
         boolean isBroadcastType = (SmsEnvelope.MESSAGE_TYPE_BROADCAST == sms.getMessageType());
 
@@ -184,6 +197,10 @@ public class CdmaInboundSmsHandler extends InboundSmsHandler {
      */
     @Override
     protected void acknowledgeLastIncomingSms(boolean success, int result, Message response) {
+        if (isInEmergencyCallMode()) {
+            return;
+        }
+
         int causeCode = resultToCause(result);
         mPhone.mCi.acknowledgeLastIncomingCdmaSms(success, causeCode, response);
 
@@ -201,7 +218,7 @@ public class CdmaInboundSmsHandler extends InboundSmsHandler {
      * @param phone
      */
     @Override
-    protected void onUpdatePhoneObject(Phone phone) {
+    protected void onUpdatePhoneObject(PhoneBase phone) {
         super.onUpdatePhoneObject(phone);
         mCellBroadcastHandler.updatePhoneObject(phone);
     }
@@ -223,7 +240,7 @@ public class CdmaInboundSmsHandler extends InboundSmsHandler {
             return CommandsInterface.CDMA_SMS_FAIL_CAUSE_INVALID_TELESERVICE_ID;
         case Intents.RESULT_SMS_GENERIC_ERROR:
         default:
-            return CommandsInterface.CDMA_SMS_FAIL_CAUSE_OTHER_TERMINAL_PROBLEM;
+            return CommandsInterface.CDMA_SMS_FAIL_CAUSE_ENCODING_PROBLEM;
         }
     }
 
@@ -235,16 +252,12 @@ public class CdmaInboundSmsHandler extends InboundSmsHandler {
         int voicemailCount = sms.getNumOfVoicemails();
         if (DBG) log("Voicemail count=" + voicemailCount);
 
-        // range check
-        if (voicemailCount < 0) {
-            voicemailCount = -1;
-        } else if (voicemailCount > 99) {
-            // C.S0015-B v2, 4.5.12
-            // range: 0-99
-            voicemailCount = 99;
-        }
-        // update voice mail count in phone
-        mPhone.setVoiceMessageCount(voicemailCount);
+        // Store the voicemail count in preferences.
+        SharedPreferences sp = PreferenceManager.getDefaultSharedPreferences(mContext);
+        SharedPreferences.Editor editor = sp.edit();
+        editor.putInt(CDMAPhone.VM_COUNT_CDMA, voicemailCount);
+        editor.apply();
+        mPhone.setVoiceMessageWaiting(1, voicemailCount);
     }
 
     /**
@@ -301,12 +314,10 @@ public class CdmaInboundSmsHandler extends InboundSmsHandler {
         byte[] userData = new byte[pdu.length - index];
         System.arraycopy(pdu, index, userData, 0, pdu.length - index);
 
-        InboundSmsTracker tracker = TelephonyComponentFactory.getInstance().makeInboundSmsTracker(
-                userData, timestamp, destinationPort, true, address, referenceNumber, segment,
-                totalSegments, true, HexDump.toHexString(userData));
+        InboundSmsTracker tracker = new InboundSmsTracker(userData, timestamp, destinationPort,
+                true, address, referenceNumber, segment, totalSegments, true);
 
-        // de-duping is done only for text messages
-        return addTrackerToRawTableAndSendMessage(tracker, false /* don't de-dup */);
+        return addTrackerToRawTableAndSendMessage(tracker);
     }
 
     /**

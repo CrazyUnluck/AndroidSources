@@ -18,7 +18,7 @@ import android.support.v17.leanback.database.CursorMapper;
 import android.util.LruCache;
 
 /**
- * An {@link ObjectAdapter} implemented with a {@link Cursor}.
+ * Adapter implemented with a {@link Cursor}.
  */
 public class CursorObjectAdapter extends ObjectAdapter {
     private static final int CACHE_SIZE = 100;
@@ -26,31 +26,21 @@ public class CursorObjectAdapter extends ObjectAdapter {
     private CursorMapper mMapper;
     private final LruCache<Integer, Object> mItemCache = new LruCache<Integer, Object>(CACHE_SIZE);
 
-    /**
-     * Constructs an adapter with the given {@link PresenterSelector}.
-     */
     public CursorObjectAdapter(PresenterSelector presenterSelector) {
         super(presenterSelector);
     }
 
-    /**
-     * Constructs an adapter that uses the given {@link Presenter} for all items.
-     */
     public CursorObjectAdapter(Presenter presenter) {
         super(presenter);
     }
 
-    /**
-     * Constructs an adapter.
-     */
     public CursorObjectAdapter() {
         super();
     }
 
     /**
-     * Changes the underlying cursor to a new cursor. If there is
-     * an existing cursor it will be closed if it is different than the new
-     * cursor.
+     * Change the underlying cursor to a new cursor. If there is
+     * an existing cursor it will be closed.
      *
      * @param cursor The new cursor to be used.
      */
@@ -91,7 +81,7 @@ public class CursorObjectAdapter extends ObjectAdapter {
     }
 
     /**
-     * Returns the {@link Cursor} backing the adapter.
+     * Gets the {@link Cursor} backing the adapter.
      */
      public final Cursor getCursor() {
         return mCursor;
@@ -118,7 +108,7 @@ public class CursorObjectAdapter extends ObjectAdapter {
     }
 
     /**
-     * Returns the {@link CursorMapper} used to convert {@link Cursor} rows into
+     * Gets the {@link CursorMapper} used to convert {@link Cursor} rows into
      * Objects.
      */
     public final CursorMapper getMapper() {
@@ -161,15 +151,14 @@ public class CursorObjectAdapter extends ObjectAdapter {
     }
 
     /**
-     * Returns true if the adapter, and hence the backing {@link Cursor}, is closed; false
-     * otherwise.
+     * Checks whether the adapter, and hence the backing {@link Cursor}, is closed.
      */
     public boolean isClosed() {
         return mCursor == null || mCursor.isClosed();
     }
 
     /**
-     * Removes an item from the cache. This will force the item to be re-read
+     * Remove an item from the cache. This will force the item to be re-read
      * from the data source the next time (@link #get(int)} is called.
      */
     protected final void invalidateCache(int index) {
@@ -177,7 +166,7 @@ public class CursorObjectAdapter extends ObjectAdapter {
     }
 
     /**
-     * Removes {@code count} items starting at {@code index}.
+     * Remove {@code count} items starting at {@code index}.
      */
     protected final void invalidateCache(int index, int count) {
         for (int limit = count + index; index < limit; index++) {

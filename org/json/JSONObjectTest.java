@@ -981,6 +981,7 @@ public class JSONObjectTest extends TestCase {
         assertTrue(JSONObject.wrap(new HashMap<String, String>()) instanceof JSONObject);
         assertTrue(JSONObject.wrap(Double.valueOf(0)) instanceof Double);
         assertTrue(JSONObject.wrap("hello") instanceof String);
+        assertTrue(JSONObject.wrap(java.nio.channels.Selector.open()) instanceof String);
     }
 
     // https://code.google.com/p/android/issues/detail?id=55114
@@ -1026,15 +1027,6 @@ public class JSONObjectTest extends TestCase {
             object.append(null, 5);
             fail();
         } catch (JSONException e) {
-        }
-    }
-
-    // https://code.google.com/p/android/issues/detail?id=103641
-    public void testInvalidUnicodeEscape() {
-        try {
-            new JSONObject("{\"q\":\"\\u\", \"r\":[]}");
-            fail();
-        } catch (JSONException expected) {
         }
     }
 }

@@ -16,8 +16,6 @@
 
 package android.graphics;
 
-import android.annotation.NonNull;
-
 /**
  * Shader used to draw a bitmap as a texture. The bitmap can be repeated or
  * mirrored by setting the tiling mode.
@@ -40,11 +38,13 @@ public class BitmapShader extends Shader {
      * @param tileX             The tiling mode for x to draw the bitmap in.
      * @param tileY             The tiling mode for y to draw the bitmap in.
      */
-    public BitmapShader(@NonNull Bitmap bitmap, TileMode tileX, TileMode tileY) {
+    public BitmapShader(Bitmap bitmap, TileMode tileX, TileMode tileY) {
         mBitmap = bitmap;
         mTileX = tileX;
         mTileY = tileY;
-        init(nativeCreate(bitmap, tileX.nativeInt, tileY.nativeInt));
+        final long b = bitmap.ni();
+        native_instance = nativeCreate(b, tileX.nativeInt, tileY.nativeInt);
+        native_shader = nativePostCreate(native_instance, b, tileX.nativeInt, tileY.nativeInt);
     }
 
     /**
@@ -57,6 +57,8 @@ public class BitmapShader extends Shader {
         return copy;
     }
 
-    private static native long nativeCreate(Bitmap bitmap, int shaderTileModeX,
+    private static native long nativeCreate(long native_bitmap, int shaderTileModeX,
             int shaderTileModeY);
+    private static native long nativePostCreate(long native_shader, long native_bitmap,
+            int shaderTileModeX, int shaderTileModeY);
 }

@@ -22,7 +22,6 @@ import android.content.ContextWrapper;
 import android.content.res.TypedArray;
 import android.graphics.Canvas;
 import android.graphics.Rect;
-import android.graphics.drawable.AnimationDrawable;
 import android.graphics.drawable.Drawable;
 import android.support.annotation.NonNull;
 import android.support.v4.app.FragmentActivity;
@@ -120,8 +119,7 @@ public class MediaRouteButton extends View {
     }
 
     public MediaRouteButton(Context context, AttributeSet attrs, int defStyleAttr) {
-        super(MediaRouterThemeHelper.createThemedContext(context, defStyleAttr), attrs,
-                defStyleAttr);
+        super(MediaRouterThemeHelper.createThemedContext(context, false), attrs, defStyleAttr);
         context = getContext();
 
         mRouter = MediaRouter.getInstance(context);
@@ -231,7 +229,7 @@ public class MediaRouteButton extends View {
         }
 
         MediaRouter.RouteInfo route = mRouter.getSelectedRoute();
-        if (route.isDefaultOrBluetooth() || !route.matchesSelector(mSelector)) {
+        if (route.isDefault() || !route.matchesSelector(mSelector)) {
             if (fm.findFragmentByTag(CHOOSER_FRAGMENT_TAG) != null) {
                 Log.w(TAG, "showDialog(): Route chooser dialog already showing!");
                 return false;
@@ -358,10 +356,7 @@ public class MediaRouteButton extends View {
         }
     }
 
-    /**
-     * Sets a drawable to use as the remote route indicator.
-     */
-    public void setRemoteIndicatorDrawable(Drawable d) {
+    private void setRemoteIndicatorDrawable(Drawable d) {
         if (mRemoteIndicator != null) {
             mRemoteIndicator.setCallback(null);
             unscheduleDrawable(mRemoteIndicator);
@@ -432,40 +427,40 @@ public class MediaRouteButton extends View {
         final int widthMode = MeasureSpec.getMode(widthMeasureSpec);
         final int heightMode = MeasureSpec.getMode(heightMeasureSpec);
 
-        final int width = Math.max(mMinWidth, mRemoteIndicator != null ?
-                mRemoteIndicator.getIntrinsicWidth() + getPaddingLeft() + getPaddingRight() : 0);
-        final int height = Math.max(mMinHeight, mRemoteIndicator != null ?
-                mRemoteIndicator.getIntrinsicHeight() + getPaddingTop() + getPaddingBottom() : 0);
+        final int minWidth = Math.max(mMinWidth,
+                mRemoteIndicator != null ? mRemoteIndicator.getIntrinsicWidth() : 0);
+        final int minHeight = Math.max(mMinHeight,
+                mRemoteIndicator != null ? mRemoteIndicator.getIntrinsicHeight() : 0);
 
-        int measuredWidth;
+        int width;
         switch (widthMode) {
             case MeasureSpec.EXACTLY:
-                measuredWidth = widthSize;
+                width = widthSize;
                 break;
             case MeasureSpec.AT_MOST:
-                measuredWidth = Math.min(widthSize, width);
+                width = Math.min(widthSize, minWidth + getPaddingLeft() + getPaddingRight());
                 break;
             default:
             case MeasureSpec.UNSPECIFIED:
-                measuredWidth = width;
+                width = minWidth + getPaddingLeft() + getPaddingRight();
                 break;
         }
 
-        int measuredHeight;
+        int height;
         switch (heightMode) {
             case MeasureSpec.EXACTLY:
-                measuredHeight = heightSize;
+                height = heightSize;
                 break;
             case MeasureSpec.AT_MOST:
-                measuredHeight = Math.min(heightSize, height);
+                height = Math.min(heightSize, minHeight + getPaddingTop() + getPaddingBottom());
                 break;
             default:
             case MeasureSpec.UNSPECIFIED:
-                measuredHeight = height;
+                height = minHeight + getPaddingTop() + getPaddingBottom();
                 break;
         }
 
-        setMeasuredDimension(measuredWidth, measuredHeight);
+        setMeasuredDimension(width, height);
     }
 
     @Override
@@ -492,8 +487,7 @@ public class MediaRouteButton extends View {
     private void refreshRoute() {
         if (mAttachedToWindow) {
             final MediaRouter.RouteInfo route = mRouter.getSelectedRoute();
-            final boolean isRemote = !route.isDefaultOrBluetooth()
-                    && route.matchesSelector(mSelector);
+            final boolean isRemote = !route.isDefault() && route.matchesSelector(mSelector);
             final boolean isConnecting = isRemote && route.isConnecting();
 
             boolean needsRefresh = false;
@@ -508,14 +502,10 @@ public class MediaRouteButton extends View {
 
             if (needsRefresh) {
                 refreshDrawableState();
-                if (mRemoteIndicator.getCurrent() instanceof AnimationDrawable) {
-                    AnimationDrawable curDrawable =
-                            (AnimationDrawable) mRemoteIndicator.getCurrent();
-                    if (!curDrawable.isRunning()) {
-                        curDrawable.start();
-                    }
-                }
             }
+
+            setEnabled(mRouter.isRouteAvailable(mSelector,
+                    MediaRouter.AVAILABILITY_FLAG_IGNORE_DEFAULT_ROUTE));
         }
     }
 

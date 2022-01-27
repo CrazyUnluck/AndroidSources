@@ -32,6 +32,7 @@ import android.view.MotionEvent;
 import android.view.View;
 import android.view.ViewConfiguration;
 import android.view.ViewGroup;
+import android.view.ViewParent;
 import android.view.ViewRootImpl;
 import android.view.WindowManager;
 import android.view.View.OnClickListener;
@@ -403,7 +404,7 @@ public class ZoomButtonsController implements View.OnTouchListener {
             // No longer care about configuration changes
             mContext.unregisterReceiver(mConfigurationChangedReceiver);
 
-            mWindowManager.removeViewImmediate(mContainer);
+            mWindowManager.removeView(mContainer);
             mHandler.removeCallbacks(mPostedVisibleInitializer);
 
             if (mCallback != null) {
@@ -490,7 +491,7 @@ public class ZoomButtonsController implements View.OnTouchListener {
                     setVisible(false);
                     return true;
                 }
-
+                
             } else {
                 dismissControlsDelayed(ZOOM_CONTROLS_TIMEOUT);
             }

@@ -16,7 +16,6 @@
 
 package android.net.rtp;
 
-import android.app.ActivityThread;
 import android.media.AudioManager;
 
 import java.util.HashMap;
@@ -152,8 +151,7 @@ public class AudioGroup {
                         codec.rtpmap, codec.fmtp);
                 long id = nativeAdd(stream.getMode(), stream.getSocket(),
                         stream.getRemoteAddress().getHostAddress(),
-                        stream.getRemotePort(), codecSpec, stream.getDtmfType(),
-                        ActivityThread.currentOpPackageName());
+                        stream.getRemotePort(), codecSpec, stream.getDtmfType());
                 mStreams.put(stream, id);
             } catch (NullPointerException e) {
                 throw new IllegalStateException(e);
@@ -162,7 +160,7 @@ public class AudioGroup {
     }
 
     private native long nativeAdd(int mode, int socket, String remoteAddress,
-            int remotePort, String codecSpec, int dtmfType, String opPackageName);
+            int remotePort, String codecSpec, int dtmfType);
 
     // Package-private method used by AudioStream.join().
     synchronized void remove(AudioStream stream) {

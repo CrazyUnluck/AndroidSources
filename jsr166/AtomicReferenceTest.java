@@ -8,21 +8,10 @@
 
 package jsr166;
 
+import junit.framework.*;
 import java.util.concurrent.atomic.AtomicReference;
 
-import junit.framework.Test;
-import junit.framework.TestSuite;
-
 public class AtomicReferenceTest extends JSR166TestCase {
-    // android-note: Removed because the CTS runner does a bad job of
-    // retrying tests that have suite() declarations.
-    //
-    // public static void main(String[] args) {
-    //     main(suite(), args);
-    // }
-    // public static Test suite() {
-    //     return new TestSuite(AtomicReferenceTest.class);
-    // }
 
     /**
      * constructor initializes to given value
@@ -103,10 +92,10 @@ public class AtomicReferenceTest extends JSR166TestCase {
      */
     public void testWeakCompareAndSet() {
         AtomicReference ai = new AtomicReference(one);
-        do {} while (!ai.weakCompareAndSet(one, two));
-        do {} while (!ai.weakCompareAndSet(two, m4));
+        while (!ai.weakCompareAndSet(one, two));
+        while (!ai.weakCompareAndSet(two, m4));
         assertSame(m4, ai.get());
-        do {} while (!ai.weakCompareAndSet(m4, seven));
+        while (!ai.weakCompareAndSet(m4, seven));
         assertSame(seven, ai.get());
     }
 

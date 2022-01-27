@@ -16,7 +16,6 @@
 
 package android.view;
 
-import android.annotation.StringRes;
 import android.app.Activity;
 import android.content.ComponentName;
 import android.content.Intent;
@@ -149,7 +148,7 @@ public interface Menu {
      * @param titleRes Resource identifier of title string.
      * @return The newly added menu item.
      */
-    public MenuItem add(@StringRes int titleRes);
+    public MenuItem add(int titleRes);
 
     /**
      * Add a new item to the menu. This item displays the given title for its
@@ -183,7 +182,7 @@ public interface Menu {
      * @param titleRes Resource identifier of title string.
      * @return The newly added menu item.
      */
-    public MenuItem add(int groupId, int itemId, int order, @StringRes int titleRes);
+    public MenuItem add(int groupId, int itemId, int order, int titleRes);
 
     /**
      * Add a new sub-menu to the menu. This item displays the given title for
@@ -203,7 +202,7 @@ public interface Menu {
      * @param titleRes Resource identifier of title string.
      * @return The newly added sub-menu
      */
-    SubMenu addSubMenu(@StringRes final int titleRes);
+    SubMenu addSubMenu(final int titleRes);
 
     /**
      * Add a new sub-menu to the menu. This item displays the given
@@ -240,7 +239,7 @@ public interface Menu {
      * @param titleRes Resource identifier of title string.
      * @return The newly added sub-menu
      */
-    SubMenu addSubMenu(int groupId, int itemId, int order, @StringRes int titleRes);
+    SubMenu addSubMenu(int groupId, int itemId, int order, int titleRes);
 
     /**
      * Add a group of menu items corresponding to actions that can be performed

@@ -16,27 +16,22 @@
 
 package com.android.internal.telephony.uicc;
 
-import android.content.BroadcastReceiver;
+import static com.android.internal.telephony.TelephonyProperties.PROPERTY_ICC_OPERATOR_ALPHA;
+import static com.android.internal.telephony.TelephonyProperties.PROPERTY_ICC_OPERATOR_ISO_COUNTRY;
+import static com.android.internal.telephony.TelephonyProperties.PROPERTY_ICC_OPERATOR_NUMERIC;
 import android.content.Context;
-import android.content.Intent;
-import android.content.IntentFilter;
 import android.os.AsyncResult;
 import android.os.Message;
-import android.telephony.CarrierConfigManager;
+import android.os.SystemProperties;
 import android.telephony.PhoneNumberUtils;
 import android.telephony.SmsMessage;
-import android.telephony.SubscriptionInfo;
 import android.text.TextUtils;
 import android.telephony.Rlog;
-import android.content.res.Resources;
 
 import com.android.internal.telephony.CommandsInterface;
 import com.android.internal.telephony.MccTable;
 import com.android.internal.telephony.SmsConstants;
-import com.android.internal.telephony.SubscriptionController;
 import com.android.internal.telephony.gsm.SimTlv;
-import com.android.internal.telephony.uicc.IccCardApplicationStatus.AppState;
-import com.android.internal.telephony.uicc.IccCardApplicationStatus.AppType;
 
 import java.io.FileDescriptor;
 import java.io.PrintWriter;
@@ -60,7 +55,7 @@ public class SIMRecords extends IccRecords {
 
     // ***** Cached SIM State; cleared on channel close
 
-    private int mCallForwardingStatus;
+    private boolean mCallForwardingEnabled;
 
 
     /**
@@ -81,8 +76,6 @@ public class SIMRecords extends IccRecords {
     byte[] mEfCff = null;
     byte[] mEfCfis = null;
 
-    byte[] mEfLi = null;
-    byte[] mEfPl = null;
 
     int mSpnDisplayCondition;
     // Numeric network codes listed in TS 51.011 EF[SPDI]
@@ -97,7 +90,7 @@ public class SIMRecords extends IccRecords {
         return "SimRecords: " + super.toString()
                 + " mVmConfig" + mVmConfig
                 + " mSpnOverride=" + "mSpnOverride"
-                + " callForwardingEnabled=" + mCallForwardingStatus
+                + " callForwardingEnabled=" + mCallForwardingEnabled
                 + " spnState=" + mSpnState
                 + " mCphsInfo=" + mCphsInfo
                 + " mCspPlmnEnabled=" + mCspPlmnEnabled
@@ -165,9 +158,6 @@ public class SIMRecords extends IccRecords {
     private static final int EVENT_GET_CFIS_DONE = 32;
     private static final int EVENT_GET_CSP_CPHS_DONE = 33;
     private static final int EVENT_GET_GID1_DONE = 34;
-    private static final int EVENT_APP_LOCKED = 35;
-    private static final int EVENT_GET_GID2_DONE = 36;
-    private static final int EVENT_CARRIER_CONFIG_CHANGED = 37;
 
     // Lookup table for carriers known to produce SIMs which incorrectly indicate MNC length.
 
@@ -212,22 +202,8 @@ public class SIMRecords extends IccRecords {
         // Start off by setting empty state
         resetRecords();
         mParentApp.registerForReady(this, EVENT_APP_READY, null);
-        mParentApp.registerForLocked(this, EVENT_APP_LOCKED, null);
         if (DBG) log("SIMRecords X ctor this=" + this);
-
-        IntentFilter intentfilter = new IntentFilter();
-        intentfilter.addAction(CarrierConfigManager.ACTION_CARRIER_CONFIG_CHANGED);
-        c.registerReceiver(mReceiver, intentfilter);
     }
-
-    private final BroadcastReceiver mReceiver = new BroadcastReceiver() {
-        @Override
-        public void onReceive(Context context, Intent intent) {
-            if (intent.getAction().equals(CarrierConfigManager.ACTION_CARRIER_CONFIG_CHANGED)) {
-                sendMessage(obtainMessage(EVENT_CARRIER_CONFIG_CHANGED));
-            }
-        }
-    };
 
     @Override
     public void dispose() {
@@ -236,7 +212,6 @@ public class SIMRecords extends IccRecords {
         mCi.unregisterForIccRefresh(this);
         mCi.unSetOnSmsOnSim(this);
         mParentApp.unregisterForReady(this);
-        mParentApp.unregisterForLocked(this);
         resetRecords();
         super.dispose();
     }
@@ -250,10 +225,9 @@ public class SIMRecords extends IccRecords {
         mImsi = null;
         mMsisdn = null;
         mVoiceMailNum = null;
+        mCountVoiceMessages = 0;
         mMncLength = UNINITIALIZED;
-        log("setting0 mMncLength" + mMncLength);
         mIccId = null;
-        mFullIccId = null;
         // -1 means no EF_SPN found; treat accordingly.
         mSpnDisplayCondition = -1;
         mEfMWIS = null;
@@ -261,15 +235,13 @@ public class SIMRecords extends IccRecords {
         mSpdiNetworks = null;
         mPnnHomeName = null;
         mGid1 = null;
-        mGid2 = null;
 
         mAdnCache.reset();
 
         log("SIMRecords: onRadioOffOrNotAvailable set 'gsm.sim.operator.numeric' to operator=null");
-        log("update icc_operator_numeric=" + null);
-        mTelephonyManager.setSimOperatorNumericForPhone(mParentApp.getPhoneId(), "");
-        mTelephonyManager.setSimOperatorNameForPhone(mParentApp.getPhoneId(), "");
-        mTelephonyManager.setSimCountryIsoForPhone(mParentApp.getPhoneId(), "");
+        SystemProperties.set(PROPERTY_ICC_OPERATOR_NUMERIC, null);
+        SystemProperties.set(PROPERTY_ICC_OPERATOR_ALPHA, null);
+        SystemProperties.set(PROPERTY_ICC_OPERATOR_ISO_COUNTRY, null);
 
         // recordsRequested is set to false indicating that the SIM
         // read requests made so far are not valid. This is set to
@@ -299,30 +271,8 @@ public class SIMRecords extends IccRecords {
     }
 
     @Override
-    public String getGid2() {
-        return mGid2;
-    }
-
-    @Override
     public UsimServiceTable getUsimServiceTable() {
         return mUsimServiceTable;
-    }
-
-    private int getExtFromEf(int ef) {
-        int ext;
-        switch (ef) {
-            case EF_MSISDN:
-                /* For USIM apps use EXT5. (TS 31.102 Section 4.2.37) */
-                if (mParentApp.getType() == AppType.APPTYPE_USIM) {
-                    ext = EF_EXT5;
-                } else {
-                    ext = EF_EXT1;
-                }
-                break;
-            default:
-                ext = EF_EXT1;
-        }
-        return ext;
     }
 
     /**
@@ -344,16 +294,15 @@ public class SIMRecords extends IccRecords {
     public void setMsisdnNumber(String alphaTag, String number,
             Message onComplete) {
 
-        // If the SIM card is locked by PIN, we will set EF_MSISDN fail.
-        // In that case, msisdn and msisdnTag should not be update.
-        mNewMsisdn = number;
-        mNewMsisdnTag = alphaTag;
+        mMsisdn = number;
+        mMsisdnTag = alphaTag;
 
-        if(DBG) log("Set MSISDN: " + mNewMsisdnTag + " " + /*mNewMsisdn*/ "xxxxxxx");
+        if(DBG) log("Set MSISDN: " + mMsisdnTag + " " + /*mMsisdn*/ "xxxxxxx");
 
-        AdnRecord adn = new AdnRecord(mNewMsisdnTag, mNewMsisdn);
 
-        new AdnRecordLoader(mFh).updateEF(adn, EF_MSISDN, getExtFromEf(EF_MSISDN), 1, null,
+        AdnRecord adn = new AdnRecord(mMsisdnTag, mMsisdn);
+
+        new AdnRecordLoader(mFh).updateEF(adn, EF_MSISDN, EF_EXT1, 1, null,
                 obtainMessage(EVENT_SET_MSISDN_DONE, onComplete));
     }
 
@@ -446,13 +395,26 @@ public class SIMRecords extends IccRecords {
             return;
         }
 
+        // range check
+        if (countWaiting < 0) {
+            countWaiting = -1;
+        } else if (countWaiting > 0xff) {
+            // TS 23.040 9.2.3.24.2
+            // "The value 255 shall be taken to mean 255 or greater"
+            countWaiting = 0xff;
+        }
+
+        mCountVoiceMessages = countWaiting;
+
+        mRecordsEventsRegistrants.notifyResult(EVENT_MWI);
+
         try {
             if (mEfMWIS != null) {
                 // TS 51.011 10.3.45
 
                 // lsb of byte 0 is 'voicemail' status
                 mEfMWIS[0] = (byte)((mEfMWIS[0] & 0xfe)
-                                    | (countWaiting == 0 ? 0 : 1));
+                                    | (mCountVoiceMessages == 0 ? 0 : 1));
 
                 // byte 1 is the number of voice messages waiting
                 if (countWaiting < 0) {
@@ -465,13 +427,14 @@ public class SIMRecords extends IccRecords {
 
                 mFh.updateEFLinearFixed(
                     EF_MWIS, 1, mEfMWIS, null,
-                    obtainMessage (EVENT_UPDATE_DONE, EF_MWIS, 0));
+                    obtainMessage (EVENT_UPDATE_DONE, EF_MWIS));
             }
 
             if (mEfCPHS_MWI != null) {
                     // Refer CPHS4_2.WW6 B4.2.3
                 mEfCPHS_MWI[0] = (byte)((mEfCPHS_MWI[0] & 0xf0)
-                            | (countWaiting == 0 ? 0x5 : 0xa));
+                            | (mCountVoiceMessages == 0 ? 0x5 : 0xa));
+
                 mFh.updateEFTransparent(
                     EF_VOICE_MAIL_INDICATOR_CPHS, mEfCPHS_MWI,
                     obtainMessage (EVENT_UPDATE_DONE, EF_VOICE_MAIL_INDICATOR_CPHS));
@@ -487,43 +450,12 @@ public class SIMRecords extends IccRecords {
         return ((data != null) && (data[0] >= 1) && (data[0] <= 4));
     }
 
-    public int getVoiceMessageCount() {
-        boolean voiceMailWaiting = false;
-        int countVoiceMessages = 0;
-        if (mEfMWIS != null) {
-            // Use this data if the EF[MWIS] exists and
-            // has been loaded
-            // Refer TS 51.011 Section 10.3.45 for the content description
-            voiceMailWaiting = ((mEfMWIS[0] & 0x01) != 0);
-            countVoiceMessages = mEfMWIS[1] & 0xff;
-
-            if (voiceMailWaiting && countVoiceMessages == 0) {
-                // Unknown count = -1
-                countVoiceMessages = -1;
-            }
-            if(DBG) log(" VoiceMessageCount from SIM MWIS = " + countVoiceMessages);
-        } else if (mEfCPHS_MWI != null) {
-            // use voice mail count from CPHS
-            int indicator = (int) (mEfCPHS_MWI[0] & 0xf);
-
-            // Refer CPHS4_2.WW6 B4.2.3
-            if (indicator == 0xA) {
-                // Unknown count = -1
-                countVoiceMessages = -1;
-            } else if (indicator == 0x5) {
-                countVoiceMessages = 0;
-            }
-            if(DBG) log(" VoiceMessageCount from SIM CPHS = " + countVoiceMessages);
-        }
-        return countVoiceMessages;
-    }
-
     /**
      * {@inheritDoc}
      */
     @Override
-    public int getVoiceCallForwardingFlag() {
-        return mCallForwardingStatus;
+    public boolean getVoiceCallForwardingFlag() {
+        return mCallForwardingEnabled;
     }
 
     /**
@@ -534,8 +466,7 @@ public class SIMRecords extends IccRecords {
 
         if (line != 1) return; // only line 1 is supported
 
-        mCallForwardingStatus = enable ? CALL_FORWARDING_STATUS_ENABLED :
-                CALL_FORWARDING_STATUS_DISABLED;
+        mCallForwardingEnabled = enable;
 
         mRecordsEventsRegistrants.notifyResult(EVENT_CFI);
 
@@ -647,10 +578,6 @@ public class SIMRecords extends IccRecords {
                 onReady();
                 break;
 
-            case EVENT_APP_LOCKED:
-                onLocked();
-                break;
-
             /* IO events */
             case EVENT_GET_IMSI_DONE:
                 isRecordLoadResponse = true;
@@ -671,8 +598,7 @@ public class SIMRecords extends IccRecords {
                     mImsi = null;
                 }
 
-                log("IMSI: mMncLength=" + mMncLength);
-                log("IMSI: " + mImsi.substring(0, 6) + "xxxxxxx");
+                log("IMSI: " + /* imsi.substring(0, 6) +*/ "xxxxxxx");
 
                 if (((mMncLength == UNKNOWN) || (mMncLength == 2)) &&
                         ((mImsi != null) && (mImsi.length() >= 6))) {
@@ -680,7 +606,6 @@ public class SIMRecords extends IccRecords {
                     for (String mccmnc : MCCMNC_CODES_HAVING_3DIGITS_MNC) {
                         if (mccmnc.equals(mccmncCode)) {
                             mMncLength = 3;
-                            log("IMSI: setting1 mMncLength=" + mMncLength);
                             break;
                         }
                     }
@@ -692,15 +617,13 @@ public class SIMRecords extends IccRecords {
                     try {
                         int mcc = Integer.parseInt(mImsi.substring(0,3));
                         mMncLength = MccTable.smallestDigitsMccForMnc(mcc);
-                        log("setting2 mMncLength=" + mMncLength);
                     } catch (NumberFormatException e) {
                         mMncLength = UNKNOWN;
-                        loge("Corrupt IMSI! setting3 mMncLength=" + mMncLength);
+                        loge("Corrupt IMSI!");
                     }
                 }
 
                 if (mMncLength != UNKNOWN && mMncLength != UNINITIALIZED) {
-                    log("update mccmnc=" + mImsi.substring(0, 3 + mMncLength));
                     // finally have both the imsi and the mncLength and can parse the imsi properly
                     MccTable.updateMccMncConfiguration(mContext,
                             mImsi.substring(0, 3 + mMncLength), false);
@@ -822,12 +745,6 @@ public class SIMRecords extends IccRecords {
                 isRecordLoadResponse = false;
                 ar = (AsyncResult)msg.obj;
 
-                if (ar.exception == null) {
-                    mMsisdn = mNewMsisdn;
-                    mMsisdnTag = mNewMsisdnTag;
-                    log("Success to update EF[MSISDN]");
-                }
-
                 if (ar.userObj != null) {
                     AsyncResult.forMessage(((Message) ar.userObj)).exception
                             = ar.exception;
@@ -841,21 +758,30 @@ public class SIMRecords extends IccRecords {
                 ar = (AsyncResult)msg.obj;
                 data = (byte[])ar.result;
 
-                if(DBG) log("EF_MWIS : " + IccUtils.bytesToHexString(data));
-
                 if (ar.exception != null) {
-                    if(DBG) log("EVENT_GET_MWIS_DONE exception = "
-                            + ar.exception);
                     break;
                 }
 
-                if ((data[0] & 0xff) == 0xff) {
-                    if(DBG) log("SIMRecords: Uninitialized record MWIS");
-                    break;
-                }
+                log("EF_MWIS: " + IccUtils.bytesToHexString(data));
 
                 mEfMWIS = data;
-                break;
+
+                if ((data[0] & 0xff) == 0xff) {
+                    log("Uninitialized record MWIS");
+                    break;
+                }
+
+                // Refer TS 51.011 Section 10.3.45 for the content description
+                boolean voiceMailWaiting = ((data[0] & 0x01) != 0);
+                mCountVoiceMessages = data[1] & 0xff;
+
+                if (voiceMailWaiting && mCountVoiceMessages == 0) {
+                    // Unknown count = -1
+                    mCountVoiceMessages = -1;
+                }
+
+                mRecordsEventsRegistrants.notifyResult(EVENT_MWI);
+            break;
 
             case EVENT_GET_VOICE_MAIL_INDICATOR_CPHS_DONE:
                 isRecordLoadResponse = true;
@@ -863,16 +789,29 @@ public class SIMRecords extends IccRecords {
                 ar = (AsyncResult)msg.obj;
                 data = (byte[])ar.result;
 
-                if(DBG) log("EF_CPHS_MWI: " + IccUtils.bytesToHexString(data));
-
                 if (ar.exception != null) {
-                    if(DBG) log("EVENT_GET_VOICE_MAIL_INDICATOR_CPHS_DONE exception = "
-                            + ar.exception);
                     break;
                 }
 
                 mEfCPHS_MWI = data;
-                break;
+
+                // Use this data if the EF[MWIS] exists and
+                // has been loaded
+
+                if (mEfMWIS == null) {
+                    int indicator = data[0] & 0xf;
+
+                    // Refer CPHS4_2.WW6 B4.2.3
+                    if (indicator == 0xA) {
+                        // Unknown count = -1
+                        mCountVoiceMessages = -1;
+                    } else if (indicator == 0x5) {
+                        mCountVoiceMessages = 0;
+                    }
+
+                    mRecordsEventsRegistrants.notifyResult(EVENT_MWI);
+                }
+            break;
 
             case EVENT_GET_ICCID_DONE:
                 isRecordLoadResponse = true;
@@ -885,9 +824,8 @@ public class SIMRecords extends IccRecords {
                 }
 
                 mIccId = IccUtils.bcdToString(data, 0, data.length);
-                mFullIccId = IccUtils.bchToString(data, 0, data.length);
 
-                log("iccid: " + SubscriptionInfo.givePrintableIccid(mFullIccId));
+                log("iccid: " + mIccId);
 
             break;
 
@@ -916,24 +854,17 @@ public class SIMRecords extends IccRecords {
                     }
 
                     mMncLength = data[3] & 0xf;
-                    log("setting4 mMncLength=" + mMncLength);
 
                     if (mMncLength == 0xf) {
                         mMncLength = UNKNOWN;
-                        log("setting5 mMncLength=" + mMncLength);
-                    } else if (mMncLength != 2 && mMncLength != 3) {
-                        mMncLength = UNINITIALIZED;
-                        log("setting5 mMncLength=" + mMncLength);
                     }
                 } finally {
                     if (((mMncLength == UNINITIALIZED) || (mMncLength == UNKNOWN) ||
                             (mMncLength == 2)) && ((mImsi != null) && (mImsi.length() >= 6))) {
                         String mccmncCode = mImsi.substring(0, 6);
-                        log("mccmncCode=" + mccmncCode);
                         for (String mccmnc : MCCMNC_CODES_HAVING_3DIGITS_MNC) {
                             if (mccmnc.equals(mccmncCode)) {
                                 mMncLength = 3;
-                                log("setting6 mMncLength=" + mMncLength);
                                 break;
                             }
                         }
@@ -945,21 +876,20 @@ public class SIMRecords extends IccRecords {
                                 int mcc = Integer.parseInt(mImsi.substring(0,3));
 
                                 mMncLength = MccTable.smallestDigitsMccForMnc(mcc);
-                                log("setting7 mMncLength=" + mMncLength);
                             } catch (NumberFormatException e) {
                                 mMncLength = UNKNOWN;
-                                loge("Corrupt IMSI! setting8 mMncLength=" + mMncLength);
+                                loge("Corrupt IMSI!");
                             }
                         } else {
                             // Indicate we got this info, but it didn't contain the length.
                             mMncLength = UNKNOWN;
-                            log("MNC length not present in EF_AD setting9 mMncLength=" + mMncLength);
+
+                            log("MNC length not present in EF_AD");
                         }
                     }
                     if (mImsi != null && mMncLength != UNKNOWN) {
                         // finally have both imsi and the length of the mnc and can parse
                         // the imsi properly
-                        log("update mccmnc=" + mImsi.substring(0, 3 + mMncLength));
                         MccTable.updateMccMncConfiguration(mContext,
                                 mImsi.substring(0, 3 + mMncLength), false);
                     }
@@ -979,12 +909,21 @@ public class SIMRecords extends IccRecords {
                 data = (byte[]) ar.result;
 
                 if (ar.exception != null) {
-                    mEfCff = null;
-                } else {
-                    log("EF_CFF_CPHS: " + IccUtils.bytesToHexString(data));
-                    mEfCff = data;
+                    break;
                 }
 
+                log("EF_CFF_CPHS: " + IccUtils.bytesToHexString(data));
+                mEfCff = data;
+
+                // if EF_CFIS is valid, prefer it to EF_CFF_CPHS
+                if (!validEfCfis(mEfCfis)) {
+                    mCallForwardingEnabled =
+                        ((data[0] & CFF_LINE1_MASK) == CFF_UNCONDITIONAL_ACTIVE);
+
+                    mRecordsEventsRegistrants.notifyResult(EVENT_CFI);
+                } else {
+                    log("EVENT_GET_CFF_DONE: EF_CFIS is valid, ignoring EF_CFF_CPHS");
+                }
                 break;
 
             case EVENT_GET_SPDI_DONE:
@@ -1102,7 +1041,6 @@ public class SIMRecords extends IccRecords {
                 isRecordLoadResponse = false;
                 ar = (AsyncResult)msg.obj;
 
-                if (DBG) log("EVENT_SET_MBDN_DONE ex:" + ar.exception);
                 if (ar.exception == null) {
                     mVoiceMailNum = mNewVoiceMailNum;
                     mVoiceMailTag = mNewVoiceMailTag;
@@ -1135,18 +1073,8 @@ public class SIMRecords extends IccRecords {
                                     onCphsCompleted));
                 } else {
                     if (ar.userObj != null) {
-                        Resources resource = Resources.getSystem();
-                        if (ar.exception != null && resource.getBoolean(com.android.internal.
-                                    R.bool.editable_voicemailnumber)) {
-                            // GsmCdmaPhone will store vm number on device
-                            // when IccVmNotSupportedException occurred
-                            AsyncResult.forMessage(((Message) ar.userObj)).exception
-                                = new IccVmNotSupportedException(
-                                        "Update SIM voice mailbox error");
-                        } else {
-                            AsyncResult.forMessage(((Message) ar.userObj)).exception
+                        AsyncResult.forMessage(((Message) ar.userObj)).exception
                                 = ar.exception;
-                        }
                         ((Message) ar.userObj).sendToTarget();
                     }
                 }
@@ -1183,12 +1111,22 @@ public class SIMRecords extends IccRecords {
                 data = (byte[])ar.result;
 
                 if (ar.exception != null) {
-                    mEfCfis = null;
-                } else {
-                    log("EF_CFIS: " + IccUtils.bytesToHexString(data));
-                    mEfCfis = data;
+                    break;
                 }
 
+                log("EF_CFIS: " + IccUtils.bytesToHexString(data));
+
+                if (validEfCfis(data)) {
+                    mEfCfis = data;
+
+                    // Refer TS 51.011 Section 10.3.46 for the content description
+                    mCallForwardingEnabled = ((data[1] & 0x01) != 0);
+                    log("EF_CFIS: callForwardingEnabled=" + mCallForwardingEnabled);
+
+                    mRecordsEventsRegistrants.notifyResult(EVENT_CFI);
+                } else {
+                    log("EF_CFIS: invalid data=" + IccUtils.bytesToHexString(data));
+                }
                 break;
 
             case EVENT_GET_CSP_CPHS_DONE:
@@ -1223,26 +1161,6 @@ public class SIMRecords extends IccRecords {
 
                 break;
 
-            case EVENT_GET_GID2_DONE:
-                isRecordLoadResponse = true;
-
-                ar = (AsyncResult)msg.obj;
-                data =(byte[])ar.result;
-
-                if (ar.exception != null) {
-                    loge("Exception in get GID2 " + ar.exception);
-                    mGid2 = null;
-                    break;
-                }
-                mGid2 = IccUtils.bytesToHexString(data);
-                log("GID2: " + mGid2);
-
-                break;
-
-            case EVENT_CARRIER_CONFIG_CHANGED:
-                handleCarrierNameOverride();
-                break;
-
             default:
                 super.handleMessage(msg);   // IccRecords handles generic record load responses
 
@@ -1254,28 +1172,6 @@ public class SIMRecords extends IccRecords {
             if (isRecordLoadResponse) {
                 onRecordLoaded();
             }
-        }
-    }
-
-    private class EfPlLoaded implements IccRecordLoaded {
-        public String getEfName() {
-            return "EF_PL";
-        }
-
-        public void onRecordLoaded(AsyncResult ar) {
-            mEfPl = (byte[]) ar.result;
-            if (DBG) log("EF_PL=" + IccUtils.bytesToHexString(mEfPl));
-        }
-    }
-
-    private class EfUsimLiLoaded implements IccRecordLoaded {
-        public String getEfName() {
-            return "EF_LI";
-        }
-
-        public void onRecordLoaded(AsyncResult ar) {
-            mEfLi = (byte[]) ar.result;
-            if (DBG) log("EF_LI=" + IccUtils.bytesToHexString(mEfLi));
         }
     }
 
@@ -1296,21 +1192,6 @@ public class SIMRecords extends IccRecords {
                 log("[CSP] SIM Refresh for EF_CSP_CPHS");
                 mFh.loadEFTransparent(EF_CSP_CPHS,
                         obtainMessage(EVENT_GET_CSP_CPHS_DONE));
-                break;
-            case EF_FDN:
-                if (DBG) log("SIM Refresh called for EF_FDN");
-                mParentApp.queryFdn();
-                break;
-            case EF_MSISDN:
-                mRecordsToLoad++;
-                log("SIM Refresh called for EF_MSISDN");
-                new AdnRecordLoader(mFh).loadFromEF(EF_MSISDN, getExtFromEf(EF_MSISDN), 1,
-                        obtainMessage(EVENT_GET_MSISDN_DONE));
-                break;
-            case EF_CFIS:
-            case EF_CFF_CPHS:
-                log("SIM Refresh called for EF_CFIS or EF_CFF_CPHS");
-                loadCallForwardingRecords();
                 break;
             default:
                 // For now, fetch all records if this is not a
@@ -1345,8 +1226,16 @@ public class SIMRecords extends IccRecords {
                 onIccRefreshInit();
                 break;
             case IccRefreshResponse.REFRESH_RESULT_RESET:
-                // Refresh reset is handled by the UiccCard object.
                 if (DBG) log("handleSimRefresh with SIM_REFRESH_RESET");
+                mCi.setRadioPower(false, null);
+                /* Note: no need to call setRadioPower(true).  Assuming the desired
+                * radio power state is still ON (as tracked by ServiceStateTracker),
+                * ServiceStateTracker will call setRadioPower when it receives the
+                * RADIO_STATE_CHANGED notification for the power off.  And if the
+                * desired power state has changed in the interim, we don't want to
+                * override it with an unconditional power on.
+                */
+                mAdnCache.reset();
                 break;
             default:
                 // unknown refresh operation
@@ -1356,8 +1245,8 @@ public class SIMRecords extends IccRecords {
     }
 
     /**
-     * Dispatch 3GPP format message to registrant ({@code GsmCdmaPhone}) to pass to the 3GPP SMS
-     * dispatcher for delivery.
+     * Dispatch 3GPP format message to registrant ({@code GSMPhone} or {@code CDMALTEPhone})
+     * to pass to the 3GPP SMS dispatcher for delivery.
      */
     private int dispatchGsmMessage(SmsMessage message) {
         mNewSmsRegistrants.notifyResult(message);
@@ -1435,42 +1324,9 @@ public class SIMRecords extends IccRecords {
         }
     }
 
-    private void setVoiceCallForwardingFlagFromSimRecords() {
-        if (validEfCfis(mEfCfis)) {
-            // Refer TS 51.011 Section 10.3.46 for the content description
-            mCallForwardingStatus = (mEfCfis[1] & 0x01);
-            log("EF_CFIS: callForwardingEnabled=" + mCallForwardingStatus);
-        } else if (mEfCff != null) {
-            mCallForwardingStatus =
-                    ((mEfCff[0] & CFF_LINE1_MASK) == CFF_UNCONDITIONAL_ACTIVE) ?
-                            CALL_FORWARDING_STATUS_ENABLED : CALL_FORWARDING_STATUS_DISABLED;
-            log("EF_CFF: callForwardingEnabled=" + mCallForwardingStatus);
-        } else {
-            mCallForwardingStatus = CALL_FORWARDING_STATUS_UNKNOWN;
-            log("EF_CFIS and EF_CFF not valid. callForwardingEnabled=" + mCallForwardingStatus);
-        }
-    }
-
     @Override
     protected void onAllRecordsLoaded() {
         if (DBG) log("record load complete");
-
-        Resources resource = Resources.getSystem();
-        if (resource.getBoolean(com.android.internal.R.bool.config_use_sim_language_file)) {
-            setSimLanguage(mEfLi, mEfPl);
-        } else {
-            if (DBG) log ("Not using EF LI/EF PL");
-        }
-
-        setVoiceCallForwardingFlagFromSimRecords();
-
-        if (mParentApp.getState() == AppState.APPSTATE_PIN ||
-               mParentApp.getState() == AppState.APPSTATE_PUK) {
-            // reset recordsRequested, since sim is not loaded really
-            mRecordsRequested = false;
-            // lock state, only update language
-            return ;
-        }
 
         // Some fields require more than one SIM record to set
 
@@ -1478,25 +1334,21 @@ public class SIMRecords extends IccRecords {
         if (!TextUtils.isEmpty(operator)) {
             log("onAllRecordsLoaded set 'gsm.sim.operator.numeric' to operator='" +
                     operator + "'");
-            log("update icc_operator_numeric=" + operator);
-            mTelephonyManager.setSimOperatorNumericForPhone(
-                    mParentApp.getPhoneId(), operator);
-            final SubscriptionController subController = SubscriptionController.getInstance();
-            subController.setMccMnc(operator, subController.getDefaultSubId());
+            SystemProperties.set(PROPERTY_ICC_OPERATOR_NUMERIC, operator);
         } else {
             log("onAllRecordsLoaded empty 'gsm.sim.operator.numeric' skipping");
         }
 
         if (!TextUtils.isEmpty(mImsi)) {
-            log("onAllRecordsLoaded set mcc imsi" + (VDBG ? ("=" + mImsi) : ""));
-            mTelephonyManager.setSimCountryIsoForPhone(
-                    mParentApp.getPhoneId(), MccTable.countryCodeForMcc(
-                    Integer.parseInt(mImsi.substring(0,3))));
+            log("onAllRecordsLoaded set mcc imsi=" + mImsi);
+            SystemProperties.set(PROPERTY_ICC_OPERATOR_ISO_COUNTRY,
+                    MccTable.countryCodeForMcc(Integer.parseInt(mImsi.substring(0,3))));
         } else {
             log("onAllRecordsLoaded empty imsi skipping setting mcc");
         }
 
         setVoiceMailByCountry(operator);
+        setSpnFromConfig(operator);
 
         mRecordsLoadedRegistrants.notifyRegistrants(
             new AsyncResult(null, null, null));
@@ -1504,26 +1356,9 @@ public class SIMRecords extends IccRecords {
 
     //***** Private methods
 
-    private void handleCarrierNameOverride() {
-        CarrierConfigManager configLoader = (CarrierConfigManager)
-                mContext.getSystemService(Context.CARRIER_CONFIG_SERVICE);
-        if (configLoader != null && configLoader.getConfig().getBoolean(
-                CarrierConfigManager.KEY_CARRIER_NAME_OVERRIDE_BOOL)) {
-            String carrierName = configLoader.getConfig().getString(
-                    CarrierConfigManager.KEY_CARRIER_NAME_STRING);
-            setServiceProviderName(carrierName);
-            mTelephonyManager.setSimOperatorNameForPhone(mParentApp.getPhoneId(),
-                    carrierName);
-        } else {
-            setSpnFromConfig(getOperatorNumeric());
-        }
-    }
-
     private void setSpnFromConfig(String carrier) {
         if (mSpnOverride.containsCarrier(carrier)) {
-            setServiceProviderName(mSpnOverride.getSpn(carrier));
-            mTelephonyManager.setSimOperatorNameForPhone(
-                    mParentApp.getPhoneId(), getServiceProviderName());
+            mSpn = mSpnOverride.getSpn(carrier);
         }
     }
 
@@ -1541,32 +1376,6 @@ public class SIMRecords extends IccRecords {
         fetchSimRecords();
     }
 
-    private void onLocked() {
-        if (DBG) log("only fetch EF_LI and EF_PL in lock state");
-        loadEfLiAndEfPl();
-    }
-
-    private void loadEfLiAndEfPl() {
-        if (mParentApp.getType() == AppType.APPTYPE_USIM) {
-            mRecordsRequested = true;
-            mFh.loadEFTransparent(EF_LI,
-                    obtainMessage(EVENT_GET_ICC_RECORD_DONE, new EfUsimLiLoaded()));
-            mRecordsToLoad++;
-
-            mFh.loadEFTransparent(EF_PL,
-                    obtainMessage(EVENT_GET_ICC_RECORD_DONE, new EfPlLoaded()));
-            mRecordsToLoad++;
-        }
-    }
-
-    private void loadCallForwardingRecords() {
-        mRecordsRequested = true;
-        mFh.loadEFLinearFixed(EF_CFIS, 1, obtainMessage(EVENT_GET_CFIS_DONE));
-        mRecordsToLoad++;
-        mFh.loadEFTransparent(EF_CFF_CPHS, obtainMessage(EVENT_GET_CFF_DONE));
-        mRecordsToLoad++;
-    }
-
     protected void fetchSimRecords() {
         mRecordsRequested = true;
 
@@ -1580,7 +1389,7 @@ public class SIMRecords extends IccRecords {
 
         // FIXME should examine EF[MSISDN]'s capability configuration
         // to determine which is the voice/data/fax line
-        new AdnRecordLoader(mFh).loadFromEF(EF_MSISDN, getExtFromEf(EF_MSISDN), 1,
+        new AdnRecordLoader(mFh).loadFromEF(EF_MSISDN, EF_EXT1, 1,
                     obtainMessage(EVENT_GET_MSISDN_DONE));
         mRecordsToLoad++;
 
@@ -1607,7 +1416,11 @@ public class SIMRecords extends IccRecords {
 
         // Same goes for Call Forward Status indicator: fetch both
         // EF[CFIS] and CPHS-EF, with EF[CFIS] preferred.
-        loadCallForwardingRecords();
+        mFh.loadEFLinearFixed(EF_CFIS, 1, obtainMessage(EVENT_GET_CFIS_DONE));
+        mRecordsToLoad++;
+        mFh.loadEFTransparent(EF_CFF_CPHS, obtainMessage(EVENT_GET_CFF_DONE));
+        mRecordsToLoad++;
+
 
         getSpnFsm(true, null);
 
@@ -1628,11 +1441,6 @@ public class SIMRecords extends IccRecords {
 
         mFh.loadEFTransparent(EF_GID1, obtainMessage(EVENT_GET_GID1_DONE));
         mRecordsToLoad++;
-
-        mFh.loadEFTransparent(EF_GID2, obtainMessage(EVENT_GET_GID2_DONE));
-        mRecordsToLoad++;
-
-        loadEfLiAndEfPl();
 
         // XXX should seek instead of examining them all
         if (false) { // XXX
@@ -1666,12 +1474,7 @@ public class SIMRecords extends IccRecords {
     @Override
     public int getDisplayRule(String plmn) {
         int rule;
-
-        if (mParentApp != null && mParentApp.getUiccCard() != null &&
-            mParentApp.getUiccCard().getOperatorBrandOverride() != null) {
-        // If the operator has been overridden, treat it as the SPN file on the SIM did not exist.
-            rule = SPN_RULE_SHOW_PLMN;
-        } else if (TextUtils.isEmpty(getServiceProviderName()) || mSpnDisplayCondition == -1) {
+        if (TextUtils.isEmpty(mSpn) || mSpnDisplayCondition == -1) {
             // No EF_SPN content was found on the SIM, or not yet loaded.  Just show ONS.
             rule = SPN_RULE_SHOW_PLMN;
         } else if (isOnMatchingPlmn(plmn)) {
@@ -1759,7 +1562,7 @@ public class SIMRecords extends IccRecords {
 
         switch(mSpnState){
             case INIT:
-                setServiceProviderName(null);
+                mSpn = null;
 
                 mFh.loadEFTransparent(EF_SPN,
                         obtainMessage(EVENT_GET_SPN_DONE));
@@ -1771,31 +1574,19 @@ public class SIMRecords extends IccRecords {
                 if (ar != null && ar.exception == null) {
                     data = (byte[]) ar.result;
                     mSpnDisplayCondition = 0xff & data[0];
+                    mSpn = IccUtils.adnStringFieldToString(data, 1, data.length - 1);
 
-                    setServiceProviderName(IccUtils.adnStringFieldToString(
-                            data, 1, data.length - 1));
-                    // for card double-check and brand override
-                    // we have to do this:
-                    final String spn = getServiceProviderName();
+                    if (DBG) log("Load EF_SPN: " + mSpn
+                            + " spnDisplayCondition: " + mSpnDisplayCondition);
+                    SystemProperties.set(PROPERTY_ICC_OPERATOR_ALPHA, mSpn);
 
-                    if (spn == null || spn.length() == 0) {
-                        mSpnState = GetSpnFsmState.READ_SPN_CPHS;
-                    } else {
-                        if (DBG) log("Load EF_SPN: " + spn
-                                + " spnDisplayCondition: " + mSpnDisplayCondition);
-                        mTelephonyManager.setSimOperatorNameForPhone(
-                                mParentApp.getPhoneId(), spn);
-
-                        mSpnState = GetSpnFsmState.IDLE;
-                    }
+                    mSpnState = GetSpnFsmState.IDLE;
                 } else {
-                    mSpnState = GetSpnFsmState.READ_SPN_CPHS;
-                }
-
-                if (mSpnState == GetSpnFsmState.READ_SPN_CPHS) {
                     mFh.loadEFTransparent( EF_SPN_CPHS,
                             obtainMessage(EVENT_GET_SPN_DONE));
                     mRecordsToLoad++;
+
+                    mSpnState = GetSpnFsmState.READ_SPN_CPHS;
 
                     // See TS 51.011 10.3.11.  Basically, default to
                     // show PLMN always, and SPN also if roaming.
@@ -1805,57 +1596,28 @@ public class SIMRecords extends IccRecords {
             case READ_SPN_CPHS:
                 if (ar != null && ar.exception == null) {
                     data = (byte[]) ar.result;
+                    mSpn = IccUtils.adnStringFieldToString(data, 0, data.length);
 
-                    setServiceProviderName(IccUtils.adnStringFieldToString(
-                            data, 0, data.length));
-                    // for card double-check and brand override
-                    // we have to do this:
-                    final String spn = getServiceProviderName();
+                    if (DBG) log("Load EF_SPN_CPHS: " + mSpn);
+                    SystemProperties.set(PROPERTY_ICC_OPERATOR_ALPHA, mSpn);
 
-                    if (spn == null || spn.length() == 0) {
-                        mSpnState = GetSpnFsmState.READ_SPN_SHORT_CPHS;
-                    } else {
-                        // Display CPHS Operator Name only when not roaming
-                        mSpnDisplayCondition = 2;
-
-                        if (DBG) log("Load EF_SPN_CPHS: " + spn);
-                        mTelephonyManager.setSimOperatorNameForPhone(
-                                mParentApp.getPhoneId(), spn);
-
-                        mSpnState = GetSpnFsmState.IDLE;
-                    }
+                    mSpnState = GetSpnFsmState.IDLE;
                 } else {
-                    mSpnState = GetSpnFsmState.READ_SPN_SHORT_CPHS;
-                }
-
-                if (mSpnState == GetSpnFsmState.READ_SPN_SHORT_CPHS) {
                     mFh.loadEFTransparent(
                             EF_SPN_SHORT_CPHS, obtainMessage(EVENT_GET_SPN_DONE));
                     mRecordsToLoad++;
+
+                    mSpnState = GetSpnFsmState.READ_SPN_SHORT_CPHS;
                 }
                 break;
             case READ_SPN_SHORT_CPHS:
                 if (ar != null && ar.exception == null) {
                     data = (byte[]) ar.result;
+                    mSpn = IccUtils.adnStringFieldToString(data, 0, data.length);
 
-                    setServiceProviderName(IccUtils.adnStringFieldToString(
-                            data, 0, data.length));
-                    // for card double-check and brand override
-                    // we have to do this:
-                    final String spn = getServiceProviderName();
-
-                    if (spn == null || spn.length() == 0) {
-                        if (DBG) log("No SPN loaded in either CHPS or 3GPP");
-                    } else {
-                        // Display CPHS Operator Name only when not roaming
-                        mSpnDisplayCondition = 2;
-
-                        if (DBG) log("Load EF_SPN_SHORT_CPHS: " + spn);
-                        mTelephonyManager.setSimOperatorNameForPhone(
-                                mParentApp.getPhoneId(), spn);
-                    }
-                } else {
-                    setServiceProviderName(null);
+                    if (DBG) log("Load EF_SPN_SHORT_CPHS: " + mSpn);
+                    SystemProperties.set(PROPERTY_ICC_OPERATOR_ALPHA, mSpn);
+                }else {
                     if (DBG) log("No SPN loaded in either CHPS or 3GPP");
                 }
 
@@ -1990,7 +1752,7 @@ public class SIMRecords extends IccRecords {
         super.dump(fd, pw, args);
         pw.println(" mVmConfig=" + mVmConfig);
         pw.println(" mSpnOverride=" + mSpnOverride);
-        pw.println(" mCallForwardingStatus=" + mCallForwardingStatus);
+        pw.println(" mCallForwardingEnabled=" + mCallForwardingEnabled);
         pw.println(" mSpnState=" + mSpnState);
         pw.println(" mCphsInfo=" + mCphsInfo);
         pw.println(" mCspPlmnEnabled=" + mCspPlmnEnabled);
@@ -2003,7 +1765,6 @@ public class SIMRecords extends IccRecords {
         pw.println(" mPnnHomeName=" + mPnnHomeName);
         pw.println(" mUsimServiceTable=" + mUsimServiceTable);
         pw.println(" mGid1=" + mGid1);
-        pw.println(" mGid2=" + mGid2);
         pw.flush();
     }
 }

@@ -47,30 +47,11 @@ final class FactoryFinder {
     /** <p>Debug flag to trace loading process.</p> */
     private static boolean debug = false;
 
-    /**
-     * <p>Cache properties for performance. Use a static class to avoid double-checked
-     * locking.</p>
-     */
-    private static class CacheHolder {
+    /** <p>Cache properties for performance.</p> */
+    private static Properties cacheProps = new Properties();
 
-        private static Properties cacheProps = new Properties();
-
-        static {
-            String javah = System.getProperty("java.home");
-            String configFile = javah + File.separator + "lib" + File.separator + "jaxp.properties";
-            File f = new File(configFile);
-            if (f.exists()) {
-                if (debug) debugPrintln("Read properties file " + f);
-                try {
-                    cacheProps.load(new FileInputStream(f));
-                } catch (Exception ex) {
-                    if (debug) {
-                        ex.printStackTrace();
-                    }
-                }
-            }
-        }
-    }
+    /** <p>First time requires initialization overhead.</p> */
+    private static boolean firstTime = true;
 
     /** Default columns per line. */
     private static final int DEFAULT_LINE_LENGTH = 80;
@@ -196,7 +177,22 @@ final class FactoryFinder {
 
         // try to read from $java.home/lib/jaxp.properties
         try {
-            String factoryClassName = CacheHolder.cacheProps.getProperty(factoryId);
+            String javah = System.getProperty("java.home");
+            String configFile = javah + File.separator + "lib" + File.separator + "jaxp.properties";
+            String factoryClassName = null;
+            if (firstTime) {
+                synchronized (cacheProps) {
+                    if (firstTime) {
+                        File f = new File(configFile);
+                        firstTime = false;
+                        if (f.exists()) {
+                            if (debug) debugPrintln("Read properties file " + f);
+                            cacheProps.load(new FileInputStream(f));
+                        }
+                    }
+                }
+            }
+            factoryClassName = cacheProps.getProperty(factoryId);
             if (debug) debugPrintln("found " + factoryClassName + " in $java.home/jaxp.properties");
 
             if (factoryClassName != null) {

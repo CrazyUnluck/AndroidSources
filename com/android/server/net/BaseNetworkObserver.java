@@ -18,7 +18,6 @@ package com.android.server.net;
 
 import android.net.INetworkManagementEventObserver;
 import android.net.LinkAddress;
-import android.net.RouteInfo;
 
 /**
  * Base {@link INetworkManagementEventObserver} that provides no-op
@@ -58,7 +57,7 @@ public class BaseNetworkObserver extends INetworkManagementEventObserver.Stub {
     }
 
     @Override
-    public void interfaceClassDataActivityChanged(String label, boolean active, long tsNanos) {
+    public void interfaceClassDataActivityChanged(String label, boolean active) {
         // default no-op
     }
 
@@ -69,16 +68,6 @@ public class BaseNetworkObserver extends INetworkManagementEventObserver.Stub {
 
     @Override
     public void interfaceDnsServerInfo(String iface, long lifetime, String[] servers) {
-        // default no-op
-    }
-
-    @Override
-    public void routeUpdated(RouteInfo route) {
-        // default no-op
-    }
-
-    @Override
-    public void routeRemoved(RouteInfo route) {
         // default no-op
     }
 }

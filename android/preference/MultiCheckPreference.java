@@ -18,7 +18,6 @@ package android.preference;
 
 import java.util.Arrays;
 
-import android.annotation.ArrayRes;
 import android.app.AlertDialog.Builder;
 import android.content.Context;
 import android.content.DialogInterface;
@@ -41,13 +40,12 @@ public class MultiCheckPreference extends DialogPreference {
     private boolean[] mSetValues;
     private boolean[] mOrigValues;
     private String mSummary;
-
-    public MultiCheckPreference(
-            Context context, AttributeSet attrs, int defStyleAttr, int defStyleRes) {
-        super(context, attrs, defStyleAttr, defStyleRes);
-
-        TypedArray a = context.obtainStyledAttributes(
-                attrs, com.android.internal.R.styleable.ListPreference, defStyleAttr, defStyleRes);
+    
+    public MultiCheckPreference(Context context, AttributeSet attrs) {
+        super(context, attrs);
+        
+        TypedArray a = context.obtainStyledAttributes(attrs,
+                com.android.internal.R.styleable.ListPreference, 0, 0);
         mEntries = a.getTextArray(com.android.internal.R.styleable.ListPreference_entries);
         if (mEntries != null) {
             setEntries(mEntries);
@@ -63,14 +61,6 @@ public class MultiCheckPreference extends DialogPreference {
                 com.android.internal.R.styleable.Preference, 0, 0);
         mSummary = a.getString(com.android.internal.R.styleable.Preference_summary);
         a.recycle();
-    }
-
-    public MultiCheckPreference(Context context, AttributeSet attrs, int defStyleAttr) {
-        this(context, attrs, defStyleAttr, 0);
-    }
-
-    public MultiCheckPreference(Context context, AttributeSet attrs) {
-        this(context, attrs, com.android.internal.R.attr.dialogPreferenceStyle);
     }
 
     public MultiCheckPreference(Context context) {
@@ -97,7 +87,7 @@ public class MultiCheckPreference extends DialogPreference {
      * @see #setEntries(CharSequence[])
      * @param entriesResId The entries array as a resource.
      */
-    public void setEntries(@ArrayRes int entriesResId) {
+    public void setEntries(int entriesResId) {
         setEntries(getContext().getResources().getTextArray(entriesResId));
     }
     
@@ -127,7 +117,7 @@ public class MultiCheckPreference extends DialogPreference {
      * @see #setEntryValues(CharSequence[])
      * @param entryValuesResId The entry values array as a resource.
      */
-    public void setEntryValues(@ArrayRes int entryValuesResId) {
+    public void setEntryValues(int entryValuesResId) {
         setEntryValuesCS(getContext().getResources().getTextArray(entryValuesResId));
     }
 

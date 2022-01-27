@@ -16,9 +16,9 @@
 
 package android.media.audiofx;
 
-import android.app.ActivityThread;
 import android.util.Log;
 import java.lang.ref.WeakReference;
+import java.io.IOException;
 import android.os.Handler;
 import android.os.Looper;
 import android.os.Message;
@@ -207,8 +207,7 @@ public class Visualizer {
         synchronized (mStateLock) {
             mState = STATE_UNINITIALIZED;
             // native initialization
-            int result = native_setup(new WeakReference<Visualizer>(this), audioSession, id,
-                    ActivityThread.currentOpPackageName());
+            int result = native_setup(new WeakReference<Visualizer>(this), audioSession, id);
             if (result != SUCCESS && result != ALREADY_EXISTS) {
                 Log.e(TAG, "Error code "+result+" when initializing Visualizer.");
                 switch (result) {
@@ -718,8 +717,7 @@ public class Visualizer {
 
     private native final int native_setup(Object audioeffect_this,
                                           int audioSession,
-                                          int[] id,
-                                          String opPackageName);
+                                          int[] id);
 
     private native final void native_finalize();
 
@@ -768,5 +766,6 @@ public class Visualizer {
         }
 
     }
+
 }
 

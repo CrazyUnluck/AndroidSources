@@ -6,6 +6,7 @@
 
 package jsr166;
 
+import junit.framework.*;
 import java.util.Arrays;
 import java.util.BitSet;
 import java.util.Collection;
@@ -18,19 +19,7 @@ import java.util.Set;
 import java.util.SortedSet;
 import java.util.TreeSet;
 
-import junit.framework.Test;
-import junit.framework.TestSuite;
-
 public class TreeSetTest extends JSR166TestCase {
-    // android-note: Removed because the CTS runner does a bad job of
-    // retrying tests that have suite() declarations.
-    //
-    // public static void main(String[] args) {
-    //     main(suite(), args);
-    // }
-    // public static Test suite() {
-    //     return new TestSuite(TreeSetTest.class);
-    // }
 
     static class MyReverseComparator implements Comparator {
         public int compare(Object x, Object y) {
@@ -50,9 +39,9 @@ public class TreeSetTest extends JSR166TestCase {
     private TreeSet<Integer> populatedSet(int n) {
         TreeSet<Integer> q = new TreeSet<Integer>();
         assertTrue(q.isEmpty());
-        for (int i = n - 1; i >= 0; i -= 2)
+        for (int i = n-1; i >= 0; i-=2)
             assertTrue(q.add(new Integer(i)));
-        for (int i = (n & 1); i < n; i += 2)
+        for (int i = (n & 1); i < n; i+=2)
             assertTrue(q.add(new Integer(i)));
         assertFalse(q.isEmpty());
         assertEquals(n, q.size());
@@ -86,7 +75,7 @@ public class TreeSetTest extends JSR166TestCase {
      */
     public void testConstructor3() {
         try {
-            new TreeSet((Collection)null);
+            TreeSet q = new TreeSet((Collection)null);
             shouldThrow();
         } catch (NullPointerException success) {}
     }
@@ -96,7 +85,8 @@ public class TreeSetTest extends JSR166TestCase {
      */
     public void testConstructor4() {
         try {
-            new TreeSet(Arrays.asList(new Integer[SIZE]));
+            Integer[] ints = new Integer[SIZE];
+            TreeSet q = new TreeSet(Arrays.asList(ints));
             shouldThrow();
         } catch (NullPointerException success) {}
     }
@@ -105,11 +95,11 @@ public class TreeSetTest extends JSR166TestCase {
      * Initializing from Collection with some null elements throws NPE
      */
     public void testConstructor5() {
-        Integer[] ints = new Integer[SIZE];
-        for (int i = 0; i < SIZE - 1; ++i)
-            ints[i] = new Integer(i);
         try {
-            new TreeSet(Arrays.asList(ints));
+            Integer[] ints = new Integer[SIZE];
+            for (int i = 0; i < SIZE-1; ++i)
+                ints[i] = new Integer(i);
+            TreeSet q = new TreeSet(Arrays.asList(ints));
             shouldThrow();
         } catch (NullPointerException success) {}
     }
@@ -137,7 +127,7 @@ public class TreeSetTest extends JSR166TestCase {
         for (int i = 0; i < SIZE; ++i)
             ints[i] = new Integer(i);
         q.addAll(Arrays.asList(ints));
-        for (int i = SIZE - 1; i >= 0; --i)
+        for (int i = SIZE-1; i >= 0; --i)
             assertEquals(ints[i], q.pollFirst());
     }
 
@@ -161,7 +151,7 @@ public class TreeSetTest extends JSR166TestCase {
     public void testSize() {
         TreeSet q = populatedSet(SIZE);
         for (int i = 0; i < SIZE; ++i) {
-            assertEquals(SIZE - i, q.size());
+            assertEquals(SIZE-i, q.size());
             q.pollFirst();
         }
         for (int i = 0; i < SIZE; ++i) {
@@ -174,8 +164,8 @@ public class TreeSetTest extends JSR166TestCase {
      * add(null) throws NPE if nonempty
      */
     public void testAddNull() {
-        TreeSet q = populatedSet(SIZE);
         try {
+            TreeSet q = populatedSet(SIZE);
             q.add(null);
             shouldThrow();
         } catch (NullPointerException success) {}
@@ -203,8 +193,9 @@ public class TreeSetTest extends JSR166TestCase {
      * Add of non-Comparable throws CCE
      */
     public void testAddNonComparable() {
-        TreeSet q = new TreeSet();
         try {
+            TreeSet q = new TreeSet();
+            q.add(new Object());
             q.add(new Object());
             q.add(new Object());
             shouldThrow();
@@ -215,8 +206,8 @@ public class TreeSetTest extends JSR166TestCase {
      * addAll(null) throws NPE
      */
     public void testAddAll1() {
-        TreeSet q = new TreeSet();
         try {
+            TreeSet q = new TreeSet();
             q.addAll(null);
             shouldThrow();
         } catch (NullPointerException success) {}
@@ -226,9 +217,9 @@ public class TreeSetTest extends JSR166TestCase {
      * addAll of a collection with null elements throws NPE
      */
     public void testAddAll2() {
-        TreeSet q = new TreeSet();
-        Integer[] ints = new Integer[SIZE];
         try {
+            TreeSet q = new TreeSet();
+            Integer[] ints = new Integer[SIZE];
             q.addAll(Arrays.asList(ints));
             shouldThrow();
         } catch (NullPointerException success) {}
@@ -239,11 +230,11 @@ public class TreeSetTest extends JSR166TestCase {
      * possibly adding some elements
      */
     public void testAddAll3() {
-        TreeSet q = new TreeSet();
-        Integer[] ints = new Integer[SIZE];
-        for (int i = 0; i < SIZE - 1; ++i)
-            ints[i] = new Integer(i);
         try {
+            TreeSet q = new TreeSet();
+            Integer[] ints = new Integer[SIZE];
+            for (int i = 0; i < SIZE-1; ++i)
+                ints[i] = new Integer(i);
             q.addAll(Arrays.asList(ints));
             shouldThrow();
         } catch (NullPointerException success) {}
@@ -256,7 +247,7 @@ public class TreeSetTest extends JSR166TestCase {
         Integer[] empty = new Integer[0];
         Integer[] ints = new Integer[SIZE];
         for (int i = 0; i < SIZE; ++i)
-            ints[i] = new Integer(SIZE - 1 - i);
+            ints[i] = new Integer(SIZE-1-i);
         TreeSet q = new TreeSet();
         assertFalse(q.addAll(Arrays.asList(empty)));
         assertTrue(q.addAll(Arrays.asList(ints)));
@@ -280,7 +271,7 @@ public class TreeSetTest extends JSR166TestCase {
      */
     public void testPollLast() {
         TreeSet q = populatedSet(SIZE);
-        for (int i = SIZE - 1; i >= 0; --i) {
+        for (int i = SIZE-1; i >= 0; --i) {
             assertEquals(i, q.pollLast());
         }
         assertNull(q.pollFirst());
@@ -291,18 +282,18 @@ public class TreeSetTest extends JSR166TestCase {
      */
     public void testRemoveElement() {
         TreeSet q = populatedSet(SIZE);
-        for (int i = 1; i < SIZE; i += 2) {
+        for (int i = 1; i < SIZE; i+=2) {
             assertTrue(q.contains(i));
             assertTrue(q.remove(i));
             assertFalse(q.contains(i));
-            assertTrue(q.contains(i - 1));
+            assertTrue(q.contains(i-1));
         }
-        for (int i = 0; i < SIZE; i += 2) {
+        for (int i = 0; i < SIZE; i+=2) {
             assertTrue(q.contains(i));
             assertTrue(q.remove(i));
             assertFalse(q.contains(i));
-            assertFalse(q.remove(i + 1));
-            assertFalse(q.contains(i + 1));
+            assertFalse(q.remove(i+1));
+            assertFalse(q.contains(i+1));
         }
         assertTrue(q.isEmpty());
     }
@@ -361,7 +352,7 @@ public class TreeSetTest extends JSR166TestCase {
                 assertTrue(changed);
 
             assertTrue(q.containsAll(p));
-            assertEquals(SIZE - i, q.size());
+            assertEquals(SIZE-i, q.size());
             p.pollFirst();
         }
     }
@@ -374,10 +365,10 @@ public class TreeSetTest extends JSR166TestCase {
             TreeSet q = populatedSet(SIZE);
             TreeSet p = populatedSet(i);
             assertTrue(q.removeAll(p));
-            assertEquals(SIZE - i, q.size());
+            assertEquals(SIZE-i, q.size());
             for (int j = 0; j < i; ++j) {
-                Integer x = (Integer)(p.pollFirst());
-                assertFalse(q.contains(x));
+                Integer I = (Integer)(p.pollFirst());
+                assertFalse(q.contains(I));
             }
         }
     }
@@ -481,19 +472,27 @@ public class TreeSetTest extends JSR166TestCase {
      */
     public void testIterator() {
         TreeSet q = populatedSet(SIZE);
+        int i = 0;
         Iterator it = q.iterator();
-        int i;
-        for (i = 0; it.hasNext(); i++)
+        while (it.hasNext()) {
             assertTrue(q.contains(it.next()));
+            ++i;
+        }
         assertEquals(i, SIZE);
-        assertIteratorExhausted(it);
     }
 
     /**
      * iterator of empty set has no elements
      */
     public void testEmptyIterator() {
-        assertIteratorExhausted(new TreeSet().iterator());
+        TreeSet q = new TreeSet();
+        int i = 0;
+        Iterator it = q.iterator();
+        while (it.hasNext()) {
+            assertTrue(q.contains(it.next()));
+            ++i;
+        }
+        assertEquals(0, i);
     }
 
     /**
@@ -733,7 +732,7 @@ public class TreeSetTest extends JSR166TestCase {
         // Add entries till we're back to original size
         while (set.size() < size) {
             int element = min + rnd.nextInt(rangeSize);
-            assertTrue(element >= min && element <= max);
+            assertTrue(element >= min && element<= max);
             put(set, element);
         }
     }
@@ -758,7 +757,7 @@ public class TreeSetTest extends JSR166TestCase {
         // Add entries till we're back to original size
         while (set.size() < size) {
             int element = min - 5 + rnd.nextInt(rangeSize + 10);
-            if (element >= min && element <= max) {
+            if (element >= min && element<= max) {
                 put(set, element);
             } else {
                 try {
@@ -908,18 +907,18 @@ public class TreeSetTest extends JSR166TestCase {
                 else if (element > max)
                     return -1;
                 int result = bs.nextSetBit(element);
-                return (result > max) ? -1 : result;
+                return result > max ? -1 : result;
             }
             int higherAscending(int element) {
                 return ceilingAscending(element + 1);
             }
             private int firstAscending() {
                 int result = ceilingAscending(min);
-                return (result > max) ? -1 : result;
+                return result > max ? -1 : result;
             }
             private int lastAscending() {
                 int result = floorAscending(max);
-                return (result < min) ? -1 : result;
+                return result < min ? -1 : result;
             }
         }
         ReferenceSet rs = new ReferenceSet();
@@ -980,7 +979,7 @@ public class TreeSetTest extends JSR166TestCase {
     }
 
     static boolean eq(Integer i, int j) {
-        return (i == null) ? j == -1 : i == j;
+        return i == null ? j == -1 : i == j;
     }
 
 }

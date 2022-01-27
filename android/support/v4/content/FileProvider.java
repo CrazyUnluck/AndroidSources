@@ -139,10 +139,9 @@ import java.util.Map;
  *</pre>
  *     </dt>
  *     <dd>
- *     Represents the root of the external storage. The root path of this subdirectory
- *     is the same that {@link
- *     Environment#getExternalStorageDirectory() Environment.getExternalStorageDirectory()}
- *     returns.
+ *     Represents files in the root of your app's external storage area. The path
+ *     {@link Context#getExternalFilesDir(String) Context.getExternalFilesDir()} returns the
+ *     <code>files/</code> subdirectory of this this root.
  *     </dd>
  *     <dt>
  * <pre>
@@ -297,7 +296,7 @@ import java.util.Map;
  * <h3 id="">More Information</h3>
  * <p>
  *    To learn more about FileProvider, see the Android training class
- *    <a href="{@docRoot}training/secure-file-sharing/index.html">Sharing Files Securely with URIs</a>.
+ *    <a href="{@docRoot}training/secure-uri/index.html">Sharing Files Securely with URIs</a>.
  * </p>
  */
 public class FileProvider extends ContentProvider {
@@ -366,7 +365,7 @@ public class FileProvider extends ContentProvider {
      *
      * @param context A {@link Context} for the current component.
      * @param authority The authority of a {@link FileProvider} defined in a
-     *            {@code <provider>} element in your app's manifest.
+     *            {@code &lt;provider&gt;} element in your app's manifest.
      * @param file A {@link File} pointing to the filename for which you want a
      * <code>content</code> {@link Uri}.
      * @return A content URI for the file.
@@ -548,7 +547,7 @@ public class FileProvider extends ContentProvider {
 
     /**
      * Parse and return {@link PathStrategy} for given authority as defined in
-     * {@link #META_DATA_FILE_PROVIDER_PATHS} {@code <meta-data>}.
+     * {@link #META_DATA_FILE_PROVIDER_PATHS} {@code &lt;meta-data>}.
      *
      * @see #getPathStrategy(Context, String)
      */

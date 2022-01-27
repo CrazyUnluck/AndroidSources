@@ -16,14 +16,10 @@
 
 package java.lang;
 
-import android.system.Os;
-import android.system.OsConstants;
 import dalvik.system.VMRuntime;
 import java.lang.ref.FinalizerReference;
 import java.lang.ref.Reference;
 import java.lang.ref.ReferenceQueue;
-import java.util.concurrent.atomic.AtomicBoolean;
-import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.TimeoutException;
 import libcore.util.EmptyArray;
 
@@ -43,11 +39,9 @@ public final class Daemons {
         ReferenceQueueDaemon.INSTANCE.start();
         FinalizerDaemon.INSTANCE.start();
         FinalizerWatchdogDaemon.INSTANCE.start();
-        HeapTaskDaemon.INSTANCE.start();
     }
 
     public static void stop() {
-        HeapTaskDaemon.INSTANCE.stop();
         ReferenceQueueDaemon.INSTANCE.stop();
         FinalizerDaemon.INSTANCE.stop();
         FinalizerWatchdogDaemon.INSTANCE.stop();
@@ -60,17 +54,13 @@ public final class Daemons {
      */
     private static abstract class Daemon implements Runnable {
         private Thread thread;
-        private String name;
-
-        protected Daemon(String name) {
-            this.name = name;
-        }
 
         public synchronized void start() {
             if (thread != null) {
                 throw new IllegalStateException("already running");
             }
-            thread = new Thread(ThreadGroup.systemThreadGroup, this, name);
+            thread = new Thread(ThreadGroup.mSystem, this,
+                getClass().getSimpleName());
             thread.setDaemon(true);
             thread.start();
         }
@@ -86,10 +76,6 @@ public final class Daemons {
         }
 
         public synchronized void interrupt() {
-            interrupt(thread);
-        }
-
-        public synchronized void interrupt(Thread thread) {
             if (thread == null) {
                 throw new IllegalStateException("not running");
             }
@@ -109,14 +95,12 @@ public final class Daemons {
             if (threadToStop == null) {
                 throw new IllegalStateException("not running");
             }
-            interrupt(threadToStop);
+            threadToStop.interrupt();
             while (true) {
                 try {
                     threadToStop.join();
                     return;
                 } catch (InterruptedException ignored) {
-                } catch (OutOfMemoryError ignored) {
-                    // An OOME may be thrown if allocating the InterruptedException failed.
                 }
             }
         }
@@ -137,10 +121,6 @@ public final class Daemons {
     private static class ReferenceQueueDaemon extends Daemon {
         private static final ReferenceQueueDaemon INSTANCE = new ReferenceQueueDaemon();
 
-        ReferenceQueueDaemon() {
-            super("ReferenceQueueDaemon");
-        }
-
         @Override public void run() {
             while (isRunning()) {
                 Reference<?> list;
@@ -154,10 +134,25 @@ public final class Daemons {
                     }
                 } catch (InterruptedException e) {
                     continue;
-                } catch (OutOfMemoryError e) {
-                    continue;
                 }
-                ReferenceQueue.enqueuePending(list);
+                enqueue(list);
+            }
+        }
+
+        private void enqueue(Reference<?> list) {
+            while (list != null) {
+                Reference<?> reference;
+                // pendingNext is owned by the GC so no synchronization is required
+                if (list == list.pendingNext) {
+                    reference = list;
+                    reference.pendingNext = null;
+                    list = null;
+                } else {
+                    reference = list.pendingNext;
+                    list.pendingNext = reference.pendingNext;
+                    reference.pendingNext = null;
+                }
+                reference.enqueueInternal();
             }
         }
     }
@@ -165,50 +160,15 @@ public final class Daemons {
     private static class FinalizerDaemon extends Daemon {
         private static final FinalizerDaemon INSTANCE = new FinalizerDaemon();
         private final ReferenceQueue<Object> queue = FinalizerReference.queue;
-        private final AtomicInteger progressCounter = new AtomicInteger(0);
-        // Object (not reference!) being finalized. Accesses may race!
-        private Object finalizingObject = null;
-
-        FinalizerDaemon() {
-            super("FinalizerDaemon");
-        }
+        private volatile Object finalizingObject;
+        private volatile long finalizingStartedNanos;
 
         @Override public void run() {
-            // This loop may be performance critical, since we need to keep up with mutator
-            // generation of finalizable objects.
-            // We minimize the amount of work we do per finalizable object. For example, we avoid
-            // reading the current time here, since that involves a kernel call per object.  We
-            // limit fast path communication with FinalizerWatchDogDaemon to what's unavoidable: A
-            // non-volatile store to communicate the current finalizable object, e.g. for
-            // reporting, and a release store (lazySet) to a counter.
-            // We do stop the  FinalizerWatchDogDaemon if we have nothing to do for a
-            // potentially extended period.  This prevents the device from waking up regularly
-            // during idle times.
-
-            // Local copy of progressCounter; saves a fence per increment on ARM and MIPS.
-            int localProgressCounter = progressCounter.get();
-
             while (isRunning()) {
+                // Take a reference, blocking until one is ready or the thread should stop
                 try {
-                    // Use non-blocking poll to avoid FinalizerWatchdogDaemon communication
-                    // when busy.
-                    FinalizerReference<?> finalizingReference = (FinalizerReference<?>)queue.poll();
-                    if (finalizingReference != null) {
-                        finalizingObject = finalizingReference.get();
-                        progressCounter.lazySet(++localProgressCounter);
-                    } else {
-                        finalizingObject = null;
-                        progressCounter.lazySet(++localProgressCounter);
-                        // Slow path; block.
-                        FinalizerWatchdogDaemon.INSTANCE.goToSleep();
-                        finalizingReference = (FinalizerReference<?>)queue.remove();
-                        finalizingObject = finalizingReference.get();
-                        progressCounter.set(++localProgressCounter);
-                        FinalizerWatchdogDaemon.INSTANCE.wakeUp();
-                    }
-                    doFinalize(finalizingReference);
+                    doFinalize((FinalizerReference<?>) queue.remove());
                 } catch (InterruptedException ignored) {
-                } catch (OutOfMemoryError ignored) {
                 }
             }
         }
@@ -219,12 +179,16 @@ public final class Daemons {
             Object object = reference.get();
             reference.clear();
             try {
+                finalizingStartedNanos = System.nanoTime();
+                finalizingObject = object;
+                synchronized (FinalizerWatchdogDaemon.INSTANCE) {
+                    FinalizerWatchdogDaemon.INSTANCE.notify();
+                }
                 object.finalize();
             } catch (Throwable ex) {
                 // The RI silently swallows these, but Android has always logged.
                 System.logE("Uncaught exception thrown by finalizer", ex);
             } finally {
-                // Done finalizing, stop holding the object as live.
                 finalizingObject = null;
             }
         }
@@ -238,131 +202,61 @@ public final class Daemons {
     private static class FinalizerWatchdogDaemon extends Daemon {
         private static final FinalizerWatchdogDaemon INSTANCE = new FinalizerWatchdogDaemon();
 
-        private boolean needToWork = true;  // Only accessed in synchronized methods.
-
-        FinalizerWatchdogDaemon() {
-            super("FinalizerWatchdogDaemon");
-        }
-
         @Override public void run() {
             while (isRunning()) {
-                if (!sleepUntilNeeded()) {
+                Object object = waitForObject();
+                if (object == null) {
                     // We have been interrupted, need to see if this daemon has been stopped.
                     continue;
                 }
-                final Object finalizing = waitForFinalization();
-                if (finalizing != null && !VMRuntime.getRuntime().isDebuggerActive()) {
-                    finalizerTimedOut(finalizing);
+                boolean finalized = waitForFinalization(object);
+                if (!finalized && !VMRuntime.getRuntime().isDebuggerActive()) {
+                    finalizerTimedOut(object);
                     break;
                 }
             }
         }
 
-        /**
-         * Wait until something is ready to be finalized.
-         * Return false if we have been interrupted
-         * See also http://code.google.com/p/android/issues/detail?id=22778.
-         */
-        private synchronized boolean sleepUntilNeeded() {
-            while (!needToWork) {
-                try {
-                    wait();
-                } catch (InterruptedException e) {
-                    // Daemon.stop may have interrupted us.
-                    return false;
-                } catch (OutOfMemoryError e) {
-                    return false;
+        private Object waitForObject() {
+            while (true) {
+                Object object = FinalizerDaemon.INSTANCE.finalizingObject;
+                if (object != null) {
+                    return object;
+                }
+                synchronized (this) {
+                    // wait until something is ready to be finalized
+                    // http://code.google.com/p/android/issues/detail?id=22778
+                    try {
+                        wait();
+                    } catch (InterruptedException e) {
+                        // Daemon.stop may have interrupted us.
+                        return null;
+                    }
                 }
             }
-            return true;
         }
 
-        /**
-         * Notify daemon that it's OK to sleep until notified that something is ready to be
-         * finalized.
-         */
-        private synchronized void goToSleep() {
-            needToWork = false;
-        }
-
-        /**
-         * Notify daemon that there is something ready to be finalized.
-         */
-        private synchronized void wakeUp() {
-            needToWork = true;
-            notify();
-        }
-
-        private synchronized boolean getNeedToWork() {
-            return needToWork;
-        }
-
-        /**
-         * Sleep for the given number of nanoseconds.
-         * @return false if we were interrupted.
-         */
-        private boolean sleepFor(long durationNanos) {
-            long startNanos = System.nanoTime();
+        private void sleepFor(long startNanos, long durationNanos) {
             while (true) {
                 long elapsedNanos = System.nanoTime() - startNanos;
                 long sleepNanos = durationNanos - elapsedNanos;
                 long sleepMills = sleepNanos / NANOS_PER_MILLI;
                 if (sleepMills <= 0) {
-                    return true;
+                    return;
                 }
                 try {
                     Thread.sleep(sleepMills);
                 } catch (InterruptedException e) {
                     if (!isRunning()) {
-                        return false;
-                    }
-                } catch (OutOfMemoryError ignored) {
-                    if (!isRunning()) {
-                        return false;
+                        return;
                     }
                 }
             }
         }
 
-
-        /**
-         * Return an object that took too long to finalize or return null.
-         * Wait MAX_FINALIZE_NANOS.  If the FinalizerDaemon took essentially the whole time
-         * processing a single reference, return that reference.  Otherwise return null.
-         */
-        private Object waitForFinalization() {
-            long startCount = FinalizerDaemon.INSTANCE.progressCounter.get();
-            // Avoid remembering object being finalized, so as not to keep it alive.
-            if (!sleepFor(MAX_FINALIZE_NANOS)) {
-                // Don't report possibly spurious timeout if we are interrupted.
-                return null;
-            }
-            if (getNeedToWork() && FinalizerDaemon.INSTANCE.progressCounter.get() == startCount) {
-                // We assume that only remove() and doFinalize() may take time comparable to
-                // MAX_FINALIZE_NANOS.
-                // We observed neither the effect of the gotoSleep() nor the increment preceding a
-                // later wakeUp. Any remove() call by the FinalizerDaemon during our sleep
-                // interval must have been followed by a wakeUp call before we checked needToWork.
-                // But then we would have seen the counter increment.  Thus there cannot have
-                // been such a remove() call.
-                // The FinalizerDaemon must not have progressed (from either the beginning or the
-                // last progressCounter increment) to either the next increment or gotoSleep()
-                // call.  Thus we must have taken essentially the whole MAX_FINALIZE_NANOS in a
-                // single doFinalize() call.  Thus it's OK to time out.  finalizingObject was set
-                // just before the counter increment, which preceded the doFinalize call.  Thus we
-                // are guaranteed to get the correct finalizing value below, unless doFinalize()
-                // just finished as we were timing out, in which case we may get null or a later
-                // one.  In this last case, we are very likely to discard it below.
-                Object finalizing = FinalizerDaemon.INSTANCE.finalizingObject;
-                sleepFor(NANOS_PER_SECOND / 2);
-                // Recheck to make it even less likely we report the wrong finalizing object in
-                // the case which a very slow finalization just finished as we were timing out.
-                if (getNeedToWork()
-                        && FinalizerDaemon.INSTANCE.progressCounter.get() == startCount) {
-                    return finalizing;
-                }
-            }
-            return null;
+        private boolean waitForFinalization(Object object) {
+            sleepFor(FinalizerDaemon.INSTANCE.finalizingStartedNanos, MAX_FINALIZE_NANOS);
+            return object != FinalizerDaemon.INSTANCE.finalizingObject;
         }
 
         private static void finalizerTimedOut(Object object) {
@@ -373,16 +267,6 @@ public final class Daemons {
             // We use the stack from where finalize() was running to show where it was stuck.
             syntheticException.setStackTrace(FinalizerDaemon.INSTANCE.getStackTrace());
             Thread.UncaughtExceptionHandler h = Thread.getDefaultUncaughtExceptionHandler();
-            // Send SIGQUIT to get native stack traces.
-            try {
-                Os.kill(Os.getpid(), OsConstants.SIGQUIT);
-                // Sleep a few seconds to let the stack traces print.
-                Thread.sleep(5000);
-            } catch (Exception e) {
-                System.logE("failed to send SIGQUIT", e);
-            } catch (OutOfMemoryError ignored) {
-                // May occur while trying to allocate the exception.
-            }
             if (h == null) {
                 // If we have no handler, log and exit.
                 System.logE(message, syntheticException);
@@ -392,45 +276,6 @@ public final class Daemons {
             // We don't just throw because we're not the thread that
             // timed out; we're the thread that detected it.
             h.uncaughtException(Thread.currentThread(), syntheticException);
-        }
-    }
-
-    // Adds a heap trim task to the heap event processor, not called from java. Left for
-    // compatibility purposes due to reflection.
-    public static void requestHeapTrim() {
-        VMRuntime.getRuntime().requestHeapTrim();
-    }
-
-    // Adds a concurrent GC request task ot the heap event processor, not called from java. Left
-    // for compatibility purposes due to reflection.
-    public static void requestGC() {
-        VMRuntime.getRuntime().requestConcurrentGC();
-    }
-
-    private static class HeapTaskDaemon extends Daemon {
-        private static final HeapTaskDaemon INSTANCE = new HeapTaskDaemon();
-
-        HeapTaskDaemon() {
-            super("HeapTaskDaemon");
-        }
-
-        // Overrides the Daemon.interupt method which is called from Daemons.stop.
-        public synchronized void interrupt(Thread thread) {
-            VMRuntime.getRuntime().stopHeapTaskProcessor();
-        }
-
-        @Override public void run() {
-            synchronized (this) {
-                if (isRunning()) {
-                  // Needs to be synchronized or else we there is a race condition where we start
-                  // the thread, call stopHeapTaskProcessor before we start the heap task
-                  // processor, resulting in a deadlock since startHeapTaskProcessor restarts it
-                  // while the other thread is waiting in Daemons.stop().
-                  VMRuntime.getRuntime().startHeapTaskProcessor();
-                }
-            }
-            // This runs tasks until we are stopped and there is no more pending task.
-            VMRuntime.getRuntime().runHeapTasks();
         }
     }
 }

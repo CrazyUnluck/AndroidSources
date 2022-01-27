@@ -14,119 +14,59 @@
 package android.support.v17.leanback.widget;
 
 import android.content.Context;
-import android.support.annotation.ColorInt;
 import android.support.v17.leanback.R;
 import android.util.AttributeSet;
 import android.view.LayoutInflater;
 import android.view.View;
 import android.view.ViewGroup;
-import android.widget.FrameLayout;
-import android.graphics.Canvas;
-import android.graphics.Color;
-import android.graphics.Paint;
-import android.graphics.Rect;
 
 /**
- * Provides an SDK version-independent wrapper to support shadows, color overlays, and rounded
- * corners.  It's not always preferred to create a ShadowOverlayContainer, use
- * {@link ShadowOverlayHelper} instead.
+ * ShadowOverlayContainer Provides a SDK version independent wrapper container
+ * to take care of shadow and/or color overlay.
  * <p>
+ * Shadow and color dimmer overlay are both optional.  When shadow is used,  it's
+ * user's responsibility to properly call setClipChildren(false) on parent views if
+ * the shadow can appear outside bounds of parent views.
  * {@link #prepareParentForShadow(ViewGroup)} must be called on parent of container
  * before using shadow.  Depending on sdk version, optical bounds might be applied
  * to parent.
  * </p>
  * <p>
- * If shadows can appear outside the bounds of the parent view, setClipChildren(false) must
- * be called on the grandparent view.
+ * {@link #initialize(boolean, boolean)} must be first called on the container to initialize
+ * shadows and/or color overlay.  Then call {@link #wrap(View)} to insert wrapped view
+ * into container.
  * </p>
  * <p>
- * {@link #initialize(boolean, boolean, boolean)} must be first called on the container.
- * Then call {@link #wrap(View)} to insert the wrapped view into the container.
- * </p>
- * <p>
- * Call {@link #setShadowFocusLevel(float)} to control the strength of the shadow (focused shadows
- * cast stronger shadows).
+ * Call {@link #setShadowFocusLevel(float)} to control shadow alpha.
  * </p>
  * <p>
  * Call {@link #setOverlayColor(int)} to control overlay color.
  * </p>
  */
-public class ShadowOverlayContainer extends FrameLayout {
-
-    /**
-     * No shadow.
-     */
-    public static final int SHADOW_NONE = ShadowOverlayHelper.SHADOW_NONE;
-
-    /**
-     * Shadows are fixed.
-     */
-    public static final int SHADOW_STATIC = ShadowOverlayHelper.SHADOW_STATIC;
-
-    /**
-     * Shadows depend on the size, shape, and position of the view.
-     */
-    public static final int SHADOW_DYNAMIC = ShadowOverlayHelper.SHADOW_DYNAMIC;
+public class ShadowOverlayContainer extends ViewGroup {
 
     private boolean mInitialized;
+    private View mColorDimOverlay;
     private Object mShadowImpl;
     private View mWrappedView;
-    private boolean mRoundedCorners;
-    private int mShadowType = SHADOW_NONE;
-    private float mUnfocusedZ;
-    private float mFocusedZ;
-    private int mRoundedCornerRadius;
-    private static final Rect sTempRect = new Rect();
-    private Paint mOverlayPaint;
-    private int mOverlayColor;
 
-    /**
-     * Create ShadowOverlayContainer and auto select shadow type.
-     */
     public ShadowOverlayContainer(Context context) {
         this(context, null, 0);
     }
 
-    /**
-     * Create ShadowOverlayContainer and auto select shadow type.
-     */
     public ShadowOverlayContainer(Context context, AttributeSet attrs) {
         this(context, attrs, 0);
     }
 
-    /**
-     * Create ShadowOverlayContainer and auto select shadow type.
-     */
     public ShadowOverlayContainer(Context context, AttributeSet attrs, int defStyle) {
         super(context, attrs, defStyle);
-        useStaticShadow();
-        useDynamicShadow();
-    }
-
-    /**
-     * Create ShadowOverlayContainer with specific shadowType.
-     */
-    ShadowOverlayContainer(Context context,
-            int shadowType, boolean hasColorDimOverlay,
-            float unfocusedZ, float focusedZ, int roundedCornerRadius) {
-        super(context);
-        mUnfocusedZ = unfocusedZ;
-        mFocusedZ = focusedZ;
-        initialize(shadowType, hasColorDimOverlay, roundedCornerRadius);
     }
 
     /**
      * Return true if the platform sdk supports shadow.
      */
     public static boolean supportsShadow() {
-        return StaticShadowHelper.getInstance().supportsShadow();
-    }
-
-    /**
-     * Returns true if the platform sdk supports dynamic shadows.
-     */
-    public static boolean supportsDynamicShadow() {
-        return ShadowHelper.getInstance().supportsDynamicShadow();
+        return ShadowHelper.getInstance().supportsShadow();
     }
 
     /**
@@ -135,119 +75,24 @@ public class ShadowOverlayContainer extends FrameLayout {
      * to parent.
      */
     public static void prepareParentForShadow(ViewGroup parent) {
-        StaticShadowHelper.getInstance().prepareParent(parent);
+        ShadowHelper.getInstance().prepareParent(parent);
     }
 
     /**
-     * Sets the shadow type to {@link #SHADOW_DYNAMIC} if supported.
+     * Initialize shadows and/or color overlay.  Both are optional.
      */
-    public void useDynamicShadow() {
-        useDynamicShadow(getResources().getDimension(R.dimen.lb_material_shadow_normal_z),
-                getResources().getDimension(R.dimen.lb_material_shadow_focused_z));
-    }
-
-    /**
-     * Sets the shadow type to {@link #SHADOW_DYNAMIC} if supported and sets the elevation/Z
-     * values to the given parameteres.
-     */
-    public void useDynamicShadow(float unfocusedZ, float focusedZ) {
-        if (mInitialized) {
-            throw new IllegalStateException("Already initialized");
-        }
-        if (supportsDynamicShadow()) {
-            mShadowType = SHADOW_DYNAMIC;
-            mUnfocusedZ = unfocusedZ;
-            mFocusedZ = focusedZ;
-        }
-    }
-
-    /**
-     * Sets the shadow type to {@link #SHADOW_STATIC} if supported.
-     */
-    public void useStaticShadow() {
-        if (mInitialized) {
-            throw new IllegalStateException("Already initialized");
-        }
-        if (supportsShadow()) {
-            mShadowType = SHADOW_STATIC;
-        }
-    }
-
-    /**
-     * Returns the shadow type, one of {@link #SHADOW_NONE}, {@link #SHADOW_STATIC}, or
-     * {@link #SHADOW_DYNAMIC}.
-     */
-    public int getShadowType() {
-        return mShadowType;
-    }
-
-    /**
-     * Initialize shadows, color overlay.
-     * @deprecated use {@link ShadowOverlayHelper#createShadowOverlayContainer(Context)} instead.
-     */
-    @Deprecated
     public void initialize(boolean hasShadow, boolean hasColorDimOverlay) {
-        initialize(hasShadow, hasColorDimOverlay, true);
-    }
-
-    /**
-     * Initialize shadows, color overlay, and rounded corners.  All are optional.
-     * Shadow type are auto-selected based on {@link #useStaticShadow()} and
-     * {@link #useDynamicShadow()} call.
-     * @deprecated use {@link ShadowOverlayHelper#createShadowOverlayContainer(Context)} instead.
-     */
-    @Deprecated
-    public void initialize(boolean hasShadow, boolean hasColorDimOverlay, boolean roundedCorners) {
-        int shadowType;
-        if (!hasShadow) {
-            shadowType = SHADOW_NONE;
-        } else {
-            shadowType = mShadowType;
-        }
-        int roundedCornerRadius = roundedCorners ? getContext().getResources().getDimensionPixelSize(
-                R.dimen.lb_rounded_rect_corner_radius) : 0;
-        initialize(shadowType, hasColorDimOverlay, roundedCornerRadius);
-    }
-
-    /**
-     * Initialize shadows, color overlay, and rounded corners.  All are optional.
-     */
-    void initialize(int shadowType, boolean hasColorDimOverlay, int roundedCornerRadius) {
         if (mInitialized) {
             throw new IllegalStateException();
         }
         mInitialized = true;
-        mRoundedCornerRadius = roundedCornerRadius;
-        mRoundedCorners = roundedCornerRadius > 0;
-        mShadowType = shadowType;
-        switch (mShadowType) {
-            case SHADOW_DYNAMIC:
-                mShadowImpl = ShadowHelper.getInstance().addDynamicShadow(
-                        this, mUnfocusedZ, mFocusedZ, mRoundedCornerRadius);
-                break;
-            case SHADOW_STATIC:
-                mShadowImpl = StaticShadowHelper.getInstance().addStaticShadow(this);
-                break;
+        if (hasShadow) {
+            mShadowImpl = ShadowHelper.getInstance().addShadow(this);
         }
         if (hasColorDimOverlay) {
-            setWillNotDraw(false);
-            mOverlayColor = Color.TRANSPARENT;
-            mOverlayPaint = new Paint();
-            mOverlayPaint.setColor(mOverlayColor);
-            mOverlayPaint.setStyle(Paint.Style.FILL);
-        } else {
-            setWillNotDraw(true);
-            mOverlayPaint = null;
-        }
-    }
-
-    @Override
-    public void draw(Canvas canvas) {
-        super.draw(canvas);
-        if (mOverlayPaint != null && mOverlayColor != Color.TRANSPARENT) {
-            canvas.drawRect(mWrappedView.getLeft(), mWrappedView.getTop(),
-                    mWrappedView.getRight(), mWrappedView.getBottom(),
-                    mOverlayPaint);
+            mColorDimOverlay = LayoutInflater.from(getContext())
+                    .inflate(R.layout.lb_card_color_overlay, this, false);
+            addView(mColorDimOverlay);
         }
     }
 
@@ -256,20 +101,21 @@ public class ShadowOverlayContainer extends FrameLayout {
      */
     public void setShadowFocusLevel(float level) {
         if (mShadowImpl != null) {
-            ShadowOverlayHelper.setShadowFocusLevel(mShadowImpl, mShadowType, level);
+            if (level < 0f) {
+                level = 0f;
+            } else if (level > 1f) {
+                level = 1f;
+            }
+            ShadowHelper.getInstance().setShadowFocusLevel(mShadowImpl, level);
         }
     }
 
     /**
      * Set color (with alpha) of the overlay.
      */
-    public void setOverlayColor(@ColorInt int overlayColor) {
-        if (mOverlayPaint != null) {
-            if (overlayColor != mOverlayColor) {
-                mOverlayColor = overlayColor;
-                mOverlayPaint.setColor(overlayColor);
-                invalidate();
-            }
+    public void setOverlayColor(int overlayColor) {
+        if (mColorDimOverlay != null) {
+            mColorDimOverlay.setBackgroundColor(overlayColor);
         }
     }
 
@@ -280,50 +126,75 @@ public class ShadowOverlayContainer extends FrameLayout {
         if (!mInitialized || mWrappedView != null) {
             throw new IllegalStateException();
         }
-        ViewGroup.LayoutParams lp = view.getLayoutParams();
-        if (lp != null) {
-            // if wrapped view has layout params, inherit everything but width/height.
-            // Wrapped view is assigned a FrameLayout.LayoutParams with width and height only.
-            // Margins, etc are assigned to the wrapper and take effect in parent container.
-            ViewGroup.LayoutParams wrapped_lp = new FrameLayout.LayoutParams(lp.width, lp.height);
-            // Uses MATCH_PARENT for MATCH_PARENT, WRAP_CONTENT for WRAP_CONTENT and fixed size,
-            // App can still change wrapped view fixed width/height afterwards.
-            lp.width = lp.width == LayoutParams.MATCH_PARENT ?
-                    LayoutParams.MATCH_PARENT : LayoutParams.WRAP_CONTENT;
-            lp.height = lp.height == LayoutParams.MATCH_PARENT ?
-                    LayoutParams.MATCH_PARENT : LayoutParams.WRAP_CONTENT;
-            this.setLayoutParams(lp);
-            addView(view, wrapped_lp);
+        if (mColorDimOverlay != null) {
+            addView(view, indexOfChild(mColorDimOverlay));
         } else {
             addView(view);
-        }
-        if (mRoundedCorners && mShadowType == SHADOW_STATIC) {
-            RoundedRectHelper.getInstance().setClipToRoundedOutline(view, true);
         }
         mWrappedView = view;
     }
 
-    /**
-     * Returns the wrapper view.
-     */
-    public View getWrappedView() {
-        return mWrappedView;
+    @Override
+    protected void onMeasure(int widthMeasureSpec, int heightMeasureSpec) {
+        if (mWrappedView == null) {
+            throw new IllegalStateException();
+        }
+        // padding and child margin are not supported.
+        // first measure the wrapped view, then measure the shadow view and/or overlay view.
+        int childWidthMeasureSpec, childHeightMeasureSpec;
+        LayoutParams lp = mWrappedView.getLayoutParams();
+        if (lp.width == LayoutParams.MATCH_PARENT) {
+            childWidthMeasureSpec = MeasureSpec.makeMeasureSpec
+                    (MeasureSpec.getSize(widthMeasureSpec), MeasureSpec.EXACTLY);
+        } else {
+            childWidthMeasureSpec = getChildMeasureSpec(widthMeasureSpec, 0, lp.width);
+        }
+        if (lp.height == LayoutParams.MATCH_PARENT) {
+            childHeightMeasureSpec = MeasureSpec.makeMeasureSpec
+                    (MeasureSpec.getSize(heightMeasureSpec), MeasureSpec.EXACTLY);
+        } else {
+            childHeightMeasureSpec = getChildMeasureSpec(heightMeasureSpec, 0, lp.height);
+        }
+        mWrappedView.measure(childWidthMeasureSpec, childHeightMeasureSpec);
+
+        int measuredWidth = mWrappedView.getMeasuredWidth();
+        int measuredHeight = mWrappedView.getMeasuredHeight();
+
+        for (int i = 0; i < getChildCount(); i++) {
+            View child = getChildAt(i);
+            if (child == mWrappedView) {
+                continue;
+            }
+            lp = child.getLayoutParams();
+            if (lp.width == LayoutParams.MATCH_PARENT) {
+                childWidthMeasureSpec = MeasureSpec.makeMeasureSpec
+                        (measuredWidth, MeasureSpec.EXACTLY);
+            } else {
+                childWidthMeasureSpec = getChildMeasureSpec(widthMeasureSpec, 0, lp.width);
+            }
+
+            if (lp.height == LayoutParams.MATCH_PARENT) {
+                childHeightMeasureSpec = MeasureSpec.makeMeasureSpec
+                        (measuredHeight, MeasureSpec.EXACTLY);
+            } else {
+                childHeightMeasureSpec = getChildMeasureSpec(heightMeasureSpec, 0, lp.height);
+            }
+            child.measure(childWidthMeasureSpec, childHeightMeasureSpec);
+        }
+        setMeasuredDimension(measuredWidth, measuredHeight);
     }
 
     @Override
     protected void onLayout(boolean changed, int l, int t, int r, int b) {
-        super.onLayout(changed, l, t, r, b);
-        if (changed && mWrappedView != null) {
-            sTempRect.left = (int) mWrappedView.getPivotX();
-            sTempRect.top = (int) mWrappedView.getPivotY();
-            offsetDescendantRectToMyCoords(mWrappedView, sTempRect);
-            setPivotX(sTempRect.left);
-            setPivotY(sTempRect.top);
+        final int count = getChildCount();
+        for (int i = 0; i < count; i++) {
+            final View child = getChildAt(i);
+            if (child.getVisibility() != GONE) {
+                final int width = child.getMeasuredWidth();
+                final int height = child.getMeasuredHeight();
+                child.layout(0, 0, width, height);
+            }
         }
     }
 
-    @Override
-    public boolean hasOverlappingRendering() {
-        return false;
-    }
 }

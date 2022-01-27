@@ -19,15 +19,18 @@ package com.android.documentsui;
 import android.content.Context;
 import android.content.pm.PackageManager;
 import android.content.pm.ProviderInfo;
+import android.content.res.Resources;
 import android.graphics.drawable.Drawable;
 import android.provider.DocumentsContract.Document;
-import android.util.TypedValue;
+import android.util.Log;
+
+import com.google.android.collect.Maps;
 
 import java.util.HashMap;
 
 public class IconUtils {
 
-    private static HashMap<String, Integer> sMimeIcons = new HashMap<>();
+    private static HashMap<String, Integer> sMimeIcons = Maps.newHashMap();
 
     private static void add(String mimeType, int resId) {
         if (sMimeIcons.put(mimeType, resId) != null) {
@@ -144,6 +147,10 @@ public class IconUtils {
 
         // Presentation
         icon = R.drawable.ic_doc_presentation;
+        add("application/vnd.ms-powerpoint", icon);
+        add("application/vnd.openxmlformats-officedocument.presentationml.presentation", icon);
+        add("application/vnd.openxmlformats-officedocument.presentationml.template", icon);
+        add("application/vnd.openxmlformats-officedocument.presentationml.slideshow", icon);
         add("application/vnd.stardivision.impress", icon);
         add("application/vnd.sun.xml.impress", icon);
         add("application/vnd.sun.xml.impress.template", icon);
@@ -154,17 +161,23 @@ public class IconUtils {
         icon = R.drawable.ic_doc_spreadsheet;
         add("application/vnd.oasis.opendocument.spreadsheet", icon);
         add("application/vnd.oasis.opendocument.spreadsheet-template", icon);
+        add("application/vnd.ms-excel", icon);
+        add("application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", icon);
+        add("application/vnd.openxmlformats-officedocument.spreadsheetml.template", icon);
         add("application/vnd.stardivision.calc", icon);
         add("application/vnd.sun.xml.calc", icon);
         add("application/vnd.sun.xml.calc.template", icon);
         add("application/x-kspread", icon);
 
-        // Document
-        icon = R.drawable.ic_doc_document;
+        // Text
+        icon = R.drawable.ic_doc_text;
         add("application/vnd.oasis.opendocument.text", icon);
         add("application/vnd.oasis.opendocument.text-master", icon);
         add("application/vnd.oasis.opendocument.text-template", icon);
         add("application/vnd.oasis.opendocument.text-web", icon);
+        add("application/msword", icon);
+        add("application/vnd.openxmlformats-officedocument.wordprocessingml.document", icon);
+        add("application/vnd.openxmlformats-officedocument.wordprocessingml.template", icon);
         add("application/vnd.stardivision.writer", icon);
         add("application/vnd.stardivision.writer-global", icon);
         add("application/vnd.sun.xml.writer", icon);
@@ -177,25 +190,6 @@ public class IconUtils {
         icon = R.drawable.ic_doc_video;
         add("application/x-quicktimeplayer", icon);
         add("application/x-shockwave-flash", icon);
-
-        // Word
-        icon = R.drawable.ic_doc_word;
-        add("application/msword", icon);
-        add("application/vnd.openxmlformats-officedocument.wordprocessingml.document", icon);
-        add("application/vnd.openxmlformats-officedocument.wordprocessingml.template", icon);
-
-        // Excel
-        icon = R.drawable.ic_doc_excel;
-        add("application/vnd.ms-excel", icon);
-        add("application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", icon);
-        add("application/vnd.openxmlformats-officedocument.spreadsheetml.template", icon);
-
-        // Powerpoint
-        icon = R.drawable.ic_doc_powerpoint;
-        add("application/vnd.ms-powerpoint", icon);
-        add("application/vnd.openxmlformats-officedocument.presentationml.presentation", icon);
-        add("application/vnd.openxmlformats-officedocument.presentationml.template", icon);
-        add("application/vnd.openxmlformats-officedocument.presentationml.slideshow", icon);
     }
 
     public static Drawable loadPackageIcon(Context context, String authority, int icon) {
@@ -207,7 +201,7 @@ public class IconUtils {
                     return pm.getDrawable(info.packageName, icon, info.applicationInfo);
                 }
             } else {
-                return context.getDrawable(icon);
+                return context.getResources().getDrawable(icon);
             }
         }
         return null;
@@ -215,17 +209,19 @@ public class IconUtils {
 
     public static Drawable loadMimeIcon(
             Context context, String mimeType, String authority, String docId, int mode) {
+        final Resources res = context.getResources();
+
         if (Document.MIME_TYPE_DIR.equals(mimeType)) {
             // TODO: eventually move these hacky assets into that package
             if ("com.android.providers.media.documents".equals(authority)
                     && docId.startsWith("album")) {
-                return context.getDrawable(R.drawable.ic_doc_album);
+                return res.getDrawable(R.drawable.ic_doc_album);
             }
 
-            if (mode == State.MODE_GRID) {
-                return context.getDrawable(R.drawable.ic_grid_folder);
+            if (mode == DocumentsActivity.State.MODE_GRID) {
+                return res.getDrawable(R.drawable.ic_grid_folder);
             } else {
-                return context.getDrawable(R.drawable.ic_doc_folder);
+                return res.getDrawable(R.drawable.ic_root_folder);
             }
         }
 
@@ -233,14 +229,17 @@ public class IconUtils {
     }
 
     public static Drawable loadMimeIcon(Context context, String mimeType) {
+        final Resources res = context.getResources();
+
         if (Document.MIME_TYPE_DIR.equals(mimeType)) {
-            return context.getDrawable(R.drawable.ic_doc_folder);
+            // TODO: return a mipmap, since this is used for grid
+            return res.getDrawable(R.drawable.ic_root_folder);
         }
 
         // Look for exact match first
         Integer resId = sMimeIcons.get(mimeType);
         if (resId != null) {
-            return context.getDrawable(resId);
+            return res.getDrawable(resId);
         }
 
         if (mimeType == null) {
@@ -251,28 +250,15 @@ public class IconUtils {
         // Otherwise look for partial match
         final String typeOnly = mimeType.split("/")[0];
         if ("audio".equals(typeOnly)) {
-            return context.getDrawable(R.drawable.ic_doc_audio);
+            return res.getDrawable(R.drawable.ic_doc_audio);
         } else if ("image".equals(typeOnly)) {
-            return context.getDrawable(R.drawable.ic_doc_image);
+            return res.getDrawable(R.drawable.ic_doc_image);
         } else if ("text".equals(typeOnly)) {
-            return context.getDrawable(R.drawable.ic_doc_text);
+            return res.getDrawable(R.drawable.ic_doc_text);
         } else if ("video".equals(typeOnly)) {
-            return context.getDrawable(R.drawable.ic_doc_video);
+            return res.getDrawable(R.drawable.ic_doc_video);
         } else {
-            return context.getDrawable(R.drawable.ic_doc_generic);
+            return res.getDrawable(R.drawable.ic_doc_generic);
         }
-    }
-
-    public static Drawable applyTintColor(Context context, int drawableId, int tintColorId) {
-        final Drawable icon = context.getDrawable(drawableId);
-        icon.mutate();
-        icon.setTintList(context.getColorStateList(tintColorId));
-        return icon;
-    }
-
-    public static Drawable applyTintAttr(Context context, int drawableId, int tintAttrId) {
-        final TypedValue outValue = new TypedValue();
-        context.getTheme().resolveAttribute(tintAttrId, outValue, true);
-        return applyTintColor(context, drawableId, outValue.resourceId);
     }
 }

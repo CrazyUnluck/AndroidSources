@@ -20,9 +20,11 @@ package android.filterfw.core;
 import android.filterfw.core.Frame;
 import android.filterfw.core.FrameFormat;
 import android.filterfw.core.FrameManager;
+import android.filterfw.core.NativeBuffer;
 import android.filterfw.format.ObjectFormat;
 import android.graphics.Bitmap;
 
+import java.lang.reflect.Constructor;
 import java.nio.ByteBuffer;
 
 /**

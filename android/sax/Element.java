@@ -21,6 +21,8 @@ import org.xml.sax.SAXParseException;
 
 import java.util.ArrayList;
 
+import android.util.Log;
+
 /**
  * An XML element. Provides access to child elements and hooks to listen
  * for events related to this element.

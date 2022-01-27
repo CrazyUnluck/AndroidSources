@@ -68,8 +68,9 @@ public class AutomaticGainControl extends AudioEffect {
             Log.w(TAG, "not enough resources");
         } catch (RuntimeException e) {
             Log.w(TAG, "not enough memory");
+        } finally {
+            return agc;
         }
-        return agc;
     }
 
     /**

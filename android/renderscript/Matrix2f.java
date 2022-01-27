@@ -16,6 +16,9 @@
 
 package android.renderscript;
 
+import java.lang.Math;
+import android.util.Log;
+
 
 /**
  * Class for exposing the native RenderScript rs_matrix2x2 type back to the Android system.

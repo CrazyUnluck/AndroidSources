@@ -17,6 +17,9 @@
 package android.renderscript;
 
 
+import android.util.Log;
+
+
 /**
  * @hide
  * @deprecated in API 16
@@ -51,7 +54,7 @@ public class ProgramRaster extends BaseObj {
     boolean mPointSprite;
     CullMode mCullMode;
 
-    ProgramRaster(long id, RenderScript rs) {
+    ProgramRaster(int id, RenderScript rs) {
         super(id, rs);
 
         mPointSprite = false;
@@ -151,7 +154,7 @@ public class ProgramRaster extends BaseObj {
          */
         public ProgramRaster create() {
             mRS.validate();
-            long id = mRS.nProgramRasterCreate(mPointSprite, mCullMode.mID);
+            int id = mRS.nProgramRasterCreate(mPointSprite, mCullMode.mID);
             ProgramRaster programRaster = new ProgramRaster(id, mRS);
             programRaster.mPointSprite = mPointSprite;
             programRaster.mCullMode = mCullMode;

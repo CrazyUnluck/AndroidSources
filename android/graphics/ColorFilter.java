@@ -21,28 +21,22 @@
 
 package android.graphics;
 
-/**
- * A color filter can be used with a {@link Paint} to modify the color of
- * each pixel drawn with that paint. This is an abstract class that should
- * never be used directly.
- */
+
 public class ColorFilter {
+    long native_instance;
+
     /**
-     * Holds the pointer to the native SkColorFilter instance.
-     *
      * @hide
      */
-    public long native_instance;
+    public long nativeColorFilter;
 
-    @Override
     protected void finalize() throws Throwable {
         try {
             super.finalize();
         } finally {
-            destroyFilter(native_instance);
-            native_instance = 0;
+            finalizer(native_instance, nativeColorFilter);
         }
     }
 
-    static native void destroyFilter(long native_instance);
+    private static native void finalizer(long native_instance, long nativeColorFilter);
 }

@@ -23,7 +23,6 @@ import android.location.Geocoder;
 import android.location.Location;
 import android.location.LocationListener;
 import android.location.LocationManager;
-import android.os.Binder;
 import android.os.Bundle;
 import android.util.Slog;
 
@@ -96,48 +95,33 @@ public class LocationBasedCountryDetector extends CountryDetectorBase {
      * Register a listener with a provider name
      */
     protected void registerListener(String provider, LocationListener listener) {
-        final long bid = Binder.clearCallingIdentity();
-        try {
-            mLocationManager.requestLocationUpdates(provider, 0, 0, listener);
-        } finally {
-            Binder.restoreCallingIdentity(bid);
-        }
+        mLocationManager.requestLocationUpdates(provider, 0, 0, listener);
     }
 
     /**
      * Unregister an already registered listener
      */
     protected void unregisterListener(LocationListener listener) {
-        final long bid = Binder.clearCallingIdentity();
-        try {
-            mLocationManager.removeUpdates(listener);
-        } finally {
-            Binder.restoreCallingIdentity(bid);
-        }
+        mLocationManager.removeUpdates(listener);
     }
 
     /**
      * @return the last known location from all providers
      */
     protected Location getLastKnownLocation() {
-        final long bid = Binder.clearCallingIdentity();
-        try {
-            List<String> providers = mLocationManager.getAllProviders();
-            Location bestLocation = null;
-            for (String provider : providers) {
-                Location lastKnownLocation = mLocationManager.getLastKnownLocation(provider);
-                if (lastKnownLocation != null) {
-                    if (bestLocation == null ||
-                            bestLocation.getElapsedRealtimeNanos() <
-                            lastKnownLocation.getElapsedRealtimeNanos()) {
-                        bestLocation = lastKnownLocation;
-                    }
+        List<String> providers = mLocationManager.getAllProviders();
+        Location bestLocation = null;
+        for (String provider : providers) {
+            Location lastKnownLocation = mLocationManager.getLastKnownLocation(provider);
+            if (lastKnownLocation != null) {
+                if (bestLocation == null ||
+                        bestLocation.getElapsedRealtimeNanos() <
+                        lastKnownLocation.getElapsedRealtimeNanos()) {
+                    bestLocation = lastKnownLocation;
                 }
             }
-            return bestLocation;
-        } finally {
-            Binder.restoreCallingIdentity(bid);
         }
+        return bestLocation;
     }
 
     /**

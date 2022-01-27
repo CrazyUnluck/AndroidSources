@@ -16,40 +16,41 @@
 
 package benchmarks.regression;
 
-import android.icu.util.TimeZone;
-import android.icu.util.ULocale;
-import libcore.icu.DateIntervalFormat;
+import com.google.caliper.SimpleBenchmark;
 
-import static libcore.icu.DateUtilsBridge.*;
+import java.util.Locale;
+import java.util.TimeZone;
 
-public class DateIntervalFormatBenchmark {
+import static libcore.icu.DateIntervalFormat.*;
+
+public class DateIntervalFormatBenchmark extends SimpleBenchmark {
   public void timeDateIntervalFormat_formatDateRange_DATE(int reps) throws Exception {
-    ULocale l = ULocale.US;
+    Locale l = Locale.US;
     TimeZone utc = TimeZone.getTimeZone("UTC");
     int flags = FORMAT_SHOW_DATE | FORMAT_SHOW_WEEKDAY;
 
     for (int rep = 0; rep < reps; ++rep) {
-      DateIntervalFormat.formatDateRange(l, utc, 0L, 0L, flags);
+      formatDateRange(l, utc, 0L, 0L, flags);
     }
   }
 
   public void timeDateIntervalFormat_formatDateRange_TIME(int reps) throws Exception {
-    ULocale l = ULocale.US;
+    Locale l = Locale.US;
     TimeZone utc = TimeZone.getTimeZone("UTC");
     int flags = FORMAT_SHOW_TIME | FORMAT_24HOUR;
 
     for (int rep = 0; rep < reps; ++rep) {
-      DateIntervalFormat.formatDateRange(l, utc, 0L, 0L, flags);
+      formatDateRange(l, utc, 0L, 0L, flags);
     }
   }
 
   public void timeDateIntervalFormat_formatDateRange_DATE_TIME(int reps) throws Exception {
-    ULocale l = ULocale.US;
+    Locale l = Locale.US;
     TimeZone utc = TimeZone.getTimeZone("UTC");
     int flags = FORMAT_SHOW_DATE | FORMAT_SHOW_WEEKDAY | FORMAT_SHOW_TIME | FORMAT_24HOUR;
 
     for (int rep = 0; rep < reps; ++rep) {
-      DateIntervalFormat.formatDateRange(l, utc, 0L, 0L, flags);
+      formatDateRange(l, utc, 0L, 0L, flags);
     }
   }
 }

@@ -17,11 +17,12 @@
 package android.text.format;
 
 import android.content.Context;
-import android.os.UserHandle;
 import android.provider.Settings;
 import android.text.SpannableStringBuilder;
 import android.text.Spanned;
 import android.text.SpannedString;
+
+import com.android.internal.R;
 
 import java.util.Calendar;
 import java.util.Date;
@@ -59,45 +60,27 @@ import libcore.icu.LocaleData;
  * {@code SimpleDateFormat}.
  */
 public class DateFormat {
-    /**
-     * @deprecated Use a literal {@code '} instead.
-     * @removed
-     */
+    /** @deprecated Use a literal {@code '} instead. */
     @Deprecated
     public  static final char    QUOTE                  =    '\'';
 
-    /**
-     * @deprecated Use a literal {@code 'a'} instead.
-     * @removed
-     */
+    /** @deprecated Use a literal {@code 'a'} instead. */
     @Deprecated
     public  static final char    AM_PM                  =    'a';
 
-    /**
-     * @deprecated Use a literal {@code 'a'} instead; 'A' was always equivalent to 'a'.
-     * @removed
-     */
+    /** @deprecated Use a literal {@code 'a'} instead; 'A' was always equivalent to 'a'. */
     @Deprecated
     public  static final char    CAPITAL_AM_PM          =    'A';
 
-    /**
-     * @deprecated Use a literal {@code 'd'} instead.
-     * @removed
-     */
+    /** @deprecated Use a literal {@code 'd'} instead. */
     @Deprecated
     public  static final char    DATE                   =    'd';
 
-    /**
-     * @deprecated Use a literal {@code 'E'} instead.
-     * @removed
-     */
+    /** @deprecated Use a literal {@code 'E'} instead. */
     @Deprecated
     public  static final char    DAY                    =    'E';
 
-    /**
-     * @deprecated Use a literal {@code 'h'} instead.
-     * @removed
-     */
+    /** @deprecated Use a literal {@code 'h'} instead. */
     @Deprecated
     public  static final char    HOUR                   =    'h';
 
@@ -105,51 +88,31 @@ public class DateFormat {
      * @deprecated Use a literal {@code 'H'} (for compatibility with {@link SimpleDateFormat}
      * and Unicode) or {@code 'k'} (for compatibility with Android releases up to and including
      * Jelly Bean MR-1) instead. Note that the two are incompatible.
-     *
-     * @removed
      */
     @Deprecated
     public  static final char    HOUR_OF_DAY            =    'k';
 
-    /**
-     * @deprecated Use a literal {@code 'm'} instead.
-     * @removed
-     */
+    /** @deprecated Use a literal {@code 'm'} instead. */
     @Deprecated
     public  static final char    MINUTE                 =    'm';
 
-    /**
-     * @deprecated Use a literal {@code 'M'} instead.
-     * @removed
-     */
+    /** @deprecated Use a literal {@code 'M'} instead. */
     @Deprecated
     public  static final char    MONTH                  =    'M';
 
-    /**
-     * @deprecated Use a literal {@code 'L'} instead.
-     * @removed
-     */
+    /** @deprecated Use a literal {@code 'L'} instead. */
     @Deprecated
     public  static final char    STANDALONE_MONTH       =    'L';
 
-    /**
-     * @deprecated Use a literal {@code 's'} instead.
-     * @removed
-     */
+    /** @deprecated Use a literal {@code 's'} instead. */
     @Deprecated
     public  static final char    SECONDS                =    's';
 
-    /**
-     * @deprecated Use a literal {@code 'z'} instead.
-     * @removed
-     */
+    /** @deprecated Use a literal {@code 'z'} instead. */
     @Deprecated
     public  static final char    TIME_ZONE              =    'z';
 
-    /**
-     * @deprecated Use a literal {@code 'y'} instead.
-     * @removed
-     */
+    /** @deprecated Use a literal {@code 'y'} instead. */
     @Deprecated
     public  static final char    YEAR                   =    'y';
 
@@ -165,20 +128,8 @@ public class DateFormat {
      * @return true if 24 hour time format is selected, false otherwise.
      */
     public static boolean is24HourFormat(Context context) {
-        return is24HourFormat(context, UserHandle.myUserId());
-    }
-
-    /**
-     * Returns true if user preference with the given user handle is set to 24-hour format.
-     * @param context the context to use for the content resolver
-     * @param userHandle the user handle of the user to query.
-     * @return true if 24 hour time format is selected, false otherwise.
-     *
-     * @hide
-     */
-    public static boolean is24HourFormat(Context context, int userHandle) {
-        String value = Settings.System.getStringForUser(context.getContentResolver(),
-                Settings.System.TIME_12_24, userHandle);
+        String value = Settings.System.getString(context.getContentResolver(),
+                Settings.System.TIME_12_24);
 
         if (value == null) {
             Locale locale = context.getResources().getConfiguration().locale;
@@ -190,7 +141,7 @@ public class DateFormat {
             }
 
             java.text.DateFormat natural =
-                    java.text.DateFormat.getTimeInstance(java.text.DateFormat.LONG, locale);
+                java.text.DateFormat.getTimeInstance(java.text.DateFormat.LONG, locale);
 
             if (natural instanceof SimpleDateFormat) {
                 SimpleDateFormat sdf = (SimpleDateFormat) natural;
@@ -244,7 +195,7 @@ public class DateFormat {
      * @return a string pattern suitable for use with {@link java.text.SimpleDateFormat}.
      */
     public static String getBestDateTimePattern(Locale locale, String skeleton) {
-        return ICU.getBestDateTimePattern(skeleton, locale);
+        return ICU.getBestDateTimePattern(skeleton, locale.toString());
     }
 
     /**
@@ -264,30 +215,74 @@ public class DateFormat {
      * @hide
      */
     public static String getTimeFormatString(Context context) {
-        return getTimeFormatString(context, UserHandle.myUserId());
-    }
-
-    /**
-     * Returns a String pattern that can be used to format the time according
-     * to the current locale and the user's 12-/24-hour clock preference.
-     * @param context the application context
-     * @param userHandle the user handle of the user to query the format for
-     * @hide
-     */
-    public static String getTimeFormatString(Context context, int userHandle) {
         LocaleData d = LocaleData.get(context.getResources().getConfiguration().locale);
-        return is24HourFormat(context, userHandle) ? d.timeFormat_Hm : d.timeFormat_hm;
+        return is24HourFormat(context) ? d.timeFormat24 : d.timeFormat12;
     }
 
     /**
      * Returns a {@link java.text.DateFormat} object that can format the date
-     * in short form according to the current locale.
-     *
+     * in short form (such as 12/31/1999) according
+     * to the current locale and the user's date-order preference.
      * @param context the application context
      * @return the {@link java.text.DateFormat} object that properly formats the date.
      */
     public static java.text.DateFormat getDateFormat(Context context) {
-        return java.text.DateFormat.getDateInstance(java.text.DateFormat.SHORT);
+        String value = Settings.System.getString(context.getContentResolver(),
+                Settings.System.DATE_FORMAT);
+
+        return getDateFormatForSetting(context, value);
+    }
+
+    /**
+     * Returns a {@link java.text.DateFormat} object to format the date
+     * as if the date format setting were set to <code>value</code>,
+     * including null to use the locale's default format.
+     * @param context the application context
+     * @param value the date format setting string to interpret for
+     *              the current locale
+     * @hide
+     */
+    public static java.text.DateFormat getDateFormatForSetting(Context context,
+                                                               String value) {
+        String format = getDateFormatStringForSetting(context, value);
+        return new java.text.SimpleDateFormat(format);
+    }
+
+    private static String getDateFormatStringForSetting(Context context, String value) {
+        if (value != null) {
+            int month = value.indexOf('M');
+            int day = value.indexOf('d');
+            int year = value.indexOf('y');
+
+            if (month >= 0 && day >= 0 && year >= 0) {
+                String template = context.getString(R.string.numeric_date_template);
+                if (year < month && year < day) {
+                    if (month < day) {
+                        value = String.format(template, "yyyy", "MM", "dd");
+                    } else {
+                        value = String.format(template, "yyyy", "dd", "MM");
+                    }
+                } else if (month < day) {
+                    if (day < year) {
+                        value = String.format(template, "MM", "dd", "yyyy");
+                    } else { // unlikely
+                        value = String.format(template, "MM", "yyyy", "dd");
+                    }
+                } else { // day < month
+                    if (month < year) {
+                        value = String.format(template, "dd", "MM", "yyyy");
+                    } else { // unlikely
+                        value = String.format(template, "dd", "yyyy", "MM");
+                    }
+                }
+
+                return value;
+            }
+        }
+
+        // The setting is not set; use the locale's default.
+        LocaleData d = LocaleData.get(context.getResources().getConfiguration().locale);
+        return d.shortDateFormat4;
     }
 
     /**
@@ -311,25 +306,23 @@ public class DateFormat {
     }
 
     /**
-     * Gets the current date format stored as a char array. Returns a 3 element
-     * array containing the day ({@code 'd'}), month ({@code 'M'}), and year ({@code 'y'}))
-     * in the order specified by the user's format preference.  Note that this order is
+     * Gets the current date format stored as a char array. The array will contain
+     * 3 elements ({@link #DATE}, {@link #MONTH}, and {@link #YEAR}) in the order
+     * specified by the user's format preference.  Note that this order is
      * <i>only</i> appropriate for all-numeric dates; spelled-out (MEDIUM and LONG)
      * dates will generally contain other punctuation, spaces, or words,
      * not just the day, month, and year, and not necessarily in the same
      * order returned here.
      */
     public static char[] getDateFormatOrder(Context context) {
-        return ICU.getDateFormatOrder(getDateFormatString());
+        return ICU.getDateFormatOrder(getDateFormatString(context));
     }
 
-    private static String getDateFormatString() {
-        java.text.DateFormat df = java.text.DateFormat.getDateInstance(java.text.DateFormat.SHORT);
-        if (df instanceof SimpleDateFormat) {
-            return ((SimpleDateFormat) df).toPattern();
-        }
+    private static String getDateFormatString(Context context) {
+        String value = Settings.System.getString(context.getContentResolver(),
+                Settings.System.DATE_FORMAT);
 
-        throw new AssertionError("!(df instanceof SimpleDateFormat)");
+        return getDateFormatStringForSetting(context, value);
     }
 
     /**

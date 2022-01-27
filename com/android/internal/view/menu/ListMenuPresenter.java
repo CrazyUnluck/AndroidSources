@@ -16,9 +16,8 @@
 
 package com.android.internal.view.menu;
 
-import android.annotation.NonNull;
-import android.annotation.Nullable;
 import android.content.Context;
+import android.database.DataSetObserver;
 import android.os.Bundle;
 import android.os.Parcelable;
 import android.util.SparseArray;
@@ -78,7 +77,7 @@ public class ListMenuPresenter implements MenuPresenter, AdapterView.OnItemClick
     }
 
     @Override
-    public void initForMenu(@NonNull Context context, @Nullable MenuBuilder menu) {
+    public void initForMenu(Context context, MenuBuilder menu) {
         if (mThemeRes != 0) {
             mContext = new ContextThemeWrapper(context, mThemeRes);
             mInflater = LayoutInflater.from(mContext);

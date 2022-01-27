@@ -35,8 +35,4 @@ class AccessibilityEventCompatIcs {
     public static Object getRecord(AccessibilityEvent event, int index) {
         return event.getRecord(index);
     }
-
-    public static void setScrollable(AccessibilityEvent event, boolean scrollable) {
-        event.setScrollable(scrollable);
-    }
 }

@@ -82,13 +82,6 @@ import java.util.concurrent.locks.ReentrantLock;
  * and
  * {@link SurfaceHolder.Callback#surfaceDestroyed SurfaceHolder.Callback.surfaceDestroyed()}.
  * </ul>
- *
- * <p class="note"><strong>Note:</strong> Starting in platform version
- * {@link android.os.Build.VERSION_CODES#N}, SurfaceView's window position is
- * updated synchronously with other View rendering. This means that translating
- * and scaling a SurfaceView on screen will not cause rendering artifacts. Such
- * artifacts may occur on previous versions of the platform when its window is
- * positioned asynchronously.</p>
  */
 public class SurfaceView extends View {
     static private final String TAG = "SurfaceView";
@@ -112,9 +105,6 @@ public class SurfaceView extends View {
     final Rect mWinFrame = new Rect();
     final Rect mOverscanInsets = new Rect();
     final Rect mContentInsets = new Rect();
-    final Rect mStableInsets = new Rect();
-    final Rect mOutsets = new Rect();
-    final Rect mBackdropFrame = new Rect();
     final Configuration mConfiguration = new Configuration();
 
     static final int KEEP_SCREEN_ON_MSG = 1;
@@ -124,7 +114,6 @@ public class SurfaceView extends View {
     int mWindowType = WindowManager.LayoutParams.TYPE_APPLICATION_MEDIA;
 
     boolean mIsCreating = false;
-    private volatile boolean mRtHandlingPositionUpdates = false;
 
     final Handler mHandler = new Handler() {
         @Override
@@ -143,23 +132,12 @@ public class SurfaceView extends View {
         }
     };
 
-    private final ViewTreeObserver.OnScrollChangedListener mScrollChangedListener
+    final ViewTreeObserver.OnScrollChangedListener mScrollChangedListener
             = new ViewTreeObserver.OnScrollChangedListener() {
                     @Override
                     public void onScrollChanged() {
                         updateWindow(false, false);
                     }
-            };
-
-    private final ViewTreeObserver.OnPreDrawListener mDrawListener =
-            new ViewTreeObserver.OnPreDrawListener() {
-                @Override
-                public boolean onPreDraw() {
-                    // reposition ourselves where the surface is
-                    mHaveFrame = getWidth() > 0 && getHeight() > 0;
-                    updateWindow(false, false);
-                    return true;
-                }
             };
 
     boolean mRequestedVisible = false;
@@ -177,19 +155,27 @@ public class SurfaceView extends View {
     long mLastLockTime = 0;
 
     boolean mVisible = false;
-    int mWindowSpaceLeft = -1;
-    int mWindowSpaceTop = -1;
-    int mWindowSpaceWidth = -1;
-    int mWindowSpaceHeight = -1;
+    int mLeft = -1;
+    int mTop = -1;
+    int mWidth = -1;
+    int mHeight = -1;
     int mFormat = -1;
     final Rect mSurfaceFrame = new Rect();
     int mLastSurfaceWidth = -1, mLastSurfaceHeight = -1;
     boolean mUpdateWindowNeeded;
     boolean mReportDrawNeeded;
     private Translator mTranslator;
-    private int mWindowInsetLeft;
-    private int mWindowInsetTop;
 
+    private final ViewTreeObserver.OnPreDrawListener mDrawListener =
+            new ViewTreeObserver.OnPreDrawListener() {
+                @Override
+                public boolean onPreDraw() {
+                    // reposition ourselves where the surface is
+                    mHaveFrame = getWidth() > 0 && getHeight() > 0;
+                    updateWindow(false, false);
+                    return true;
+                }
+            };
     private boolean mGlobalListenersAdded;
 
     public SurfaceView(Context context) {
@@ -202,13 +188,8 @@ public class SurfaceView extends View {
         init();
     }
 
-    public SurfaceView(Context context, AttributeSet attrs, int defStyleAttr) {
-        super(context, attrs, defStyleAttr);
-        init();
-    }
-
-    public SurfaceView(Context context, AttributeSet attrs, int defStyleAttr, int defStyleRes) {
-        super(context, attrs, defStyleAttr, defStyleRes);
+    public SurfaceView(Context context, AttributeSet attrs, int defStyle) {
+        super(context, attrs, defStyle);
         init();
     }
 
@@ -232,7 +213,7 @@ public class SurfaceView extends View {
         mParent.requestTransparentRegion(this);
         mSession = getWindowSession();
         mLayout.token = getWindowToken();
-        mLayout.setTitle("SurfaceView - " + getViewRootImpl().getTitle());
+        mLayout.setTitle("SurfaceView");
         mViewVisibility = getVisibility() == VISIBLE;
 
         if (!mGlobalListenersAdded) {
@@ -435,8 +416,7 @@ public class SurfaceView extends View {
         mWindowType = type;
     }
 
-    /** @hide */
-    protected void updateWindow(boolean force, boolean redrawNeeded) {
+    private void updateWindow(boolean force, boolean redrawNeeded) {
         if (!mHaveFrame) {
             return;
         }
@@ -454,37 +434,35 @@ public class SurfaceView extends View {
         int myHeight = mRequestedHeight;
         if (myHeight <= 0) myHeight = getHeight();
 
+        getLocationInWindow(mLocation);
         final boolean creating = mWindow == null;
         final boolean formatChanged = mFormat != mRequestedFormat;
-        final boolean sizeChanged = mWindowSpaceWidth != myWidth || mWindowSpaceHeight != myHeight;
+        final boolean sizeChanged = mWidth != myWidth || mHeight != myHeight;
         final boolean visibleChanged = mVisible != mRequestedVisible;
-        final boolean layoutSizeChanged = getWidth() != mLayout.width
-                || getHeight() != mLayout.height;
 
         if (force || creating || formatChanged || sizeChanged || visibleChanged
+            || mLeft != mLocation[0] || mTop != mLocation[1]
             || mUpdateWindowNeeded || mReportDrawNeeded || redrawNeeded) {
-            getLocationInWindow(mLocation);
 
-            if (DEBUG) Log.i(TAG, System.identityHashCode(this) + " "
-                    + "Changes: creating=" + creating
+            if (DEBUG) Log.i(TAG, "Changes: creating=" + creating
                     + " format=" + formatChanged + " size=" + sizeChanged
                     + " visible=" + visibleChanged
-                    + " left=" + (mWindowSpaceLeft != mLocation[0])
-                    + " top=" + (mWindowSpaceTop != mLocation[1]));
+                    + " left=" + (mLeft != mLocation[0])
+                    + " top=" + (mTop != mLocation[1]));
 
             try {
                 final boolean visible = mVisible = mRequestedVisible;
-                mWindowSpaceLeft = mLocation[0];
-                mWindowSpaceTop = mLocation[1];
-                mWindowSpaceWidth = myWidth;
-                mWindowSpaceHeight = myHeight;
+                mLeft = mLocation[0];
+                mTop = mLocation[1];
+                mWidth = myWidth;
+                mHeight = myHeight;
                 mFormat = mRequestedFormat;
 
                 // Scaling/Translate window's layout here because mLayout is not used elsewhere.
 
                 // Places the window relative
-                mLayout.x = mWindowSpaceLeft;
-                mLayout.y = mWindowSpaceTop;
+                mLayout.x = mLeft;
+                mLayout.y = mTop;
                 mLayout.width = getWidth();
                 mLayout.height = getHeight();
                 if (mTranslator != null) {
@@ -499,20 +477,11 @@ public class SurfaceView extends View {
                               | WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE
                               | WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE
                               ;
-                if (!creating && !force && !mUpdateWindowNeeded && !sizeChanged) {
-                    mLayout.privateFlags |=
-                            WindowManager.LayoutParams.PRIVATE_FLAG_PRESERVE_GEOMETRY;
-                } else {
-                    mLayout.privateFlags &=
-                            ~WindowManager.LayoutParams.PRIVATE_FLAG_PRESERVE_GEOMETRY;
-                }
-
                 if (!getContext().getResources().getCompatibilityInfo().supportsScreen()) {
                     mLayout.privateFlags |=
                             WindowManager.LayoutParams.PRIVATE_FLAG_COMPATIBLE_WINDOW;
                 }
-                mLayout.privateFlags |= WindowManager.LayoutParams.PRIVATE_FLAG_NO_MOVE_ANIMATION
-                    | WindowManager.LayoutParams.PRIVATE_FLAG_LAYOUT_CHILD_WINDOW_IN_PARENT_FRAME;
+                mLayout.privateFlags |= WindowManager.LayoutParams.PRIVATE_FLAG_NO_MOVE_ANIMATION;
 
                 if (mWindow == null) {
                     Display display = getDisplay();
@@ -520,8 +489,7 @@ public class SurfaceView extends View {
                     mLayout.type = mWindowType;
                     mLayout.gravity = Gravity.START|Gravity.TOP;
                     mSession.addToDisplayWithoutInputChannel(mWindow, mWindow.mSeq, mLayout,
-                            mVisible ? VISIBLE : GONE, display.getDisplayId(), mContentInsets,
-                            mStableInsets);
+                            mVisible ? VISIBLE : GONE, display.getDisplayId(), mContentInsets);
                 }
 
                 boolean realSizeChanged;
@@ -536,22 +504,19 @@ public class SurfaceView extends View {
                     mReportDrawNeeded = false;
                     mDrawingStopped = !visible;
 
-                    if (DEBUG) Log.i(TAG, System.identityHashCode(this) + " "
-                            + "Cur surface: " + mSurface);
+                    if (DEBUG) Log.i(TAG, "Cur surface: " + mSurface);
 
                     relayoutResult = mSession.relayout(
-                        mWindow, mWindow.mSeq, mLayout, mWindowSpaceWidth, mWindowSpaceHeight,
+                        mWindow, mWindow.mSeq, mLayout, mWidth, mHeight,
                             visible ? VISIBLE : GONE,
                             WindowManagerGlobal.RELAYOUT_DEFER_SURFACE_DESTROY,
                             mWinFrame, mOverscanInsets, mContentInsets,
-                            mVisibleInsets, mStableInsets, mOutsets, mBackdropFrame,
-                            mConfiguration, mNewSurface);
+                            mVisibleInsets, mConfiguration, mNewSurface);
                     if ((relayoutResult & WindowManagerGlobal.RELAYOUT_RES_FIRST_TIME) != 0) {
-                        reportDrawNeeded = true;
+                        mReportDrawNeeded = true;
                     }
 
-                    if (DEBUG) Log.i(TAG, System.identityHashCode(this) + " "
-                            + "New surface: " + mNewSurface
+                    if (DEBUG) Log.i(TAG, "New surface: " + mNewSurface
                             + ", vis=" + visible + ", frame=" + mWinFrame);
 
                     mSurfaceFrame.left = 0;
@@ -585,8 +550,7 @@ public class SurfaceView extends View {
                     if (mSurfaceCreated && (surfaceChanged || (!visible && visibleChanged))) {
                         mSurfaceCreated = false;
                         if (mSurface.isValid()) {
-                            if (DEBUG) Log.i(TAG, System.identityHashCode(this) + " "
-                                    + "visibleChanged -- surfaceDestroyed");
+                            if (DEBUG) Log.i(TAG, "visibleChanged -- surfaceDestroyed");
                             callbacks = getSurfaceCallbacks();
                             for (SurfaceHolder.Callback c : callbacks) {
                                 c.surfaceDestroyed(mSurfaceHolder);
@@ -595,12 +559,12 @@ public class SurfaceView extends View {
                     }
 
                     mSurface.transferFrom(mNewSurface);
+
                     if (visible && mSurface.isValid()) {
                         if (!mSurfaceCreated && (surfaceChanged || visibleChanged)) {
                             mSurfaceCreated = true;
                             mIsCreating = true;
-                            if (DEBUG) Log.i(TAG, System.identityHashCode(this) + " "
-                                    + "visibleChanged -- surfaceCreated");
+                            if (DEBUG) Log.i(TAG, "visibleChanged -- surfaceCreated");
                             if (callbacks == null) {
                                 callbacks = getSurfaceCallbacks();
                             }
@@ -610,8 +574,7 @@ public class SurfaceView extends View {
                         }
                         if (creating || formatChanged || sizeChanged
                                 || visibleChanged || realSizeChanged) {
-                            if (DEBUG) Log.i(TAG, System.identityHashCode(this) + " "
-                                    + "surfaceChanged -- format=" + mFormat
+                            if (DEBUG) Log.i(TAG, "surfaceChanged -- format=" + mFormat
                                     + " w=" + myWidth + " h=" + myHeight);
                             if (callbacks == null) {
                                 callbacks = getSurfaceCallbacks();
@@ -621,8 +584,7 @@ public class SurfaceView extends View {
                             }
                         }
                         if (redrawNeeded) {
-                            if (DEBUG) Log.i(TAG, System.identityHashCode(this) + " "
-                                    + "surfaceRedrawNeeded");
+                            if (DEBUG) Log.i(TAG, "surfaceRedrawNeeded");
                             if (callbacks == null) {
                                 callbacks = getSurfaceCallbacks();
                             }
@@ -637,139 +599,17 @@ public class SurfaceView extends View {
                 } finally {
                     mIsCreating = false;
                     if (redrawNeeded) {
-                        if (DEBUG) Log.i(TAG, System.identityHashCode(this) + " "
-                                + "finishedDrawing");
+                        if (DEBUG) Log.i(TAG, "finishedDrawing");
                         mSession.finishDrawing(mWindow);
                     }
                     mSession.performDeferredDestroy(mWindow);
                 }
             } catch (RemoteException ex) {
-                Log.e(TAG, "Exception from relayout", ex);
             }
             if (DEBUG) Log.v(
                 TAG, "Layout: x=" + mLayout.x + " y=" + mLayout.y +
                 " w=" + mLayout.width + " h=" + mLayout.height +
                 ", frame=" + mSurfaceFrame);
-        } else {
-            // Calculate the window position in case RT loses the window
-            // and we need to fallback to a UI-thread driven position update
-            getLocationInWindow(mLocation);
-            final boolean positionChanged = mWindowSpaceLeft != mLocation[0]
-                    || mWindowSpaceTop != mLocation[1];
-            if (positionChanged || layoutSizeChanged) { // Only the position has changed
-                mWindowSpaceLeft = mLocation[0];
-                mWindowSpaceTop = mLocation[1];
-                // For our size changed check, we keep mLayout.width and mLayout.height
-                // in view local space.
-                mLocation[0] = mLayout.width = getWidth();
-                mLocation[1] = mLayout.height = getHeight();
-
-                transformFromViewToWindowSpace(mLocation);
-
-                mWinFrame.set(mWindowSpaceLeft, mWindowSpaceTop,
-                        mLocation[0], mLocation[1]);
-
-                if (mTranslator != null) {
-                    mTranslator.translateRectInAppWindowToScreen(mWinFrame);
-                }
-
-                if (!isHardwareAccelerated() || !mRtHandlingPositionUpdates) {
-                    try {
-                        if (DEBUG) Log.d(TAG, String.format("%d updateWindowPosition UI, " +
-                                "postion = [%d, %d, %d, %d]", System.identityHashCode(this),
-                                mWinFrame.left, mWinFrame.top,
-                                mWinFrame.right, mWinFrame.bottom));
-                        mSession.repositionChild(mWindow, mWinFrame.left, mWinFrame.top,
-                                mWinFrame.right, mWinFrame.bottom, -1, mWinFrame);
-                    } catch (RemoteException ex) {
-                        Log.e(TAG, "Exception from relayout", ex);
-                    }
-                }
-            }
-        }
-    }
-
-    private Rect mRTLastReportedPosition = new Rect();
-
-    /**
-     * Called by native on RenderThread to update the window position
-     * @hide
-     */
-    public final void updateWindowPositionRT(long frameNumber,
-            int left, int top, int right, int bottom) {
-        IWindowSession session = mSession;
-        MyWindow window = mWindow;
-        if (session == null || window == null) {
-            // Guess we got detached, that sucks
-            return;
-        }
-        // TODO: This is teensy bit racey in that a brand new SurfaceView moving on
-        // its 2nd frame if RenderThread is running slowly could potentially see
-        // this as false, enter the branch, get pre-empted, then this comes along
-        // and reports a new position, then the UI thread resumes and reports
-        // its position. This could therefore be de-sync'd in that interval, but
-        // the synchronization would violate the rule that RT must never block
-        // on the UI thread which would open up potential deadlocks. The risk of
-        // a single-frame desync is therefore preferable for now.
-        mRtHandlingPositionUpdates = true;
-        if (mRTLastReportedPosition.left == left
-                && mRTLastReportedPosition.top == top
-                && mRTLastReportedPosition.right == right
-                && mRTLastReportedPosition.bottom == bottom) {
-            return;
-        }
-        try {
-            if (DEBUG) {
-                Log.d(TAG, String.format("%d updateWindowPosition RT, frameNr = %d, " +
-                        "postion = [%d, %d, %d, %d]", System.identityHashCode(this),
-                        frameNumber, left, top, right, bottom));
-            }
-            // Just using mRTLastReportedPosition as a dummy rect here
-            session.repositionChild(window, left, top, right, bottom,
-                    frameNumber,
-                    mRTLastReportedPosition);
-            // Now overwrite mRTLastReportedPosition with our values
-            mRTLastReportedPosition.set(left, top, right, bottom);
-        } catch (RemoteException ex) {
-            Log.e(TAG, "Exception from repositionChild", ex);
-        }
-    }
-
-    /**
-     * Called by native on RenderThread to notify that the window is no longer in the
-     * draw tree
-     * @hide
-     */
-    public final void windowPositionLostRT(long frameNumber) {
-        if (DEBUG) {
-            Log.d(TAG, String.format("%d windowPositionLostRT RT, frameNr = %d",
-                    System.identityHashCode(this), frameNumber));
-        }
-        IWindowSession session = mSession;
-        MyWindow window = mWindow;
-        if (session == null || window == null) {
-            // We got detached prior to receiving this, abort
-            return;
-        }
-        if (mRtHandlingPositionUpdates) {
-            mRtHandlingPositionUpdates = false;
-            // This callback will happen while the UI thread is blocked, so we can
-            // safely access other member variables at this time.
-            // So do what the UI thread would have done if RT wasn't handling position
-            // updates.
-            if (!mWinFrame.isEmpty() && !mWinFrame.equals(mRTLastReportedPosition)) {
-                try {
-                    if (DEBUG) Log.d(TAG, String.format("%d updateWindowPosition, " +
-                            "postion = [%d, %d, %d, %d]", System.identityHashCode(this),
-                            mWinFrame.left, mWinFrame.top,
-                            mWinFrame.right, mWinFrame.bottom));
-                    session.repositionChild(window, mWinFrame.left, mWinFrame.top,
-                            mWinFrame.right, mWinFrame.bottom, frameNumber, mWinFrame);
-                } catch (RemoteException ex) {
-                    Log.e(TAG, "Exception from relayout", ex);
-                }
-            }
-            mRTLastReportedPosition.setEmpty();
         }
     }
 
@@ -806,12 +646,11 @@ public class SurfaceView extends View {
 
         @Override
         public void resized(Rect frame, Rect overscanInsets, Rect contentInsets,
-                Rect visibleInsets, Rect stableInsets, Rect outsets, boolean reportDraw,
-                Configuration newConfig, Rect backDropRect, boolean forceLayout,
-                boolean alwaysConsumeNavBar) {
+                Rect visibleInsets, boolean reportDraw, Configuration newConfig) {
             SurfaceView surfaceView = mSurfaceView.get();
             if (surfaceView != null) {
-                if (DEBUG) Log.v(TAG, surfaceView + " got resized: w=" + frame.width()
+                if (DEBUG) Log.v(
+                        "SurfaceView", surfaceView + " got resized: w=" + frame.width()
                         + " h=" + frame.height() + ", cur w=" + mCurWidth + " h=" + mCurHeight);
                 surfaceView.mSurfaceLock.lock();
                 try {
@@ -820,8 +659,7 @@ public class SurfaceView extends View {
                         surfaceView.mReportDrawNeeded = true;
                         surfaceView.mHandler.sendEmptyMessage(UPDATE_WINDOW_MSG);
                     } else if (surfaceView.mWinFrame.width() != frame.width()
-                            || surfaceView.mWinFrame.height() != frame.height()
-                            || forceLayout) {
+                            || surfaceView.mWinFrame.height() != frame.height()) {
                         surfaceView.mUpdateWindowNeeded = true;
                         surfaceView.mHandler.sendEmptyMessage(UPDATE_WINDOW_MSG);
                     }
@@ -967,7 +805,7 @@ public class SurfaceView extends View {
         private final Canvas internalLockCanvas(Rect dirty) {
             mSurfaceLock.lock();
 
-            if (DEBUG) Log.i(TAG, System.identityHashCode(this) + " " + "Locking canvas... stopped="
+            if (DEBUG) Log.i(TAG, "Locking canvas... stopped="
                     + mDrawingStopped + ", win=" + mWindow);
 
             Canvas c = null;
@@ -979,7 +817,7 @@ public class SurfaceView extends View {
                 }
             }
 
-            if (DEBUG) Log.i(TAG, System.identityHashCode(this) + " " + "Returned canvas: " + c);
+            if (DEBUG) Log.i(TAG, "Returned canvas: " + c);
             if (c != null) {
                 mLastLockTime = SystemClock.uptimeMillis();
                 return c;

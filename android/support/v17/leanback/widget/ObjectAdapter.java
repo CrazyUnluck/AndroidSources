@@ -16,12 +16,11 @@ package android.support.v17.leanback.widget;
 import android.database.Observable;
 
 /**
- * Base class adapter to be used in leanback activities.  Provides access to a data model and is
+ * Adapter for leanback activities.  Provides access to a data model and is
  * decoupled from the presentation of the items via {@link PresenterSelector}.
  */
 public abstract class ObjectAdapter {
 
-    /** Indicates that an id has not been set. */
     public static final int NO_ID = -1;
 
     /**
@@ -32,7 +31,7 @@ public abstract class ObjectAdapter {
     public static abstract class DataObserver {
         /**
          * Called whenever the ObjectAdapter's data has changed in some manner
-         * outside of the set of changes covered by the other range-based change
+         * outside of the set of changes covered by the other range based change
          * notification methods.
          */
         public void onChanged() {
@@ -102,27 +101,27 @@ public abstract class ObjectAdapter {
     private PresenterSelector mPresenterSelector;
 
     /**
-     * Constructs an adapter with the given {@link PresenterSelector}.
+     * Construct an adapter with the given {@link PresenterSelector}.
      */
     public ObjectAdapter(PresenterSelector presenterSelector) {
         setPresenterSelector(presenterSelector);
     }
 
     /**
-     * Constructs an adapter that uses the given {@link Presenter} for all items.
+     * Construct an adapter that uses the given {@link Presenter} for all items.
      */
     public ObjectAdapter(Presenter presenter) {
         setPresenterSelector(new SinglePresenterSelector(presenter));
     }
 
     /**
-     * Constructs an adapter.
+     * Construct an adapter.
      */
     public ObjectAdapter() {
     }
 
     /**
-     * Sets the presenter selector.  May not be null.
+     * Set the presenter selector.  May not be null.
      */
     public final void setPresenterSelector(PresenterSelector presenterSelector) {
         if (presenterSelector == null) {
@@ -149,28 +148,28 @@ public abstract class ObjectAdapter {
     }
 
     /**
-     * Returns the presenter selector for this ObjectAdapter.
+     * Returns the presenter selector;
      */
     public final PresenterSelector getPresenterSelector() {
         return mPresenterSelector;
     }
 
     /**
-     * Registers a DataObserver for data change notifications.
+     * Register a DataObserver for data change notifications.
      */
     public final void registerObserver(DataObserver observer) {
         mObservable.registerObserver(observer);
     }
 
     /**
-     * Unregisters a DataObserver for data change notifications.
+     * Unregister a DataObserver for data change notifications.
      */
     public final void unregisterObserver(DataObserver observer) {
         mObservable.unregisterObserver(observer);
     }
 
     /**
-     * Unregisters all DataObservers for this ObjectAdapter.
+     * Unregister all DataObservers for this ObservableList.
      */
     public final void unregisterAllObservers() {
         mObservable.unregisterAll();
@@ -193,9 +192,9 @@ public abstract class ObjectAdapter {
     }
 
     /**
-     * Returns true if the item ids are stable across changes to the
-     * underlying data.  When this is true, clients of the ObjectAdapter can use
-     * {@link #getId(int)} to correlate Objects across changes.
+     * Indicates whether the item ids are stable across changes to the
+     * underlying data.  When this is true, client of Adapter can use
+     * {@link #getId(int)} to correlate objects across changes.
      */
     public final boolean hasStableIds() {
         return mHasStableIds;
@@ -242,7 +241,7 @@ public abstract class ObjectAdapter {
     public abstract Object get(int position);
 
     /**
-     * Returns the id for the given position.
+     * Returns id for the given position.
      */
     public long getId(int position) {
         return NO_ID;

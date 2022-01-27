@@ -24,6 +24,9 @@ import android.util.AttributeSet;
 import android.util.SparseBooleanArray;
 import android.view.View;
 import android.view.ViewGroup;
+import android.view.accessibility.AccessibilityEvent;
+import android.view.accessibility.AccessibilityNodeInfo;
+
 import java.util.regex.Pattern;
 
 /**
@@ -467,7 +470,7 @@ public class TableLayout extends LinearLayout {
      */
     @Override
     void measureVertical(int widthMeasureSpec, int heightMeasureSpec) {
-        findLargestCells(widthMeasureSpec, heightMeasureSpec);
+        findLargestCells(widthMeasureSpec);
         shrinkAndStretchColumns(widthMeasureSpec);
 
         super.measureVertical(widthMeasureSpec, heightMeasureSpec);
@@ -479,7 +482,7 @@ public class TableLayout extends LinearLayout {
      *
      * @param widthMeasureSpec the measure constraint imposed by our parent
      */
-    private void findLargestCells(int widthMeasureSpec, int heightMeasureSpec) {
+    private void findLargestCells(int widthMeasureSpec) {
         boolean firstRow = true;
 
         // find the maximum width for each column
@@ -502,7 +505,7 @@ public class TableLayout extends LinearLayout {
                 final ViewGroup.LayoutParams layoutParams = row.getLayoutParams();
                 layoutParams.height = LayoutParams.WRAP_CONTENT;
 
-                final int[] widths = row.getColumnsWidths(widthMeasureSpec, heightMeasureSpec);
+                final int[] widths = row.getColumnsWidths(widthMeasureSpec);
                 final int newLength = widths.length;
                 // this is the first row, we just need to copy the values
                 if (firstRow) {
@@ -664,8 +667,15 @@ public class TableLayout extends LinearLayout {
     }
 
     @Override
-    public CharSequence getAccessibilityClassName() {
-        return TableLayout.class.getName();
+    public void onInitializeAccessibilityEvent(AccessibilityEvent event) {
+        super.onInitializeAccessibilityEvent(event);
+        event.setClassName(TableLayout.class.getName());
+    }
+
+    @Override
+    public void onInitializeAccessibilityNodeInfo(AccessibilityNodeInfo info) {
+        super.onInitializeAccessibilityNodeInfo(info);
+        info.setClassName(TableLayout.class.getName());
     }
 
     /**

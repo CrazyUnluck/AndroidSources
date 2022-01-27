@@ -70,8 +70,9 @@ public class NoiseSuppressor extends AudioEffect {
             Log.w(TAG, "not enough resources");
         } catch (RuntimeException e) {
             Log.w(TAG, "not enough memory");
+        } finally {
+            return ns;
         }
-        return ns;
     }
 
     /**

@@ -19,8 +19,7 @@ import android.app.Fragment;
  * Fragment used by the background manager.
  * @hide
  */
-public final class BackgroundFragment extends Fragment implements
-        BackgroundManager.FragmentStateQueriable {
+public final class BackgroundFragment extends Fragment {
     private BackgroundManager mBackgroundManager;
 
     void setBackgroundManager(BackgroundManager backgroundManager) {
@@ -32,24 +31,13 @@ public final class BackgroundFragment extends Fragment implements
     }
 
     @Override
-    public void onStart() {
-        super.onStart();
-        // mBackgroundManager might be null:
-        // if BackgroundFragment is just restored by FragmentManager,
-        // and user does not call BackgroundManager.getInstance() yet.
-        if (mBackgroundManager != null) {
-            mBackgroundManager.onActivityStart();
-        }
-    }
-
-    @Override
     public void onResume() {
         super.onResume();
         // mBackgroundManager might be null:
         // if BackgroundFragment is just restored by FragmentManager,
         // and user does not call BackgroundManager.getInstance() yet.
         if (mBackgroundManager != null) {
-            mBackgroundManager.onResume();
+            mBackgroundManager.onActivityResume();
         }
     }
 

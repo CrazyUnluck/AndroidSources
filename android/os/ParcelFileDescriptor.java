@@ -16,25 +16,24 @@
 
 package android.os;
 
-import static android.system.OsConstants.AF_UNIX;
-import static android.system.OsConstants.SEEK_SET;
-import static android.system.OsConstants.SOCK_STREAM;
-import static android.system.OsConstants.SOCK_SEQPACKET;
-import static android.system.OsConstants.S_ISLNK;
-import static android.system.OsConstants.S_ISREG;
+import static libcore.io.OsConstants.AF_UNIX;
+import static libcore.io.OsConstants.SEEK_SET;
+import static libcore.io.OsConstants.SOCK_STREAM;
+import static libcore.io.OsConstants.S_ISLNK;
+import static libcore.io.OsConstants.S_ISREG;
 
 import android.content.BroadcastReceiver;
 import android.content.ContentProvider;
-import android.os.MessageQueue.OnFileDescriptorEventListener;
-import android.system.ErrnoException;
-import android.system.Os;
-import android.system.OsConstants;
-import android.system.StructStat;
 import android.util.Log;
 
 import dalvik.system.CloseGuard;
+
+import libcore.io.ErrnoException;
 import libcore.io.IoUtils;
+import libcore.io.Libcore;
 import libcore.io.Memory;
+import libcore.io.OsConstants;
+import libcore.io.StructStat;
 
 import java.io.Closeable;
 import java.io.File;
@@ -43,7 +42,6 @@ import java.io.FileInputStream;
 import java.io.FileNotFoundException;
 import java.io.FileOutputStream;
 import java.io.IOException;
-import java.io.InterruptedIOException;
 import java.net.DatagramSocket;
 import java.net.Socket;
 import java.nio.ByteOrder;
@@ -221,8 +219,8 @@ public class ParcelFileDescriptor implements Parcelable, Closeable {
      *             be opened with the requested mode.
      * @see #parseMode(String)
      */
-    public static ParcelFileDescriptor open(File file, int mode, Handler handler,
-            final OnCloseListener listener) throws IOException {
+    public static ParcelFileDescriptor open(
+            File file, int mode, Handler handler, OnCloseListener listener) throws IOException {
         if (handler == null) {
             throw new IllegalArgumentException("Handler must not be null");
         }
@@ -233,42 +231,13 @@ public class ParcelFileDescriptor implements Parcelable, Closeable {
         final FileDescriptor fd = openInternal(file, mode);
         if (fd == null) return null;
 
-        return fromFd(fd, handler, listener);
-    }
-
-    /** {@hide} */
-    public static ParcelFileDescriptor fromFd(
-            FileDescriptor fd, Handler handler, final OnCloseListener listener) throws IOException {
-        if (handler == null) {
-            throw new IllegalArgumentException("Handler must not be null");
-        }
-        if (listener == null) {
-            throw new IllegalArgumentException("Listener must not be null");
-        }
-
         final FileDescriptor[] comm = createCommSocketPair();
         final ParcelFileDescriptor pfd = new ParcelFileDescriptor(fd, comm[0]);
-        final MessageQueue queue = handler.getLooper().getQueue();
-        queue.addOnFileDescriptorEventListener(comm[1],
-                OnFileDescriptorEventListener.EVENT_INPUT, new OnFileDescriptorEventListener() {
-            @Override
-            public int onFileDescriptorEvents(FileDescriptor fd, int events) {
-                Status status = null;
-                if ((events & OnFileDescriptorEventListener.EVENT_INPUT) != 0) {
-                    final byte[] buf = new byte[MAX_STATUS];
-                    status = readCommStatus(fd, buf);
-                } else if ((events & OnFileDescriptorEventListener.EVENT_ERROR) != 0) {
-                    status = new Status(Status.DEAD);
-                }
-                if (status != null) {
-                    queue.removeOnFileDescriptorEventListener(fd);
-                    IoUtils.closeQuietly(fd);
-                    listener.onClose(status.asIOException());
-                    return 0;
-                }
-                return EVENT_INPUT;
-            }
-        });
+
+        // Kick off thread to watch for status updates
+        IoUtils.setBlocking(comm[1], true);
+        final ListenerBridge bridge = new ListenerBridge(comm[1], handler.getLooper(), listener);
+        bridge.start();
 
         return pfd;
     }
@@ -291,7 +260,7 @@ public class ParcelFileDescriptor implements Parcelable, Closeable {
      */
     public static ParcelFileDescriptor dup(FileDescriptor orig) throws IOException {
         try {
-            final FileDescriptor fd = Os.dup(orig);
+            final FileDescriptor fd = Libcore.os.dup(orig);
             return new ParcelFileDescriptor(fd);
         } catch (ErrnoException e) {
             throw e.rethrowAsIOException();
@@ -327,7 +296,7 @@ public class ParcelFileDescriptor implements Parcelable, Closeable {
         original.setInt$(fd);
 
         try {
-            final FileDescriptor dup = Os.dup(original);
+            final FileDescriptor dup = Libcore.os.dup(original);
             return new ParcelFileDescriptor(dup);
         } catch (ErrnoException e) {
             throw e.rethrowAsIOException();
@@ -389,7 +358,7 @@ public class ParcelFileDescriptor implements Parcelable, Closeable {
      */
     public static ParcelFileDescriptor[] createPipe() throws IOException {
         try {
-            final FileDescriptor[] fds = Os.pipe();
+            final FileDescriptor[] fds = Libcore.os.pipe();
             return new ParcelFileDescriptor[] {
                     new ParcelFileDescriptor(fds[0]),
                     new ParcelFileDescriptor(fds[1]) };
@@ -411,7 +380,7 @@ public class ParcelFileDescriptor implements Parcelable, Closeable {
     public static ParcelFileDescriptor[] createReliablePipe() throws IOException {
         try {
             final FileDescriptor[] comm = createCommSocketPair();
-            final FileDescriptor[] fds = Os.pipe();
+            final FileDescriptor[] fds = Libcore.os.pipe();
             return new ParcelFileDescriptor[] {
                     new ParcelFileDescriptor(fds[0], comm[0]),
                     new ParcelFileDescriptor(fds[1], comm[1]) };
@@ -425,17 +394,10 @@ public class ParcelFileDescriptor implements Parcelable, Closeable {
      * connected to each other. The two sockets are indistinguishable.
      */
     public static ParcelFileDescriptor[] createSocketPair() throws IOException {
-        return createSocketPair(SOCK_STREAM);
-    }
-
-    /**
-     * @hide
-     */
-    public static ParcelFileDescriptor[] createSocketPair(int type) throws IOException {
         try {
             final FileDescriptor fd0 = new FileDescriptor();
             final FileDescriptor fd1 = new FileDescriptor();
-            Os.socketpair(AF_UNIX, type, 0, fd0, fd1);
+            Libcore.os.socketpair(AF_UNIX, SOCK_STREAM, 0, fd0, fd1);
             return new ParcelFileDescriptor[] {
                     new ParcelFileDescriptor(fd0),
                     new ParcelFileDescriptor(fd1) };
@@ -454,18 +416,11 @@ public class ParcelFileDescriptor implements Parcelable, Closeable {
      * This can also be used to detect remote crashes.
      */
     public static ParcelFileDescriptor[] createReliableSocketPair() throws IOException {
-        return createReliableSocketPair(SOCK_STREAM);
-    }
-
-    /**
-     * @hide
-     */
-    public static ParcelFileDescriptor[] createReliableSocketPair(int type) throws IOException {
         try {
             final FileDescriptor[] comm = createCommSocketPair();
             final FileDescriptor fd0 = new FileDescriptor();
             final FileDescriptor fd1 = new FileDescriptor();
-            Os.socketpair(AF_UNIX, type, 0, fd0, fd1);
+            Libcore.os.socketpair(AF_UNIX, SOCK_STREAM, 0, fd0, fd1);
             return new ParcelFileDescriptor[] {
                     new ParcelFileDescriptor(fd0, comm[0]),
                     new ParcelFileDescriptor(fd1, comm[1]) };
@@ -476,12 +431,9 @@ public class ParcelFileDescriptor implements Parcelable, Closeable {
 
     private static FileDescriptor[] createCommSocketPair() throws IOException {
         try {
-            // Use SOCK_SEQPACKET so that we have a guarantee that the status
-            // is written and read atomically as one unit and is not split
-            // across multiple IO operations.
             final FileDescriptor comm1 = new FileDescriptor();
             final FileDescriptor comm2 = new FileDescriptor();
-            Os.socketpair(AF_UNIX, SOCK_SEQPACKET, 0, comm1, comm2);
+            Libcore.os.socketpair(AF_UNIX, SOCK_STREAM, 0, comm1, comm2);
             IoUtils.setBlocking(comm1, false);
             IoUtils.setBlocking(comm2, false);
             return new FileDescriptor[] { comm1, comm2 };
@@ -567,7 +519,7 @@ public class ParcelFileDescriptor implements Parcelable, Closeable {
             return mWrapped.getStatSize();
         } else {
             try {
-                final StructStat st = Os.fstat(mFd);
+                final StructStat st = Libcore.os.fstat(mFd);
                 if (S_ISREG(st.st_mode) || S_ISLNK(st.st_mode)) {
                     return st.st_size;
                 } else {
@@ -590,7 +542,7 @@ public class ParcelFileDescriptor implements Parcelable, Closeable {
             return mWrapped.seekTo(pos);
         } else {
             try {
-                return Os.lseek(mFd, pos, SEEK_SET);
+                return Libcore.os.lseek(mFd, pos, SEEK_SET);
             } catch (ErrnoException e) {
                 throw e.rethrowAsIOException();
             }
@@ -634,9 +586,6 @@ public class ParcelFileDescriptor implements Parcelable, Closeable {
             final int fd = getFd();
             Parcel.clearFileDescriptor(mFd);
             writeCommStatusAndClose(Status.DETACHED, null);
-            mClosed = true;
-            mGuard.close();
-            releaseResources();
             return fd;
         }
     }
@@ -745,12 +694,8 @@ public class ParcelFileDescriptor implements Parcelable, Closeable {
                     writePtr += len;
                 }
 
-                // Must write the entire status as a single operation.
-                Os.write(mCommFd, buf, 0, writePtr);
+                Libcore.os.write(mCommFd, buf, 0, writePtr);
             } catch (ErrnoException e) {
-                // Reporting status is best-effort
-                Log.w(TAG, "Failed to report status: " + e);
-            } catch (InterruptedIOException e) {
                 // Reporting status is best-effort
                 Log.w(TAG, "Failed to report status: " + e);
             }
@@ -763,8 +708,7 @@ public class ParcelFileDescriptor implements Parcelable, Closeable {
 
     private static Status readCommStatus(FileDescriptor comm, byte[] buf) {
         try {
-            // Must read the entire status as a single operation.
-            final int n = Os.read(comm, buf, 0, buf.length);
+            final int n = Libcore.os.read(comm, buf, 0, buf.length);
             if (n == 0) {
                 // EOF means they're dead
                 return new Status(Status.DEAD);
@@ -784,9 +728,6 @@ public class ParcelFileDescriptor implements Parcelable, Closeable {
                 Log.d(TAG, "Failed to read status; assuming dead: " + e);
                 return new Status(Status.DEAD);
             }
-        } catch (InterruptedIOException e) {
-            Log.d(TAG, "Failed to read status; assuming dead: " + e);
-            return new Status(Status.DEAD);
         }
     }
 
@@ -864,34 +805,6 @@ public class ParcelFileDescriptor implements Parcelable, Closeable {
                 super.close();
             }
         }
-
-        @Override
-        public int read() throws IOException {
-            final int result = super.read();
-            if (result == -1 && mPfd.canDetectErrors()) {
-                // Check for errors only on EOF, to minimize overhead.
-                mPfd.checkError();
-            }
-            return result;
-        }
-
-        @Override
-        public int read(byte[] b) throws IOException {
-            final int result = super.read(b);
-            if (result == -1 && mPfd.canDetectErrors()) {
-                mPfd.checkError();
-            }
-            return result;
-        }
-
-        @Override
-        public int read(byte[] b, int off, int len) throws IOException {
-            final int result = super.read(b, off, len);
-            if (result == -1 && mPfd.canDetectErrors()) {
-                mPfd.checkError();
-            }
-            return result;
-        }
     }
 
     /**
@@ -966,13 +879,12 @@ public class ParcelFileDescriptor implements Parcelable, Closeable {
                 releaseResources();
             }
         } else {
+            out.writeFileDescriptor(mFd);
             if (mCommFd != null) {
                 out.writeInt(1);
-                out.writeFileDescriptor(mFd);
                 out.writeFileDescriptor(mCommFd);
             } else {
                 out.writeInt(0);
-                out.writeFileDescriptor(mFd);
             }
             if ((flags & PARCELABLE_WRITE_RETURN_VALUE) != 0 && !mClosed) {
                 // Not a real close, so emit no status
@@ -985,10 +897,9 @@ public class ParcelFileDescriptor implements Parcelable, Closeable {
             = new Parcelable.Creator<ParcelFileDescriptor>() {
         @Override
         public ParcelFileDescriptor createFromParcel(Parcel in) {
-            int hasCommChannel = in.readInt();
             final FileDescriptor fd = in.readRawFileDescriptor();
             FileDescriptor commChannel = null;
-            if (hasCommChannel != 0) {
+            if (in.readInt() != 0) {
                 commChannel = in.readRawFileDescriptor();
             }
             return new ParcelFileDescriptor(fd, commChannel);
@@ -1078,10 +989,39 @@ public class ParcelFileDescriptor implements Parcelable, Closeable {
                     return new IOException("Unknown status: " + status);
             }
         }
+    }
+
+    /**
+     * Bridge to watch for remote status, and deliver to listener. Currently
+     * requires that communication socket is <em>blocking</em>.
+     */
+    private static final class ListenerBridge extends Thread {
+        // TODO: switch to using Looper to avoid burning a thread
+
+        private FileDescriptor mCommFd;
+        private final Handler mHandler;
+
+        public ListenerBridge(FileDescriptor comm, Looper looper, final OnCloseListener listener) {
+            mCommFd = comm;
+            mHandler = new Handler(looper) {
+                @Override
+                public void handleMessage(Message msg) {
+                    final Status s = (Status) msg.obj;
+                    listener.onClose(s != null ? s.asIOException() : null);
+                }
+            };
+        }
 
         @Override
-        public String toString() {
-            return "{" + status + ": " + msg + "}";
+        public void run() {
+            try {
+                final byte[] buf = new byte[MAX_STATUS];
+                final Status status = readCommStatus(mCommFd, buf);
+                mHandler.obtainMessage(0, status).sendToTarget();
+            } finally {
+                IoUtils.closeQuietly(mCommFd);
+                mCommFd = null;
+            }
         }
     }
 }

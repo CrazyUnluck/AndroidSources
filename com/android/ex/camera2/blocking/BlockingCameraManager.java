@@ -34,21 +34,21 @@ import java.util.Objects;
  * duplicate any functionality that is already blocking.</p>
  *
  * <p>Be careful when using this from UI thread! This function will typically block
- * for about 500ms when successful, and as long as {@value #OPEN_TIME_OUT_MS}ms when timing out.</p>
+ * for about 500ms when successful, and as long as {@value #OPEN_TIME_OUT}ms when timing out.</p>
  */
 public class BlockingCameraManager {
 
-    private static final String TAG = "BlockingCameraManager";
+    private static final String TAG = "CameraBlockingOpener";
     private static final boolean VERBOSE = Log.isLoggable(TAG, Log.VERBOSE);
 
-    private static final int OPEN_TIME_OUT_MS = 2000; // ms time out for openCamera
+    private static final int OPEN_TIME_OUT = 2000; // ms time out for openCamera
 
     /**
      * Exception thrown by {@link #openCamera} if the open fails asynchronously.
      */
     public static class BlockingOpenException extends Exception {
         /**
-         * Suppress Eclipse warning
+         * Suppress eclipse warning
          */
         private static final long serialVersionUID = 12397123891238912L;
 
@@ -66,7 +66,7 @@ public class BlockingCameraManager {
 
         /**
          * Returns the error code {@link ERROR_DISCONNECTED} if disconnected, or one of
-         * {@code CameraDevice.StateCallback#ERROR_*} if there was another error.
+         * {@code CameraDevice.StateListener#ERROR_*} if there was another error.
          *
          * @return int Disconnect/error code
          */
@@ -81,7 +81,7 @@ public class BlockingCameraManager {
          * @param errorCode
          * @param message
          *
-         * @see {@link CameraDevice.StateCallback#ERROR_CAMERA_DEVICE}
+         * @see {@link CameraDevice.StateListener#ERROR_CAMERA_DEVICE}
          */
         public BlockingOpenException(int errorCode, String message) {
             super(message);
@@ -117,8 +117,8 @@ public class BlockingCameraManager {
      * does.</p>
      *
      * <p>Throws {@link BlockingOpenException} when the open fails asynchronously (due to
-     * {@link CameraDevice.StateCallback#onDisconnected(CameraDevice)} or
-     * ({@link CameraDevice.StateCallback#onError(CameraDevice)}.</p>
+     * {@link CameraDevice.StateListener#onDisconnected(CameraDevice)} or
+     * ({@link CameraDevice.StateListener#onError(CameraDevice)}.</p>
      *
      * <p>Throws {@link TimeoutRuntimeException} if opening times out. This is usually
      * highly unrecoverable, and all future calls to opening that camera will fail since the
@@ -142,7 +142,7 @@ public class BlockingCameraManager {
      * @throws TimeoutRuntimeException
      *            If opening times out. Typically unrecoverable.
      */
-    public CameraDevice openCamera(String cameraId, CameraDevice.StateCallback listener,
+    public CameraDevice openCamera(String cameraId, CameraDevice.StateListener listener,
             Handler handler) throws CameraAccessException, BlockingOpenException {
 
         if (handler == null) {
@@ -163,17 +163,17 @@ public class BlockingCameraManager {
     /**
      * Block until CameraManager#openCamera finishes with onOpened/onError/onDisconnected
      *
-     * <p>Pass-through all StateCallback changes to the proxy.</p>
+     * <p>Pass-through all StateListener changes to the proxy.</p>
      *
-     * <p>Time out after {@link #OPEN_TIME_OUT_MS} and unblock. Clean up camera if it arrives
+     * <p>Time out after {@link #OPEN_TIME_OUT} and unblock. Clean up camera if it arrives
      * later.</p>
      */
-    private class OpenListener extends CameraDevice.StateCallback {
+    private class OpenListener extends CameraDevice.StateListener {
         private static final int ERROR_UNINITIALIZED = -1;
 
         private final String mCameraId;
 
-        private final CameraDevice.StateCallback mProxy;
+        private final CameraDevice.StateListener mProxy;
 
         private final Object mLock = new Object();
         private final ConditionVariable mDeviceReady = new ConditionVariable();
@@ -187,7 +187,7 @@ public class BlockingCameraManager {
         private boolean mTimedOut = false;
 
         OpenListener(CameraManager manager, String cameraId,
-                CameraDevice.StateCallback listener, Handler handler)
+                CameraDevice.StateListener listener, Handler handler)
                 throws CameraAccessException {
             mCameraId = cameraId;
             mProxy = listener;
@@ -275,6 +275,26 @@ public class BlockingCameraManager {
         }
 
         @Override
+        public void onUnconfigured(CameraDevice camera) {
+            if (mProxy != null) mProxy.onUnconfigured(camera);
+        }
+
+        @Override
+        public void onIdle(CameraDevice camera) {
+            if (mProxy != null) mProxy.onIdle(camera);
+        }
+
+        @Override
+        public void onActive(CameraDevice camera) {
+            if (mProxy != null) mProxy.onActive(camera);
+        }
+
+        @Override
+        public void onBusy(CameraDevice camera) {
+            if (mProxy != null) mProxy.onBusy(camera);
+        }
+
+        @Override
         public void onClosed(CameraDevice camera) {
             if (mProxy != null) mProxy.onClosed(camera);
         }
@@ -283,14 +303,14 @@ public class BlockingCameraManager {
             /**
              * Block until onOpened, onError, or onDisconnected
              */
-            if (!mDeviceReady.block(OPEN_TIME_OUT_MS)) {
+            if (!mDeviceReady.block(OPEN_TIME_OUT)) {
 
                 synchronized (mLock) {
                     if (mNoReply) { // Give the async camera a fighting chance (required)
                         mTimedOut = true; // Clean up camera if it ever arrives later
                         throw new TimeoutRuntimeException(String.format(
                                 "Timed out after %d ms while trying to open camera device %s",
-                                OPEN_TIME_OUT_MS, mCameraId));
+                                OPEN_TIME_OUT, mCameraId));
                     }
                 }
             }

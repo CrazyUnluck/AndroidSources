@@ -16,24 +16,11 @@
 
 package android.app;
 
-import android.annotation.SdkConstant;
-import android.annotation.SystemApi;
 import android.content.Context;
 import android.content.Intent;
 import android.os.Build;
-import android.os.Handler;
-import android.os.Parcel;
-import android.os.Parcelable;
 import android.os.RemoteException;
-import android.os.UserHandle;
 import android.os.WorkSource;
-import android.text.TextUtils;
-import android.util.ArrayMap;
-import android.util.Log;
-
-import libcore.util.ZoneInfoDB;
-
-import java.io.IOException;
 
 /**
  * This class provides access to the system alarm services.  These allow you
@@ -75,7 +62,8 @@ import java.io.IOException;
  * {@link android.content.Context#getSystemService
  * Context.getSystemService(Context.ALARM_SERVICE)}.
  */
-public class AlarmManager {
+public class AlarmManager
+{
     private static final String TAG = "AlarmManager";
 
     /**
@@ -106,145 +94,14 @@ public class AlarmManager {
      */
     public static final int ELAPSED_REALTIME = 3;
 
-    /**
-     * Broadcast Action: Sent after the value returned by
-     * {@link #getNextAlarmClock()} has changed.
-     *
-     * <p class="note">This is a protected intent that can only be sent by the system.
-     * It is only sent to registered receivers.</p>
-     */
-    @SdkConstant(SdkConstant.SdkConstantType.BROADCAST_INTENT_ACTION)
-    public static final String ACTION_NEXT_ALARM_CLOCK_CHANGED =
-            "android.app.action.NEXT_ALARM_CLOCK_CHANGED";
-
     /** @hide */
     public static final long WINDOW_EXACT = 0;
     /** @hide */
     public static final long WINDOW_HEURISTIC = -1;
 
-    /**
-     * Flag for alarms: this is to be a stand-alone alarm, that should not be batched with
-     * other alarms.
-     * @hide
-     */
-    public static final int FLAG_STANDALONE = 1<<0;
-
-    /**
-     * Flag for alarms: this alarm would like to wake the device even if it is idle.  This
-     * is, for example, an alarm for an alarm clock.
-     * @hide
-     */
-    public static final int FLAG_WAKE_FROM_IDLE = 1<<1;
-
-    /**
-     * Flag for alarms: this alarm would like to still execute even if the device is
-     * idle.  This won't bring the device out of idle, just allow this specific alarm to
-     * run.  Note that this means the actual time this alarm goes off can be inconsistent
-     * with the time of non-allow-while-idle alarms (it could go earlier than the time
-     * requested by another alarm).
-     *
-     * @hide
-     */
-    public static final int FLAG_ALLOW_WHILE_IDLE = 1<<2;
-
-    /**
-     * Flag for alarms: same as {@link #FLAG_ALLOW_WHILE_IDLE}, but doesn't have restrictions
-     * on how frequently it can be scheduled.  Only available (and automatically applied) to
-     * system alarms.
-     *
-     * @hide
-     */
-    public static final int FLAG_ALLOW_WHILE_IDLE_UNRESTRICTED = 1<<3;
-
-    /**
-     * Flag for alarms: this alarm marks the point where we would like to come out of idle
-     * mode.  It may be moved by the alarm manager to match the first wake-from-idle alarm.
-     * Scheduling an alarm with this flag puts the alarm manager in to idle mode, where it
-     * avoids scheduling any further alarms until the marker alarm is executed.
-     * @hide
-     */
-    public static final int FLAG_IDLE_UNTIL = 1<<4;
-
     private final IAlarmManager mService;
-    private final String mPackageName;
     private final boolean mAlwaysExact;
-    private final int mTargetSdkVersion;
-    private final Handler mMainThreadHandler;
 
-    /**
-     * Direct-notification alarms: the requester must be running continuously from the
-     * time the alarm is set to the time it is delivered, or delivery will fail.  Only
-     * one-shot alarms can be set using this mechanism, not repeating alarms.
-     */
-    public interface OnAlarmListener {
-        /**
-         * Callback method that is invoked by the system when the alarm time is reached.
-         */
-        public void onAlarm();
-    }
-
-    final class ListenerWrapper extends IAlarmListener.Stub implements Runnable {
-        final OnAlarmListener mListener;
-        Handler mHandler;
-        IAlarmCompleteListener mCompletion;
-
-        public ListenerWrapper(OnAlarmListener listener) {
-            mListener = listener;
-        }
-
-        public void setHandler(Handler h) {
-           mHandler = h;
-        }
-
-        public void cancel() {
-            try {
-                mService.remove(null, this);
-            } catch (RemoteException ex) {
-                throw ex.rethrowFromSystemServer();
-            }
-
-            synchronized (AlarmManager.class) {
-                if (sWrappers != null) {
-                    sWrappers.remove(mListener);
-                }
-            }
-        }
-
-        @Override
-        public void doAlarm(IAlarmCompleteListener alarmManager) {
-            mCompletion = alarmManager;
-            mHandler.post(this);
-        }
-
-        @Override
-        public void run() {
-            // Remove this listener from the wrapper cache first; the server side
-            // already considers it gone
-            synchronized (AlarmManager.class) {
-                if (sWrappers != null) {
-                    sWrappers.remove(mListener);
-                }
-            }
-
-            // Now deliver it to the app
-            try {
-                mListener.onAlarm();
-            } finally {
-                // No catch -- make sure to report completion to the system process,
-                // but continue to allow the exception to crash the app.
-
-                try {
-                    mCompletion.alarmComplete(this);
-                } catch (Exception e) {
-                    Log.e(TAG, "Unable to report completion to Alarm Manager!", e);
-                }
-            }
-        }
-    }
-
-    // Tracking of the OnAlarmListener -> wrapper mapping, for cancel() support.
-    // Access is synchronized on the AlarmManager class object.
-    private static ArrayMap<OnAlarmListener, ListenerWrapper> sWrappers;
 
     /**
      * package private on purpose
@@ -252,10 +109,8 @@ public class AlarmManager {
     AlarmManager(IAlarmManager service, Context ctx) {
         mService = service;
 
-        mPackageName = ctx.getPackageName();
-        mTargetSdkVersion = ctx.getApplicationInfo().targetSdkVersion;
-        mAlwaysExact = (mTargetSdkVersion < Build.VERSION_CODES.KITKAT);
-        mMainThreadHandler = new Handler(ctx.getMainLooper());
+        final int sdkVersion = ctx.getApplicationInfo().targetSdkVersion;
+        mAlwaysExact = (sdkVersion < Build.VERSION_CODES.KITKAT);
     }
 
     private long legacyExactLength() {
@@ -333,37 +188,7 @@ public class AlarmManager {
      * @see #RTC_WAKEUP
      */
     public void set(int type, long triggerAtMillis, PendingIntent operation) {
-        setImpl(type, triggerAtMillis, legacyExactLength(), 0, 0, operation, null, null,
-                null, null, null);
-    }
-
-    /**
-     * Direct callback version of {@link #set(int, long, PendingIntent)}.  Rather than
-     * supplying a PendingIntent to be sent when the alarm time is reached, this variant
-     * supplies an {@link OnAlarmListener} instance that will be invoked at that time.
-     * <p>
-     * The OnAlarmListener's {@link OnAlarmListener#onAlarm() onAlarm()} method will be
-     * invoked via the specified target Handler, or on the application's main looper
-     * if {@code null} is passed as the {@code targetHandler} parameter.
-     *
-     * @param type One of {@link #ELAPSED_REALTIME}, {@link #ELAPSED_REALTIME_WAKEUP},
-     *         {@link #RTC}, or {@link #RTC_WAKEUP}.
-     * @param triggerAtMillis time in milliseconds that the alarm should go
-     *         off, using the appropriate clock (depending on the alarm type).
-     * @param tag string describing the alarm, used for logging and battery-use
-     *         attribution
-     * @param listener {@link OnAlarmListener} instance whose
-     *         {@link OnAlarmListener#onAlarm() onAlarm()} method will be
-     *         called when the alarm time is reached.  A given OnAlarmListener instance can
-     *         only be the target of a single pending alarm, just as a given PendingIntent
-     *         can only be used with one alarm at a time.
-     * @param targetHandler {@link Handler} on which to execute the listener's onAlarm()
-     *         callback, or {@code null} to run that callback on the main looper.
-     */
-    public void set(int type, long triggerAtMillis, String tag, OnAlarmListener listener,
-            Handler targetHandler) {
-        setImpl(type, triggerAtMillis, legacyExactLength(), 0, 0, null, listener, tag,
-                targetHandler, null, null);
+        setImpl(type, triggerAtMillis, legacyExactLength(), 0, operation, null);
     }
 
     /**
@@ -424,8 +249,7 @@ public class AlarmManager {
      */
     public void setRepeating(int type, long triggerAtMillis,
             long intervalMillis, PendingIntent operation) {
-        setImpl(type, triggerAtMillis, legacyExactLength(), intervalMillis, 0, operation,
-                null, null, null, null, null);
+        setImpl(type, triggerAtMillis, legacyExactLength(), intervalMillis, operation, null);
     }
 
     /**
@@ -475,23 +299,7 @@ public class AlarmManager {
      */
     public void setWindow(int type, long windowStartMillis, long windowLengthMillis,
             PendingIntent operation) {
-        setImpl(type, windowStartMillis, windowLengthMillis, 0, 0, operation,
-                null, null, null, null, null);
-    }
-
-    /**
-     * Direct callback version of {@link #setWindow(int, long, long, PendingIntent)}.  Rather
-     * than supplying a PendingIntent to be sent when the alarm time is reached, this variant
-     * supplies an {@link OnAlarmListener} instance that will be invoked at that time.
-     * <p>
-     * The OnAlarmListener {@link OnAlarmListener#onAlarm() onAlarm()} method will be
-     * invoked via the specified target Handler, or on the application's main looper
-     * if {@code null} is passed as the {@code targetHandler} parameter.
-     */
-    public void setWindow(int type, long windowStartMillis, long windowLengthMillis,
-            String tag, OnAlarmListener listener, Handler targetHandler) {
-        setImpl(type, windowStartMillis, windowLengthMillis, 0, 0, null, listener, tag,
-                targetHandler, null, null);
+        setImpl(type, windowStartMillis, windowLengthMillis, 0, operation, null);
     }
 
     /**
@@ -529,109 +337,17 @@ public class AlarmManager {
      * @see #RTC_WAKEUP
      */
     public void setExact(int type, long triggerAtMillis, PendingIntent operation) {
-        setImpl(type, triggerAtMillis, WINDOW_EXACT, 0, 0, operation, null, null, null,
-                null, null);
-    }
-
-    /**
-     * Direct callback version of {@link #setExact(int, long, PendingIntent)}.  Rather
-     * than supplying a PendingIntent to be sent when the alarm time is reached, this variant
-     * supplies an {@link OnAlarmListener} instance that will be invoked at that time.
-     * <p>
-     * The OnAlarmListener's {@link OnAlarmListener#onAlarm() onAlarm()} method will be
-     * invoked via the specified target Handler, or on the application's main looper
-     * if {@code null} is passed as the {@code targetHandler} parameter.
-     */
-    public void setExact(int type, long triggerAtMillis, String tag, OnAlarmListener listener,
-            Handler targetHandler) {
-        setImpl(type, triggerAtMillis, WINDOW_EXACT, 0, 0, null, listener, tag,
-                targetHandler, null, null);
-    }
-
-    /**
-     * Schedule an idle-until alarm, which will keep the alarm manager idle until
-     * the given time.
-     * @hide
-     */
-    public void setIdleUntil(int type, long triggerAtMillis, String tag, OnAlarmListener listener,
-            Handler targetHandler) {
-        setImpl(type, triggerAtMillis, WINDOW_EXACT, 0, FLAG_IDLE_UNTIL, null,
-                listener, tag, targetHandler, null, null);
-    }
-
-    /**
-     * Schedule an alarm that represents an alarm clock.
-     *
-     * The system may choose to display information about this alarm to the user.
-     *
-     * <p>
-     * This method is like {@link #setExact(int, long, PendingIntent)}, but implies
-     * {@link #RTC_WAKEUP}.
-     *
-     * @param info
-     * @param operation Action to perform when the alarm goes off;
-     *        typically comes from {@link PendingIntent#getBroadcast
-     *        IntentSender.getBroadcast()}.
-     *
-     * @see #set
-     * @see #setRepeating
-     * @see #setWindow
-     * @see #setExact
-     * @see #cancel
-     * @see #getNextAlarmClock()
-     * @see android.content.Context#sendBroadcast
-     * @see android.content.Context#registerReceiver
-     * @see android.content.Intent#filterEquals
-     */
-    public void setAlarmClock(AlarmClockInfo info, PendingIntent operation) {
-        setImpl(RTC_WAKEUP, info.getTriggerTime(), WINDOW_EXACT, 0, 0, operation,
-                null, null, null, null, info);
+        setImpl(type, triggerAtMillis, WINDOW_EXACT, 0, operation, null);
     }
 
     /** @hide */
-    @SystemApi
     public void set(int type, long triggerAtMillis, long windowMillis, long intervalMillis,
             PendingIntent operation, WorkSource workSource) {
-        setImpl(type, triggerAtMillis, windowMillis, intervalMillis, 0, operation, null, null,
-                null, workSource, null);
-    }
-
-    /**
-     * Direct callback version of {@link #set(int, long, long, long, PendingIntent, WorkSource)}.
-     * Note that repeating alarms must use the PendingIntent variant, not an OnAlarmListener.
-     * <p>
-     * The OnAlarmListener's {@link OnAlarmListener#onAlarm() onAlarm()} method will be
-     * invoked via the specified target Handler, or on the application's main looper
-     * if {@code null} is passed as the {@code targetHandler} parameter.
-     *
-     * @hide
-     */
-    public void set(int type, long triggerAtMillis, long windowMillis, long intervalMillis,
-            String tag, OnAlarmListener listener, Handler targetHandler, WorkSource workSource) {
-        setImpl(type, triggerAtMillis, windowMillis, intervalMillis, 0, null, listener, tag,
-                targetHandler, workSource, null);
-    }
-
-    /**
-     * Direct callback version of {@link #set(int, long, long, long, PendingIntent, WorkSource)}.
-     * Note that repeating alarms must use the PendingIntent variant, not an OnAlarmListener.
-     * <p>
-     * The OnAlarmListener's {@link OnAlarmListener#onAlarm() onAlarm()} method will be
-     * invoked via the specified target Handler, or on the application's main looper
-     * if {@code null} is passed as the {@code targetHandler} parameter.
-     *
-     * @hide
-     */
-    @SystemApi
-    public void set(int type, long triggerAtMillis, long windowMillis, long intervalMillis,
-            OnAlarmListener listener, Handler targetHandler, WorkSource workSource) {
-        setImpl(type, triggerAtMillis, windowMillis, intervalMillis, 0, null, listener, null,
-                targetHandler, workSource, null);
+        setImpl(type, triggerAtMillis, windowMillis, intervalMillis, operation, workSource);
     }
 
     private void setImpl(int type, long triggerAtMillis, long windowMillis, long intervalMillis,
-            int flags, PendingIntent operation, final OnAlarmListener listener, String listenerTag,
-            Handler targetHandler, WorkSource workSource, AlarmClockInfo alarmClock) {
+            PendingIntent operation, WorkSource workSource) {
         if (triggerAtMillis < 0) {
             /* NOTYET
             if (mAlwaysExact) {
@@ -643,30 +359,10 @@ public class AlarmManager {
             triggerAtMillis = 0;
         }
 
-        ListenerWrapper recipientWrapper = null;
-        if (listener != null) {
-            synchronized (AlarmManager.class) {
-                if (sWrappers == null) {
-                    sWrappers = new ArrayMap<OnAlarmListener, ListenerWrapper>();
-                }
-
-                recipientWrapper = sWrappers.get(listener);
-                // no existing wrapper => build a new one
-                if (recipientWrapper == null) {
-                    recipientWrapper = new ListenerWrapper(listener);
-                    sWrappers.put(listener, recipientWrapper);
-                }
-            }
-
-            final Handler handler = (targetHandler != null) ? targetHandler : mMainThreadHandler;
-            recipientWrapper.setHandler(handler);
-        }
-
         try {
-            mService.set(mPackageName, type, triggerAtMillis, windowMillis, intervalMillis, flags,
-                    operation, recipientWrapper, listenerTag, workSource, alarmClock);
+            mService.set(type, triggerAtMillis, windowMillis, intervalMillis, operation,
+                    workSource);
         } catch (RemoteException ex) {
-            throw ex.rethrowFromSystemServer();
         }
     }
 
@@ -765,165 +461,24 @@ public class AlarmManager {
      */
     public void setInexactRepeating(int type, long triggerAtMillis,
             long intervalMillis, PendingIntent operation) {
-        setImpl(type, triggerAtMillis, WINDOW_HEURISTIC, intervalMillis, 0, operation, null,
-                null, null, null, null);
+        setImpl(type, triggerAtMillis, WINDOW_HEURISTIC, intervalMillis, operation, null);
     }
-
-    /**
-     * Like {@link #set(int, long, PendingIntent)}, but this alarm will be allowed to execute
-     * even when the system is in low-power idle modes.  This type of alarm must <b>only</b>
-     * be used for situations where it is actually required that the alarm go off while in
-     * idle -- a reasonable example would be for a calendar notification that should make a
-     * sound so the user is aware of it.  When the alarm is dispatched, the app will also be
-     * added to the system's temporary whitelist for approximately 10 seconds to allow that
-     * application to acquire further wake locks in which to complete its work.</p>
-     *
-     * <p>These alarms can significantly impact the power use
-     * of the device when idle (and thus cause significant battery blame to the app scheduling
-     * them), so they should be used with care.  To reduce abuse, there are restrictions on how
-     * frequently these alarms will go off for a particular application.
-     * Under normal system operation, it will not dispatch these
-     * alarms more than about every minute (at which point every such pending alarm is
-     * dispatched); when in low-power idle modes this duration may be significantly longer,
-     * such as 15 minutes.</p>
-     *
-     * <p>Unlike other alarms, the system is free to reschedule this type of alarm to happen
-     * out of order with any other alarms, even those from the same app.  This will clearly happen
-     * when the device is idle (since this alarm can go off while idle, when any other alarms
-     * from the app will be held until later), but may also happen even when not idle.</p>
-     *
-     * <p>Regardless of the app's target SDK version, this call always allows batching of the
-     * alarm.</p>
-     *
-     * @param type One of {@link #ELAPSED_REALTIME}, {@link #ELAPSED_REALTIME_WAKEUP},
-     *        {@link #RTC}, or {@link #RTC_WAKEUP}.
-     * @param triggerAtMillis time in milliseconds that the alarm should go
-     * off, using the appropriate clock (depending on the alarm type).
-     * @param operation Action to perform when the alarm goes off;
-     * typically comes from {@link PendingIntent#getBroadcast
-     * IntentSender.getBroadcast()}.
-     *
-     * @see #set(int, long, PendingIntent)
-     * @see #setExactAndAllowWhileIdle
-     * @see #cancel
-     * @see android.content.Context#sendBroadcast
-     * @see android.content.Context#registerReceiver
-     * @see android.content.Intent#filterEquals
-     * @see #ELAPSED_REALTIME
-     * @see #ELAPSED_REALTIME_WAKEUP
-     * @see #RTC
-     * @see #RTC_WAKEUP
-     */
-    public void setAndAllowWhileIdle(int type, long triggerAtMillis, PendingIntent operation) {
-        setImpl(type, triggerAtMillis, WINDOW_HEURISTIC, 0, FLAG_ALLOW_WHILE_IDLE,
-                operation, null, null, null, null, null);
-    }
-
-    /**
-     * Like {@link #setExact(int, long, PendingIntent)}, but this alarm will be allowed to execute
-     * even when the system is in low-power idle modes.  If you don't need exact scheduling of
-     * the alarm but still need to execute while idle, consider using
-     * {@link #setAndAllowWhileIdle}.  This type of alarm must <b>only</b>
-     * be used for situations where it is actually required that the alarm go off while in
-     * idle -- a reasonable example would be for a calendar notification that should make a
-     * sound so the user is aware of it.  When the alarm is dispatched, the app will also be
-     * added to the system's temporary whitelist for approximately 10 seconds to allow that
-     * application to acquire further wake locks in which to complete its work.</p>
-     *
-     * <p>These alarms can significantly impact the power use
-     * of the device when idle (and thus cause significant battery blame to the app scheduling
-     * them), so they should be used with care.  To reduce abuse, there are restrictions on how
-     * frequently these alarms will go off for a particular application.
-     * Under normal system operation, it will not dispatch these
-     * alarms more than about every minute (at which point every such pending alarm is
-     * dispatched); when in low-power idle modes this duration may be significantly longer,
-     * such as 15 minutes.</p>
-     *
-     * <p>Unlike other alarms, the system is free to reschedule this type of alarm to happen
-     * out of order with any other alarms, even those from the same app.  This will clearly happen
-     * when the device is idle (since this alarm can go off while idle, when any other alarms
-     * from the app will be held until later), but may also happen even when not idle.
-     * Note that the OS will allow itself more flexibility for scheduling these alarms than
-     * regular exact alarms, since the application has opted into this behavior.  When the
-     * device is idle it may take even more liberties with scheduling in order to optimize
-     * for battery life.</p>
-     *
-     * @param type One of {@link #ELAPSED_REALTIME}, {@link #ELAPSED_REALTIME_WAKEUP},
-     *        {@link #RTC}, or {@link #RTC_WAKEUP}.
-     * @param triggerAtMillis time in milliseconds that the alarm should go
-     *        off, using the appropriate clock (depending on the alarm type).
-     * @param operation Action to perform when the alarm goes off;
-     *        typically comes from {@link PendingIntent#getBroadcast
-     *        IntentSender.getBroadcast()}.
-     *
-     * @see #set
-     * @see #setRepeating
-     * @see #setWindow
-     * @see #cancel
-     * @see android.content.Context#sendBroadcast
-     * @see android.content.Context#registerReceiver
-     * @see android.content.Intent#filterEquals
-     * @see #ELAPSED_REALTIME
-     * @see #ELAPSED_REALTIME_WAKEUP
-     * @see #RTC
-     * @see #RTC_WAKEUP
-     */
-    public void setExactAndAllowWhileIdle(int type, long triggerAtMillis, PendingIntent operation) {
-        setImpl(type, triggerAtMillis, WINDOW_EXACT, 0, FLAG_ALLOW_WHILE_IDLE, operation,
-                null, null, null, null, null);
-    }
-
+    
     /**
      * Remove any alarms with a matching {@link Intent}.
      * Any alarm, of any type, whose Intent matches this one (as defined by
      * {@link Intent#filterEquals}), will be canceled.
      *
      * @param operation IntentSender which matches a previously added
-     * IntentSender. This parameter must not be {@code null}.
+     * IntentSender.
      *
      * @see #set
      */
     public void cancel(PendingIntent operation) {
-        if (operation == null) {
-            final String msg = "cancel() called with a null PendingIntent";
-            if (mTargetSdkVersion >= Build.VERSION_CODES.N) {
-                throw new NullPointerException(msg);
-            } else {
-                Log.e(TAG, msg);
-                return;
-            }
-        }
-
         try {
-            mService.remove(operation, null);
+            mService.remove(operation);
         } catch (RemoteException ex) {
-            throw ex.rethrowFromSystemServer();
         }
-    }
-
-    /**
-     * Remove any alarm scheduled to be delivered to the given {@link OnAlarmListener}.
-     *
-     * @param listener OnAlarmListener instance that is the target of a currently-set alarm.
-     */
-    public void cancel(OnAlarmListener listener) {
-        if (listener == null) {
-            throw new NullPointerException("cancel() called with a null OnAlarmListener");
-        }
-
-        ListenerWrapper wrapper = null;
-        synchronized (AlarmManager.class) {
-            if (sWrappers != null) {
-                wrapper = sWrappers.get(listener);
-            }
-        }
-
-        if (wrapper == null) {
-            Log.w(TAG, "Unrecognized alarm listener " + listener);
-            return;
-        }
-
-        wrapper.cancel();
     }
 
     /**
@@ -936,179 +491,19 @@ public class AlarmManager {
         try {
             mService.setTime(millis);
         } catch (RemoteException ex) {
-            throw ex.rethrowFromSystemServer();
         }
     }
 
     /**
-     * Sets the system's persistent default time zone. This is the time zone for all apps, even
-     * after a reboot. Use {@link java.util.TimeZone#setDefault} if you just want to change the
-     * time zone within your app, and even then prefer to pass an explicit
-     * {@link java.util.TimeZone} to APIs that require it rather than changing the time zone for
-     * all threads.
+     * Set the system default time zone.
+     * Requires the permission android.permission.SET_TIME_ZONE.
      *
-     * <p> On android M and above, it is an error to pass in a non-Olson timezone to this
-     * function. Note that this is a bad idea on all Android releases because POSIX and
-     * the {@code TimeZone} class have opposite interpretations of {@code '+'} and {@code '-'}
-     * in the same non-Olson ID.
-     *
-     * @param timeZone one of the Olson ids from the list returned by
-     *     {@link java.util.TimeZone#getAvailableIDs}
+     * @param timeZone in the format understood by {@link java.util.TimeZone}
      */
     public void setTimeZone(String timeZone) {
-        if (TextUtils.isEmpty(timeZone)) {
-            return;
-        }
-
-        // Reject this timezone if it isn't an Olson zone we recognize.
-        if (mTargetSdkVersion >= Build.VERSION_CODES.M) {
-            boolean hasTimeZone = false;
-            try {
-                hasTimeZone = ZoneInfoDB.getInstance().hasTimeZone(timeZone);
-            } catch (IOException ignored) {
-            }
-
-            if (!hasTimeZone) {
-                throw new IllegalArgumentException("Timezone: " + timeZone + " is not an Olson ID");
-            }
-        }
-
         try {
             mService.setTimeZone(timeZone);
         } catch (RemoteException ex) {
-            throw ex.rethrowFromSystemServer();
         }
-    }
-
-    /** @hide */
-    public long getNextWakeFromIdleTime() {
-        try {
-            return mService.getNextWakeFromIdleTime();
-        } catch (RemoteException ex) {
-            throw ex.rethrowFromSystemServer();
-        }
-    }
-
-    /**
-     * Gets information about the next alarm clock currently scheduled.
-     *
-     * The alarm clocks considered are those scheduled by any application
-     * using the {@link #setAlarmClock} method.
-     *
-     * @return An {@link AlarmClockInfo} object describing the next upcoming alarm
-     *   clock event that will occur.  If there are no alarm clock events currently
-     *   scheduled, this method will return {@code null}.
-     *
-     * @see #setAlarmClock
-     * @see AlarmClockInfo
-     * @see #ACTION_NEXT_ALARM_CLOCK_CHANGED
-     */
-    public AlarmClockInfo getNextAlarmClock() {
-        return getNextAlarmClock(UserHandle.myUserId());
-    }
-
-    /**
-     * Gets information about the next alarm clock currently scheduled.
-     *
-     * The alarm clocks considered are those scheduled by any application
-     * using the {@link #setAlarmClock} method within the given user.
-     *
-     * @return An {@link AlarmClockInfo} object describing the next upcoming alarm
-     *   clock event that will occur within the given user.  If there are no alarm clock
-     *   events currently scheduled in that user, this method will return {@code null}.
-     *
-     * @see #setAlarmClock
-     * @see AlarmClockInfo
-     * @see #ACTION_NEXT_ALARM_CLOCK_CHANGED
-     *
-     * @hide
-     */
-    public AlarmClockInfo getNextAlarmClock(int userId) {
-        try {
-            return mService.getNextAlarmClock(userId);
-        } catch (RemoteException ex) {
-            throw ex.rethrowFromSystemServer();
-        }
-    }
-
-    /**
-     * An immutable description of a scheduled "alarm clock" event.
-     *
-     * @see AlarmManager#setAlarmClock
-     * @see AlarmManager#getNextAlarmClock
-     */
-    public static final class AlarmClockInfo implements Parcelable {
-
-        private final long mTriggerTime;
-        private final PendingIntent mShowIntent;
-
-        /**
-         * Creates a new alarm clock description.
-         *
-         * @param triggerTime time at which the underlying alarm is triggered in wall time 
-         *                    milliseconds since the epoch
-         * @param showIntent an intent that can be used to show or edit details of
-         *                        the alarm clock.
-         */
-        public AlarmClockInfo(long triggerTime, PendingIntent showIntent) {
-            mTriggerTime = triggerTime;
-            mShowIntent = showIntent;
-        }
-
-        /**
-         * Use the {@link #CREATOR}
-         * @hide
-         */
-        AlarmClockInfo(Parcel in) {
-            mTriggerTime = in.readLong();
-            mShowIntent = in.readParcelable(PendingIntent.class.getClassLoader());
-        }
-
-        /**
-         * Returns the time at which the alarm is going to trigger.
-         *
-         * This value is UTC wall clock time in milliseconds, as returned by
-         * {@link System#currentTimeMillis()} for example.
-         */
-        public long getTriggerTime() {
-            return mTriggerTime;
-        }
-
-        /**
-         * Returns an intent that can be used to show or edit details of the alarm clock in
-         * the application that scheduled it.
-         *
-         * <p class="note">Beware that any application can retrieve and send this intent, 
-         * potentially with additional fields filled in. See
-         * {@link PendingIntent#send(android.content.Context, int, android.content.Intent)
-         * PendingIntent.send()} and {@link android.content.Intent#fillIn Intent.fillIn()}
-         * for details.
-         */
-        public PendingIntent getShowIntent() {
-            return mShowIntent;
-        }
-
-        @Override
-        public int describeContents() {
-            return 0;
-        }
-
-        @Override
-        public void writeToParcel(Parcel dest, int flags) {
-            dest.writeLong(mTriggerTime);
-            dest.writeParcelable(mShowIntent, flags);
-        }
-
-        public static final Creator<AlarmClockInfo> CREATOR = new Creator<AlarmClockInfo>() {
-            @Override
-            public AlarmClockInfo createFromParcel(Parcel in) {
-                return new AlarmClockInfo(in);
-            }
-
-            @Override
-            public AlarmClockInfo[] newArray(int size) {
-                return new AlarmClockInfo[size];
-            }
-        };
     }
 }

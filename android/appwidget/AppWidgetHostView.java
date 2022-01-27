@@ -19,7 +19,6 @@ package android.appwidget;
 import android.content.ComponentName;
 import android.content.Context;
 import android.content.pm.ApplicationInfo;
-import android.content.pm.LauncherApps;
 import android.content.pm.PackageManager;
 import android.content.pm.PackageManager.NameNotFoundException;
 import android.content.res.Resources;
@@ -30,17 +29,17 @@ import android.graphics.Paint;
 import android.graphics.Rect;
 import android.os.Build;
 import android.os.Bundle;
-import android.os.CancellationSignal;
 import android.os.Parcel;
 import android.os.Parcelable;
+import android.os.Process;
 import android.os.SystemClock;
+import android.os.UserHandle;
 import android.util.AttributeSet;
 import android.util.Log;
 import android.util.SparseArray;
 import android.view.Gravity;
 import android.view.LayoutInflater;
 import android.view.View;
-import android.view.ViewGroup;
 import android.view.accessibility.AccessibilityNodeInfo;
 import android.widget.Adapter;
 import android.widget.AdapterView;
@@ -50,8 +49,6 @@ import android.widget.RemoteViews;
 import android.widget.RemoteViews.OnClickHandler;
 import android.widget.RemoteViewsAdapter.RemoteAdapterConnectionCallback;
 import android.widget.TextView;
-
-import java.util.concurrent.Executor;
 
 /**
  * Provides the glue to show AppWidget views. This class offers automatic animation
@@ -90,9 +87,7 @@ public class AppWidgetHostView extends FrameLayout {
     Bitmap mOld;
     Paint mOldPaint = new Paint();
     private OnClickHandler mOnClickHandler;
-
-    private Executor mAsyncExecutor;
-    private CancellationSignal mLastExecutionSignal;
+    private UserHandle mUser;
 
     /**
      * Create a host view.  Uses default fade animations.
@@ -120,9 +115,15 @@ public class AppWidgetHostView extends FrameLayout {
     public AppWidgetHostView(Context context, int animationIn, int animationOut) {
         super(context);
         mContext = context;
+        mUser = Process.myUserHandle();
         // We want to segregate the view ids within AppWidgets to prevent
         // problems when those ids collide with view ids in the AppWidgetHost.
         setIsRootNamespace(true);
+    }
+
+    /** @hide */
+    public void setUserId(int userId) {
+        mUser = new UserHandle(userId);
     }
 
     /**
@@ -151,7 +152,7 @@ public class AppWidgetHostView extends FrameLayout {
             // We add padding to the AppWidgetHostView if necessary
             Rect padding = getDefaultPaddingForWidget(mContext, info.provider, null);
             setPadding(padding.left, padding.top, padding.right, padding.bottom);
-            updateContentDescription(info);
+            setContentDescription(info.label);
         }
     }
 
@@ -242,25 +243,6 @@ public class AppWidgetHostView extends FrameLayout {
         }
     }
 
-    @Override
-    protected void onLayout(boolean changed, int left, int top, int right, int bottom) {
-        try {
-            super.onLayout(changed, left, top, right, bottom);
-        } catch (final RuntimeException e) {
-            Log.e(TAG, "Remote provider threw runtime exception, using error view instead.", e);
-            removeViewInLayout(mView);
-            View child = getErrorView();
-            prepareView(child);
-            addViewInLayout(child, 0, child.getLayoutParams());
-            measureChild(child, MeasureSpec.makeMeasureSpec(getMeasuredWidth(), MeasureSpec.EXACTLY),
-                    MeasureSpec.makeMeasureSpec(getMeasuredHeight(), MeasureSpec.EXACTLY));
-            child.layout(0, 0, child.getMeasuredWidth() + mPaddingLeft + mPaddingRight,
-                    child.getMeasuredHeight() + mPaddingTop + mPaddingBottom);
-            mView = child;
-            mViewMode = VIEW_MODE_ERROR;
-        }
-    }
-
     /**
      * Provide guidance about the size of this widget to the AppWidgetManager. The widths and
      * heights should correspond to the full area the AppWidgetHostView is given. Padding added by
@@ -347,22 +329,6 @@ public class AppWidgetHostView extends FrameLayout {
     }
 
     /**
-     * Sets an executor which can be used for asynchronously inflating and applying the remoteviews.
-     * @see {@link RemoteViews#applyAsync(Context, ViewGroup, RemoteViews.OnViewAppliedListener, Executor)}
-     *
-     * @param executor the executor to use or null.
-     * @hide
-     */
-    public void setAsyncExecutor(Executor executor) {
-        if (mLastExecutionSignal != null) {
-            mLastExecutionSignal.cancel();
-            mLastExecutionSignal = null;
-        }
-
-        mAsyncExecutor = executor;
-    }
-
-    /**
      * Update the AppWidgetProviderInfo for this view, and reset it to the
      * initial layout.
      */
@@ -377,13 +343,7 @@ public class AppWidgetHostView extends FrameLayout {
      * AppWidget provider. Will animate into these new views as needed
      */
     public void updateAppWidget(RemoteViews remoteViews) {
-        applyRemoteViews(remoteViews);
-    }
 
-    /**
-     * @hide
-     */
-    protected void applyRemoteViews(RemoteViews remoteViews) {
         if (LOGD) Log.d(TAG, "updateAppWidget called mOld=" + mOld);
 
         boolean recycled = false;
@@ -409,11 +369,6 @@ public class AppWidgetHostView extends FrameLayout {
             }
         }
 
-        if (mLastExecutionSignal != null) {
-            mLastExecutionSignal.cancel();
-            mLastExecutionSignal = null;
-        }
-
         if (remoteViews == null) {
             if (mViewMode == VIEW_MODE_DEFAULT) {
                 // We've already done this -- nothing to do.
@@ -423,13 +378,9 @@ public class AppWidgetHostView extends FrameLayout {
             mLayoutId = -1;
             mViewMode = VIEW_MODE_DEFAULT;
         } else {
-            if (mAsyncExecutor != null) {
-                inflateAsync(remoteViews);
-                return;
-            }
             // Prepare a local reference to the remote Context so we're ready to
             // inflate any requested LayoutParams.
-            mRemoteContext = getRemoteContext();
+            mRemoteContext = getRemoteContext(remoteViews);
             int layoutId = remoteViews.getLayoutId();
 
             // If our stale view has been prepared to match active, and the new
@@ -439,7 +390,7 @@ public class AppWidgetHostView extends FrameLayout {
                     remoteViews.reapply(mContext, mView, mOnClickHandler);
                     content = mView;
                     recycled = true;
-                    if (LOGD) Log.d(TAG, "was able to recycle existing layout");
+                    if (LOGD) Log.d(TAG, "was able to recycled existing layout");
                 } catch (RuntimeException e) {
                     exception = e;
                 }
@@ -459,11 +410,6 @@ public class AppWidgetHostView extends FrameLayout {
             mViewMode = VIEW_MODE_CONTENT;
         }
 
-        applyContent(content, recycled, exception);
-        updateContentDescription(mInfo);
-    }
-
-    private void applyContent(View content, boolean recycled, Exception exception) {
         if (content == null) {
             if (mViewMode == VIEW_MODE_ERROR) {
                 // We've already done this -- nothing to do.
@@ -495,84 +441,6 @@ public class AppWidgetHostView extends FrameLayout {
         }
     }
 
-    private void updateContentDescription(AppWidgetProviderInfo info) {
-        if (info != null) {
-            LauncherApps launcherApps = getContext().getSystemService(LauncherApps.class);
-            ApplicationInfo appInfo = launcherApps.getApplicationInfo(
-                    info.provider.getPackageName(), 0, info.getProfile());
-            if (appInfo != null &&
-                    (appInfo.flags & ApplicationInfo.FLAG_SUSPENDED) != 0) {
-                setContentDescription(
-                        Resources.getSystem().getString(
-                        com.android.internal.R.string.suspended_widget_accessibility, info.label));
-            } else {
-                setContentDescription(info.label);
-            }
-        }
-    }
-
-    private void inflateAsync(RemoteViews remoteViews) {
-        // Prepare a local reference to the remote Context so we're ready to
-        // inflate any requested LayoutParams.
-        mRemoteContext = getRemoteContext();
-        int layoutId = remoteViews.getLayoutId();
-
-        // If our stale view has been prepared to match active, and the new
-        // layout matches, try recycling it
-        if (layoutId == mLayoutId && mView != null) {
-            try {
-                mLastExecutionSignal = remoteViews.reapplyAsync(mContext,
-                        mView,
-                        mAsyncExecutor,
-                        new ViewApplyListener(remoteViews, layoutId, true),
-                        mOnClickHandler);
-            } catch (Exception e) {
-                // Reapply failed. Try apply
-            }
-        }
-        if (mLastExecutionSignal == null) {
-            mLastExecutionSignal = remoteViews.applyAsync(mContext,
-                    this,
-                    mAsyncExecutor,
-                    new ViewApplyListener(remoteViews, layoutId, false),
-                    mOnClickHandler);
-        }
-    }
-
-    private class ViewApplyListener implements RemoteViews.OnViewAppliedListener {
-        private final RemoteViews mViews;
-        private final boolean mIsReapply;
-        private final int mLayoutId;
-
-        public ViewApplyListener(RemoteViews views, int layoutId, boolean isReapply) {
-            mViews = views;
-            mLayoutId = layoutId;
-            mIsReapply = isReapply;
-        }
-
-        @Override
-        public void onViewApplied(View v) {
-            AppWidgetHostView.this.mLayoutId = mLayoutId;
-            mViewMode = VIEW_MODE_CONTENT;
-
-            applyContent(v, mIsReapply, null);
-        }
-
-        @Override
-        public void onError(Exception e) {
-            if (mIsReapply) {
-                // Try a fresh replay
-                mLastExecutionSignal = mViews.applyAsync(mContext,
-                        AppWidgetHostView.this,
-                        mAsyncExecutor,
-                        new ViewApplyListener(mViews, mLayoutId, false),
-                        mOnClickHandler);
-            } else {
-                applyContent(null, false, e);
-            }
-        }
-    }
-
     /**
      * Process data-changed notifications for the specified view in the specified
      * set of {@link RemoteViews} views.
@@ -597,16 +465,18 @@ public class AppWidgetHostView extends FrameLayout {
     /**
      * Build a {@link Context} cloned into another package name, usually for the
      * purposes of reading remote resources.
-     * @hide
      */
-    protected Context getRemoteContext() {
+    private Context getRemoteContext(RemoteViews views) {
+        // Bail if missing package name
+        final String packageName = views.getPackage();
+        if (packageName == null) return mContext;
+
         try {
             // Return if cloned successfully, otherwise default
-            return mContext.createApplicationContext(
-                    mInfo.providerInfo.applicationInfo,
-                    Context.CONTEXT_RESTRICTED);
+            return mContext.createPackageContextAsUser(packageName, Context.CONTEXT_RESTRICTED,
+                    mUser);
         } catch (NameNotFoundException e) {
-            Log.e(TAG, "Package name " +  mInfo.providerInfo.packageName + " not found");
+            Log.e(TAG, "Package name " + packageName + " not found");
             return mContext;
         }
     }
@@ -678,7 +548,8 @@ public class AppWidgetHostView extends FrameLayout {
 
         try {
             if (mInfo != null) {
-                Context theirContext = getRemoteContext();
+                Context theirContext = mContext.createPackageContextAsUser(
+                        mInfo.provider.getPackageName(), Context.CONTEXT_RESTRICTED, mUser);
                 mRemoteContext = theirContext;
                 LayoutInflater inflater = (LayoutInflater)
                         theirContext.getSystemService(Context.LAYOUT_INFLATER_SERVICE);
@@ -701,6 +572,8 @@ public class AppWidgetHostView extends FrameLayout {
             } else {
                 Log.w(TAG, "can't inflate defaultView because mInfo is missing");
             }
+        } catch (PackageManager.NameNotFoundException e) {
+            exception = e;
         } catch (RuntimeException e) {
             exception = e;
         }
@@ -728,10 +601,9 @@ public class AppWidgetHostView extends FrameLayout {
         return tv;
     }
 
-    /** @hide */
     @Override
-    public void onInitializeAccessibilityNodeInfoInternal(AccessibilityNodeInfo info) {
-        super.onInitializeAccessibilityNodeInfoInternal(info);
+    public void onInitializeAccessibilityNodeInfo(AccessibilityNodeInfo info) {
+        super.onInitializeAccessibilityNodeInfo(info);
         info.setClassName(AppWidgetHostView.class.getName());
     }
 

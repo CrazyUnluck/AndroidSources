@@ -8,22 +8,11 @@
 
 package jsr166;
 
+import junit.framework.*;
 import java.util.Arrays;
 import java.util.concurrent.atomic.AtomicReferenceArray;
 
-import junit.framework.Test;
-import junit.framework.TestSuite;
-
 public class AtomicReferenceArrayTest extends JSR166TestCase {
-    // android-note: Removed because the CTS runner does a bad job of
-    // retrying tests that have suite() declarations.
-    //
-    // public static void main(String[] args) {
-    //     main(suite(), args);
-    // }
-    // public static Test suite() {
-    //     return new TestSuite(AtomicReferenceArrayTest.class);
-    // }
 
     /**
      * constructor creates array of given size with all elements null
@@ -41,7 +30,7 @@ public class AtomicReferenceArrayTest extends JSR166TestCase {
     public void testConstructor2NPE() {
         try {
             Integer[] a = null;
-            new AtomicReferenceArray<Integer>(a);
+            AtomicReferenceArray<Integer> aa = new AtomicReferenceArray<Integer>(a);
             shouldThrow();
         } catch (NullPointerException success) {}
     }
@@ -176,10 +165,10 @@ public class AtomicReferenceArrayTest extends JSR166TestCase {
         AtomicReferenceArray aa = new AtomicReferenceArray(SIZE);
         for (int i = 0; i < SIZE; i++) {
             aa.set(i, one);
-            do {} while (!aa.weakCompareAndSet(i, one, two));
-            do {} while (!aa.weakCompareAndSet(i, two, m4));
+            while (!aa.weakCompareAndSet(i, one, two));
+            while (!aa.weakCompareAndSet(i, two, m4));
             assertSame(m4, aa.get(i));
-            do {} while (!aa.weakCompareAndSet(i, m4, seven));
+            while (!aa.weakCompareAndSet(i, m4, seven));
             assertSame(seven, aa.get(i));
         }
     }

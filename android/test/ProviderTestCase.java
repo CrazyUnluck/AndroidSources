@@ -67,8 +67,9 @@ public abstract class ProviderTestCase<T extends ContentProvider>
                 filenamePrefix);
         mProviderContext = new IsolatedContext(mResolver, targetContextWrapper);
 
-        mProvider = ProviderTestCase2.createProviderForTest(
-                mProviderContext, mProviderClass, mProviderAuthority);
+        mProvider = mProviderClass.newInstance();
+        mProvider.attachInfoForTesting(mProviderContext, null);
+        assertNotNull(mProvider);
         mResolver.addProvider(mProviderAuthority, getProvider());
     }
 
@@ -106,7 +107,8 @@ public abstract class ProviderTestCase<T extends ContentProvider>
                 resolver, targetContextWrapper);
         DatabaseUtils.createDbFromSqlStatements(context, databaseName, databaseVersion, sql);
 
-        T provider = ProviderTestCase2.createProviderForTest(context, providerClass, authority);
+        T provider = providerClass.newInstance();
+        provider.attachInfoForTesting(context, null);
         resolver.addProvider(authority, provider);
 
         return resolver;

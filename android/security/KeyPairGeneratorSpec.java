@@ -16,12 +16,9 @@
 
 package android.security;
 
-import android.app.KeyguardManager;
-import android.annotation.NonNull;
-import android.annotation.Nullable;
+import com.android.org.conscrypt.NativeCrypto;
+
 import android.content.Context;
-import android.security.keystore.KeyGenParameterSpec;
-import android.security.keystore.KeyProperties;
 import android.text.TextUtils;
 
 import java.math.BigInteger;
@@ -29,6 +26,8 @@ import java.security.NoSuchAlgorithmException;
 import java.security.PrivateKey;
 import java.security.cert.Certificate;
 import java.security.spec.AlgorithmParameterSpec;
+import java.security.spec.DSAParameterSpec;
+import java.security.spec.RSAKeyGenParameterSpec;
 import java.util.Date;
 
 import javax.security.auth.x500.X500Principal;
@@ -54,11 +53,26 @@ import javax.security.auth.x500.X500Principal;
  * <p>
  * The self-signed X.509 certificate may be replaced at a later time by a
  * certificate signed by a real Certificate Authority.
- *
- * @deprecated Use {@link KeyGenParameterSpec} instead.
  */
-@Deprecated
 public final class KeyPairGeneratorSpec implements AlgorithmParameterSpec {
+    /*
+     * These must be kept in sync with system/security/keystore/defaults.h
+     */
+
+    /* DSA */
+    private static final int DSA_DEFAULT_KEY_SIZE = 1024;
+    private static final int DSA_MIN_KEY_SIZE = 512;
+    private static final int DSA_MAX_KEY_SIZE = 8192;
+
+    /* EC */
+    private static final int EC_DEFAULT_KEY_SIZE = 256;
+    private static final int EC_MIN_KEY_SIZE = 192;
+    private static final int EC_MAX_KEY_SIZE = 521;
+
+    /* RSA */
+    private static final int RSA_DEFAULT_KEY_SIZE = 2048;
+    private static final int RSA_MIN_KEY_SIZE = 512;
+    private static final int RSA_MAX_KEY_SIZE = 8192;
 
     private final Context mContext;
 
@@ -131,9 +145,12 @@ public final class KeyPairGeneratorSpec implements AlgorithmParameterSpec {
             throw new IllegalArgumentException("endDate < startDate");
         }
 
-        if (endDate.before(startDate)) {
-            throw new IllegalArgumentException("endDate < startDate");
+        final int keyTypeInt = KeyStore.getKeyTypeForAlgorithm(keyType);
+        if (keySize == -1) {
+            keySize = getDefaultKeySizeForType(keyTypeInt);
         }
+        checkCorrectParametersSpec(keyTypeInt, keySize, spec);
+        checkValidKeySize(keyTypeInt, keySize);
 
         mContext = context;
         mKeystoreAlias = keyStoreAlias;
@@ -145,6 +162,57 @@ public final class KeyPairGeneratorSpec implements AlgorithmParameterSpec {
         mStartDate = startDate;
         mEndDate = endDate;
         mFlags = flags;
+    }
+
+    private static int getDefaultKeySizeForType(int keyType) {
+        if (keyType == NativeCrypto.EVP_PKEY_DSA) {
+            return DSA_DEFAULT_KEY_SIZE;
+        } else if (keyType == NativeCrypto.EVP_PKEY_EC) {
+            return EC_DEFAULT_KEY_SIZE;
+        } else if (keyType == NativeCrypto.EVP_PKEY_RSA) {
+            return RSA_DEFAULT_KEY_SIZE;
+        }
+        throw new IllegalArgumentException("Invalid key type " + keyType);
+    }
+
+    private static void checkValidKeySize(int keyType, int keySize) {
+        if (keyType == NativeCrypto.EVP_PKEY_DSA) {
+            if (keySize < DSA_MIN_KEY_SIZE || keySize > DSA_MAX_KEY_SIZE) {
+                throw new IllegalArgumentException("DSA keys must be >= " + DSA_MIN_KEY_SIZE
+                        + " and <= " + DSA_MAX_KEY_SIZE);
+            }
+        } else if (keyType == NativeCrypto.EVP_PKEY_EC) {
+            if (keySize < EC_MIN_KEY_SIZE || keySize > EC_MAX_KEY_SIZE) {
+                throw new IllegalArgumentException("EC keys must be >= " + EC_MIN_KEY_SIZE
+                        + " and <= " + EC_MAX_KEY_SIZE);
+            }
+        } else if (keyType == NativeCrypto.EVP_PKEY_RSA) {
+            if (keySize < RSA_MIN_KEY_SIZE || keySize > RSA_MAX_KEY_SIZE) {
+                throw new IllegalArgumentException("RSA keys must be >= " + RSA_MIN_KEY_SIZE
+                        + " and <= " + RSA_MAX_KEY_SIZE);
+            }
+        } else {
+            throw new IllegalArgumentException("Invalid key type " + keyType);
+        }
+    }
+
+    private static void checkCorrectParametersSpec(int keyType, int keySize,
+            AlgorithmParameterSpec spec) {
+        if (keyType == NativeCrypto.EVP_PKEY_DSA && spec != null) {
+            if (!(spec instanceof DSAParameterSpec)) {
+                throw new IllegalArgumentException("DSA keys must have DSAParameterSpec specified");
+            }
+        } else if (keyType == NativeCrypto.EVP_PKEY_RSA && spec != null) {
+            if (spec instanceof RSAKeyGenParameterSpec) {
+                RSAKeyGenParameterSpec rsaSpec = (RSAKeyGenParameterSpec) spec;
+                if (keySize != -1 && keySize != rsaSpec.getKeysize()) {
+                    throw new IllegalArgumentException("RSA key size must match: " + keySize
+                            + " vs " + rsaSpec.getKeysize());
+                }
+            } else {
+                throw new IllegalArgumentException("RSA may only use RSAKeyGenParameterSpec");
+            }
+        }
     }
 
     /**
@@ -163,11 +231,10 @@ public final class KeyPairGeneratorSpec implements AlgorithmParameterSpec {
     }
 
     /**
-     * Returns the type of key pair (e.g., {@code EC}, {@code RSA}) to be generated. See
-     * {@link KeyProperties}.{@code KEY_ALGORITHM} constants.
+     * Returns the key type (e.g., "RSA", "DSA", "EC") specified by this
+     * parameter.
      */
-    @Nullable
-    public @KeyProperties.KeyAlgorithmEnum String getKeyType() {
+    public String getKeyType() {
         return mKeyType;
     }
 
@@ -184,7 +251,6 @@ public final class KeyPairGeneratorSpec implements AlgorithmParameterSpec {
      * Returns the {@link AlgorithmParameterSpec} that will be used for creation
      * of the key pair.
      */
-    @NonNull
     public AlgorithmParameterSpec getAlgorithmParameterSpec() {
         return mSpec;
     }
@@ -193,7 +259,6 @@ public final class KeyPairGeneratorSpec implements AlgorithmParameterSpec {
      * Gets the subject distinguished name to be used on the X.509 certificate
      * that will be put in the {@link java.security.KeyStore}.
      */
-    @NonNull
     public X500Principal getSubjectDN() {
         return mSubjectDN;
     }
@@ -202,7 +267,6 @@ public final class KeyPairGeneratorSpec implements AlgorithmParameterSpec {
      * Gets the serial number to be used on the X.509 certificate that will be
      * put in the {@link java.security.KeyStore}.
      */
-    @NonNull
     public BigInteger getSerialNumber() {
         return mSerialNumber;
     }
@@ -211,7 +275,6 @@ public final class KeyPairGeneratorSpec implements AlgorithmParameterSpec {
      * Gets the start date to be used on the X.509 certificate that will be put
      * in the {@link java.security.KeyStore}.
      */
-    @NonNull
     public Date getStartDate() {
         return mStartDate;
     }
@@ -220,7 +283,6 @@ public final class KeyPairGeneratorSpec implements AlgorithmParameterSpec {
      * Gets the end date to be used on the X.509 certificate that will be put in
      * the {@link java.security.KeyStore}.
      */
-    @NonNull
     public Date getEndDate() {
         return mEndDate;
     }
@@ -228,21 +290,13 @@ public final class KeyPairGeneratorSpec implements AlgorithmParameterSpec {
     /**
      * @hide
      */
-    public int getFlags() {
+    int getFlags() {
         return mFlags;
     }
 
     /**
-     * Returns {@code true} if the key must be encrypted at rest. This will protect the key pair
-     * with the secure lock screen credential (e.g., password, PIN, or pattern).
-     *
-     * <p>Note that encrypting the key at rest requires that the secure lock screen (e.g., password,
-     * PIN, pattern) is set up, otherwise key generation will fail. Moreover, this key will be
-     * deleted when the secure lock screen is disabled or reset (e.g., by the user or a Device
-     * Administrator). Finally, this key cannot be used until the user unlocks the secure lock
-     * screen after boot.
-     *
-     * @see KeyguardManager#isDeviceSecure()
+     * Returns {@code true} if this parameter will require generated keys to be
+     * encrypted in the {@link java.security.KeyStore}.
      */
     public boolean isEncryptionRequired() {
         return (mFlags & KeyStore.FLAG_ENCRYPTED) != 0;
@@ -268,16 +322,13 @@ public final class KeyPairGeneratorSpec implements AlgorithmParameterSpec {
      *                 .setSubject(new X500Principal(&quot;CN=myKey&quot;)).setSerial(BigInteger.valueOf(1337))
      *                 .setStartDate(start.getTime()).setEndDate(end.getTime()).build();
      * </pre>
-     *
-     *  @deprecated Use {@link KeyGenParameterSpec.Builder} instead.
      */
-    @Deprecated
     public final static class Builder {
         private final Context mContext;
 
         private String mKeystoreAlias;
 
-        private String mKeyType;
+        private String mKeyType = "RSA";
 
         private int mKeySize = -1;
 
@@ -299,7 +350,7 @@ public final class KeyPairGeneratorSpec implements AlgorithmParameterSpec {
          * some UI to ask the user to unlock or initialize the Android KeyStore
          * facility.
          */
-        public Builder(@NonNull Context context) {
+        public Builder(Context context) {
             if (context == null) {
                 throw new NullPointerException("context == null");
             }
@@ -311,8 +362,7 @@ public final class KeyPairGeneratorSpec implements AlgorithmParameterSpec {
          * {@link java.security.KeyStore} instance using the
          * {@code AndroidKeyStore} provider.
          */
-        @NonNull
-        public Builder setAlias(@NonNull String alias) {
+        public Builder setAlias(String alias) {
             if (alias == null) {
                 throw new NullPointerException("alias == null");
             }
@@ -321,18 +371,14 @@ public final class KeyPairGeneratorSpec implements AlgorithmParameterSpec {
         }
 
         /**
-         * Sets the type of key pair (e.g., {@code EC}, {@code RSA}) of the key pair to be
-         * generated. See {@link KeyProperties}.{@code KEY_ALGORITHM} constants.
-         *
+         * Sets the key type (e.g., RSA, DSA, EC) of the keypair to be created.
          */
-        @NonNull
-        public Builder setKeyType(@NonNull @KeyProperties.KeyAlgorithmEnum String keyType)
-                throws NoSuchAlgorithmException {
+        public Builder setKeyType(String keyType) throws NoSuchAlgorithmException {
             if (keyType == null) {
                 throw new NullPointerException("keyType == null");
             } else {
                 try {
-                    KeyProperties.KeyAlgorithm.toKeymasterAsymmetricKeyAlgorithm(keyType);
+                    KeyStore.getKeyTypeForAlgorithm(keyType);
                 } catch (IllegalArgumentException e) {
                     throw new NoSuchAlgorithmException("Unsupported key type: " + keyType);
                 }
@@ -346,7 +392,6 @@ public final class KeyPairGeneratorSpec implements AlgorithmParameterSpec {
          * key type of RSA this will set the modulus size and for a key type of
          * EC it will select a curve with a matching field size.
          */
-        @NonNull
         public Builder setKeySize(int keySize) {
             if (keySize < 0) {
                 throw new IllegalArgumentException("keySize < 0");
@@ -356,10 +401,11 @@ public final class KeyPairGeneratorSpec implements AlgorithmParameterSpec {
         }
 
         /**
-         * Sets the algorithm-specific key generation parameters. For example, for RSA keys
-         * this may be an instance of {@link java.security.spec.RSAKeyGenParameterSpec}.
+         * Sets the underlying key type's parameters. This is required for DSA
+         * where you must set this to an instance of
+         * {@link java.security.spec.DSAParameterSpec}.
          */
-        public Builder setAlgorithmParameterSpec(@NonNull AlgorithmParameterSpec spec) {
+        public Builder setAlgorithmParameterSpec(AlgorithmParameterSpec spec) {
             if (spec == null) {
                 throw new NullPointerException("spec == null");
             }
@@ -371,8 +417,7 @@ public final class KeyPairGeneratorSpec implements AlgorithmParameterSpec {
          * Sets the subject used for the self-signed certificate of the
          * generated key pair.
          */
-        @NonNull
-        public Builder setSubject(@NonNull X500Principal subject) {
+        public Builder setSubject(X500Principal subject) {
             if (subject == null) {
                 throw new NullPointerException("subject == null");
             }
@@ -384,8 +429,7 @@ public final class KeyPairGeneratorSpec implements AlgorithmParameterSpec {
          * Sets the serial number used for the self-signed certificate of the
          * generated key pair.
          */
-        @NonNull
-        public Builder setSerialNumber(@NonNull BigInteger serialNumber) {
+        public Builder setSerialNumber(BigInteger serialNumber) {
             if (serialNumber == null) {
                 throw new NullPointerException("serialNumber == null");
             }
@@ -397,8 +441,7 @@ public final class KeyPairGeneratorSpec implements AlgorithmParameterSpec {
          * Sets the start of the validity period for the self-signed certificate
          * of the generated key pair.
          */
-        @NonNull
-        public Builder setStartDate(@NonNull Date startDate) {
+        public Builder setStartDate(Date startDate) {
             if (startDate == null) {
                 throw new NullPointerException("startDate == null");
             }
@@ -410,8 +453,7 @@ public final class KeyPairGeneratorSpec implements AlgorithmParameterSpec {
          * Sets the end of the validity period for the self-signed certificate
          * of the generated key pair.
          */
-        @NonNull
-        public Builder setEndDate(@NonNull Date endDate) {
+        public Builder setEndDate(Date endDate) {
             if (endDate == null) {
                 throw new NullPointerException("endDate == null");
             }
@@ -420,18 +462,11 @@ public final class KeyPairGeneratorSpec implements AlgorithmParameterSpec {
         }
 
         /**
-         * Indicates that this key pair must be encrypted at rest. This will protect the key pair
-         * with the secure lock screen credential (e.g., password, PIN, or pattern).
-         *
-         * <p>Note that this feature requires that the secure lock screen (e.g., password, PIN,
-         * pattern) is set up, otherwise key pair generation will fail. Moreover, this key pair will
-         * be deleted when the secure lock screen is disabled or reset (e.g., by the user or a
-         * Device Administrator). Finally, this key pair cannot be used until the user unlocks the
-         * secure lock screen after boot.
-         *
-         * @see KeyguardManager#isDeviceSecure()
+         * Indicates that this key must be encrypted at rest on storage. Note
+         * that enabling this will require that the user enable a strong lock
+         * screen (e.g., PIN, password) before creating or using the generated
+         * key is successful.
          */
-        @NonNull
         public Builder setEncryptionRequired() {
             mFlags |= KeyStore.FLAG_ENCRYPTED;
             return this;
@@ -443,18 +478,9 @@ public final class KeyPairGeneratorSpec implements AlgorithmParameterSpec {
          * @throws IllegalArgumentException if a required field is missing
          * @return built instance of {@code KeyPairGeneratorSpec}
          */
-        @NonNull
         public KeyPairGeneratorSpec build() {
-            return new KeyPairGeneratorSpec(mContext,
-                    mKeystoreAlias,
-                    mKeyType,
-                    mKeySize,
-                    mSpec,
-                    mSubjectDN,
-                    mSerialNumber,
-                    mStartDate,
-                    mEndDate,
-                    mFlags);
+            return new KeyPairGeneratorSpec(mContext, mKeystoreAlias, mKeyType, mKeySize, mSpec,
+                    mSubjectDN, mSerialNumber, mStartDate, mEndDate, mFlags);
         }
     }
 }

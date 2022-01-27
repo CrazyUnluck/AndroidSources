@@ -38,7 +38,7 @@ public class MtpStorage {
     public MtpStorage(StorageVolume volume, Context context) {
         mStorageId = volume.getStorageId();
         mPath = volume.getPath();
-        mDescription = volume.getDescription(context);
+        mDescription = context.getResources().getString(volume.getDescriptionId());
         mReserveSpace = volume.getMtpReserveSpace() * 1024L * 1024L;
         mRemovable = volume.isRemovable();
         mMaxFileSize = volume.getMaxFileSize();
@@ -51,6 +51,18 @@ public class MtpStorage {
      */
     public final int getStorageId() {
         return mStorageId;
+    }
+
+    /**
+     * Generates a storage ID for storage of given index.
+     * Index 0 is for primary external storage
+     *
+     * @return the storage ID
+     */
+    public static int getStorageId(int index) {
+        // storage ID is 0x00010001 for primary storage,
+        // then 0x00020001, 0x00030001, etc. for secondary storages
+        return ((index + 1) << 16) + 1;
     }
 
    /**

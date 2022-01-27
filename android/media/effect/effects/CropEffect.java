@@ -19,6 +19,7 @@ package android.media.effect.effects;
 
 import android.media.effect.EffectContext;
 import android.media.effect.SizeChangeEffect;
+import android.media.effect.SingleFilterEffect;
 import android.filterpacks.imageproc.CropRectFilter;
 
 /**

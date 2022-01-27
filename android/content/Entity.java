@@ -16,7 +16,10 @@
 
 package android.content;
 
+import android.os.Parcelable;
+import android.os.Parcel;
 import android.net.Uri;
+import android.util.Log;
 
 import java.util.ArrayList;
 

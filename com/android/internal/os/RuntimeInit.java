@@ -20,12 +20,10 @@ import android.app.ActivityManagerNative;
 import android.app.ActivityThread;
 import android.app.ApplicationErrorReport;
 import android.os.Build;
-import android.os.DeadObjectException;
 import android.os.Debug;
 import android.os.IBinder;
 import android.os.Process;
 import android.os.SystemProperties;
-import android.os.Trace;
 import android.util.Log;
 import android.util.Slog;
 import com.android.internal.logging.AndroidConfig;
@@ -57,10 +55,6 @@ public class RuntimeInit {
     private static final native void nativeFinishInit();
     private static final native void nativeSetExitWithoutCleanup(boolean exitWithoutCleanup);
 
-    private static int Clog_e(String tag, String msg, Throwable tr) {
-        return Log.printlns(Log.LOG_ID_CRASH, Log.ERROR, tag, msg, tr);
-    }
-
     /**
      * Use this to log a message when a thread exits due to an uncaught
      * exception.  The framework catches these for the main threads, so
@@ -74,7 +68,7 @@ public class RuntimeInit {
                 mCrashing = true;
 
                 if (mApplicationObject == null) {
-                    Clog_e(TAG, "*** FATAL EXCEPTION IN SYSTEM PROCESS: " + t.getName(), e);
+                    Slog.e(TAG, "*** FATAL EXCEPTION IN SYSTEM PROCESS: " + t.getName(), e);
                 } else {
                     StringBuilder message = new StringBuilder();
                     message.append("FATAL EXCEPTION: ").append(t.getName()).append("\n");
@@ -83,28 +77,17 @@ public class RuntimeInit {
                         message.append("Process: ").append(processName).append(", ");
                     }
                     message.append("PID: ").append(Process.myPid());
-                    Clog_e(TAG, message.toString(), e);
-                }
-
-                // Try to end profiling. If a profiler is running at this point, and we kill the
-                // process (below), the in-memory buffer will be lost. So try to stop, which will
-                // flush the buffer. (This makes method trace profiling useful to debug crashes.)
-                if (ActivityThread.currentActivityThread() != null) {
-                    ActivityThread.currentActivityThread().stopProfiling();
+                    Slog.e(TAG, message.toString(), e);
                 }
 
                 // Bring up crash dialog, wait for it to be dismissed
                 ActivityManagerNative.getDefault().handleApplicationCrash(
                         mApplicationObject, new ApplicationErrorReport.CrashInfo(e));
             } catch (Throwable t2) {
-                if (t2 instanceof DeadObjectException) {
-                    // System process is dead; ignore
-                } else {
-                    try {
-                        Clog_e(TAG, "Error reporting crash", t2);
-                    } catch (Throwable t3) {
-                        // Even Clog_e() fails!  Oh well.
-                    }
+                try {
+                    Slog.e(TAG, "Error reporting crash", t2);
+                } catch (Throwable t3) {
+                    // Even Slog.e() fails!  Oh well.
                 }
             } finally {
                 // Try everything to make sure this process goes away.
@@ -204,14 +187,13 @@ public class RuntimeInit {
      *
      * @param className Fully-qualified class name
      * @param argv Argument vector for main()
-     * @param classLoader the classLoader to load {@className} with
      */
-    private static void invokeStaticMain(String className, String[] argv, ClassLoader classLoader)
+    private static void invokeStaticMain(String className, String[] argv)
             throws ZygoteInit.MethodAndArgsCaller {
         Class<?> cl;
 
         try {
-            cl = Class.forName(className, true, classLoader);
+            cl = Class.forName(className);
         } catch (ClassNotFoundException ex) {
             throw new RuntimeException(
                     "Missing class when invoking static main " + className,
@@ -245,7 +227,6 @@ public class RuntimeInit {
     }
 
     public static final void main(String[] argv) {
-        enableDdms();
         if (argv.length == 2 && argv[1].equals("application")) {
             if (DEBUG) Slog.d(TAG, "RuntimeInit: Starting application");
             redirectLogStreams();
@@ -277,16 +258,16 @@ public class RuntimeInit {
      * @param targetSdkVersion target SDK version
      * @param argv arg strings
      */
-    public static final void zygoteInit(int targetSdkVersion, String[] argv, ClassLoader classLoader)
+    public static final void zygoteInit(int targetSdkVersion, String[] argv)
             throws ZygoteInit.MethodAndArgsCaller {
         if (DEBUG) Slog.d(TAG, "RuntimeInit: Starting application from zygote");
 
-        Trace.traceBegin(Trace.TRACE_TAG_ACTIVITY_MANAGER, "RuntimeInit");
         redirectLogStreams();
 
         commonInit();
         nativeZygoteInit();
-        applicationInit(targetSdkVersion, argv, classLoader);
+
+        applicationInit(targetSdkVersion, argv);
     }
 
     /**
@@ -304,10 +285,10 @@ public class RuntimeInit {
             throws ZygoteInit.MethodAndArgsCaller {
         if (DEBUG) Slog.d(TAG, "RuntimeInit: Starting application from wrapper");
 
-        applicationInit(targetSdkVersion, argv, null);
+        applicationInit(targetSdkVersion, argv);
     }
 
-    private static void applicationInit(int targetSdkVersion, String[] argv, ClassLoader classLoader)
+    private static void applicationInit(int targetSdkVersion, String[] argv)
             throws ZygoteInit.MethodAndArgsCaller {
         // If the application calls System.exit(), terminate the process
         // immediately without running any shutdown hooks.  It is not possible to
@@ -330,11 +311,8 @@ public class RuntimeInit {
             return;
         }
 
-        // The end of of the RuntimeInit event (see #zygoteInit).
-        Trace.traceEnd(Trace.TRACE_TAG_ACTIVITY_MANAGER);
-
         // Remaining arguments are passed to the start class's static main
-        invokeStaticMain(args.startClass, args.startArgs, classLoader);
+        invokeStaticMain(args.startClass, args.startArgs);
     }
 
     /**
@@ -354,21 +332,17 @@ public class RuntimeInit {
      * @param tag to record with the error
      * @param t exception describing the error site and conditions
      */
-    public static void wtf(String tag, Throwable t, boolean system) {
+    public static void wtf(String tag, Throwable t) {
         try {
             if (ActivityManagerNative.getDefault().handleApplicationWtf(
-                    mApplicationObject, tag, system, new ApplicationErrorReport.CrashInfo(t))) {
+                    mApplicationObject, tag, new ApplicationErrorReport.CrashInfo(t))) {
                 // The Activity Manager has already written us off -- now exit.
                 Process.killProcess(Process.myPid());
                 System.exit(10);
             }
         } catch (Throwable t2) {
-            if (t2 instanceof DeadObjectException) {
-                // System process is dead; ignore
-            } else {
-                Slog.e(TAG, "Error reporting WTF", t2);
-                Slog.e(TAG, "Original WTF:", t);
-            }
+            Slog.e(TAG, "Error reporting WTF", t2);
+            Slog.e(TAG, "Original WTF:", t);
         }
     }
 
@@ -385,9 +359,9 @@ public class RuntimeInit {
     }
 
     /**
-     * Enable DDMS.
+     * Enable debugging features.
      */
-    static final void enableDdms() {
+    static {
         // Register handlers for DDM messages.
         android.ddm.DdmRegister.registerHandlers();
     }

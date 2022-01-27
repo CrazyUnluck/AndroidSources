@@ -23,7 +23,6 @@ import android.content.DialogInterface;
 import android.os.Bundle;
 import android.support.annotation.IntDef;
 import android.support.annotation.NonNull;
-import android.support.annotation.Nullable;
 import android.support.annotation.StyleRes;
 import android.view.LayoutInflater;
 import android.view.View;
@@ -262,8 +261,8 @@ public class DialogFragment extends Fragment
     }
 
     @Override
-    public void onAttach(Context context) {
-        super.onAttach(context);
+    public void onAttach(Activity activity) {
+        super.onAttach(activity);
         if (!mShownByMe) {
             // If not explicitly shown through our API, take this as an
             // indication that the dialog is no longer dismissed.
@@ -283,7 +282,7 @@ public class DialogFragment extends Fragment
     }
 
     @Override
-    public void onCreate(@Nullable Bundle savedInstanceState) {
+    public void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
 
         mShowsDialog = mContainerId == 0;
@@ -295,6 +294,7 @@ public class DialogFragment extends Fragment
             mShowsDialog = savedInstanceState.getBoolean(SAVED_SHOWS_DIALOG, mShowsDialog);
             mBackStackId = savedInstanceState.getInt(SAVED_BACK_STACK_ID, -1);
         }
+        
     }
 
     /** @hide */
@@ -305,29 +305,22 @@ public class DialogFragment extends Fragment
         }
 
         mDialog = onCreateDialog(savedInstanceState);
-
-        if (mDialog != null) {
-            setupDialog(mDialog, mStyle);
-
-            return (LayoutInflater) mDialog.getContext().getSystemService(
-                    Context.LAYOUT_INFLATER_SERVICE);
-        }
-        return (LayoutInflater) mHost.getContext().getSystemService(
-                Context.LAYOUT_INFLATER_SERVICE);
-    }
-
-    /** @hide */
-    public void setupDialog(Dialog dialog, int style) {
-        switch (style) {
+        switch (mStyle) {
             case STYLE_NO_INPUT:
-                dialog.getWindow().addFlags(
+                mDialog.getWindow().addFlags(
                         WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE |
-                                WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE);
+                        WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE);
                 // fall through...
             case STYLE_NO_FRAME:
             case STYLE_NO_TITLE:
-                dialog.requestWindowFeature(Window.FEATURE_NO_TITLE);
+                mDialog.requestWindowFeature(Window.FEATURE_NO_TITLE);
         }
+        if (mDialog != null) {
+            return (LayoutInflater) mDialog.getContext().getSystemService(
+                    Context.LAYOUT_INFLATER_SERVICE);
+        }
+        return (LayoutInflater) mActivity.getSystemService(
+                Context.LAYOUT_INFLATER_SERVICE);
     }
     
     /**
@@ -381,15 +374,11 @@ public class DialogFragment extends Fragment
         View view = getView();
         if (view != null) {
             if (view.getParent() != null) {
-                throw new IllegalStateException(
-                        "DialogFragment can not be attached to a container view");
+                throw new IllegalStateException("DialogFragment can not be attached to a container view");
             }
             mDialog.setContentView(view);
         }
-        final Activity activity = getActivity();
-        if (activity != null) {
-            mDialog.setOwnerActivity(activity);
-        }
+        mDialog.setOwnerActivity(getActivity());
         mDialog.setCancelable(mCancelable);
         mDialog.setOnCancelListener(this);
         mDialog.setOnDismissListener(this);
@@ -404,7 +393,6 @@ public class DialogFragment extends Fragment
     @Override
     public void onStart() {
         super.onStart();
-
         if (mDialog != null) {
             mViewDestroyed = false;
             mDialog.show();

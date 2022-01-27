@@ -33,20 +33,16 @@ class NotificationCompatKitKat {
         private Notification.Builder b;
         private Bundle mExtras;
         private List<Bundle> mActionExtrasList = new ArrayList<Bundle>();
-        private RemoteViews mContentView;
-        private RemoteViews mBigContentView;
 
         public Builder(Context context, Notification n,
                 CharSequence contentTitle, CharSequence contentText, CharSequence contentInfo,
                 RemoteViews tickerView, int number,
                 PendingIntent contentIntent, PendingIntent fullScreenIntent, Bitmap largeIcon,
-                int progressMax, int progress, boolean progressIndeterminate, boolean showWhen,
+                int mProgressMax, int mProgress, boolean mProgressIndeterminate,
                 boolean useChronometer, int priority, CharSequence subText, boolean localOnly,
-                ArrayList<String> people, Bundle extras, String groupKey, boolean groupSummary,
-                String sortKey, RemoteViews contentView, RemoteViews bigContentView) {
+                Bundle extras, String groupKey, boolean groupSummary, String sortKey) {
             b = new Notification.Builder(context)
                 .setWhen(n.when)
-                .setShowWhen(showWhen)
                 .setSmallIcon(n.icon, n.iconLevel)
                 .setContent(n.contentView)
                 .setTicker(n.tickerText, tickerView)
@@ -69,14 +65,10 @@ class NotificationCompatKitKat {
                 .setNumber(number)
                 .setUsesChronometer(useChronometer)
                 .setPriority(priority)
-                .setProgress(progressMax, progress, progressIndeterminate);
+                .setProgress(mProgressMax, mProgress, mProgressIndeterminate);
             mExtras = new Bundle();
             if (extras != null) {
                 mExtras.putAll(extras);
-            }
-            if (people != null && !people.isEmpty()) {
-                mExtras.putStringArray(Notification.EXTRA_PEOPLE,
-                        people.toArray(new String[people.size()]));
             }
             if (localOnly) {
                 mExtras.putBoolean(NotificationCompatJellybean.EXTRA_LOCAL_ONLY, true);
@@ -92,8 +84,6 @@ class NotificationCompatKitKat {
             if (sortKey != null) {
                 mExtras.putString(NotificationCompatJellybean.EXTRA_SORT_KEY, sortKey);
             }
-            mContentView = contentView;
-            mBigContentView = bigContentView;
         }
 
         @Override
@@ -106,7 +96,6 @@ class NotificationCompatKitKat {
             return b;
         }
 
-        @Override
         public Notification build() {
             SparseArray<Bundle> actionExtrasMap = NotificationCompatJellybean.buildActionExtrasMap(
                     mActionExtrasList);
@@ -116,14 +105,7 @@ class NotificationCompatKitKat {
                         NotificationCompatJellybean.EXTRA_ACTION_EXTRAS, actionExtrasMap);
             }
             b.setExtras(mExtras);
-            Notification notification = b.build();
-            if (mContentView != null) {
-                notification.contentView = mContentView;
-            }
-            if (mBigContentView != null) {
-                notification.bigContentView = mBigContentView;
-            }
-            return notification;
+            return b.build();
         }
     }
 

@@ -16,24 +16,13 @@
 
 package android.provider;
 
-import static android.provider.DocumentsContract.METHOD_COPY_DOCUMENT;
+import static android.provider.DocumentsContract.EXTRA_THUMBNAIL_SIZE;
 import static android.provider.DocumentsContract.METHOD_CREATE_DOCUMENT;
 import static android.provider.DocumentsContract.METHOD_DELETE_DOCUMENT;
-import static android.provider.DocumentsContract.METHOD_IS_CHILD_DOCUMENT;
-import static android.provider.DocumentsContract.METHOD_MOVE_DOCUMENT;
-import static android.provider.DocumentsContract.METHOD_REMOVE_DOCUMENT;
-import static android.provider.DocumentsContract.METHOD_RENAME_DOCUMENT;
-import static android.provider.DocumentsContract.buildDocumentUri;
-import static android.provider.DocumentsContract.buildDocumentUriMaybeUsingTree;
-import static android.provider.DocumentsContract.buildTreeDocumentUri;
 import static android.provider.DocumentsContract.getDocumentId;
 import static android.provider.DocumentsContract.getRootId;
 import static android.provider.DocumentsContract.getSearchDocumentsQuery;
-import static android.provider.DocumentsContract.getTreeDocumentId;
-import static android.provider.DocumentsContract.isTreeUri;
 
-import android.annotation.CallSuper;
-import android.content.ClipDescription;
 import android.content.ContentProvider;
 import android.content.ContentResolver;
 import android.content.ContentValues;
@@ -57,7 +46,6 @@ import android.util.Log;
 import libcore.io.IoUtils;
 
 import java.io.FileNotFoundException;
-import java.util.Objects;
 
 /**
  * Base class for a document provider. A document provider offers read and write
@@ -126,7 +114,6 @@ import java.util.Objects;
  * </p>
  *
  * @see Intent#ACTION_OPEN_DOCUMENT
- * @see Intent#ACTION_OPEN_DOCUMENT_TREE
  * @see Intent#ACTION_CREATE_DOCUMENT
  */
 public abstract class DocumentsProvider extends ContentProvider {
@@ -138,8 +125,6 @@ public abstract class DocumentsProvider extends ContentProvider {
     private static final int MATCH_SEARCH = 4;
     private static final int MATCH_DOCUMENT = 5;
     private static final int MATCH_CHILDREN = 6;
-    private static final int MATCH_DOCUMENT_TREE = 7;
-    private static final int MATCH_CHILDREN_TREE = 8;
 
     private String mAuthority;
 
@@ -159,8 +144,6 @@ public abstract class DocumentsProvider extends ContentProvider {
         mMatcher.addURI(mAuthority, "root/*/search", MATCH_SEARCH);
         mMatcher.addURI(mAuthority, "document/*", MATCH_DOCUMENT);
         mMatcher.addURI(mAuthority, "document/*/children", MATCH_CHILDREN);
-        mMatcher.addURI(mAuthority, "tree/*/document/*", MATCH_DOCUMENT_TREE);
-        mMatcher.addURI(mAuthority, "tree/*/document/*/children", MATCH_CHILDREN_TREE);
 
         // Sanity check our setup
         if (!info.exported) {
@@ -178,36 +161,6 @@ public abstract class DocumentsProvider extends ContentProvider {
     }
 
     /**
-     * Test if a document is descendant (child, grandchild, etc) from the given
-     * parent. For example, providers must implement this to support
-     * {@link Intent#ACTION_OPEN_DOCUMENT_TREE}. You should avoid making network
-     * requests to keep this request fast.
-     *
-     * @param parentDocumentId parent to verify against.
-     * @param documentId child to verify.
-     * @return if given document is a descendant of the given parent.
-     * @see DocumentsContract.Root#FLAG_SUPPORTS_IS_CHILD
-     */
-    public boolean isChildDocument(String parentDocumentId, String documentId) {
-        return false;
-    }
-
-    /** {@hide} */
-    private void enforceTree(Uri documentUri) {
-        if (isTreeUri(documentUri)) {
-            final String parent = getTreeDocumentId(documentUri);
-            final String child = getDocumentId(documentUri);
-            if (Objects.equals(parent, child)) {
-                return;
-            }
-            if (!isChildDocument(parent, child)) {
-                throw new SecurityException(
-                        "Document " + child + " is not a descendant of " + parent);
-            }
-        }
-    }
-
-    /**
      * Create a new document and return its newly generated
      * {@link Document#COLUMN_DOCUMENT_ID}. You must allocate a new
      * {@link Document#COLUMN_DOCUMENT_ID} to represent the document, which must
@@ -219,7 +172,7 @@ public abstract class DocumentsProvider extends ContentProvider {
      *            If the MIME type is not supported, the provider must throw.
      * @param displayName the display name of the new document. The provider may
      *            alter this name to meet any internal constraints, such as
-     *            avoiding conflicting names.
+     *            conflicting names.
      */
     @SuppressWarnings("unused")
     public String createDocument(String parentDocumentId, String mimeType, String displayName)
@@ -228,97 +181,16 @@ public abstract class DocumentsProvider extends ContentProvider {
     }
 
     /**
-     * Rename an existing document.
-     * <p>
-     * If a different {@link Document#COLUMN_DOCUMENT_ID} must be used to
-     * represent the renamed document, generate and return it. Any outstanding
-     * URI permission grants will be updated to point at the new document. If
-     * the original {@link Document#COLUMN_DOCUMENT_ID} is still valid after the
-     * rename, return {@code null}.
-     *
-     * @param documentId the document to rename.
-     * @param displayName the updated display name of the document. The provider
-     *            may alter this name to meet any internal constraints, such as
-     *            avoiding conflicting names.
-     */
-    @SuppressWarnings("unused")
-    public String renameDocument(String documentId, String displayName)
-            throws FileNotFoundException {
-        throw new UnsupportedOperationException("Rename not supported");
-    }
-
-    /**
-     * Delete the requested document.
-     * <p>
-     * Upon returning, any URI permission grants for the given document will be
-     * revoked. If additional documents were deleted as a side effect of this
-     * call (such as documents inside a directory) the implementor is
-     * responsible for revoking those permissions using
-     * {@link #revokeDocumentPermission(String)}.
+     * Delete the requested document. Upon returning, any URI permission grants
+     * for the requested document will be revoked. If additional documents were
+     * deleted as a side effect of this call, such as documents inside a
+     * directory, the implementor is responsible for revoking those permissions.
      *
      * @param documentId the document to delete.
      */
     @SuppressWarnings("unused")
     public void deleteDocument(String documentId) throws FileNotFoundException {
         throw new UnsupportedOperationException("Delete not supported");
-    }
-
-    /**
-     * Copy the requested document or a document tree.
-     * <p>
-     * Copies a document including all child documents to another location within
-     * the same document provider. Upon completion returns the document id of
-     * the copied document at the target destination. {@code null} must never
-     * be returned.
-     *
-     * @param sourceDocumentId the document to copy.
-     * @param targetParentDocumentId the target document to be copied into as a child.
-     */
-    @SuppressWarnings("unused")
-    public String copyDocument(String sourceDocumentId, String targetParentDocumentId)
-            throws FileNotFoundException {
-        throw new UnsupportedOperationException("Copy not supported");
-    }
-
-    /**
-     * Move the requested document or a document tree.
-     *
-     * <p>Moves a document including all child documents to another location within
-     * the same document provider. Upon completion returns the document id of
-     * the copied document at the target destination. {@code null} must never
-     * be returned.
-     *
-     * <p>It's the responsibility of the provider to revoke grants if the document
-     * is no longer accessible using <code>sourceDocumentId</code>.
-     *
-     * @param sourceDocumentId the document to move.
-     * @param sourceParentDocumentId the parent of the document to move.
-     * @param targetParentDocumentId the target document to be a new parent of the
-     *     source document.
-     */
-    @SuppressWarnings("unused")
-    public String moveDocument(String sourceDocumentId, String sourceParentDocumentId,
-            String targetParentDocumentId)
-            throws FileNotFoundException {
-        throw new UnsupportedOperationException("Move not supported");
-    }
-
-    /**
-     * Removes the requested document or a document tree.
-     *
-     * <p>In contrast to {@link #deleteDocument} it requires specifying the parent.
-     * This method is especially useful if the document can be in multiple parents.
-     *
-     * <p>It's the responsibility of the provider to revoke grants if the document is
-     * removed from the last parent, and effectively the document is deleted.
-     *
-     * @param documentId the document to remove.
-     * @param parentDocumentId the parent of the document to move.
-     */
-    @SuppressWarnings("unused")
-    public void removeDocument(String documentId, String parentDocumentId)
-            throws FileNotFoundException {
-        throw new UnsupportedOperationException("Remove not supported");
     }
 
     /**
@@ -419,7 +291,7 @@ public abstract class DocumentsProvider extends ContentProvider {
     }
 
     /**
-     * Return documents that match the given query under the requested
+     * Return documents that that match the given query under the requested
      * root. The returned documents should be sorted by relevance in descending
      * order. How documents are matched against the query string is an
      * implementation detail left to each provider, but it's suggested that at
@@ -527,29 +399,6 @@ public abstract class DocumentsProvider extends ContentProvider {
     }
 
     /**
-     * Open and return the document in a format matching the specified MIME
-     * type filter.
-     * <p>
-     * A provider may perform a conversion if the documents's MIME type is not
-     * matching the specified MIME type filter.
-     *
-     * @param documentId the document to return.
-     * @param mimeTypeFilter the MIME type filter for the requested format. May
-     *            be *\/*, which matches any MIME type.
-     * @param opts extra options from the client. Specific to the content
-     *            provider.
-     * @param signal used by the caller to signal if the request should be
-     *            cancelled. May be null.
-     * @see #getDocumentStreamTypes(String, String)
-     */
-    @SuppressWarnings("unused")
-    public AssetFileDescriptor openTypedDocument(
-            String documentId, String mimeTypeFilter, Bundle opts, CancellationSignal signal)
-            throws FileNotFoundException {
-        throw new FileNotFoundException("The requested MIME type is not supported.");
-    }
-
-    /**
      * Implementation is provided by the parent class. Cannot be overriden.
      *
      * @see #queryRoots(String[])
@@ -571,12 +420,8 @@ public abstract class DocumentsProvider extends ContentProvider {
                     return querySearchDocuments(
                             getRootId(uri), getSearchDocumentsQuery(uri), projection);
                 case MATCH_DOCUMENT:
-                case MATCH_DOCUMENT_TREE:
-                    enforceTree(uri);
                     return queryDocument(getDocumentId(uri), projection);
                 case MATCH_CHILDREN:
-                case MATCH_CHILDREN_TREE:
-                    enforceTree(uri);
                     if (DocumentsContract.isManageMode(uri)) {
                         return queryChildDocumentsForManage(
                                 getDocumentId(uri), projection, sortOrder);
@@ -604,8 +449,6 @@ public abstract class DocumentsProvider extends ContentProvider {
                 case MATCH_ROOT:
                     return DocumentsContract.Root.MIME_TYPE_ITEM;
                 case MATCH_DOCUMENT:
-                case MATCH_DOCUMENT_TREE:
-                    enforceTree(uri);
                     return getDocumentType(getDocumentId(uri));
                 default:
                     return null;
@@ -614,56 +457,6 @@ public abstract class DocumentsProvider extends ContentProvider {
             Log.w(TAG, "Failed during getType", e);
             return null;
         }
-    }
-
-    /**
-     * Implementation is provided by the parent class. Can be overridden to
-     * provide additional functionality, but subclasses <em>must</em> always
-     * call the superclass. If the superclass returns {@code null}, the subclass
-     * may implement custom behavior.
-     * <p>
-     * This is typically used to resolve a subtree URI into a concrete document
-     * reference, issuing a narrower single-document URI permission grant along
-     * the way.
-     *
-     * @see DocumentsContract#buildDocumentUriUsingTree(Uri, String)
-     */
-    @CallSuper
-    @Override
-    public Uri canonicalize(Uri uri) {
-        final Context context = getContext();
-        switch (mMatcher.match(uri)) {
-            case MATCH_DOCUMENT_TREE:
-                enforceTree(uri);
-
-                final Uri narrowUri = buildDocumentUri(uri.getAuthority(), getDocumentId(uri));
-
-                // Caller may only have prefix grant, so extend them a grant to
-                // the narrow URI.
-                final int modeFlags = getCallingOrSelfUriPermissionModeFlags(context, uri);
-                context.grantUriPermission(getCallingPackage(), narrowUri, modeFlags);
-                return narrowUri;
-        }
-        return null;
-    }
-
-    private static int getCallingOrSelfUriPermissionModeFlags(Context context, Uri uri) {
-        // TODO: move this to a direct AMS call
-        int modeFlags = 0;
-        if (context.checkCallingOrSelfUriPermission(uri, Intent.FLAG_GRANT_READ_URI_PERMISSION)
-                == PackageManager.PERMISSION_GRANTED) {
-            modeFlags |= Intent.FLAG_GRANT_READ_URI_PERMISSION;
-        }
-        if (context.checkCallingOrSelfUriPermission(uri, Intent.FLAG_GRANT_WRITE_URI_PERMISSION)
-                == PackageManager.PERMISSION_GRANTED) {
-            modeFlags |= Intent.FLAG_GRANT_WRITE_URI_PERMISSION;
-        }
-        if (context.checkCallingOrSelfUriPermission(uri, Intent.FLAG_GRANT_READ_URI_PERMISSION
-                | Intent.FLAG_GRANT_PERSISTABLE_URI_PERMISSION)
-                == PackageManager.PERMISSION_GRANTED) {
-            modeFlags |= Intent.FLAG_GRANT_PERSISTABLE_URI_PERMISSION;
-        }
-        return modeFlags;
     }
 
     /**
@@ -703,172 +496,62 @@ public abstract class DocumentsProvider extends ContentProvider {
      * provide additional functionality, but subclasses <em>must</em> always
      * call the superclass. If the superclass returns {@code null}, the subclass
      * may implement custom behavior.
+     *
+     * @see #openDocument(String, String, CancellationSignal)
+     * @see #deleteDocument(String)
      */
-    @CallSuper
     @Override
     public Bundle call(String method, String arg, Bundle extras) {
+        final Context context = getContext();
+
         if (!method.startsWith("android:")) {
-            // Ignore non-platform methods
+            // Let non-platform methods pass through
             return super.call(method, arg, extras);
         }
 
+        final String documentId = extras.getString(Document.COLUMN_DOCUMENT_ID);
+        final Uri documentUri = DocumentsContract.buildDocumentUri(mAuthority, documentId);
+
+        // Require that caller can manage requested document
+        final boolean callerHasManage =
+                context.checkCallingOrSelfPermission(android.Manifest.permission.MANAGE_DOCUMENTS)
+                == PackageManager.PERMISSION_GRANTED;
+        enforceWritePermissionInner(documentUri);
+
+        final Bundle out = new Bundle();
         try {
-            return callUnchecked(method, arg, extras);
+            if (METHOD_CREATE_DOCUMENT.equals(method)) {
+                final String mimeType = extras.getString(Document.COLUMN_MIME_TYPE);
+                final String displayName = extras.getString(Document.COLUMN_DISPLAY_NAME);
+
+                final String newDocumentId = createDocument(documentId, mimeType, displayName);
+                out.putString(Document.COLUMN_DOCUMENT_ID, newDocumentId);
+
+                // Extend permission grant towards caller if needed
+                if (!callerHasManage) {
+                    final Uri newDocumentUri = DocumentsContract.buildDocumentUri(
+                            mAuthority, newDocumentId);
+                    context.grantUriPermission(getCallingPackage(), newDocumentUri,
+                            Intent.FLAG_GRANT_READ_URI_PERMISSION
+                            | Intent.FLAG_GRANT_WRITE_URI_PERMISSION
+                            | Intent.FLAG_GRANT_PERSISTABLE_URI_PERMISSION);
+                }
+
+            } else if (METHOD_DELETE_DOCUMENT.equals(method)) {
+                deleteDocument(documentId);
+
+                // Document no longer exists, clean up any grants
+                context.revokeUriPermission(documentUri, Intent.FLAG_GRANT_READ_URI_PERMISSION
+                        | Intent.FLAG_GRANT_WRITE_URI_PERMISSION
+                        | Intent.FLAG_GRANT_PERSISTABLE_URI_PERMISSION);
+
+            } else {
+                throw new UnsupportedOperationException("Method not supported " + method);
+            }
         } catch (FileNotFoundException e) {
             throw new IllegalStateException("Failed call " + method, e);
         }
-    }
-
-    private Bundle callUnchecked(String method, String arg, Bundle extras)
-            throws FileNotFoundException {
-
-        final Context context = getContext();
-        final Uri documentUri = extras.getParcelable(DocumentsContract.EXTRA_URI);
-        final String authority = documentUri.getAuthority();
-        final String documentId = DocumentsContract.getDocumentId(documentUri);
-
-        if (!mAuthority.equals(authority)) {
-            throw new SecurityException(
-                    "Requested authority " + authority + " doesn't match provider " + mAuthority);
-        }
-
-        final Bundle out = new Bundle();
-
-        // If the URI is a tree URI performs some validation.
-        enforceTree(documentUri);
-
-        if (METHOD_IS_CHILD_DOCUMENT.equals(method)) {
-            enforceReadPermissionInner(documentUri, getCallingPackage(), null);
-
-            final Uri childUri = extras.getParcelable(DocumentsContract.EXTRA_TARGET_URI);
-            final String childAuthority = childUri.getAuthority();
-            final String childId = DocumentsContract.getDocumentId(childUri);
-
-            out.putBoolean(
-                    DocumentsContract.EXTRA_RESULT,
-                    mAuthority.equals(childAuthority)
-                            && isChildDocument(documentId, childId));
-
-        } else if (METHOD_CREATE_DOCUMENT.equals(method)) {
-            enforceWritePermissionInner(documentUri, getCallingPackage(), null);
-
-            final String mimeType = extras.getString(Document.COLUMN_MIME_TYPE);
-            final String displayName = extras.getString(Document.COLUMN_DISPLAY_NAME);
-            final String newDocumentId = createDocument(documentId, mimeType, displayName);
-
-            // No need to issue new grants here, since caller either has
-            // manage permission or a prefix grant. We might generate a
-            // tree style URI if that's how they called us.
-            final Uri newDocumentUri = buildDocumentUriMaybeUsingTree(documentUri,
-                    newDocumentId);
-            out.putParcelable(DocumentsContract.EXTRA_URI, newDocumentUri);
-
-        } else if (METHOD_RENAME_DOCUMENT.equals(method)) {
-            enforceWritePermissionInner(documentUri, getCallingPackage(), null);
-
-            final String displayName = extras.getString(Document.COLUMN_DISPLAY_NAME);
-            final String newDocumentId = renameDocument(documentId, displayName);
-
-            if (newDocumentId != null) {
-                final Uri newDocumentUri = buildDocumentUriMaybeUsingTree(documentUri,
-                        newDocumentId);
-
-                // If caller came in with a narrow grant, issue them a
-                // narrow grant for the newly renamed document.
-                if (!isTreeUri(newDocumentUri)) {
-                    final int modeFlags = getCallingOrSelfUriPermissionModeFlags(context,
-                            documentUri);
-                    context.grantUriPermission(getCallingPackage(), newDocumentUri, modeFlags);
-                }
-
-                out.putParcelable(DocumentsContract.EXTRA_URI, newDocumentUri);
-
-                // Original document no longer exists, clean up any grants.
-                revokeDocumentPermission(documentId);
-            }
-
-        } else if (METHOD_DELETE_DOCUMENT.equals(method)) {
-            enforceWritePermissionInner(documentUri, getCallingPackage(), null);
-            deleteDocument(documentId);
-
-            // Document no longer exists, clean up any grants.
-            revokeDocumentPermission(documentId);
-
-        } else if (METHOD_COPY_DOCUMENT.equals(method)) {
-            final Uri targetUri = extras.getParcelable(DocumentsContract.EXTRA_TARGET_URI);
-            final String targetId = DocumentsContract.getDocumentId(targetUri);
-
-            enforceReadPermissionInner(documentUri, getCallingPackage(), null);
-            enforceWritePermissionInner(targetUri, getCallingPackage(), null);
-
-            final String newDocumentId = copyDocument(documentId, targetId);
-
-            if (newDocumentId != null) {
-                final Uri newDocumentUri = buildDocumentUriMaybeUsingTree(documentUri,
-                        newDocumentId);
-
-                if (!isTreeUri(newDocumentUri)) {
-                    final int modeFlags = getCallingOrSelfUriPermissionModeFlags(context,
-                            documentUri);
-                    context.grantUriPermission(getCallingPackage(), newDocumentUri, modeFlags);
-                }
-
-                out.putParcelable(DocumentsContract.EXTRA_URI, newDocumentUri);
-            }
-
-        } else if (METHOD_MOVE_DOCUMENT.equals(method)) {
-            final Uri parentSourceUri = extras.getParcelable(DocumentsContract.EXTRA_PARENT_URI);
-            final String parentSourceId = DocumentsContract.getDocumentId(parentSourceUri);
-            final Uri targetUri = extras.getParcelable(DocumentsContract.EXTRA_TARGET_URI);
-            final String targetId = DocumentsContract.getDocumentId(targetUri);
-
-            enforceWritePermissionInner(documentUri, getCallingPackage(), null);
-            enforceReadPermissionInner(parentSourceUri, getCallingPackage(), null);
-            enforceWritePermissionInner(targetUri, getCallingPackage(), null);
-
-            final String newDocumentId = moveDocument(documentId, parentSourceId, targetId);
-
-            if (newDocumentId != null) {
-                final Uri newDocumentUri = buildDocumentUriMaybeUsingTree(documentUri,
-                        newDocumentId);
-
-                if (!isTreeUri(newDocumentUri)) {
-                    final int modeFlags = getCallingOrSelfUriPermissionModeFlags(context,
-                            documentUri);
-                    context.grantUriPermission(getCallingPackage(), newDocumentUri, modeFlags);
-                }
-
-                out.putParcelable(DocumentsContract.EXTRA_URI, newDocumentUri);
-            }
-
-        } else if (METHOD_REMOVE_DOCUMENT.equals(method)) {
-            final Uri parentSourceUri = extras.getParcelable(DocumentsContract.EXTRA_PARENT_URI);
-            final String parentSourceId = DocumentsContract.getDocumentId(parentSourceUri);
-
-            enforceReadPermissionInner(parentSourceUri, getCallingPackage(), null);
-            enforceWritePermissionInner(documentUri, getCallingPackage(), null);
-            removeDocument(documentId, parentSourceId);
-
-            // It's responsibility of the provider to revoke any grants, as the document may be
-            // still attached to another parents.
-
-        } else {
-            throw new UnsupportedOperationException("Method not supported " + method);
-        }
-
         return out;
-    }
-
-    /**
-     * Revoke any active permission grants for the given
-     * {@link Document#COLUMN_DOCUMENT_ID}, usually called when a document
-     * becomes invalid. Follows the same semantics as
-     * {@link Context#revokeUriPermission(Uri, int)}.
-     */
-    public final void revokeDocumentPermission(String documentId) {
-        final Context context = getContext();
-        context.revokeUriPermission(buildDocumentUri(mAuthority, documentId), ~0);
-        context.revokeUriPermission(buildTreeDocumentUri(mAuthority, documentId), ~0);
     }
 
     /**
@@ -878,7 +561,6 @@ public abstract class DocumentsProvider extends ContentProvider {
      */
     @Override
     public final ParcelFileDescriptor openFile(Uri uri, String mode) throws FileNotFoundException {
-        enforceTree(uri);
         return openDocument(getDocumentId(uri), mode, null);
     }
 
@@ -890,154 +572,39 @@ public abstract class DocumentsProvider extends ContentProvider {
     @Override
     public final ParcelFileDescriptor openFile(Uri uri, String mode, CancellationSignal signal)
             throws FileNotFoundException {
-        enforceTree(uri);
         return openDocument(getDocumentId(uri), mode, signal);
     }
 
     /**
      * Implementation is provided by the parent class. Cannot be overriden.
      *
-     * @see #openDocument(String, String, CancellationSignal)
-     */
-    @Override
-    @SuppressWarnings("resource")
-    public final AssetFileDescriptor openAssetFile(Uri uri, String mode)
-            throws FileNotFoundException {
-        enforceTree(uri);
-        final ParcelFileDescriptor fd = openDocument(getDocumentId(uri), mode, null);
-        return fd != null ? new AssetFileDescriptor(fd, 0, -1) : null;
-    }
-
-    /**
-     * Implementation is provided by the parent class. Cannot be overriden.
-     *
-     * @see #openDocument(String, String, CancellationSignal)
-     */
-    @Override
-    @SuppressWarnings("resource")
-    public final AssetFileDescriptor openAssetFile(Uri uri, String mode, CancellationSignal signal)
-            throws FileNotFoundException {
-        enforceTree(uri);
-        final ParcelFileDescriptor fd = openDocument(getDocumentId(uri), mode, signal);
-        return fd != null ? new AssetFileDescriptor(fd, 0, -1) : null;
-    }
-
-    /**
-     * Implementation is provided by the parent class. Cannot be overriden.
-     *
      * @see #openDocumentThumbnail(String, Point, CancellationSignal)
-     * @see #openTypedDocument(String, String, Bundle, CancellationSignal)
-     * @see #getDocumentStreamTypes(String, String)
      */
     @Override
     public final AssetFileDescriptor openTypedAssetFile(Uri uri, String mimeTypeFilter, Bundle opts)
             throws FileNotFoundException {
-        return openTypedAssetFileImpl(uri, mimeTypeFilter, opts, null);
+        if (opts != null && opts.containsKey(EXTRA_THUMBNAIL_SIZE)) {
+            final Point sizeHint = opts.getParcelable(EXTRA_THUMBNAIL_SIZE);
+            return openDocumentThumbnail(getDocumentId(uri), sizeHint, null);
+        } else {
+            return super.openTypedAssetFile(uri, mimeTypeFilter, opts);
+        }
     }
 
     /**
      * Implementation is provided by the parent class. Cannot be overriden.
      *
      * @see #openDocumentThumbnail(String, Point, CancellationSignal)
-     * @see #openTypedDocument(String, String, Bundle, CancellationSignal)
-     * @see #getDocumentStreamTypes(String, String)
      */
     @Override
     public final AssetFileDescriptor openTypedAssetFile(
             Uri uri, String mimeTypeFilter, Bundle opts, CancellationSignal signal)
             throws FileNotFoundException {
-        return openTypedAssetFileImpl(uri, mimeTypeFilter, opts, signal);
-    }
-
-    /**
-     * Return a list of streamable MIME types matching the filter, which can be passed to
-     * {@link #openTypedDocument(String, String, Bundle, CancellationSignal)}.
-     *
-     * <p>The default implementation returns a MIME type provided by
-     * {@link #queryDocument(String, String[])} as long as it matches the filter and the document
-     * does not have the {@link Document#FLAG_VIRTUAL_DOCUMENT} flag set.
-     *
-     * @see #getStreamTypes(Uri, String)
-     * @see #openTypedDocument(String, String, Bundle, CancellationSignal)
-     */
-    public String[] getDocumentStreamTypes(String documentId, String mimeTypeFilter) {
-        Cursor cursor = null;
-        try {
-            cursor = queryDocument(documentId, null);
-            if (cursor.moveToFirst()) {
-                final String mimeType =
-                    cursor.getString(cursor.getColumnIndexOrThrow(Document.COLUMN_MIME_TYPE));
-                final long flags =
-                    cursor.getLong(cursor.getColumnIndexOrThrow(Document.COLUMN_FLAGS));
-                if ((flags & Document.FLAG_VIRTUAL_DOCUMENT) == 0 && mimeType != null &&
-                        mimeTypeMatches(mimeTypeFilter, mimeType)) {
-                    return new String[] { mimeType };
-                }
-            }
-        } catch (FileNotFoundException e) {
-            return null;
-        } finally {
-            IoUtils.closeQuietly(cursor);
-        }
-
-        // No streamable MIME types.
-        return null;
-    }
-
-    /**
-     * Called by a client to determine the types of data streams that this content provider
-     * support for the given URI.
-     *
-     * <p>Overriding this method is deprecated. Override {@link #openTypedDocument} instead.
-     *
-     * @see #getDocumentStreamTypes(String, String)
-     */
-    @Override
-    public String[] getStreamTypes(Uri uri, String mimeTypeFilter) {
-        enforceTree(uri);
-        return getDocumentStreamTypes(getDocumentId(uri), mimeTypeFilter);
-    }
-
-    /**
-     * @hide
-     */
-    private final AssetFileDescriptor openTypedAssetFileImpl(
-            Uri uri, String mimeTypeFilter, Bundle opts, CancellationSignal signal)
-            throws FileNotFoundException {
-        enforceTree(uri);
-        final String documentId = getDocumentId(uri);
-        if (opts != null && opts.containsKey(ContentResolver.EXTRA_SIZE)) {
-            final Point sizeHint = opts.getParcelable(ContentResolver.EXTRA_SIZE);
-            return openDocumentThumbnail(documentId, sizeHint, signal);
-        }
-        if ("*/*".equals(mimeTypeFilter)) {
-             // If they can take anything, the untyped open call is good enough.
-             return openAssetFile(uri, "r");
-        }
-        final String baseType = getType(uri);
-        if (baseType != null && ClipDescription.compareMimeTypes(baseType, mimeTypeFilter)) {
-            // Use old untyped open call if this provider has a type for this
-            // URI and it matches the request.
-            return openAssetFile(uri, "r");
-        }
-        // For any other yet unhandled case, let the provider subclass handle it.
-        return openTypedDocument(documentId, mimeTypeFilter, opts, signal);
-    }
-
-    /**
-     * @hide
-     */
-    public static boolean mimeTypeMatches(String filter, String test) {
-        if (test == null) {
-            return false;
-        } else if (filter == null || "*/*".equals(filter)) {
-            return true;
-        } else if (filter.equals(test)) {
-            return true;
-        } else if (filter.endsWith("/*")) {
-            return filter.regionMatches(0, test, 0, filter.indexOf('/'));
+        if (opts != null && opts.containsKey(EXTRA_THUMBNAIL_SIZE)) {
+            final Point sizeHint = opts.getParcelable(EXTRA_THUMBNAIL_SIZE);
+            return openDocumentThumbnail(getDocumentId(uri), sizeHint, signal);
         } else {
-            return false;
+            return super.openTypedAssetFile(uri, mimeTypeFilter, opts, signal);
         }
     }
 }

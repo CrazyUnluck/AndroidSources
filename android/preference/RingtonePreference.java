@@ -19,7 +19,6 @@ package android.preference;
 import android.content.Context;
 import android.content.Intent;
 import android.content.res.TypedArray;
-import android.media.AudioAttributes;
 import android.media.RingtoneManager;
 import android.net.Uri;
 import android.provider.Settings.System;
@@ -51,11 +50,11 @@ public class RingtonePreference extends Preference implements
     
     private int mRequestCode;
 
-    public RingtonePreference(Context context, AttributeSet attrs, int defStyleAttr, int defStyleRes) {
-        super(context, attrs, defStyleAttr, defStyleRes);
-
-        final TypedArray a = context.obtainStyledAttributes(attrs,
-                com.android.internal.R.styleable.RingtonePreference, defStyleAttr, defStyleRes);
+    public RingtonePreference(Context context, AttributeSet attrs, int defStyle) {
+        super(context, attrs, defStyle);
+        
+        TypedArray a = context.obtainStyledAttributes(attrs,
+                com.android.internal.R.styleable.RingtonePreference, defStyle, 0);
         mRingtoneType = a.getInt(com.android.internal.R.styleable.RingtonePreference_ringtoneType,
                 RingtoneManager.TYPE_RINGTONE);
         mShowDefault = a.getBoolean(com.android.internal.R.styleable.RingtonePreference_showDefault,
@@ -63,10 +62,6 @@ public class RingtonePreference extends Preference implements
         mShowSilent = a.getBoolean(com.android.internal.R.styleable.RingtonePreference_showSilent,
                 true);
         a.recycle();
-    }
-
-    public RingtonePreference(Context context, AttributeSet attrs, int defStyleAttr) {
-        this(context, attrs, defStyleAttr, 0);
     }
 
     public RingtonePreference(Context context, AttributeSet attrs) {
@@ -170,8 +165,6 @@ public class RingtonePreference extends Preference implements
         ringtonePickerIntent.putExtra(RingtoneManager.EXTRA_RINGTONE_SHOW_SILENT, mShowSilent);
         ringtonePickerIntent.putExtra(RingtoneManager.EXTRA_RINGTONE_TYPE, mRingtoneType);
         ringtonePickerIntent.putExtra(RingtoneManager.EXTRA_RINGTONE_TITLE, getTitle());
-        ringtonePickerIntent.putExtra(RingtoneManager.EXTRA_RINGTONE_AUDIO_ATTRIBUTES_FLAGS,
-                AudioAttributes.FLAG_BYPASS_INTERRUPTION_POLICY);
     }
     
     /**

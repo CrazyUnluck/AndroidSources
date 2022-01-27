@@ -25,12 +25,11 @@ import java.net.SocketOptions;
 
 /**
  * Creates a (non-server) socket in the UNIX-domain namespace. The interface
- * here is not entirely unlike that of java.net.Socket. This class and the streams
- * returned from it may be used from multiple threads.
+ * here is not entirely unlike that of java.net.Socket
  */
 public class LocalSocket implements Closeable {
 
-    private final LocalSocketImpl impl;
+    private LocalSocketImpl impl;
     private volatile boolean implCreated;
     private LocalSocketAddress localAddress;
     private boolean isBound;

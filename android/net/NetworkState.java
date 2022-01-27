@@ -25,22 +25,24 @@ import android.os.Parcelable;
  * @hide
  */
 public class NetworkState implements Parcelable {
-    public static final NetworkState EMPTY = new NetworkState(null, null, null, null, null, null);
 
     public final NetworkInfo networkInfo;
     public final LinkProperties linkProperties;
-    public final NetworkCapabilities networkCapabilities;
-    public final Network network;
+    public final LinkCapabilities linkCapabilities;
+    /** Currently only used by testing. */
     public final String subscriberId;
     public final String networkId;
 
     public NetworkState(NetworkInfo networkInfo, LinkProperties linkProperties,
-            NetworkCapabilities networkCapabilities, Network network, String subscriberId,
-            String networkId) {
+            LinkCapabilities linkCapabilities) {
+        this(networkInfo, linkProperties, linkCapabilities, null, null);
+    }
+
+    public NetworkState(NetworkInfo networkInfo, LinkProperties linkProperties,
+            LinkCapabilities linkCapabilities, String subscriberId, String networkId) {
         this.networkInfo = networkInfo;
         this.linkProperties = linkProperties;
-        this.networkCapabilities = networkCapabilities;
-        this.network = network;
+        this.linkCapabilities = linkCapabilities;
         this.subscriberId = subscriberId;
         this.networkId = networkId;
     }
@@ -48,8 +50,7 @@ public class NetworkState implements Parcelable {
     public NetworkState(Parcel in) {
         networkInfo = in.readParcelable(null);
         linkProperties = in.readParcelable(null);
-        networkCapabilities = in.readParcelable(null);
-        network = in.readParcelable(null);
+        linkCapabilities = in.readParcelable(null);
         subscriberId = in.readString();
         networkId = in.readString();
     }
@@ -63,8 +64,7 @@ public class NetworkState implements Parcelable {
     public void writeToParcel(Parcel out, int flags) {
         out.writeParcelable(networkInfo, flags);
         out.writeParcelable(linkProperties, flags);
-        out.writeParcelable(networkCapabilities, flags);
-        out.writeParcelable(network, flags);
+        out.writeParcelable(linkCapabilities, flags);
         out.writeString(subscriberId);
         out.writeString(networkId);
     }
@@ -80,4 +80,5 @@ public class NetworkState implements Parcelable {
             return new NetworkState[size];
         }
     };
+
 }

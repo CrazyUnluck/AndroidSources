@@ -188,6 +188,8 @@ public class JSONTokener {
      * not include it in the returned string.
      *
      * @param quote either ' or ".
+     * @throws NumberFormatException if any unicode escape sequences are
+     *     malformed.
      */
     public String nextString(char quote) throws JSONException {
         /*
@@ -233,6 +235,9 @@ public class JSONTokener {
      * immediately follow a backslash. The backslash '\' should have already
      * been read. This supports both unicode escapes "u000A" and two-character
      * escapes "\n".
+     *
+     * @throws NumberFormatException if any unicode escape sequences are
+     *     malformed.
      */
     private char readEscapeCharacter() throws JSONException {
         char escaped = in.charAt(pos++);
@@ -243,11 +248,7 @@ public class JSONTokener {
                 }
                 String hex = in.substring(pos, pos + 4);
                 pos += 4;
-                try {
-                    return (char) Integer.parseInt(hex, 16);
-                } catch (NumberFormatException nfe) {
-                    throw syntaxError("Invalid escape sequence: " + hex);
-                }
+                return (char) Integer.parseInt(hex, 16);
 
             case 't':
                 return '\t';

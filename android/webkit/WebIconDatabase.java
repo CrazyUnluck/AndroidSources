@@ -16,7 +16,6 @@
 
 package android.webkit;
 
-import android.annotation.SystemApi;
 import android.content.ContentResolver;
 import android.graphics.Bitmap;
 
@@ -33,7 +32,7 @@ import android.graphics.Bitmap;
  *             up to {@link android.os.Build.VERSION_CODES#JELLY_BEAN_MR2}
  */
 @Deprecated
-public abstract class WebIconDatabase {
+public class WebIconDatabase {
     /**
      * Interface for receiving icons from the database.
      * @deprecated This interface is obsolete.
@@ -53,17 +52,23 @@ public abstract class WebIconDatabase {
      * Open a the icon database and store the icons in the given path.
      * @param path The directory path where the icon database will be stored.
      */
-    public abstract void open(String path);
+    public void open(String path) {
+        throw new MustOverrideException();
+    }
 
     /**
      * Close the shared instance of the icon database.
      */
-    public abstract void close();
+    public void close() {
+        throw new MustOverrideException();
+    }
 
     /**
      * Removes all the icons in the database.
      */
-    public abstract void removeAllIcons();
+    public void removeAllIcons() {
+        throw new MustOverrideException();
+    }
 
     /**
      * Request the Bitmap representing the icon for the given page
@@ -71,25 +76,32 @@ public abstract class WebIconDatabase {
      * @param url The page's url.
      * @param listener An implementation on IconListener to receive the result.
      */
-    public abstract void requestIconForPageUrl(String url, IconListener listener);
+    public void requestIconForPageUrl(String url, IconListener listener) {
+        throw new MustOverrideException();
+    }
 
     /** {@hide}
      */
-    @SystemApi
-    public abstract void bulkRequestIconForPageUrl(ContentResolver cr, String where,
-            IconListener listener);
+    public void bulkRequestIconForPageUrl(ContentResolver cr, String where,
+            IconListener listener) {
+        throw new MustOverrideException();
+    }
 
     /**
      * Retain the icon for the given page url.
      * @param url The page's url.
      */
-    public abstract void retainIconForPageUrl(String url);
+    public void retainIconForPageUrl(String url) {
+        throw new MustOverrideException();
+    }
 
     /**
      * Release the icon for the given page url.
      * @param url The page's url.
      */
-    public abstract void releaseIconForPageUrl(String url);
+    public void releaseIconForPageUrl(String url) {
+        throw new MustOverrideException();
+    }
 
     /**
      * Get the global instance of WebIconDatabase.
@@ -101,4 +113,9 @@ public abstract class WebIconDatabase {
         // XXX: Must be created in the UI thread.
         return WebViewFactory.getProvider().getWebIconDatabase();
     }
+
+    /**
+     * @hide Only for use by WebViewProvider implementations
+     */
+    protected WebIconDatabase() {}
 }

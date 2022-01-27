@@ -16,7 +16,6 @@
 
 package android.content;
 
-import android.annotation.Nullable;
 import android.content.res.AssetFileDescriptor;
 import android.database.Cursor;
 import android.net.Uri;
@@ -48,8 +47,7 @@ public interface IContentProvider extends IInterface {
     public int update(String callingPkg, Uri url, ContentValues values, String selection,
             String[] selectionArgs) throws RemoteException;
     public ParcelFileDescriptor openFile(
-            String callingPkg, Uri url, String mode, ICancellationSignal signal,
-            IBinder callerToken)
+            String callingPkg, Uri url, String mode, ICancellationSignal signal)
             throws RemoteException, FileNotFoundException;
     public AssetFileDescriptor openAssetFile(
             String callingPkg, Uri url, String mode, ICancellationSignal signal)
@@ -57,8 +55,7 @@ public interface IContentProvider extends IInterface {
     public ContentProviderResult[] applyBatch(String callingPkg,
             ArrayList<ContentProviderOperation> operations)
                     throws RemoteException, OperationApplicationException;
-    public Bundle call(
-            String callingPkg, String method, @Nullable String arg, @Nullable Bundle extras)
+    public Bundle call(String callingPkg, String method, String arg, Bundle extras)
             throws RemoteException;
     public ICancellationSignal createCancellationSignal() throws RemoteException;
 

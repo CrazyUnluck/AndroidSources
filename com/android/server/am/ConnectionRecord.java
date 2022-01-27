@@ -87,16 +87,7 @@ final class ConnectionRecord {
             sb.append("IMP ");
         }
         if ((flags&Context.BIND_ADJUST_WITH_ACTIVITY) != 0) {
-            sb.append("WACT ");
-        }
-        if ((flags&Context.BIND_FOREGROUND_SERVICE_WHILE_AWAKE) != 0) {
-            sb.append("FGSA ");
-        }
-        if ((flags&Context.BIND_FOREGROUND_SERVICE) != 0) {
-            sb.append("FGS ");
-        }
-        if ((flags&Context.BIND_TREAT_LIKE_ACTIVITY) != 0) {
-            sb.append("LACT ");
+            sb.append("ACT ");
         }
         if ((flags&Context.BIND_VISIBLE) != 0) {
             sb.append("VIS ");

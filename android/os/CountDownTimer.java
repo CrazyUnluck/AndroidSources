@@ -16,6 +16,8 @@
 
 package android.os;
 
+import android.util.Log;
+
 /**
  * Schedule a countdown until a time in the future, with
  * regular notifications on intervals along the way.
@@ -54,11 +56,6 @@ public abstract class CountDownTimer {
     private final long mCountdownInterval;
 
     private long mStopTimeInFuture;
-    
-    /**
-    * boolean representing if the timer was cancelled
-    */
-    private boolean mCancelled = false;
 
     /**
      * @param millisInFuture The number of millis in the future from the call
@@ -75,8 +72,7 @@ public abstract class CountDownTimer {
     /**
      * Cancel the countdown.
      */
-    public synchronized final void cancel() {
-        mCancelled = true;
+    public final void cancel() {
         mHandler.removeMessages(MSG);
     }
 
@@ -84,7 +80,6 @@ public abstract class CountDownTimer {
      * Start the countdown.
      */
     public synchronized final CountDownTimer start() {
-        mCancelled = false;
         if (mMillisInFuture <= 0) {
             onFinish();
             return this;
@@ -117,10 +112,6 @@ public abstract class CountDownTimer {
         public void handleMessage(Message msg) {
 
             synchronized (CountDownTimer.this) {
-                if (mCancelled) {
-                    return;
-                }
-
                 final long millisLeft = mStopTimeInFuture - SystemClock.elapsedRealtime();
 
                 if (millisLeft <= 0) {

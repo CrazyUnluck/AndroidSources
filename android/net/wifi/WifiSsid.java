@@ -16,8 +16,9 @@
 
 package android.net.wifi;
 
-import android.os.Parcel;
 import android.os.Parcelable;
+import android.os.Parcel;
+import android.util.Log;
 
 import java.io.ByteArrayOutputStream;
 import java.nio.ByteBuffer;
@@ -41,7 +42,7 @@ import java.util.Locale;
 public class WifiSsid implements Parcelable {
     private static final String TAG = "WifiSsid";
 
-    public final ByteArrayOutputStream octets = new ByteArrayOutputStream(32);
+    public ByteArrayOutputStream octets = new ByteArrayOutputStream(32);
 
     private static final int HEX_RADIX = 16;
     public static final String NONE = "<unknown ssid>";
@@ -57,6 +58,7 @@ public class WifiSsid implements Parcelable {
 
     public static WifiSsid createFromHex(String hexStr) {
         WifiSsid a = new WifiSsid();
+        int length = 0;
         if (hexStr == null) return a;
 
         if (hexStr.startsWith("0x") || hexStr.startsWith("0X")) {
@@ -189,13 +191,8 @@ public class WifiSsid implements Parcelable {
     }
 
     /** @hide */
-    public boolean isHidden() {
-        return isArrayAllZeroes(octets.toByteArray());
-    }
-
-    /** @hide */
     public byte[] getOctets() {
-        return octets.toByteArray();
+        return  octets.toByteArray();
     }
 
     /** @hide */
@@ -205,7 +202,7 @@ public class WifiSsid implements Parcelable {
         for (int i = 0; i < octets.size(); i++) {
             out += String.format(Locale.US, "%02x", ssidbytes[i]);
         }
-        return (octets.size() > 0) ? out : null;
+        return out;
     }
 
     /** Implement the Parcelable interface {@hide} */

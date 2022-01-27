@@ -28,6 +28,8 @@ import android.text.method.DialerKeyListener;
 import android.text.method.KeyListener;
 import android.text.method.TextKeyListener;
 import android.util.AttributeSet;
+import android.util.Log;
+import android.view.KeyCharacterMap;
 import android.view.View;
 import android.graphics.Rect;
 

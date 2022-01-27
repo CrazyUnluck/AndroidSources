@@ -27,6 +27,7 @@ import android.os.SystemClock;
 import android.util.Log;
 import android.util.LongSparseArray;
 import android.util.SparseArray;
+import android.util.SparseLongArray;
 
 import java.util.ArrayList;
 import java.util.Collections;
@@ -84,7 +85,7 @@ public final class AccessibilityInteractionClient
     private static final Object sStaticLock = new Object();
 
     private static final LongSparseArray<AccessibilityInteractionClient> sClients =
-        new LongSparseArray<>();
+        new LongSparseArray<AccessibilityInteractionClient>();
 
     private final AtomicInteger mInteractionIdCounter = new AtomicInteger();
 
@@ -100,11 +101,14 @@ public final class AccessibilityInteractionClient
 
     private Message mSameThreadMessage;
 
+    // The connection cache is shared between all interrogating threads.
     private static final SparseArray<IAccessibilityServiceConnection> sConnectionCache =
-        new SparseArray<>();
+        new SparseArray<IAccessibilityServiceConnection>();
 
-    private static final AccessibilityCache sAccessibilityCache =
-        new AccessibilityCache();
+    // The connection cache is shared between all interrogating threads since
+    // at any given time there is only one window allowing querying.
+    private static final AccessibilityNodeInfoCache sAccessibilityNodeInfoCache =
+        new AccessibilityNodeInfoCache();
 
     /**
      * @return The client for the current thread.
@@ -163,86 +167,6 @@ public final class AccessibilityInteractionClient
     }
 
     /**
-     * Gets the info for a window.
-     *
-     * @param connectionId The id of a connection for interacting with the system.
-     * @param accessibilityWindowId A unique window id. Use
-     *     {@link android.view.accessibility.AccessibilityNodeInfo#ACTIVE_WINDOW_ID}
-     *     to query the currently active window.
-     * @return The {@link AccessibilityWindowInfo}.
-     */
-    public AccessibilityWindowInfo getWindow(int connectionId, int accessibilityWindowId) {
-        try {
-            IAccessibilityServiceConnection connection = getConnection(connectionId);
-            if (connection != null) {
-                AccessibilityWindowInfo window = sAccessibilityCache.getWindow(
-                        accessibilityWindowId);
-                if (window != null) {
-                    if (DEBUG) {
-                        Log.i(LOG_TAG, "Window cache hit");
-                    }
-                    return window;
-                }
-                if (DEBUG) {
-                    Log.i(LOG_TAG, "Window cache miss");
-                }
-                final long identityToken = Binder.clearCallingIdentity();
-                window = connection.getWindow(accessibilityWindowId);
-                Binder.restoreCallingIdentity(identityToken);
-                if (window != null) {
-                    sAccessibilityCache.addWindow(window);
-                    return window;
-                }
-            } else {
-                if (DEBUG) {
-                    Log.w(LOG_TAG, "No connection for connection id: " + connectionId);
-                }
-            }
-        } catch (RemoteException re) {
-            Log.e(LOG_TAG, "Error while calling remote getWindow", re);
-        }
-        return null;
-    }
-
-    /**
-     * Gets the info for all windows.
-     *
-     * @param connectionId The id of a connection for interacting with the system.
-     * @return The {@link AccessibilityWindowInfo} list.
-     */
-    public List<AccessibilityWindowInfo> getWindows(int connectionId) {
-        try {
-            IAccessibilityServiceConnection connection = getConnection(connectionId);
-            if (connection != null) {
-                List<AccessibilityWindowInfo> windows = sAccessibilityCache.getWindows();
-                if (windows != null) {
-                    if (DEBUG) {
-                        Log.i(LOG_TAG, "Windows cache hit");
-                    }
-                    return windows;
-                }
-                if (DEBUG) {
-                    Log.i(LOG_TAG, "Windows cache miss");
-                }
-                final long identityToken = Binder.clearCallingIdentity();
-                windows = connection.getWindows();
-                Binder.restoreCallingIdentity(identityToken);
-                if (windows != null) {
-                    sAccessibilityCache.setWindows(windows);
-                    return windows;
-                }
-            } else {
-                if (DEBUG) {
-                    Log.w(LOG_TAG, "No connection for connection id: " + connectionId);
-                }
-            }
-        } catch (RemoteException re) {
-            Log.e(LOG_TAG, "Error while calling remote getWindows", re);
-        }
-        return Collections.emptyList();
-    }
-
-    /**
      * Finds an {@link AccessibilityNodeInfo} by accessibility id.
      *
      * @param connectionId The id of a connection for interacting with the system.
@@ -260,33 +184,20 @@ public final class AccessibilityInteractionClient
     public AccessibilityNodeInfo findAccessibilityNodeInfoByAccessibilityId(int connectionId,
             int accessibilityWindowId, long accessibilityNodeId, boolean bypassCache,
             int prefetchFlags) {
-        if ((prefetchFlags & AccessibilityNodeInfo.FLAG_PREFETCH_SIBLINGS) != 0
-                && (prefetchFlags & AccessibilityNodeInfo.FLAG_PREFETCH_PREDECESSORS) == 0) {
-            throw new IllegalArgumentException("FLAG_PREFETCH_SIBLINGS"
-                + " requires FLAG_PREFETCH_PREDECESSORS");
-        }
         try {
             IAccessibilityServiceConnection connection = getConnection(connectionId);
             if (connection != null) {
                 if (!bypassCache) {
-                    AccessibilityNodeInfo cachedInfo = sAccessibilityCache.getNode(
-                            accessibilityWindowId, accessibilityNodeId);
+                    AccessibilityNodeInfo cachedInfo = sAccessibilityNodeInfoCache.get(
+                            accessibilityNodeId);
                     if (cachedInfo != null) {
-                        if (DEBUG) {
-                            Log.i(LOG_TAG, "Node cache hit");
-                        }
                         return cachedInfo;
-                    }
-                    if (DEBUG) {
-                        Log.i(LOG_TAG, "Node cache miss");
                     }
                 }
                 final int interactionId = mInteractionIdCounter.getAndIncrement();
-                final long identityToken = Binder.clearCallingIdentity();
                 final boolean success = connection.findAccessibilityNodeInfoByAccessibilityId(
                         accessibilityWindowId, accessibilityNodeId, interactionId, this,
                         prefetchFlags, Thread.currentThread().getId());
-                Binder.restoreCallingIdentity(identityToken);
                 // If the scale is zero the call has failed.
                 if (success) {
                     List<AccessibilityNodeInfo> infos = getFindAccessibilityNodeInfosResultAndClear(
@@ -302,8 +213,10 @@ public final class AccessibilityInteractionClient
                 }
             }
         } catch (RemoteException re) {
-            Log.e(LOG_TAG, "Error while calling remote"
-                    + " findAccessibilityNodeInfoByAccessibilityId", re);
+            if (DEBUG) {
+                Log.w(LOG_TAG, "Error while calling remote"
+                        + " findAccessibilityNodeInfoByAccessibilityId", re);
+            }
         }
         return null;
     }
@@ -330,11 +243,9 @@ public final class AccessibilityInteractionClient
             IAccessibilityServiceConnection connection = getConnection(connectionId);
             if (connection != null) {
                 final int interactionId = mInteractionIdCounter.getAndIncrement();
-                final long identityToken = Binder.clearCallingIdentity();
                 final boolean success = connection.findAccessibilityNodeInfosByViewId(
                         accessibilityWindowId, accessibilityNodeId, viewId, interactionId, this,
                         Thread.currentThread().getId());
-                Binder.restoreCallingIdentity(identityToken);
                 if (success) {
                     List<AccessibilityNodeInfo> infos = getFindAccessibilityNodeInfosResultAndClear(
                             interactionId);
@@ -349,8 +260,10 @@ public final class AccessibilityInteractionClient
                 }
             }
         } catch (RemoteException re) {
-            Log.w(LOG_TAG, "Error while calling remote"
-                    + " findAccessibilityNodeInfoByViewIdInActiveWindow", re);
+            if (DEBUG) {
+                Log.w(LOG_TAG, "Error while calling remote"
+                        + " findAccessibilityNodeInfoByViewIdInActiveWindow", re);
+            }
         }
         return Collections.emptyList();
     }
@@ -378,11 +291,9 @@ public final class AccessibilityInteractionClient
             IAccessibilityServiceConnection connection = getConnection(connectionId);
             if (connection != null) {
                 final int interactionId = mInteractionIdCounter.getAndIncrement();
-                final long identityToken = Binder.clearCallingIdentity();
                 final boolean success = connection.findAccessibilityNodeInfosByText(
                         accessibilityWindowId, accessibilityNodeId, text, interactionId, this,
                         Thread.currentThread().getId());
-                Binder.restoreCallingIdentity(identityToken);
                 if (success) {
                     List<AccessibilityNodeInfo> infos = getFindAccessibilityNodeInfosResultAndClear(
                             interactionId);
@@ -397,8 +308,10 @@ public final class AccessibilityInteractionClient
                 }
             }
         } catch (RemoteException re) {
-            Log.w(LOG_TAG, "Error while calling remote"
-                    + " findAccessibilityNodeInfosByViewText", re);
+            if (DEBUG) {
+                Log.w(LOG_TAG, "Error while calling remote"
+                        + " findAccessibilityNodeInfosByViewText", re);
+            }
         }
         return Collections.emptyList();
     }
@@ -425,11 +338,9 @@ public final class AccessibilityInteractionClient
             IAccessibilityServiceConnection connection = getConnection(connectionId);
             if (connection != null) {
                 final int interactionId = mInteractionIdCounter.getAndIncrement();
-                final long identityToken = Binder.clearCallingIdentity();
                 final boolean success = connection.findFocus(accessibilityWindowId,
                         accessibilityNodeId, focusType, interactionId, this,
                         Thread.currentThread().getId());
-                Binder.restoreCallingIdentity(identityToken);
                 if (success) {
                     AccessibilityNodeInfo info = getFindAccessibilityNodeInfoResultAndClear(
                             interactionId);
@@ -442,7 +353,9 @@ public final class AccessibilityInteractionClient
                 }
             }
         } catch (RemoteException re) {
-            Log.w(LOG_TAG, "Error while calling remote findFocus", re);
+            if (DEBUG) {
+                Log.w(LOG_TAG, "Error while calling remote findFocus", re);
+            }
         }
         return null;
     }
@@ -469,11 +382,9 @@ public final class AccessibilityInteractionClient
             IAccessibilityServiceConnection connection = getConnection(connectionId);
             if (connection != null) {
                 final int interactionId = mInteractionIdCounter.getAndIncrement();
-                final long identityToken = Binder.clearCallingIdentity();
                 final boolean success = connection.focusSearch(accessibilityWindowId,
                         accessibilityNodeId, direction, interactionId, this,
                         Thread.currentThread().getId());
-                Binder.restoreCallingIdentity(identityToken);
                 if (success) {
                     AccessibilityNodeInfo info = getFindAccessibilityNodeInfoResultAndClear(
                             interactionId);
@@ -486,7 +397,9 @@ public final class AccessibilityInteractionClient
                 }
             }
         } catch (RemoteException re) {
-            Log.w(LOG_TAG, "Error while calling remote accessibilityFocusSearch", re);
+            if (DEBUG) {
+                Log.w(LOG_TAG, "Error while calling remote accessibilityFocusSearch", re);
+            }
         }
         return null;
     }
@@ -512,11 +425,9 @@ public final class AccessibilityInteractionClient
             IAccessibilityServiceConnection connection = getConnection(connectionId);
             if (connection != null) {
                 final int interactionId = mInteractionIdCounter.getAndIncrement();
-                final long identityToken = Binder.clearCallingIdentity();
                 final boolean success = connection.performAccessibilityAction(
                         accessibilityWindowId, accessibilityNodeId, action, arguments,
                         interactionId, this, Thread.currentThread().getId());
-                Binder.restoreCallingIdentity(identityToken);
                 if (success) {
                     return getPerformAccessibilityActionResultAndClear(interactionId);
                 }
@@ -526,17 +437,19 @@ public final class AccessibilityInteractionClient
                 }
             }
         } catch (RemoteException re) {
-            Log.w(LOG_TAG, "Error while calling remote performAccessibilityAction", re);
+            if (DEBUG) {
+                Log.w(LOG_TAG, "Error while calling remote performAccessibilityAction", re);
+            }
         }
         return false;
     }
 
     public void clearCache() {
-        sAccessibilityCache.clear();
+        sAccessibilityNodeInfoCache.clear();
     }
 
     public void onAccessibilityEvent(AccessibilityEvent event) {
-        sAccessibilityCache.onAccessibilityEvent(event);
+        sAccessibilityNodeInfoCache.onAccessibilityEvent(event);
     }
 
     /**
@@ -604,7 +517,8 @@ public final class AccessibilityInteractionClient
                     // instantiate new result list to avoid passing internal instances to clients.
                     final boolean isIpcCall = (Binder.getCallingPid() != Process.myPid());
                     if (!isIpcCall) {
-                        mFindAccessibilityNodeInfosResult = new ArrayList<>(infos);
+                        mFindAccessibilityNodeInfosResult =
+                            new ArrayList<AccessibilityNodeInfo>(infos);
                     } else {
                         mFindAccessibilityNodeInfosResult = infos;
                     }
@@ -700,7 +614,7 @@ public final class AccessibilityInteractionClient
         if (info != null) {
             info.setConnectionId(connectionId);
             info.setSealed(true);
-            sAccessibilityCache.add(info);
+            sAccessibilityNodeInfoCache.add(info);
         }
     }
 
@@ -795,8 +709,8 @@ public final class AccessibilityInteractionClient
             Log.e(LOG_TAG, "No root.");
         }
         // Check for duplicates.
-        HashSet<AccessibilityNodeInfo> seen = new HashSet<>();
-        Queue<AccessibilityNodeInfo> fringe = new LinkedList<>();
+        HashSet<AccessibilityNodeInfo> seen = new HashSet<AccessibilityNodeInfo>();
+        Queue<AccessibilityNodeInfo> fringe = new LinkedList<AccessibilityNodeInfo>();
         fringe.add(root);
         while (!fringe.isEmpty()) {
             AccessibilityNodeInfo current = fringe.poll();
@@ -804,9 +718,10 @@ public final class AccessibilityInteractionClient
                 Log.e(LOG_TAG, "Duplicate node.");
                 return;
             }
-            final int childCount = current.getChildCount();
+            SparseLongArray childIds = current.getChildNodeIds();
+            final int childCount = childIds.size();
             for (int i = 0; i < childCount; i++) {
-                final long childId = current.getChildId(i);
+                final long childId = childIds.valueAt(i);
                 for (int j = 0; j < infoCount; j++) {
                     AccessibilityNodeInfo child = infos.get(j);
                     if (child.getSourceNodeId() == childId) {

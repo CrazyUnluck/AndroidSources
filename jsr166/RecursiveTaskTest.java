@@ -6,30 +6,19 @@
 
 package jsr166;
 
-import static java.util.concurrent.TimeUnit.SECONDS;
-
-import java.util.HashSet;
+import junit.framework.*;
 import java.util.concurrent.CancellationException;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.ForkJoinPool;
 import java.util.concurrent.ForkJoinTask;
+import java.util.concurrent.ForkJoinWorkerThread;
 import java.util.concurrent.RecursiveTask;
+import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
-
-import junit.framework.Test;
-import junit.framework.TestSuite;
+import static java.util.concurrent.TimeUnit.SECONDS;
+import java.util.HashSet;
 
 public class RecursiveTaskTest extends JSR166TestCase {
-
-    // android-note: Removed because the CTS runner does a bad job of
-    // retrying tests that have suite() declarations.
-    //
-    // public static void main(String[] args) {
-    //     main(suite(), args);
-    // }
-    // public static Test suite() {
-    //     return new TestSuite(RecursiveTaskTest.class);
-    // }
 
     private static ForkJoinPool mainPool() {
         return new ForkJoinPool();
@@ -46,13 +35,15 @@ public class RecursiveTaskTest extends JSR166TestCase {
     }
 
     private <T> T testInvokeOnPool(ForkJoinPool pool, RecursiveTask<T> a) {
-        try (PoolCleaner cleaner = cleaner(pool)) {
+        try {
             checkNotDone(a);
 
             T result = pool.invoke(a);
 
             checkCompletedNormally(a, result);
             return result;
+        } finally {
+            joinPool(pool);
         }
     }
 
@@ -333,8 +324,6 @@ public class RecursiveTaskTest extends JSR166TestCase {
                 FibTask f = new FibTask(8);
                 assertSame(f, f.fork());
                 helpQuiesce();
-                while (!f.isDone()) // wait out race
-                    ;
                 assertEquals(0, getQueuedTaskCount());
                 checkCompletedNormally(f, 21);
                 return NoResult;

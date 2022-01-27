@@ -21,20 +21,19 @@ import android.content.Context;
 import android.content.Intent;
 import android.database.Cursor;
 import android.support.v4.app.Fragment;
-import android.support.v4.util.SimpleArrayMap;
 
 import com.android.ex.photo.Intents;
 import com.android.ex.photo.Intents.PhotoViewIntentBuilder;
 import com.android.ex.photo.fragments.PhotoViewFragment;
-import com.android.ex.photo.provider.PhotoContract.PhotoViewColumns;
-import com.android.ex.photo.provider.PhotoContract.PhotoQuery;
+import com.android.ex.photo.provider.PhotoContract;
 
 /**
  * Pager adapter for the photo view
  */
 public class PhotoPagerAdapter extends BaseCursorPagerAdapter {
-    protected SimpleArrayMap<String, Integer> mColumnIndices =
-            new SimpleArrayMap<String, Integer>(PhotoQuery.PROJECTION.length);
+    protected int mContentUriIndex;
+    protected int mThumbnailUriIndex;
+    protected int mLoadingIndex;
     protected final float mMaxScale;
     protected boolean mDisplayThumbsFullScreen;
 
@@ -48,10 +47,14 @@ public class PhotoPagerAdapter extends BaseCursorPagerAdapter {
 
     @Override
     public Fragment getItem(Context context, Cursor cursor, int position) {
-        final String photoUri = getPhotoUri(cursor);
-        final String thumbnailUri = getThumbnailUri(cursor);
-        final String contentDescription = getPhotoName(cursor);
-        boolean loading = shouldShowLoadingIndicator(cursor);
+        final String photoUri = cursor.getString(mContentUriIndex);
+        final String thumbnailUri = cursor.getString(mThumbnailUriIndex);
+        boolean loading;
+        if(mLoadingIndex != -1) {
+            loading = Boolean.valueOf(cursor.getString(mLoadingIndex));
+        } else {
+            loading = false;
+        }
         boolean onlyShowSpinner = false;
         if(photoUri == null && loading) {
             onlyShowSpinner = true;
@@ -59,76 +62,39 @@ public class PhotoPagerAdapter extends BaseCursorPagerAdapter {
 
         // create new PhotoViewFragment
         final PhotoViewIntentBuilder builder =
-                Intents.newPhotoViewFragmentIntentBuilder(mContext, getPhotoViewFragmentClass());
+                Intents.newPhotoViewFragmentIntentBuilder(mContext);
         builder
             .setResolvedPhotoUri(photoUri)
             .setThumbnailUri(thumbnailUri)
-            .setContentDescription(contentDescription)
             .setDisplayThumbsFullScreen(mDisplayThumbsFullScreen)
             .setMaxInitialScale(mMaxScale);
 
-        return createPhotoViewFragment(builder.build(), position, onlyShowSpinner);
-    }
-
-    protected Class<? extends PhotoViewFragment> getPhotoViewFragmentClass() {
-        return PhotoViewFragment.class;
-    }
-
-    protected PhotoViewFragment createPhotoViewFragment(
-            Intent intent, int position, boolean onlyShowSpinner) {
-        return PhotoViewFragment.newInstance(intent, position, onlyShowSpinner);
+        return PhotoViewFragment.newInstance(builder.build(), position, onlyShowSpinner);
     }
 
     @Override
     public Cursor swapCursor(Cursor newCursor) {
-        mColumnIndices.clear();
-
         if (newCursor != null) {
-            for(String column : PhotoQuery.PROJECTION) {
-                mColumnIndices.put(column, newCursor.getColumnIndexOrThrow(column));
-            }
-
-            for(String column : PhotoQuery.OPTIONAL_COLUMNS) {
-                int index = newCursor.getColumnIndex(column);
-                if (index != -1) {
-                    mColumnIndices.put(column, index);
-                }
-            }
+            mContentUriIndex =
+                    newCursor.getColumnIndex(PhotoContract.PhotoViewColumns.CONTENT_URI);
+            mThumbnailUriIndex =
+                    newCursor.getColumnIndex(PhotoContract.PhotoViewColumns.THUMBNAIL_URI);
+            mLoadingIndex =
+                    newCursor.getColumnIndex(PhotoContract.PhotoViewColumns.LOADING_INDICATOR);
+        } else {
+            mContentUriIndex = -1;
+            mThumbnailUriIndex = -1;
+            mLoadingIndex = -1;
         }
 
         return super.swapCursor(newCursor);
     }
 
     public String getPhotoUri(Cursor cursor) {
-        return getString(cursor, PhotoViewColumns.CONTENT_URI);
+        return cursor.getString(mContentUriIndex);
     }
 
     public String getThumbnailUri(Cursor cursor) {
-        return getString(cursor, PhotoViewColumns.THUMBNAIL_URI);
-    }
-
-    public String getContentType(Cursor cursor) {
-        return getString(cursor, PhotoViewColumns.CONTENT_TYPE);
-    }
-
-    public String getPhotoName(Cursor cursor) {
-        return getString(cursor, PhotoViewColumns.NAME);
-    }
-
-    public boolean shouldShowLoadingIndicator(Cursor cursor) {
-        String value = getString(cursor, PhotoViewColumns.LOADING_INDICATOR);
-        if (value == null) {
-            return false;
-        } else {
-            return Boolean.valueOf(value);
-        }
-    }
-
-    private String getString(Cursor cursor, String column) {
-        if (mColumnIndices.containsKey(column)) {
-            return cursor.getString(mColumnIndices.get(column));
-        } else {
-            return null;
-        }
+        return cursor.getString(mThumbnailUriIndex);
     }
 }

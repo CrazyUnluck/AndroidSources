@@ -29,25 +29,20 @@ import android.hardware.display.DisplayViewport;
 import android.hardware.display.DisplayManagerInternal.DisplayTransactionListener;
 import android.hardware.display.IDisplayManager;
 import android.hardware.display.IDisplayManagerCallback;
-import android.hardware.display.IVirtualDisplayCallback;
 import android.hardware.display.WifiDisplayStatus;
 import android.hardware.input.InputManagerInternal;
-import android.media.projection.IMediaProjection;
-import android.media.projection.IMediaProjectionManager;
 import android.os.Binder;
 import android.os.Handler;
 import android.os.IBinder;
 import android.os.IBinder.DeathRecipient;
 import android.os.Looper;
 import android.os.Message;
-import android.os.PowerManager;
 import android.os.Process;
 import android.os.RemoteException;
-import android.os.ServiceManager;
 import android.os.SystemClock;
 import android.os.SystemProperties;
-import android.os.Trace;
 import android.text.TextUtils;
+import android.util.Log;
 import android.util.Slog;
 import android.util.SparseArray;
 import android.view.Display;
@@ -64,7 +59,6 @@ import java.io.FileDescriptor;
 import java.io.PrintWriter;
 import java.util.ArrayList;
 import java.util.Arrays;
-import java.util.List;
 import java.util.concurrent.CopyOnWriteArrayList;
 
 /**
@@ -133,7 +127,6 @@ public final class DisplayManagerService extends SystemService {
     private final DisplayAdapterListener mDisplayAdapterListener;
     private WindowManagerInternal mWindowManagerInternal;
     private InputManagerInternal mInputManagerInternal;
-    private IMediaProjectionManager mProjectionService;
 
     // The synchronization root for the display manager.
     // This lock guards most of the display manager's state.
@@ -181,11 +174,7 @@ public final class DisplayManagerService extends SystemService {
 
     // The overall display state, independent of changes that might influence one
     // display or another in particular.
-    private int mGlobalDisplayState = Display.STATE_ON;
-
-    // The overall display brightness.
-    // For now, this only applies to the built-in display but we may split it up eventually.
-    private int mGlobalDisplayBrightness = PowerManager.BRIGHTNESS_DEFAULT;
+    private int mGlobalDisplayState = Display.STATE_UNKNOWN;
 
     // Set to true when there are pending display changes that have yet to be applied
     // to the surface flinger state.
@@ -220,11 +209,6 @@ public final class DisplayManagerService extends SystemService {
     private final DisplayViewport mTempDefaultViewport = new DisplayViewport();
     private final DisplayViewport mTempExternalTouchViewport = new DisplayViewport();
 
-    // Temporary list of deferred work to perform when setting the display state.
-    // Only used by requestDisplayState.  The field is self-synchronized and only
-    // intended for use inside of the requestGlobalDisplayStateInternal function.
-    private final ArrayList<Runnable> mTempDisplayStateWorkQueue = new ArrayList<Runnable>();
-
     public DisplayManagerService(Context context) {
         super(context);
         mContext = context;
@@ -232,9 +216,6 @@ public final class DisplayManagerService extends SystemService {
         mUiHandler = UiThread.getHandler();
         mDisplayAdapterListener = new DisplayAdapterListener();
         mSingleDisplayDemoMode = SystemProperties.getBoolean("persist.demo.singledisplay", false);
-
-        PowerManager pm = (PowerManager) mContext.getSystemService(Context.POWER_SERVICE);
-        mGlobalDisplayBrightness = pm.getDefaultScreenBrightnessSetting();
     }
 
     @Override
@@ -331,47 +312,12 @@ public final class DisplayManagerService extends SystemService {
         }
     }
 
-    private void requestGlobalDisplayStateInternal(int state, int brightness) {
-        if (state == Display.STATE_UNKNOWN) {
-            state = Display.STATE_ON;
-        }
-        if (state == Display.STATE_OFF) {
-            brightness = PowerManager.BRIGHTNESS_OFF;
-        } else if (brightness < 0) {
-            brightness = PowerManager.BRIGHTNESS_DEFAULT;
-        } else if (brightness > PowerManager.BRIGHTNESS_ON) {
-            brightness = PowerManager.BRIGHTNESS_ON;
-        }
-
-        synchronized (mTempDisplayStateWorkQueue) {
-            try {
-                // Update the display state within the lock.
-                // Note that we do not need to schedule traversals here although it
-                // may happen as a side-effect of displays changing state.
-                synchronized (mSyncRoot) {
-                    if (mGlobalDisplayState == state
-                            && mGlobalDisplayBrightness == brightness) {
-                        return; // no change
-                    }
-
-                    Trace.traceBegin(Trace.TRACE_TAG_POWER, "requestGlobalDisplayState("
-                            + Display.stateToString(state)
-                            + ", brightness=" + brightness + ")");
-                    mGlobalDisplayState = state;
-                    mGlobalDisplayBrightness = brightness;
-                    applyGlobalDisplayStateLocked(mTempDisplayStateWorkQueue);
-                }
-
-                // Setting the display power state can take hundreds of milliseconds
-                // to complete so we defer the most expensive part of the work until
-                // after we have exited the critical section to avoid blocking other
-                // threads for a long time.
-                for (int i = 0; i < mTempDisplayStateWorkQueue.size(); i++) {
-                    mTempDisplayStateWorkQueue.get(i).run();
-                }
-                Trace.traceEnd(Trace.TRACE_TAG_POWER);
-            } finally {
-                mTempDisplayStateWorkQueue.clear();
+    private void requestGlobalDisplayStateInternal(int state) {
+        synchronized (mSyncRoot) {
+            if (mGlobalDisplayState != state) {
+                mGlobalDisplayState = state;
+                updateGlobalDisplayStateLocked();
+                scheduleTraversalLocked(false);
             }
         }
     }
@@ -476,7 +422,7 @@ public final class DisplayManagerService extends SystemService {
                     mWifiDisplayAdapter.requestStopScanLocked();
                 }
             } else if (mWifiDisplayScanRequestCount < 0) {
-                Slog.wtf(TAG, "mWifiDisplayScanRequestCount became negative: "
+                Log.wtf(TAG, "mWifiDisplayScanRequestCount became negative: "
                         + mWifiDisplayScanRequestCount);
                 mWifiDisplayScanRequestCount = 0;
             }
@@ -540,19 +486,7 @@ public final class DisplayManagerService extends SystemService {
         }
     }
 
-    private void requestColorTransformInternal(int displayId, int colorTransformId) {
-        synchronized (mSyncRoot) {
-            LogicalDisplay display = mLogicalDisplays.get(displayId);
-            if (display != null &&
-                    display.getRequestedColorTransformIdLocked() != colorTransformId) {
-                display.setRequestedColorTransformIdLocked(colorTransformId);
-                scheduleTraversalLocked(false);
-            }
-        }
-    }
-
-    private int createVirtualDisplayInternal(IVirtualDisplayCallback callback,
-            IMediaProjection projection, int callingUid, String packageName,
+    private int createVirtualDisplayInternal(IBinder appToken, int callingUid, String packageName,
             String name, int width, int height, int densityDpi, Surface surface, int flags) {
         synchronized (mSyncRoot) {
             if (mVirtualDisplayAdapter == null) {
@@ -562,8 +496,8 @@ public final class DisplayManagerService extends SystemService {
             }
 
             DisplayDevice device = mVirtualDisplayAdapter.createVirtualDisplayLocked(
-                    callback, projection, callingUid, packageName,
-                    name, width, height, densityDpi, surface, flags);
+                    appToken, callingUid, packageName, name, width, height, densityDpi,
+                    surface, flags);
             if (device == null) {
                 return -1;
             }
@@ -577,21 +511,10 @@ public final class DisplayManagerService extends SystemService {
             // Something weird happened and the logical display was not created.
             Slog.w(TAG, "Rejecting request to create virtual display "
                     + "because the logical display was not created.");
-            mVirtualDisplayAdapter.releaseVirtualDisplayLocked(callback.asBinder());
+            mVirtualDisplayAdapter.releaseVirtualDisplayLocked(appToken);
             handleDisplayDeviceRemovedLocked(device);
         }
         return -1;
-    }
-
-    private void resizeVirtualDisplayInternal(IBinder appToken,
-            int width, int height, int densityDpi) {
-        synchronized (mSyncRoot) {
-            if (mVirtualDisplayAdapter == null) {
-                return;
-            }
-
-            mVirtualDisplayAdapter.resizeVirtualDisplayLocked(appToken, width, height, densityDpi);
-        }
     }
 
     private void setVirtualDisplaySurfaceInternal(IBinder appToken, Surface surface) {
@@ -680,40 +603,29 @@ public final class DisplayManagerService extends SystemService {
     }
 
     private void handleDisplayDeviceAddedLocked(DisplayDevice device) {
-        DisplayDeviceInfo info = device.getDisplayDeviceInfoLocked();
         if (mDisplayDevices.contains(device)) {
-            Slog.w(TAG, "Attempted to add already added display device: " + info);
+            Slog.w(TAG, "Attempted to add already added display device: "
+                    + device.getDisplayDeviceInfoLocked());
             return;
         }
 
-        Slog.i(TAG, "Display device added: " + info);
-        device.mDebugLastLoggedDeviceInfo = info;
+        Slog.i(TAG, "Display device added: " + device.getDisplayDeviceInfoLocked());
 
         mDisplayDevices.add(device);
         addLogicalDisplayLocked(device);
-        Runnable work = updateDisplayStateLocked(device);
-        if (work != null) {
-            work.run();
-        }
+        updateDisplayStateLocked(device);
         scheduleTraversalLocked(false);
     }
 
     private void handleDisplayDeviceChanged(DisplayDevice device) {
         synchronized (mSyncRoot) {
-            DisplayDeviceInfo info = device.getDisplayDeviceInfoLocked();
             if (!mDisplayDevices.contains(device)) {
-                Slog.w(TAG, "Attempted to change non-existent display device: " + info);
+                Slog.w(TAG, "Attempted to change non-existent display device: "
+                        + device.getDisplayDeviceInfoLocked());
                 return;
             }
 
-            int diff = device.mDebugLastLoggedDeviceInfo.diff(info);
-            if (diff == DisplayDeviceInfo.DIFF_STATE) {
-                Slog.i(TAG, "Display device changed state: \"" + info.name
-                        + "\", " + Display.stateToString(info.state));
-            } else if (diff != 0) {
-                Slog.i(TAG, "Display device changed: " + info);
-            }
-            device.mDebugLastLoggedDeviceInfo = info;
+            Slog.i(TAG, "Display device changed: " + device.getDisplayDeviceInfoLocked());
 
             device.applyPendingDisplayDeviceInfoChangesLocked();
             if (updateLogicalDisplaysLocked()) {
@@ -727,40 +639,34 @@ public final class DisplayManagerService extends SystemService {
             handleDisplayDeviceRemovedLocked(device);
         }
     }
-
     private void handleDisplayDeviceRemovedLocked(DisplayDevice device) {
-        DisplayDeviceInfo info = device.getDisplayDeviceInfoLocked();
         if (!mDisplayDevices.remove(device)) {
-            Slog.w(TAG, "Attempted to remove non-existent display device: " + info);
+            Slog.w(TAG, "Attempted to remove non-existent display device: "
+                    + device.getDisplayDeviceInfoLocked());
             return;
         }
 
-        Slog.i(TAG, "Display device removed: " + info);
-        device.mDebugLastLoggedDeviceInfo = info;
+        Slog.i(TAG, "Display device removed: " + device.getDisplayDeviceInfoLocked());
 
         updateLogicalDisplaysLocked();
         scheduleTraversalLocked(false);
     }
 
-    private void applyGlobalDisplayStateLocked(List<Runnable> workQueue) {
+    private void updateGlobalDisplayStateLocked() {
         final int count = mDisplayDevices.size();
         for (int i = 0; i < count; i++) {
             DisplayDevice device = mDisplayDevices.get(i);
-            Runnable runnable = updateDisplayStateLocked(device);
-            if (runnable != null) {
-                workQueue.add(runnable);
-            }
+            updateDisplayStateLocked(device);
         }
     }
 
-    private Runnable updateDisplayStateLocked(DisplayDevice device) {
+    private void updateDisplayStateLocked(DisplayDevice device) {
         // Blank or unblank the display immediately to match the state requested
         // by the display power controller (if known).
         DisplayDeviceInfo info = device.getDisplayDeviceInfoLocked();
         if ((info.flags & DisplayDeviceInfo.FLAG_NEVER_BLANK) == 0) {
-            return device.requestDisplayStateLocked(mGlobalDisplayState, mGlobalDisplayBrightness);
+            device.requestDisplayStateLocked(mGlobalDisplayState);
         }
-        return null;
     }
 
     // Adds a new logical display based on the given display device.
@@ -854,14 +760,11 @@ public final class DisplayManagerService extends SystemService {
         }
     }
 
-    private void setDisplayPropertiesInternal(int displayId, boolean hasContent,
-            float requestedRefreshRate, int requestedModeId, boolean inTraversal) {
+    private void setDisplayHasContentInternal(int displayId, boolean hasContent,
+            boolean inTraversal) {
         synchronized (mSyncRoot) {
             LogicalDisplay display = mLogicalDisplays.get(displayId);
-            if (display == null) {
-                return;
-            }
-            if (display.hasContentLocked() != hasContent) {
+            if (display != null && display.hasContentLocked() != hasContent) {
                 if (DEBUG) {
                     Slog.d(TAG, "Display " + displayId + " hasContent flag changed: "
                             + "hasContent=" + hasContent + ", inTraversal=" + inTraversal);
@@ -869,37 +772,6 @@ public final class DisplayManagerService extends SystemService {
 
                 display.setHasContentLocked(hasContent);
                 scheduleTraversalLocked(inTraversal);
-            }
-            if (requestedModeId == 0 && requestedRefreshRate != 0) {
-                // Scan supported modes returned by display.getInfo() to find a mode with the same
-                // size as the default display mode but with the specified refresh rate instead.
-                requestedModeId = display.getDisplayInfoLocked().findDefaultModeByRefreshRate(
-                        requestedRefreshRate);
-            }
-            if (display.getRequestedModeIdLocked() != requestedModeId) {
-                if (DEBUG) {
-                    Slog.d(TAG, "Display " + displayId + " switching to mode " + requestedModeId);
-                }
-                display.setRequestedModeIdLocked(requestedModeId);
-                scheduleTraversalLocked(inTraversal);
-            }
-        }
-    }
-
-    private void setDisplayOffsetsInternal(int displayId, int x, int y) {
-        synchronized (mSyncRoot) {
-            LogicalDisplay display = mLogicalDisplays.get(displayId);
-            if (display == null) {
-                return;
-            }
-            if (display.getDisplayOffsetXLocked() != x
-                    || display.getDisplayOffsetYLocked() != y) {
-                if (DEBUG) {
-                    Slog.d(TAG, "Display " + displayId + " burn-in offset set to ("
-                            + x + ", " + y + ")");
-                }
-                display.setDisplayOffsetsLocked(x, y);
-                scheduleTraversalLocked(false);
             }
         }
     }
@@ -1004,14 +876,6 @@ public final class DisplayManagerService extends SystemService {
             mTempCallbacks.get(i).notifyDisplayEventAsync(displayId, event);
         }
         mTempCallbacks.clear();
-    }
-
-    private IMediaProjectionManager getProjectionService() {
-        if (mProjectionService == null) {
-            IBinder b = ServiceManager.getService(Context.MEDIA_PROJECTION_SERVICE);
-            mProjectionService = IMediaProjectionManager.Stub.asInterface(b);
-        }
-        return mProjectionService;
     }
 
     private void dumpInternal(PrintWriter pw) {
@@ -1351,27 +1215,13 @@ public final class DisplayManagerService extends SystemService {
         }
 
         @Override // Binder call
-        public void requestColorTransform(int displayId, int colorTransformId) {
-            mContext.enforceCallingOrSelfPermission(
-                    Manifest.permission.CONFIGURE_DISPLAY_COLOR_TRANSFORM,
-                    "Permission required to change the display color transform");
-            final long token = Binder.clearCallingIdentity();
-            try {
-                requestColorTransformInternal(displayId, colorTransformId);
-            } finally {
-                Binder.restoreCallingIdentity(token);
-            }
-        }
-
-        @Override // Binder call
-        public int createVirtualDisplay(IVirtualDisplayCallback callback,
-                IMediaProjection projection, String packageName, String name,
-                int width, int height, int densityDpi, Surface surface, int flags) {
+        public int createVirtualDisplay(IBinder appToken, String packageName,
+                String name, int width, int height, int densityDpi, Surface surface, int flags) {
             final int callingUid = Binder.getCallingUid();
             if (!validatePackageName(callingUid, packageName)) {
                 throw new SecurityException("packageName must match the calling uid");
             }
-            if (callback == null) {
+            if (appToken == null) {
                 throw new IllegalArgumentException("appToken must not be null");
             }
             if (TextUtils.isEmpty(name)) {
@@ -1381,77 +1231,51 @@ public final class DisplayManagerService extends SystemService {
                 throw new IllegalArgumentException("width, height, and densityDpi must be "
                         + "greater than 0");
             }
-
-            if ((flags & DisplayManager.VIRTUAL_DISPLAY_FLAG_PUBLIC) != 0) {
-                flags |= DisplayManager.VIRTUAL_DISPLAY_FLAG_AUTO_MIRROR;
-            }
-            if ((flags & DisplayManager.VIRTUAL_DISPLAY_FLAG_OWN_CONTENT_ONLY) != 0) {
-                flags &= ~DisplayManager.VIRTUAL_DISPLAY_FLAG_AUTO_MIRROR;
-            }
-
-            if (projection != null) {
-                try {
-                    if (!getProjectionService().isValidMediaProjection(projection)) {
-                        throw new SecurityException("Invalid media projection");
-                    }
-                    flags = projection.applyVirtualDisplayFlags(flags);
-                } catch (RemoteException e) {
-                    throw new SecurityException("unable to validate media projection or flags");
-                }
-            }
-
             if (callingUid != Process.SYSTEM_UID &&
-                    (flags & DisplayManager.VIRTUAL_DISPLAY_FLAG_AUTO_MIRROR) != 0) {
-                if (!canProjectVideo(projection)) {
+                    (flags & DisplayManager.VIRTUAL_DISPLAY_FLAG_PUBLIC) != 0) {
+                if (mContext.checkCallingPermission(android.Manifest.permission.CAPTURE_VIDEO_OUTPUT)
+                        != PackageManager.PERMISSION_GRANTED
+                        && mContext.checkCallingPermission(
+                                android.Manifest.permission.CAPTURE_SECURE_VIDEO_OUTPUT)
+                                != PackageManager.PERMISSION_GRANTED) {
                     throw new SecurityException("Requires CAPTURE_VIDEO_OUTPUT or "
-                            + "CAPTURE_SECURE_VIDEO_OUTPUT permission, or an appropriate "
-                            + "MediaProjection token in order to create a screen sharing virtual "
-                            + "display.");
+                            + "CAPTURE_SECURE_VIDEO_OUTPUT permission to create a "
+                            + "public virtual display.");
                 }
             }
             if ((flags & DisplayManager.VIRTUAL_DISPLAY_FLAG_SECURE) != 0) {
-                if (!canProjectSecureVideo(projection)) {
+                if (mContext.checkCallingPermission(
+                        android.Manifest.permission.CAPTURE_SECURE_VIDEO_OUTPUT)
+                        != PackageManager.PERMISSION_GRANTED) {
                     throw new SecurityException("Requires CAPTURE_SECURE_VIDEO_OUTPUT "
-                            + "or an appropriate MediaProjection token to create a "
-                            + "secure virtual display.");
+                            + "to create a secure virtual display.");
                 }
             }
 
             final long token = Binder.clearCallingIdentity();
             try {
-                return createVirtualDisplayInternal(callback, projection, callingUid,
-                        packageName, name, width, height, densityDpi, surface, flags);
+                return createVirtualDisplayInternal(appToken, callingUid, packageName,
+                        name, width, height, densityDpi, surface, flags);
             } finally {
                 Binder.restoreCallingIdentity(token);
             }
         }
 
         @Override // Binder call
-        public void resizeVirtualDisplay(IVirtualDisplayCallback callback,
-                int width, int height, int densityDpi) {
+        public void setVirtualDisplaySurface(IBinder appToken, Surface surface) {
             final long token = Binder.clearCallingIdentity();
             try {
-                resizeVirtualDisplayInternal(callback.asBinder(), width, height, densityDpi);
+                setVirtualDisplaySurfaceInternal(appToken, surface);
             } finally {
                 Binder.restoreCallingIdentity(token);
             }
         }
 
         @Override // Binder call
-        public void setVirtualDisplaySurface(IVirtualDisplayCallback callback, Surface surface) {
+        public void releaseVirtualDisplay(IBinder appToken) {
             final long token = Binder.clearCallingIdentity();
             try {
-                setVirtualDisplaySurfaceInternal(callback.asBinder(), surface);
-            } finally {
-                Binder.restoreCallingIdentity(token);
-            }
-        }
-
-        @Override // Binder call
-        public void releaseVirtualDisplay(IVirtualDisplayCallback callback) {
-            final long token = Binder.clearCallingIdentity();
-            try {
-                releaseVirtualDisplayInternal(callback.asBinder());
+                releaseVirtualDisplayInternal(appToken);
             } finally {
                 Binder.restoreCallingIdentity(token);
             }
@@ -1488,39 +1312,6 @@ public final class DisplayManagerService extends SystemService {
             }
             return false;
         }
-
-        private boolean canProjectVideo(IMediaProjection projection) {
-            if (projection != null) {
-                try {
-                    if (projection.canProjectVideo()) {
-                        return true;
-                    }
-                } catch (RemoteException e) {
-                    Slog.e(TAG, "Unable to query projection service for permissions", e);
-                }
-            }
-            if (mContext.checkCallingPermission(
-                    android.Manifest.permission.CAPTURE_VIDEO_OUTPUT)
-                    == PackageManager.PERMISSION_GRANTED) {
-                return true;
-            }
-            return canProjectSecureVideo(projection);
-        }
-
-        private boolean canProjectSecureVideo(IMediaProjection projection) {
-            if (projection != null) {
-                try {
-                    if (projection.canProjectSecureVideo()){
-                        return true;
-                    }
-                } catch (RemoteException e) {
-                    Slog.e(TAG, "Unable to query projection service for permissions", e);
-                }
-            }
-            return mContext.checkCallingPermission(
-                    android.Manifest.permission.CAPTURE_SECURE_VIDEO_OUTPUT)
-                    == PackageManager.PERMISSION_GRANTED;
-        }
     }
 
     private final class LocalService extends DisplayManagerInternal {
@@ -1530,16 +1321,16 @@ public final class DisplayManagerService extends SystemService {
             synchronized (mSyncRoot) {
                 DisplayBlanker blanker = new DisplayBlanker() {
                     @Override
-                    public void requestDisplayState(int state, int brightness) {
+                    public void requestDisplayState(int state) {
                         // The order of operations is important for legacy reasons.
                         if (state == Display.STATE_OFF) {
-                            requestGlobalDisplayStateInternal(state, brightness);
+                            requestGlobalDisplayStateInternal(state);
                         }
 
                         callbacks.onDisplayStateChange(state);
 
                         if (state != Display.STATE_OFF) {
-                            requestGlobalDisplayStateInternal(state, brightness);
+                            requestGlobalDisplayStateInternal(state);
                         }
                     }
                 };
@@ -1594,15 +1385,8 @@ public final class DisplayManagerService extends SystemService {
         }
 
         @Override
-        public void setDisplayProperties(int displayId, boolean hasContent,
-                float requestedRefreshRate, int requestedMode, boolean inTraversal) {
-            setDisplayPropertiesInternal(displayId, hasContent, requestedRefreshRate,
-                    requestedMode, inTraversal);
-        }
-
-        @Override
-        public void setDisplayOffsets(int displayId, int x, int y) {
-            setDisplayOffsetsInternal(displayId, x, y);
+        public void setDisplayHasContent(int displayId, boolean hasContent, boolean inTraversal) {
+            setDisplayHasContentInternal(displayId, hasContent, inTraversal);
         }
     }
 }

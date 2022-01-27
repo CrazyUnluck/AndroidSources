@@ -1025,14 +1025,6 @@ public class BigDecimal extends Number implements Comparable<BigDecimal>, Serial
         }
 
         long diffScale = ((long)this.scale - divisor.scale) - scale;
-
-        // Check whether the diffScale will fit into an int. See http://b/17393664.
-        if (bitLength(diffScale) > 32) {
-            throw new ArithmeticException(
-                    "Unable to perform divisor / dividend scaling: the difference in scale is too" +
-                            " big (" + diffScale + ")");
-        }
-
         if(this.bitLength < 64 && divisor.bitLength < 64 ) {
             if(diffScale == 0) {
                 return dividePrimitiveLongs(this.smallValue,
@@ -2121,8 +2113,8 @@ public class BigDecimal extends Number implements Comparable<BigDecimal>, Serial
         if (x instanceof BigDecimal) {
             BigDecimal x1 = (BigDecimal) x;
             return x1.scale == scale
-                    && x1.bitLength == bitLength
-                    && (bitLength < 64 ? (x1.smallValue == smallValue) : x1.intVal.equals(intVal));
+                   && (bitLength < 64 ? (x1.smallValue == smallValue)
+                    : intVal.equals(x1.intVal));
         }
         return false;
     }

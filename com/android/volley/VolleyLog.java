@@ -23,12 +23,7 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Locale;
 
-/**
- * Logging helper class.
- * <p/>
- * to see Volley logs call:<br/>
- * {@code <android-sdk>/platform-tools/adb shell setprop log.tag.Volley VERBOSE}
- */
+/** Logging helper class. */
 public class VolleyLog {
     public static String TAG = "Volley";
 

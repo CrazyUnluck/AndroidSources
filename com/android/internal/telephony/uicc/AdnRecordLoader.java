@@ -24,8 +24,6 @@ import android.os.Looper;
 import android.os.Message;
 import android.telephony.Rlog;
 
-import com.android.internal.telephony.uicc.IccConstants;
-
 public class AdnRecordLoader extends Handler {
     final static String LOG_TAG = "AdnRecordLoader";
     final static boolean VDBG = false;
@@ -66,14 +64,6 @@ public class AdnRecordLoader extends Handler {
         mFh = fh;
     }
 
-    private String getEFPath(int efid) {
-        if (efid == IccConstants.EF_ADN) {
-            return IccConstants.MF_SIM + IccConstants.DF_TELECOM;
-        }
-
-        return null;
-    }
-
     /**
      * Resulting AdnRecord is placed in response.obj.result
      * or response.obj.exception is set
@@ -86,9 +76,10 @@ public class AdnRecordLoader extends Handler {
         mRecordNumber = recordNumber;
         mUserResponse = response;
 
-       mFh.loadEFLinearFixed(
-               ef, getEFPath(ef), recordNumber,
-               obtainMessage(EVENT_ADN_LOAD_DONE));
+        mFh.loadEFLinearFixed(
+                    ef, recordNumber,
+                    obtainMessage(EVENT_ADN_LOAD_DONE));
+
     }
 
 
@@ -103,13 +94,10 @@ public class AdnRecordLoader extends Handler {
         mExtensionEF = extensionEF;
         mUserResponse = response;
 
-        /* If we are loading from EF_ADN, specifically
-         * specify the path as well, since, on some cards,
-         * the fileid is not unique.
-         */
         mFh.loadEFLinearFixedAll(
-                ef, getEFPath(ef),
-                obtainMessage(EVENT_ADN_LOAD_ALL_DONE));
+                    ef,
+                    obtainMessage(EVENT_ADN_LOAD_ALL_DONE));
+
     }
 
     /**
@@ -132,10 +120,10 @@ public class AdnRecordLoader extends Handler {
         mRecordNumber = recordNumber;
         mUserResponse = response;
         mPin2 = pin2;
- 
-        mFh.getEFLinearRecordSize( ef, getEFPath(ef),
-                obtainMessage(EVENT_EF_LINEAR_RECORD_SIZE_DONE, adn));
-     }
+
+        mFh.getEFLinearRecordSize( ef,
+            obtainMessage(EVENT_EF_LINEAR_RECORD_SIZE_DONE, adn));
+    }
 
     //***** Overridden from Handler
 
@@ -175,8 +163,7 @@ public class AdnRecordLoader extends Handler {
                                 ar.exception);
                     }
 
-
-                    mFh.updateEFLinearFixed(mEf, getEFPath(mEf), mRecordNumber,
+                    mFh.updateEFLinearFixed(mEf, mRecordNumber,
                             data, mPin2, obtainMessage(EVENT_UPDATE_RECORD_DONE));
 
                     mPendingExtLoads = 1;
@@ -227,23 +214,16 @@ public class AdnRecordLoader extends Handler {
                     data = (byte[])(ar.result);
                     adn = (AdnRecord)(ar.userObj);
 
-                    if (ar.exception == null) {
-                        Rlog.d(LOG_TAG,"ADN extension EF: 0x"
-                                + Integer.toHexString(mExtensionEF)
-                                + ":" + adn.mExtRecord
-                                + "\n" + IccUtils.bytesToHexString(data));
-
-                        adn.appendExtRecord(data);
+                    if (ar.exception != null) {
+                        throw new RuntimeException("load failed", ar.exception);
                     }
-                    else {
-                        // If we can't get the rest of the number from EF_EXT1, rather than
-                        // providing the partial number, we clear the number since it's not
-                        // dialable anyway. Do not throw exception here otherwise the rest
-                        // of the good records will be dropped.
 
-                        Rlog.e(LOG_TAG, "Failed to read ext record. Clear the number now.");
-                        adn.setNumber("");
-                    }
+                    Rlog.d(LOG_TAG,"ADN extension EF: 0x"
+                        + Integer.toHexString(mExtensionEF)
+                        + ":" + adn.mExtRecord
+                        + "\n" + IccUtils.bytesToHexString(data));
+
+                    adn.appendExtRecord(data);
 
                     mPendingExtLoads--;
                     // result should have been set in
@@ -300,4 +280,6 @@ public class AdnRecordLoader extends Handler {
             mUserResponse = null;
         }
     }
+
+
 }

@@ -194,8 +194,7 @@ public enum SupplicantState implements Parcelable {
         }
     }
 
-    /** @hide */
-    public static boolean isConnecting(SupplicantState state) {
+    static boolean isConnecting(SupplicantState state) {
         switch(state) {
             case AUTHENTICATING:
             case ASSOCIATING:
@@ -217,8 +216,7 @@ public enum SupplicantState implements Parcelable {
         }
     }
 
-    /** @hide */
-    public static boolean isDriverActive(SupplicantState state) {
+    static boolean isDriverActive(SupplicantState state) {
         switch(state) {
             case DISCONNECTED:
             case DORMANT:

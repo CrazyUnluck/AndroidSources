@@ -17,7 +17,10 @@
 package android.database;
 
 import android.net.Uri;
-import android.os.*;
+import android.os.Bundle;
+import android.os.IBinder;
+import android.os.RemoteException;
+import android.util.Log;
 
 
 /**
@@ -31,7 +34,7 @@ import android.os.*;
  *
  * {@hide}
  */
-public final class CursorToBulkCursorAdaptor extends BulkCursorNative
+public final class CursorToBulkCursorAdaptor extends BulkCursorNative 
         implements IBinder.DeathRecipient {
     private static final String TAG = "Cursor";
 
@@ -64,7 +67,7 @@ public final class CursorToBulkCursorAdaptor extends BulkCursorNative
                 // Do nothing, the far side is dead
             }
         }
-
+        
         public boolean unlinkToDeath(DeathRecipient recipient) {
             return mRemote.asBinder().unlinkToDeath(recipient, 0);
         }
@@ -78,7 +81,7 @@ public final class CursorToBulkCursorAdaptor extends BulkCursorNative
         @Override
         public void onChange(boolean selfChange, Uri uri) {
             try {
-                mRemote.onChange(selfChange, uri, android.os.Process.myUid());
+                mRemote.onChange(selfChange, uri);
             } catch (RemoteException ex) {
                 // Do nothing, the far side is dead
             }

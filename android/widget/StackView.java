@@ -41,6 +41,7 @@ import android.view.VelocityTracker;
 import android.view.View;
 import android.view.ViewConfiguration;
 import android.view.ViewGroup;
+import android.view.accessibility.AccessibilityEvent;
 import android.view.accessibility.AccessibilityNodeInfo;
 import android.view.animation.LinearInterpolator;
 import android.widget.RemoteViews.RemoteView;
@@ -167,16 +168,9 @@ public class StackView extends AdapterViewAnimator {
      * {@inheritDoc}
      */
     public StackView(Context context, AttributeSet attrs, int defStyleAttr) {
-        this(context, attrs, defStyleAttr, 0);
-    }
-
-    /**
-     * {@inheritDoc}
-     */
-    public StackView(Context context, AttributeSet attrs, int defStyleAttr, int defStyleRes) {
-        super(context, attrs, defStyleAttr, defStyleRes);
-        final TypedArray a = context.obtainStyledAttributes(
-                attrs, com.android.internal.R.styleable.StackView, defStyleAttr, defStyleRes);
+        super(context, attrs, defStyleAttr);
+        TypedArray a = context.obtainStyledAttributes(attrs,
+                com.android.internal.R.styleable.StackView, defStyleAttr, 0);
 
         mResOutColor = a.getColor(
                 com.android.internal.R.styleable.StackView_resOutColor, 0);
@@ -1049,8 +1043,10 @@ public class StackView extends AdapterViewAnimator {
             if (mView != null) {
                 final LayoutParams viewLp = (LayoutParams) mView.getLayoutParams();
 
-                float d = (float) Math.hypot(viewLp.horizontalOffset, viewLp.verticalOffset);
-                float maxd = (float) Math.hypot(mSlideAmount, 0.4f * mSlideAmount);
+                float d = (float) Math.sqrt(Math.pow(viewLp.horizontalOffset, 2) +
+                        Math.pow(viewLp.verticalOffset, 2));
+                float maxd = (float) Math.sqrt(Math.pow(mSlideAmount, 2) +
+                        Math.pow(0.4f * mSlideAmount, 2));
 
                 if (velocity == 0) {
                     return (invert ? (1 - d / maxd) : d / maxd) * DEFAULT_ANIMATION_DURATION;
@@ -1224,14 +1220,15 @@ public class StackView extends AdapterViewAnimator {
     }
 
     @Override
-    public CharSequence getAccessibilityClassName() {
-        return StackView.class.getName();
+    public void onInitializeAccessibilityEvent(AccessibilityEvent event) {
+        super.onInitializeAccessibilityEvent(event);
+        event.setClassName(StackView.class.getName());
     }
 
-    /** @hide */
     @Override
-    public void onInitializeAccessibilityNodeInfoInternal(AccessibilityNodeInfo info) {
-        super.onInitializeAccessibilityNodeInfoInternal(info);
+    public void onInitializeAccessibilityNodeInfo(AccessibilityNodeInfo info) {
+        super.onInitializeAccessibilityNodeInfo(info);
+        info.setClassName(StackView.class.getName());
         info.setScrollable(getChildCount() > 1);
         if (isEnabled()) {
             if (getDisplayedChild() < getChildCount() - 1) {
@@ -1243,10 +1240,9 @@ public class StackView extends AdapterViewAnimator {
         }
     }
 
-    /** @hide */
     @Override
-    public boolean performAccessibilityActionInternal(int action, Bundle arguments) {
-        if (super.performAccessibilityActionInternal(action, arguments)) {
+    public boolean performAccessibilityAction(int action, Bundle arguments) {
+        if (super.performAccessibilityAction(action, arguments)) {
             return true;
         }
         if (!isEnabled()) {

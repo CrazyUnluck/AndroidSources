@@ -16,14 +16,7 @@
 
 package android.webkit;
 
-import android.annotation.IntDef;
-import android.annotation.SystemApi;
 import android.content.Context;
-
-import java.lang.annotation.ElementType;
-import java.lang.annotation.Retention;
-import java.lang.annotation.RetentionPolicy;
-import java.lang.annotation.Target;
 
 /**
  * Manages settings state for a WebView. When a WebView is first created, it
@@ -119,11 +112,6 @@ public abstract class WebSettings {
         int value;
     }
 
-    /** @hide */
-    @IntDef({LOAD_DEFAULT, LOAD_NORMAL, LOAD_CACHE_ELSE_NETWORK, LOAD_NO_CACHE, LOAD_CACHE_ONLY})
-    @Retention(RetentionPolicy.SOURCE)
-    public @interface CacheMode {}
-
     /**
      * Default cache usage mode. If the navigation type doesn't impose any
      * specific behavior, use cached resources when they are available
@@ -183,36 +171,13 @@ public abstract class WebSettings {
     }
 
     /**
-     * Used with {@link #setMixedContentMode}
+     * Hidden constructor to prevent clients from creating a new settings
+     * instance or deriving the class.
      *
-     * In this mode, the WebView will allow a secure origin to load content from any other origin,
-     * even if that origin is insecure. This is the least secure mode of operation for the WebView,
-     * and where possible apps should not set this mode.
+     * @hide
      */
-    public static final int MIXED_CONTENT_ALWAYS_ALLOW = 0;
-
-    /**
-     * Used with {@link #setMixedContentMode}
-     *
-     * In this mode, the WebView will not allow a secure origin to load content from an insecure
-     * origin. This is the preferred and most secure mode of operation for the WebView and apps are
-     * strongly advised to use this mode.
-     */
-    public static final int MIXED_CONTENT_NEVER_ALLOW = 1;
-
-    /**
-     * Used with {@link #setMixedContentMode}
-     *
-     * In this mode, the WebView will attempt to be compatible with the approach of a modern web
-     * browser with regard to mixed content. Some insecure content may be allowed to be loaded by
-     * a secure origin and other types of content will be blocked. The types of content are allowed
-     * or blocked may change release to release and are not explicitly defined.
-     *
-     * This mode is intended to be used by apps that are not in control of the content that they
-     * render but desire to operate in a reasonably secure environment. For highest security, apps
-     * are recommended to use {@link #MIXED_CONTENT_NEVER_ALLOW}.
-     */
-    public static final int MIXED_CONTENT_COMPATIBILITY_MODE = 2;
+    protected WebSettings() {
+    }
 
     /**
      * Enables dumping the pages navigation cache to a text file. The default
@@ -221,9 +186,10 @@ public abstract class WebSettings {
      * @deprecated This method is now obsolete.
      * @hide Since API level {@link android.os.Build.VERSION_CODES#JELLY_BEAN_MR1}
      */
-    @SystemApi
     @Deprecated
-    public abstract void setNavDump(boolean enabled);
+    public void setNavDump(boolean enabled) {
+        throw new MustOverrideException();
+    }
 
     /**
      * Gets whether dumping the navigation cache is enabled.
@@ -233,9 +199,10 @@ public abstract class WebSettings {
      * @deprecated This method is now obsolete.
      * @hide Since API level {@link android.os.Build.VERSION_CODES#JELLY_BEAN_MR1}
      */
-    @SystemApi
     @Deprecated
-    public abstract boolean getNavDump();
+    public boolean getNavDump() {
+        throw new MustOverrideException();
+    }
 
     /**
      * Sets whether the WebView should support zooming using its on-screen zoom
@@ -246,7 +213,9 @@ public abstract class WebSettings {
      *
      * @param support whether the WebView should support zoom
      */
-    public abstract void setSupportZoom(boolean support);
+    public void setSupportZoom(boolean support) {
+        throw new MustOverrideException();
+    }
 
     /**
      * Gets whether the WebView supports zoom.
@@ -254,7 +223,9 @@ public abstract class WebSettings {
      * @return true if the WebView supports zoom
      * @see #setSupportZoom
      */
-    public abstract boolean supportZoom();
+    public boolean supportZoom() {
+        throw new MustOverrideException();
+    }
 
     /**
      * Sets whether the WebView requires a user gesture to play media.
@@ -262,7 +233,9 @@ public abstract class WebSettings {
      *
      * @param require whether the WebView requires a user gesture to play media
      */
-    public abstract void setMediaPlaybackRequiresUserGesture(boolean require);
+    public void setMediaPlaybackRequiresUserGesture(boolean require) {
+        throw new MustOverrideException();
+    }
 
     /**
      * Gets whether the WebView requires a user gesture to play media.
@@ -270,7 +243,9 @@ public abstract class WebSettings {
      * @return true if the WebView requires a user gesture to play media
      * @see #setMediaPlaybackRequiresUserGesture
      */
-    public abstract boolean getMediaPlaybackRequiresUserGesture();
+    public boolean getMediaPlaybackRequiresUserGesture() {
+        throw new MustOverrideException();
+    }
 
     /**
      * Sets whether the WebView should use its built-in zoom mechanisms. The
@@ -287,7 +262,9 @@ public abstract class WebSettings {
     // This method was intended to select between the built-in zoom mechanisms
     // and the separate zoom controls. The latter were obtained using
     // {@link WebView#getZoomControls}, which is now hidden.
-    public abstract void setBuiltInZoomControls(boolean enabled);
+    public void setBuiltInZoomControls(boolean enabled) {
+        throw new MustOverrideException();
+    }
 
     /**
      * Gets whether the zoom mechanisms built into WebView are being used.
@@ -295,7 +272,9 @@ public abstract class WebSettings {
      * @return true if the zoom mechanisms built into WebView are being used
      * @see #setBuiltInZoomControls
      */
-    public abstract boolean getBuiltInZoomControls();
+    public boolean getBuiltInZoomControls() {
+        throw new MustOverrideException();
+    }
 
     /**
      * Sets whether the WebView should display on-screen zoom controls when
@@ -304,7 +283,9 @@ public abstract class WebSettings {
      *
      * @param enabled whether the WebView should display on-screen zoom controls
      */
-    public abstract void setDisplayZoomControls(boolean enabled);
+    public void setDisplayZoomControls(boolean enabled) {
+        throw new MustOverrideException();
+    }
 
     /**
      * Gets whether the WebView displays on-screen zoom controls when using
@@ -314,7 +295,9 @@ public abstract class WebSettings {
      *         the built-in zoom mechanisms
      * @see #setDisplayZoomControls
      */
-    public abstract boolean getDisplayZoomControls();
+    public boolean getDisplayZoomControls() {
+        throw new MustOverrideException();
+    }
 
     /**
      * Enables or disables file access within WebView. File access is enabled by
@@ -322,28 +305,36 @@ public abstract class WebSettings {
      * Assets and resources are still accessible using file:///android_asset and
      * file:///android_res.
      */
-    public abstract void setAllowFileAccess(boolean allow);
+    public void setAllowFileAccess(boolean allow) {
+        throw new MustOverrideException();
+    }
 
     /**
      * Gets whether this WebView supports file access.
      *
      * @see #setAllowFileAccess
      */
-    public abstract boolean getAllowFileAccess();
+    public boolean getAllowFileAccess() {
+        throw new MustOverrideException();
+    }
 
     /**
      * Enables or disables content URL access within WebView.  Content URL
      * access allows WebView to load content from a content provider installed
      * in the system. The default is enabled.
      */
-    public abstract void setAllowContentAccess(boolean allow);
+    public void setAllowContentAccess(boolean allow) {
+        throw new MustOverrideException();
+    }
 
     /**
      * Gets whether this WebView supports content URL access.
      *
      * @see #setAllowContentAccess
      */
-    public abstract boolean getAllowContentAccess();
+    public boolean getAllowContentAccess() {
+        throw new MustOverrideException();
+    }
 
     /**
      * Sets whether the WebView loads pages in overview mode, that is,
@@ -352,7 +343,9 @@ public abstract class WebSettings {
      * of the WebView control, for example, when {@link #getUseWideViewPort}
      * is enabled. The default is false.
      */
-    public abstract void setLoadWithOverviewMode(boolean overview);
+    public void setLoadWithOverviewMode(boolean overview) {
+        throw new MustOverrideException();
+    }
 
     /**
      * Gets whether this WebView loads pages in overview mode.
@@ -360,7 +353,9 @@ public abstract class WebSettings {
      * @return whether this WebView loads pages in overview mode
      * @see #setLoadWithOverviewMode
      */
-    public abstract boolean getLoadWithOverviewMode();
+    public boolean getLoadWithOverviewMode() {
+        throw new MustOverrideException();
+    }
 
     /**
      * Sets whether the WebView will enable smooth transition while panning or
@@ -372,7 +367,9 @@ public abstract class WebSettings {
      * @deprecated This method is now obsolete, and will become a no-op in future.
      */
     @Deprecated
-    public abstract void setEnableSmoothTransition(boolean enable);
+    public void setEnableSmoothTransition(boolean enable) {
+        throw new MustOverrideException();
+    }
 
     /**
      * Gets whether the WebView enables smooth transition while panning or
@@ -383,7 +380,9 @@ public abstract class WebSettings {
      * @deprecated This method is now obsolete, and will become a no-op in future.
      */
     @Deprecated
-    public abstract  boolean enableSmoothTransition();
+    public boolean enableSmoothTransition() {
+        throw new MustOverrideException();
+    }
 
     /**
      * Sets whether the WebView uses its background for over scroll background.
@@ -393,9 +392,10 @@ public abstract class WebSettings {
      * @deprecated This method is now obsolete.
      * @hide Since API level {@link android.os.Build.VERSION_CODES#JELLY_BEAN_MR1}
      */
-    @SystemApi
     @Deprecated
-    public abstract  void setUseWebViewBackgroundForOverscrollBackground(boolean view);
+    public void setUseWebViewBackgroundForOverscrollBackground(boolean view) {
+        throw new MustOverrideException();
+    }
 
     /**
      * Gets whether this WebView uses WebView's background instead of
@@ -405,14 +405,17 @@ public abstract class WebSettings {
      * @deprecated This method is now obsolete.
      * @hide Since API level {@link android.os.Build.VERSION_CODES#JELLY_BEAN_MR1}
      */
-    @SystemApi
     @Deprecated
-    public abstract  boolean getUseWebViewBackgroundForOverscrollBackground();
+    public boolean getUseWebViewBackgroundForOverscrollBackground() {
+        throw new MustOverrideException();
+    }
 
     /**
      * Sets whether the WebView should save form data. The default is true.
      */
-    public abstract  void setSaveFormData(boolean save);
+    public void setSaveFormData(boolean save) {
+        throw new MustOverrideException();
+    }
 
     /**
      * Gets whether the WebView saves form data.
@@ -420,14 +423,18 @@ public abstract class WebSettings {
      * @return whether the WebView saves form data
      * @see #setSaveFormData
      */
-    public abstract boolean getSaveFormData();
+    public boolean getSaveFormData() {
+        throw new MustOverrideException();
+    }
 
     /**
      * Sets whether the WebView should save passwords. The default is true.
      * @deprecated Saving passwords in WebView will not be supported in future versions.
      */
     @Deprecated
-    public abstract void setSavePassword(boolean save);
+    public void setSavePassword(boolean save) {
+        throw new MustOverrideException();
+    }
 
     /**
      * Gets whether the WebView saves passwords.
@@ -437,14 +444,18 @@ public abstract class WebSettings {
      * @deprecated Saving passwords in WebView will not be supported in future versions.
      */
     @Deprecated
-    public abstract boolean getSavePassword();
+    public boolean getSavePassword() {
+        throw new MustOverrideException();
+    }
 
     /**
      * Sets the text zoom of the page in percent. The default is 100.
      *
      * @param textZoom the text zoom in percent
      */
-    public abstract void setTextZoom(int textZoom);
+    public synchronized void setTextZoom(int textZoom) {
+        throw new MustOverrideException();
+    }
 
     /**
      * Gets the text zoom of the page in percent.
@@ -452,23 +463,9 @@ public abstract class WebSettings {
      * @return the text zoom of the page in percent
      * @see #setTextZoom
      */
-    public abstract int getTextZoom();
-
-    /**
-     * Sets policy for third party cookies.
-     * Developers should access this via {@link CookieManager#setShouldAcceptThirdPartyCookies}.
-     * @hide Internal API.
-     */
-    @SystemApi
-    public abstract void setAcceptThirdPartyCookies(boolean accept);
-
-    /**
-     * Gets policy for third party cookies.
-     * Developers should access this via {@link CookieManager#getShouldAcceptThirdPartyCookies}.
-     * @hide Internal API
-     */
-    @SystemApi
-    public abstract boolean getAcceptThirdPartyCookies();
+    public synchronized int getTextZoom() {
+        throw new MustOverrideException();
+    }
 
     /**
      * Sets the text size of the page. The default is {@link TextSize#NORMAL}.
@@ -521,7 +518,9 @@ public abstract class WebSettings {
      *             recommended alternatives.
      */
     @Deprecated
-    public abstract void setDefaultZoom(ZoomDensity zoom);
+    public void setDefaultZoom(ZoomDensity zoom) {
+        throw new MustOverrideException();
+    }
 
     /**
      * Gets the default zoom density of the page. This should be called from
@@ -533,7 +532,9 @@ public abstract class WebSettings {
      * @see #setDefaultZoom
      * @deprecated Will only return the default value.
      */
-    public abstract ZoomDensity getDefaultZoom();
+    public ZoomDensity getDefaultZoom() {
+        throw new MustOverrideException();
+    }
 
     /**
      * Enables using light touches to make a selection and activate mouseovers.
@@ -541,7 +542,9 @@ public abstract class WebSettings {
      *             setting is obsolete and has no effect.
      */
     @Deprecated
-    public abstract void setLightTouchEnabled(boolean enabled);
+    public void setLightTouchEnabled(boolean enabled) {
+        throw new MustOverrideException();
+    }
 
     /**
      * Gets whether light touches are enabled.
@@ -549,7 +552,9 @@ public abstract class WebSettings {
      * @deprecated This setting is obsolete.
      */
     @Deprecated
-    public abstract boolean getLightTouchEnabled();
+    public boolean getLightTouchEnabled() {
+        throw new MustOverrideException();
+    }
 
     /**
      * Controlled a rendering optimization that is no longer present. Setting
@@ -559,7 +564,7 @@ public abstract class WebSettings {
      * @hide Since API level {@link android.os.Build.VERSION_CODES#JELLY_BEAN_MR1}
      */
     @Deprecated
-    public void setUseDoubleTree(boolean use) {
+    public synchronized void setUseDoubleTree(boolean use) {
         // Specified to do nothing, so no need for derived classes to override.
     }
 
@@ -571,7 +576,7 @@ public abstract class WebSettings {
      * @hide Since API level {@link android.os.Build.VERSION_CODES#JELLY_BEAN_MR1}
      */
     @Deprecated
-    public boolean getUseDoubleTree() {
+    public synchronized boolean getUseDoubleTree() {
         // Returns false unconditionally, so no need for derived classes to override.
         return false;
     }
@@ -589,9 +594,10 @@ public abstract class WebSettings {
      * @deprecated Please use {@link #setUserAgentString} instead.
      * @hide Since API level {@link android.os.Build.VERSION_CODES#JELLY_BEAN_MR1}
      */
-    @SystemApi
     @Deprecated
-    public abstract void setUserAgent(int ua);
+    public synchronized void setUserAgent(int ua) {
+        throw new MustOverrideException();
+    }
 
     /**
      * Gets the user-agent as an integer code.
@@ -607,9 +613,10 @@ public abstract class WebSettings {
      * @deprecated Please use {@link #getUserAgentString} instead.
      * @hide Since API level {@link android.os.Build.VERSION_CODES#JELLY_BEAN_MR1}
      */
-    @SystemApi
     @Deprecated
-    public abstract int getUserAgent();
+    public synchronized int getUserAgent() {
+        throw new MustOverrideException();
+    }
 
     /**
      * Sets whether the WebView should enable support for the &quot;viewport&quot;
@@ -622,7 +629,9 @@ public abstract class WebSettings {
      *
      * @param use whether to enable support for the viewport meta tag
      */
-    public abstract void setUseWideViewPort(boolean use);
+    public synchronized void setUseWideViewPort(boolean use) {
+        throw new MustOverrideException();
+    }
 
     /**
      * Gets whether the WebView supports the &quot;viewport&quot;
@@ -631,7 +640,9 @@ public abstract class WebSettings {
      * @return true if the WebView supports the viewport meta tag
      * @see #setUseWideViewPort
      */
-    public abstract boolean getUseWideViewPort();
+    public synchronized boolean getUseWideViewPort() {
+        throw new MustOverrideException();
+    }
 
     /**
      * Sets whether the WebView whether supports multiple windows. If set to
@@ -640,7 +651,9 @@ public abstract class WebSettings {
      *
      * @param support whether to suport multiple windows
      */
-    public abstract void setSupportMultipleWindows(boolean support);
+    public synchronized void setSupportMultipleWindows(boolean support) {
+        throw new MustOverrideException();
+    }
 
     /**
      * Gets whether the WebView supports multiple windows.
@@ -648,7 +661,9 @@ public abstract class WebSettings {
      * @return true if the WebView supports multiple windows
      * @see #setSupportMultipleWindows
      */
-    public abstract boolean supportMultipleWindows();
+    public synchronized boolean supportMultipleWindows() {
+        throw new MustOverrideException();
+    }
 
     /**
      * Sets the underlying layout algorithm. This will cause a relayout of the
@@ -656,7 +671,9 @@ public abstract class WebSettings {
      *
      * @param l the layout algorithm to use, as a {@link LayoutAlgorithm} value
      */
-    public abstract void setLayoutAlgorithm(LayoutAlgorithm l);
+    public synchronized void setLayoutAlgorithm(LayoutAlgorithm l) {
+        throw new MustOverrideException();
+    }
 
     /**
      * Gets the current layout algorithm.
@@ -664,14 +681,18 @@ public abstract class WebSettings {
      * @return the layout algorithm in use, as a {@link LayoutAlgorithm} value
      * @see #setLayoutAlgorithm
      */
-    public abstract LayoutAlgorithm getLayoutAlgorithm();
+    public synchronized LayoutAlgorithm getLayoutAlgorithm() {
+        throw new MustOverrideException();
+    }
 
     /**
      * Sets the standard font family name. The default is "sans-serif".
      *
      * @param font a font family name
      */
-    public abstract void setStandardFontFamily(String font);
+    public synchronized void setStandardFontFamily(String font) {
+        throw new MustOverrideException();
+    }
 
     /**
      * Gets the standard font family name.
@@ -679,14 +700,18 @@ public abstract class WebSettings {
      * @return the standard font family name as a string
      * @see #setStandardFontFamily
      */
-    public abstract String getStandardFontFamily();
+    public synchronized String getStandardFontFamily() {
+        throw new MustOverrideException();
+    }
 
     /**
      * Sets the fixed font family name. The default is "monospace".
      *
      * @param font a font family name
      */
-    public abstract void setFixedFontFamily(String font);
+    public synchronized void setFixedFontFamily(String font) {
+        throw new MustOverrideException();
+    }
 
     /**
      * Gets the fixed font family name.
@@ -694,14 +719,18 @@ public abstract class WebSettings {
      * @return the fixed font family name as a string
      * @see #setFixedFontFamily
      */
-    public abstract String getFixedFontFamily();
+    public synchronized String getFixedFontFamily() {
+        throw new MustOverrideException();
+    }
 
     /**
      * Sets the sans-serif font family name. The default is "sans-serif".
      *
      * @param font a font family name
      */
-    public abstract void setSansSerifFontFamily(String font);
+    public synchronized void setSansSerifFontFamily(String font) {
+        throw new MustOverrideException();
+    }
 
     /**
      * Gets the sans-serif font family name.
@@ -709,14 +738,18 @@ public abstract class WebSettings {
      * @return the sans-serif font family name as a string
      * @see #setSansSerifFontFamily
      */
-    public abstract String getSansSerifFontFamily();
+    public synchronized String getSansSerifFontFamily() {
+        throw new MustOverrideException();
+    }
 
     /**
      * Sets the serif font family name. The default is "sans-serif".
      *
      * @param font a font family name
      */
-    public abstract void setSerifFontFamily(String font);
+    public synchronized void setSerifFontFamily(String font) {
+        throw new MustOverrideException();
+    }
 
     /**
      * Gets the serif font family name. The default is "serif".
@@ -724,14 +757,18 @@ public abstract class WebSettings {
      * @return the serif font family name as a string
      * @see #setSerifFontFamily
      */
-    public abstract String getSerifFontFamily();
+    public synchronized String getSerifFontFamily() {
+        throw new MustOverrideException();
+    }
 
     /**
      * Sets the cursive font family name. The default is "cursive".
      *
      * @param font a font family name
      */
-    public abstract void setCursiveFontFamily(String font);
+    public synchronized void setCursiveFontFamily(String font) {
+        throw new MustOverrideException();
+    }
 
     /**
      * Gets the cursive font family name.
@@ -739,14 +776,18 @@ public abstract class WebSettings {
      * @return the cursive font family name as a string
      * @see #setCursiveFontFamily
      */
-    public abstract String getCursiveFontFamily();
+    public synchronized String getCursiveFontFamily() {
+        throw new MustOverrideException();
+    }
 
     /**
      * Sets the fantasy font family name. The default is "fantasy".
      *
      * @param font a font family name
      */
-    public abstract void setFantasyFontFamily(String font);
+    public synchronized void setFantasyFontFamily(String font) {
+        throw new MustOverrideException();
+    }
 
     /**
      * Gets the fantasy font family name.
@@ -754,7 +795,9 @@ public abstract class WebSettings {
      * @return the fantasy font family name as a string
      * @see #setFantasyFontFamily
      */
-    public abstract String getFantasyFontFamily();
+    public synchronized String getFantasyFontFamily() {
+        throw new MustOverrideException();
+    }
 
     /**
      * Sets the minimum font size. The default is 8.
@@ -762,7 +805,9 @@ public abstract class WebSettings {
      * @param size a non-negative integer between 1 and 72. Any number outside
      *             the specified range will be pinned.
      */
-    public abstract void setMinimumFontSize(int size);
+    public synchronized void setMinimumFontSize(int size) {
+        throw new MustOverrideException();
+    }
 
     /**
      * Gets the minimum font size.
@@ -770,7 +815,9 @@ public abstract class WebSettings {
      * @return a non-negative integer between 1 and 72
      * @see #setMinimumFontSize
      */
-    public abstract int getMinimumFontSize();
+    public synchronized int getMinimumFontSize() {
+        throw new MustOverrideException();
+    }
 
     /**
      * Sets the minimum logical font size. The default is 8.
@@ -778,7 +825,9 @@ public abstract class WebSettings {
      * @param size a non-negative integer between 1 and 72. Any number outside
      *             the specified range will be pinned.
      */
-    public abstract void setMinimumLogicalFontSize(int size);
+    public synchronized void setMinimumLogicalFontSize(int size) {
+        throw new MustOverrideException();
+    }
 
     /**
      * Gets the minimum logical font size.
@@ -786,7 +835,9 @@ public abstract class WebSettings {
      * @return a non-negative integer between 1 and 72
      * @see #setMinimumLogicalFontSize
      */
-    public abstract int getMinimumLogicalFontSize();
+    public synchronized int getMinimumLogicalFontSize() {
+        throw new MustOverrideException();
+    }
 
     /**
      * Sets the default font size. The default is 16.
@@ -794,7 +845,9 @@ public abstract class WebSettings {
      * @param size a non-negative integer between 1 and 72. Any number outside
      *             the specified range will be pinned.
      */
-    public abstract void setDefaultFontSize(int size);
+    public synchronized void setDefaultFontSize(int size) {
+        throw new MustOverrideException();
+    }
 
     /**
      * Gets the default font size.
@@ -802,7 +855,9 @@ public abstract class WebSettings {
      * @return a non-negative integer between 1 and 72
      * @see #setDefaultFontSize
      */
-    public abstract int getDefaultFontSize();
+    public synchronized int getDefaultFontSize() {
+        throw new MustOverrideException();
+    }
 
     /**
      * Sets the default fixed font size. The default is 16.
@@ -810,7 +865,9 @@ public abstract class WebSettings {
      * @param size a non-negative integer between 1 and 72. Any number outside
      *             the specified range will be pinned.
      */
-    public abstract void setDefaultFixedFontSize(int size);
+    public synchronized void setDefaultFixedFontSize(int size) {
+        throw new MustOverrideException();
+    }
 
     /**
      * Gets the default fixed font size.
@@ -818,7 +875,9 @@ public abstract class WebSettings {
      * @return a non-negative integer between 1 and 72
      * @see #setDefaultFixedFontSize
      */
-    public abstract int getDefaultFixedFontSize();
+    public synchronized int getDefaultFixedFontSize() {
+        throw new MustOverrideException();
+    }
 
     /**
      * Sets whether the WebView should load image resources. Note that this method
@@ -831,7 +890,9 @@ public abstract class WebSettings {
      *
      * @param flag whether the WebView should load image resources
      */
-    public abstract void setLoadsImagesAutomatically(boolean flag);
+    public synchronized void setLoadsImagesAutomatically(boolean flag) {
+        throw new MustOverrideException();
+    }
 
     /**
      * Gets whether the WebView loads image resources. This includes
@@ -840,7 +901,9 @@ public abstract class WebSettings {
      * @return true if the WebView loads image resources
      * @see #setLoadsImagesAutomatically
      */
-    public abstract boolean getLoadsImagesAutomatically();
+    public synchronized boolean getLoadsImagesAutomatically() {
+        throw new MustOverrideException();
+    }
 
     /**
      * Sets whether the WebView should not load image resources from the
@@ -857,7 +920,9 @@ public abstract class WebSettings {
      *             network
      * @see #setBlockNetworkLoads
      */
-    public abstract void setBlockNetworkImage(boolean flag);
+    public synchronized void setBlockNetworkImage(boolean flag) {
+        throw new MustOverrideException();
+    }
 
     /**
      * Gets whether the WebView does not load image resources from the network.
@@ -865,7 +930,9 @@ public abstract class WebSettings {
      * @return true if the WebView does not load image resources from the network
      * @see #setBlockNetworkImage
      */
-    public abstract boolean getBlockNetworkImage();
+    public synchronized boolean getBlockNetworkImage() {
+        throw new MustOverrideException();
+    }
 
     /**
      * Sets whether the WebView should not load resources from the network.
@@ -881,10 +948,13 @@ public abstract class WebSettings {
      * {@link android.Manifest.permission#INTERNET} permission, otherwise it is
      * true.
      *
-     * @param flag true means block network loads by the WebView
+     * @param flag whether the WebView should not load any resources from the
+     *             network
      * @see android.webkit.WebView#reload
      */
-    public abstract void setBlockNetworkLoads(boolean flag);
+    public synchronized void setBlockNetworkLoads(boolean flag) {
+        throw new MustOverrideException();
+    }
 
     /**
      * Gets whether the WebView does not load any resources from the network.
@@ -892,7 +962,9 @@ public abstract class WebSettings {
      * @return true if the WebView does not load any resources from the network
      * @see #setBlockNetworkLoads
      */
-    public abstract boolean getBlockNetworkLoads();
+    public synchronized boolean getBlockNetworkLoads() {
+        throw new MustOverrideException();
+    }
 
     /**
      * Tells the WebView to enable JavaScript execution.
@@ -900,7 +972,9 @@ public abstract class WebSettings {
      *
      * @param flag true if the WebView should execute JavaScript
      */
-    public abstract void setJavaScriptEnabled(boolean flag);
+    public synchronized void setJavaScriptEnabled(boolean flag) {
+        throw new MustOverrideException();
+    }
 
     /**
      * Sets whether JavaScript running in the context of a file scheme URL
@@ -910,9 +984,7 @@ public abstract class WebSettings {
      * and therefore secure policy, this setting should be disabled.
      * Note that this setting affects only JavaScript access to file scheme
      * resources. Other access to such resources, for example, from image HTML
-     * elements, is unaffected. To prevent possible violation of same domain policy
-     * on {@link android.os.Build.VERSION_CODES#ICE_CREAM_SANDWICH} and earlier
-     * devices, you should explicitly set this value to {@code false}.
+     * elements, is unaffected.
      * <p>
      * The default value is true for API level
      * {@link android.os.Build.VERSION_CODES#ICE_CREAM_SANDWICH_MR1} and below,
@@ -932,9 +1004,7 @@ public abstract class WebSettings {
      * the value of {@link #getAllowUniversalAccessFromFileURLs} is true.
      * Note too, that this setting affects only JavaScript access to file scheme
      * resources. Other access to such resources, for example, from image HTML
-     * elements, is unaffected. To prevent possible violation of same domain policy
-     * on {@link android.os.Build.VERSION_CODES#ICE_CREAM_SANDWICH} and earlier
-     * devices, you should explicitly set this value to {@code false}.
+     * elements, is unaffected.
      * <p>
      * The default value is true for API level
      * {@link android.os.Build.VERSION_CODES#ICE_CREAM_SANDWICH_MR1} and below,
@@ -955,9 +1025,10 @@ public abstract class WebSettings {
      *             {@link #setPluginState}
      * @hide Since API level {@link android.os.Build.VERSION_CODES#JELLY_BEAN_MR2}
      */
-    @SystemApi
     @Deprecated
-    public abstract void setPluginsEnabled(boolean flag);
+    public synchronized void setPluginsEnabled(boolean flag) {
+        throw new MustOverrideException();
+    }
 
     /**
      * Tells the WebView to enable, disable, or have plugins on demand. On
@@ -970,7 +1041,9 @@ public abstract class WebSettings {
      * @deprecated Plugins will not be supported in future, and should not be used.
      */
     @Deprecated
-    public abstract void setPluginState(PluginState state);
+    public synchronized void setPluginState(PluginState state) {
+        throw new MustOverrideException();
+    }
 
     /**
      * Sets a custom path to plugins used by the WebView. This method is
@@ -982,7 +1055,7 @@ public abstract class WebSettings {
      * @hide Since API level {@link android.os.Build.VERSION_CODES#JELLY_BEAN_MR2}
      */
     @Deprecated
-    public void setPluginsPath(String pluginsPath) {
+    public synchronized void setPluginsPath(String pluginsPath) {
         // Specified to do nothing, so no need for derived classes to override.
     }
 
@@ -997,8 +1070,13 @@ public abstract class WebSettings {
      * @deprecated Database paths are managed by the implementation and calling this method
      *             will have no effect.
      */
+    // This will update WebCore when the Sync runs in the C++ side.
+    // Note that the WebCore Database Tracker only allows the path to be set
+    // once.
     @Deprecated
-    public abstract void setDatabasePath(String databasePath);
+    public synchronized void setDatabasePath(String databasePath) {
+        throw new MustOverrideException();
+    }
 
     /**
      * Sets the path where the Geolocation databases should be saved. In order
@@ -1007,11 +1085,11 @@ public abstract class WebSettings {
      *
      * @param databasePath a path to the directory where databases should be
      *                     saved.
-     * @deprecated Geolocation database are managed by the implementation and calling this method
-     *             will have no effect.
      */
-    @Deprecated
-    public abstract void setGeolocationDatabasePath(String databasePath);
+    // This will update WebCore when the Sync runs in the C++ side.
+    public synchronized void setGeolocationDatabasePath(String databasePath) {
+        throw new MustOverrideException();
+    }
 
     /**
      * Sets whether the Application Caches API should be enabled. The default
@@ -1021,7 +1099,9 @@ public abstract class WebSettings {
      *
      * @param flag true if the WebView should enable Application Caches
      */
-    public abstract void setAppCacheEnabled(boolean flag);
+    public synchronized void setAppCacheEnabled(boolean flag) {
+        throw new MustOverrideException();
+    }
 
     /**
      * Sets the path to the Application Caches files. In order for the
@@ -1033,7 +1113,9 @@ public abstract class WebSettings {
      *                     Application Caches files.
      * @see #setAppCacheEnabled
      */
-    public abstract void setAppCachePath(String appCachePath);
+    public synchronized void setAppCachePath(String appCachePath) {
+        throw new MustOverrideException();
+    }
 
     /**
      * Sets the maximum size for the Application Cache content. The passed size
@@ -1047,7 +1129,9 @@ public abstract class WebSettings {
      * @deprecated In future quota will be managed automatically.
      */
     @Deprecated
-    public abstract void setAppCacheMaxSize(long appCacheMaxSize);
+    public synchronized void setAppCacheMaxSize(long appCacheMaxSize) {
+        throw new MustOverrideException();
+    }
 
     /**
      * Sets whether the database storage API is enabled. The default value is
@@ -1061,14 +1145,18 @@ public abstract class WebSettings {
      *
      * @param flag true if the WebView should use the database storage API
      */
-    public abstract void setDatabaseEnabled(boolean flag);
+    public synchronized void setDatabaseEnabled(boolean flag) {
+        throw new MustOverrideException();
+    }
 
     /**
      * Sets whether the DOM storage API is enabled. The default value is false.
      *
      * @param flag true if the WebView should use the DOM storage API
      */
-    public abstract void setDomStorageEnabled(boolean flag);
+    public synchronized void setDomStorageEnabled(boolean flag) {
+        throw new MustOverrideException();
+    }
 
     /**
      * Gets whether the DOM Storage APIs are enabled.
@@ -1076,8 +1164,9 @@ public abstract class WebSettings {
      * @return true if the DOM Storage APIs are enabled
      * @see #setDomStorageEnabled
      */
-    public abstract boolean getDomStorageEnabled();
-
+    public synchronized boolean getDomStorageEnabled() {
+        throw new MustOverrideException();
+    }
     /**
      * Gets the path to where database storage API databases are saved.
      *
@@ -1086,7 +1175,9 @@ public abstract class WebSettings {
      * @deprecated Database paths are managed by the implementation this method is obsolete.
      */
     @Deprecated
-    public abstract String getDatabasePath();
+    public synchronized String getDatabasePath() {
+        throw new MustOverrideException();
+    }
 
     /**
      * Gets whether the database storage API is enabled.
@@ -1094,7 +1185,9 @@ public abstract class WebSettings {
      * @return true if the database storage API is enabled
      * @see #setDatabaseEnabled
      */
-    public abstract boolean getDatabaseEnabled();
+    public synchronized boolean getDatabaseEnabled() {
+        throw new MustOverrideException();
+    }
 
     /**
      * Sets whether Geolocation is enabled. The default is true.
@@ -1111,10 +1204,14 @@ public abstract class WebSettings {
      *   via the JavaScript Geolocation API.
      * </ul>
      * <p>
+     * As an option, it is possible to store previous locations and web origin
+     * permissions in a database. See {@link #setGeolocationDatabasePath}.
      *
      * @param flag whether Geolocation should be enabled
      */
-    public abstract void setGeolocationEnabled(boolean flag);
+    public synchronized void setGeolocationEnabled(boolean flag) {
+        throw new MustOverrideException();
+    }
 
     /**
      * Gets whether JavaScript is enabled.
@@ -1122,7 +1219,9 @@ public abstract class WebSettings {
      * @return true if JavaScript is enabled
      * @see #setJavaScriptEnabled
      */
-    public abstract boolean getJavaScriptEnabled();
+    public synchronized boolean getJavaScriptEnabled() {
+        throw new MustOverrideException();
+    }
 
     /**
      * Gets whether JavaScript running in the context of a file scheme URL can
@@ -1153,9 +1252,10 @@ public abstract class WebSettings {
      * @deprecated This method has been replaced by {@link #getPluginState}
      * @hide Since API level {@link android.os.Build.VERSION_CODES#JELLY_BEAN_MR2}
      */
-    @SystemApi
     @Deprecated
-    public abstract boolean getPluginsEnabled();
+    public synchronized boolean getPluginsEnabled() {
+        throw new MustOverrideException();
+    }
 
     /**
      * Gets the current state regarding whether plugins are enabled.
@@ -1165,7 +1265,9 @@ public abstract class WebSettings {
      * @deprecated Plugins will not be supported in future, and should not be used.
      */
     @Deprecated
-    public abstract PluginState getPluginState();
+    public synchronized PluginState getPluginState() {
+        throw new MustOverrideException();
+    }
 
     /**
      * Gets the directory that contains the plugin libraries. This method is
@@ -1177,7 +1279,7 @@ public abstract class WebSettings {
      * @hide Since API level {@link android.os.Build.VERSION_CODES#JELLY_BEAN_MR2}
      */
     @Deprecated
-    public String getPluginsPath() {
+    public synchronized String getPluginsPath() {
         // Unconditionally returns empty string, so no need for derived classes to override.
         return "";
     }
@@ -1188,7 +1290,9 @@ public abstract class WebSettings {
      *
      * @param flag true if JavaScript can open windows automatically
      */
-    public abstract void setJavaScriptCanOpenWindowsAutomatically(boolean flag);
+    public synchronized void setJavaScriptCanOpenWindowsAutomatically(boolean flag) {
+        throw new MustOverrideException();
+    }
 
     /**
      * Gets whether JavaScript can open windows automatically.
@@ -1197,15 +1301,18 @@ public abstract class WebSettings {
      *         window.open()
      * @see #setJavaScriptCanOpenWindowsAutomatically
      */
-    public abstract boolean getJavaScriptCanOpenWindowsAutomatically();
-
+    public synchronized boolean getJavaScriptCanOpenWindowsAutomatically() {
+        throw new MustOverrideException();
+    }
     /**
      * Sets the default text encoding name to use when decoding html pages.
-     * The default is "UTF-8".
+     * The default is "Latin-1".
      *
      * @param encoding the text encoding name
      */
-    public abstract void setDefaultTextEncodingName(String encoding);
+    public synchronized void setDefaultTextEncodingName(String encoding) {
+        throw new MustOverrideException();
+    }
 
     /**
      * Gets the default text encoding name.
@@ -1213,19 +1320,17 @@ public abstract class WebSettings {
      * @return the default text encoding name as a string
      * @see #setDefaultTextEncodingName
      */
-    public abstract String getDefaultTextEncodingName();
+    public synchronized String getDefaultTextEncodingName() {
+        throw new MustOverrideException();
+    }
 
     /**
      * Sets the WebView's user-agent string. If the string is null or empty,
      * the system default value will be used.
-     *
-     * Note that starting from {@link android.os.Build.VERSION_CODES#KITKAT} Android
-     * version, changing the user-agent while loading a web page causes WebView
-     * to initiate loading once again.
-     *
-     * @param ua new user-agent string
      */
-    public abstract void setUserAgentString(String ua);
+    public synchronized void setUserAgentString(String ua) {
+        throw new MustOverrideException();
+    }
 
     /**
      * Gets the WebView's user-agent string.
@@ -1233,7 +1338,9 @@ public abstract class WebSettings {
      * @return the WebView's user-agent string
      * @see #setUserAgentString
      */
-    public abstract String getUserAgentString();
+    public synchronized String getUserAgentString() {
+        throw new MustOverrideException();
+    }
 
     /**
      * Returns the default User-Agent used by a WebView.
@@ -1253,7 +1360,9 @@ public abstract class WebSettings {
      *
      * @param flag whether the WebView needs to set a node
      */
-    public abstract void setNeedInitialFocus(boolean flag);
+    public void setNeedInitialFocus(boolean flag) {
+        throw new MustOverrideException();
+    }
 
     /**
      * Sets the priority of the Render thread. Unlike the other settings, this
@@ -1265,7 +1374,9 @@ public abstract class WebSettings {
      *             not be supported in future versions.
      */
     @Deprecated
-    public abstract void setRenderPriority(RenderPriority priority);
+    public synchronized void setRenderPriority(RenderPriority priority) {
+        throw new MustOverrideException();
+    }
 
     /**
      * Overrides the way the cache is used. The way the cache is used is based
@@ -1279,7 +1390,9 @@ public abstract class WebSettings {
      *
      * @param mode the mode to use
      */
-    public abstract void setCacheMode(@CacheMode int mode);
+    public void setCacheMode(int mode) {
+        throw new MustOverrideException();
+    }
 
     /**
      * Gets the current setting for overriding the cache mode.
@@ -1287,148 +1400,7 @@ public abstract class WebSettings {
      * @return the current setting for overriding the cache mode
      * @see #setCacheMode
      */
-    @CacheMode
-    public abstract int getCacheMode();
-
-    /**
-     * Configures the WebView's behavior when a secure origin attempts to load a resource from an
-     * insecure origin.
-     *
-     * By default, apps that target {@link android.os.Build.VERSION_CODES#KITKAT} or below default
-     * to {@link #MIXED_CONTENT_ALWAYS_ALLOW}. Apps targeting
-     * {@link android.os.Build.VERSION_CODES#LOLLIPOP} default to {@link #MIXED_CONTENT_NEVER_ALLOW}.
-     *
-     * The preferred and most secure mode of operation for the WebView is
-     * {@link #MIXED_CONTENT_NEVER_ALLOW} and use of {@link #MIXED_CONTENT_ALWAYS_ALLOW} is
-     * strongly discouraged.
-     *
-     * @param mode The mixed content mode to use. One of {@link #MIXED_CONTENT_NEVER_ALLOW},
-     *     {@link #MIXED_CONTENT_ALWAYS_ALLOW} or {@link #MIXED_CONTENT_COMPATIBILITY_MODE}.
-     */
-    public abstract void setMixedContentMode(int mode);
-
-    /**
-     * Gets the current behavior of the WebView with regard to loading insecure content from a
-     * secure origin.
-     * @return The current setting, one of {@link #MIXED_CONTENT_NEVER_ALLOW},
-     *     {@link #MIXED_CONTENT_ALWAYS_ALLOW} or {@link #MIXED_CONTENT_COMPATIBILITY_MODE}.
-     */
-    public abstract int getMixedContentMode();
-
-    /**
-     * Sets whether to use a video overlay for embedded encrypted video.
-     * In API levels prior to {@link android.os.Build.VERSION_CODES#LOLLIPOP}, encrypted video can
-     * only be rendered directly on a secure video surface, so it had been a hard problem to play
-     * encrypted video in HTML.  When this flag is on, WebView can play encrypted video (MSE/EME)
-     * by using a video overlay (aka hole-punching) for videos embedded using HTML &lt;video&gt;
-     * tag.<br>
-     * Caution: This setting is intended for use only in a narrow set of circumstances and apps
-     * should only enable it if they require playback of encrypted video content. It will impose
-     * the following limitations on the WebView:
-     * <ul>
-     * <li> Only one video overlay can be played at a time.
-     * <li> Changes made to position or dimensions of a video element may be propagated to the
-     * corresponding video overlay with a noticeable delay.
-     * <li> The video overlay is not visible to web APIs and as such may not interact with
-     * script or styling. For example, CSS styles applied to the &lt;video&gt; tag may be ignored.
-     * </ul>
-     * This is not an exhaustive set of constraints and it may vary with new versions of the
-     * WebView.
-     * @hide
-     */
-    @SystemApi
-    public abstract void setVideoOverlayForEmbeddedEncryptedVideoEnabled(boolean flag);
-
-    /**
-     * Gets whether a video overlay will be used for embedded encrypted video.
-     *
-     * @return true if WebView uses a video overlay for embedded encrypted video.
-     * @see #setVideoOverlayForEmbeddedEncryptedVideoEnabled
-     * @hide
-     */
-    @SystemApi
-    public abstract boolean getVideoOverlayForEmbeddedEncryptedVideoEnabled();
-
-    /**
-     * Sets whether this WebView should raster tiles when it is
-     * offscreen but attached to a window. Turning this on can avoid
-     * rendering artifacts when animating an offscreen WebView on-screen.
-     * Offscreen WebViews in this mode use more memory. The default value is
-     * false.<br>
-     * Please follow these guidelines to limit memory usage:
-     * <ul>
-     * <li> WebView size should be not be larger than the device screen size.
-     * <li> Limit use of this mode to a small number of WebViews. Use it for
-     *   visible WebViews and WebViews about to be animated to visible.
-     * </ul>
-     */
-    public abstract void setOffscreenPreRaster(boolean enabled);
-
-    /**
-     * Gets whether this WebView should raster tiles when it is
-     * offscreen but attached to a window.
-     * @return true if this WebView will raster tiles when it is
-     * offscreen but attached to a window.
-     */
-    public abstract boolean getOffscreenPreRaster();
-
-    /**
-     * @hide
-     */
-    @IntDef(flag = true,
-            value = {
-                    MENU_ITEM_NONE,
-                    MENU_ITEM_SHARE,
-                    MENU_ITEM_WEB_SEARCH,
-                    MENU_ITEM_PROCESS_TEXT
-            })
-    @Retention(RetentionPolicy.SOURCE)
-    @Target({ElementType.PARAMETER, ElementType.METHOD})
-    private @interface MenuItemFlags {}
-
-    /**
-     * Disables the action mode menu items according to {@code menuItems} flag.
-     * @param menuItems an integer field flag for the menu items to be disabled.
-     */
-    public abstract void setDisabledActionModeMenuItems(@MenuItemFlags int menuItems);
-
-    /**
-     * Gets the action mode menu items that are disabled, expressed in an integer field flag.
-     * The default value is {@link #MENU_ITEM_NONE}
-     *
-     * @return all the disabled menu item flags combined with bitwise OR.
-     */
-    public abstract @MenuItemFlags int getDisabledActionModeMenuItems();
-
-    /**
-     * Used with {@link #setDisabledActionModeMenuItems}.
-     *
-     * No menu items should be disabled.
-     */
-    public static final int MENU_ITEM_NONE = 0;
-
-    /**
-     * Used with {@link #setDisabledActionModeMenuItems}.
-     *
-     * Disable menu item "Share".
-     */
-    public static final int MENU_ITEM_SHARE = 1 << 0;
-
-    /**
-     * Used with {@link #setDisabledActionModeMenuItems}.
-     *
-     * Disable menu item "Web Search".
-     */
-    public static final int MENU_ITEM_WEB_SEARCH = 1 << 1;
-
-    /**
-     * Used with {@link #setDisabledActionModeMenuItems}.
-     *
-     * Disable all the action mode menu items for text processing.
-     * By default WebView searches for activities that are able to handle
-     * {@link android.content.Intent#ACTION_PROCESS_TEXT} and show them in the
-     * action mode menu. If this flag is set via {@link
-     * #setDisabledActionModeMenuItems}, these menu items will be disabled.
-     */
-    public static final int MENU_ITEM_PROCESS_TEXT = 1 << 2;
+    public int getCacheMode() {
+        throw new MustOverrideException();
+    }
 }

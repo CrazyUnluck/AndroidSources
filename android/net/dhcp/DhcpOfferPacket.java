@@ -16,8 +16,10 @@
 
 package android.net.dhcp;
 
+import java.net.InetAddress;
 import java.net.Inet4Address;
 import java.nio.ByteBuffer;
+import java.util.List;
 
 /**
  * This class implements the DHCP-OFFER packet.
@@ -26,14 +28,15 @@ class DhcpOfferPacket extends DhcpPacket {
     /**
      * The IP address of the server which sent this packet.
      */
-    private final Inet4Address mSrcIp;
+    private final InetAddress mSrcIp;
 
     /**
      * Generates a OFFER packet with the specified parameters.
      */
-    DhcpOfferPacket(int transId, short secs, boolean broadcast, Inet4Address serverAddress,
-                    Inet4Address clientIp, Inet4Address yourIp, byte[] clientMac) {
-        super(transId, secs, clientIp, yourIp, INADDR_ANY, INADDR_ANY, clientMac, broadcast);
+    DhcpOfferPacket(int transId, boolean broadcast, InetAddress serverAddress,
+                    InetAddress clientIp, byte[] clientMac) {
+        super(transId, Inet4Address.ANY, clientIp, Inet4Address.ANY,
+            Inet4Address.ANY, clientMac, broadcast);
         mSrcIp = serverAddress;
     }
 
@@ -42,13 +45,13 @@ class DhcpOfferPacket extends DhcpPacket {
         String dnsServers = ", DNS servers: ";
 
         if (mDnsServers != null) {
-            for (Inet4Address dnsServer: mDnsServers) {
+            for (InetAddress dnsServer: mDnsServers) {
                 dnsServers += dnsServer + " ";
             }
         }
 
         return s + " OFFER, ip " + mYourIp + ", mask " + mSubnetMask +
-                dnsServers + ", gateways " + mGateways +
+                dnsServers + ", gateway " + mGateway +
                 " lease time " + mLeaseTime + ", domain " + mDomainName;
     }
 
@@ -57,8 +60,8 @@ class DhcpOfferPacket extends DhcpPacket {
      */
     public ByteBuffer buildPacket(int encap, short destUdp, short srcUdp) {
         ByteBuffer result = ByteBuffer.allocate(MAX_LENGTH);
-        Inet4Address destIp = mBroadcast ? INADDR_BROADCAST : mYourIp;
-        Inet4Address srcIp = mBroadcast ? INADDR_ANY : mSrcIp;
+        InetAddress destIp = mBroadcast ? Inet4Address.ALL : mYourIp;
+        InetAddress srcIp = mBroadcast ? Inet4Address.ANY : mSrcIp;
 
         fillInPacket(encap, destIp, srcIp, destUdp, srcUdp, result,
             DHCP_BOOTREPLY, mBroadcast);
@@ -81,10 +84,18 @@ class DhcpOfferPacket extends DhcpPacket {
         }
 
         addTlv(buffer, DHCP_SUBNET_MASK, mSubnetMask);
-        addTlv(buffer, DHCP_ROUTER, mGateways);
+        addTlv(buffer, DHCP_ROUTER, mGateway);
         addTlv(buffer, DHCP_DOMAIN_NAME, mDomainName);
         addTlv(buffer, DHCP_BROADCAST_ADDRESS, mBroadcastAddress);
         addTlv(buffer, DHCP_DNS_SERVER, mDnsServers);
         addTlvEnd(buffer);
+    }
+
+    /**
+     * Notifies the state machine of the OFFER packet parameters.
+     */
+    public void doNextOp(DhcpStateMachine machine) {
+        machine.onOfferReceived(mBroadcast, mTransId, mClientMac, mYourIp,
+            mServerIdentifier);
     }
 }

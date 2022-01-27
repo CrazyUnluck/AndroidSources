@@ -14,10 +14,6 @@
 package android.support.v17.leanback.widget;
 
 import android.content.Context;
-import android.graphics.Canvas;
-import android.graphics.drawable.ColorDrawable;
-import android.graphics.drawable.Drawable;
-import android.support.annotation.ColorInt;
 import android.support.v17.leanback.R;
 import android.util.AttributeSet;
 import android.view.LayoutInflater;
@@ -31,8 +27,6 @@ import android.widget.LinearLayout;
 final class RowContainerView extends LinearLayout {
 
     private ViewGroup mHeaderDock;
-    private Drawable mForeground;
-    private boolean mForegroundBoundsChanged = true;
 
     public RowContainerView(Context context) {
         this(context, null, 0);
@@ -68,44 +62,4 @@ final class RowContainerView extends LinearLayout {
         addView(view);
     }
 
-    public void showHeader(boolean show) {
-        mHeaderDock.setVisibility(show ? View.VISIBLE : View.GONE);
-    }
-
-    public void setForeground(Drawable d) {
-        mForeground = d;
-        setWillNotDraw(mForeground == null);
-        invalidate();
-    }
-
-    public void setForegroundColor(@ColorInt int color) {
-        if (mForeground instanceof ColorDrawable) {
-            ((ColorDrawable) mForeground.mutate()).setColor(color);
-            invalidate();
-        } else {
-            setForeground(new ColorDrawable(color));
-        }
-    }
-
-    public Drawable getForeground() {
-        return mForeground;
-    }
-
-    @Override
-    protected void onSizeChanged(int w, int h, int oldw, int oldh) {
-        super.onSizeChanged(w, h, oldw, oldh);
-        mForegroundBoundsChanged = true;
-    }
-
-    @Override
-    public void draw(Canvas canvas) {
-        super.draw(canvas);
-        if (mForeground != null) {
-            if (mForegroundBoundsChanged) {
-                mForegroundBoundsChanged = false;
-                mForeground.setBounds(0, 0, getWidth(), getHeight());
-            }
-            mForeground.draw(canvas);
-        }
-    }
 }

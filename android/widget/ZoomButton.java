@@ -17,19 +17,23 @@
 package android.widget;
 
 import android.content.Context;
+import android.os.Handler;
 import android.util.AttributeSet;
 import android.view.KeyEvent;
 import android.view.MotionEvent;
 import android.view.View;
 import android.view.View.OnLongClickListener;
+import android.view.accessibility.AccessibilityEvent;
+import android.view.accessibility.AccessibilityNodeInfo;
 
 public class ZoomButton extends ImageButton implements OnLongClickListener {
 
+    private final Handler mHandler;
     private final Runnable mRunnable = new Runnable() {
         public void run() {
             if (hasOnClickListeners() && mIsInLongpress && isEnabled()) {
                 callOnClick();
-                postDelayed(this, mZoomSpeed);
+                mHandler.postDelayed(this, mZoomSpeed);
             }
         }
     };
@@ -45,12 +49,9 @@ public class ZoomButton extends ImageButton implements OnLongClickListener {
         this(context, attrs, 0);
     }
     
-    public ZoomButton(Context context, AttributeSet attrs, int defStyleAttr) {
-        this(context, attrs, defStyleAttr, 0);
-    }
-
-    public ZoomButton(Context context, AttributeSet attrs, int defStyleAttr, int defStyleRes) {
-        super(context, attrs, defStyleAttr, defStyleRes);
+    public ZoomButton(Context context, AttributeSet attrs, int defStyle) {
+        super(context, attrs, defStyle);
+        mHandler = new Handler();
         setOnLongClickListener(this);
     }
 
@@ -69,7 +70,7 @@ public class ZoomButton extends ImageButton implements OnLongClickListener {
 
     public boolean onLongClick(View v) {
         mIsInLongpress = true;
-        post(mRunnable);
+        mHandler.post(mRunnable);
         return true;
     }
         
@@ -99,7 +100,14 @@ public class ZoomButton extends ImageButton implements OnLongClickListener {
     }
 
     @Override
-    public CharSequence getAccessibilityClassName() {
-        return ZoomButton.class.getName();
+    public void onInitializeAccessibilityEvent(AccessibilityEvent event) {
+        super.onInitializeAccessibilityEvent(event);
+        event.setClassName(ZoomButton.class.getName());
+    }
+
+    @Override
+    public void onInitializeAccessibilityNodeInfo(AccessibilityNodeInfo info) {
+        super.onInitializeAccessibilityNodeInfo(info);
+        info.setClassName(ZoomButton.class.getName());
     }
 }

@@ -34,8 +34,6 @@ import android.view.SurfaceControl;
 
 import java.io.PrintWriter;
 import java.util.ArrayList;
-import java.util.Arrays;
-import java.util.List;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
@@ -49,21 +47,6 @@ import java.util.regex.Pattern;
  * service as usual.  The UI handler is only used by the {@link OverlayDisplayWindow}.
  * </p><p>
  * Display adapters are guarded by the {@link DisplayManagerService.SyncRoot} lock.
- * </p><p>
- * This adapter is configured via the
- * {@link android.provider.Settings.Global#OVERLAY_DISPLAY_DEVICES} setting. This setting should be
- * formatted as follows:
- * <pre>
- * [mode1]|[mode2]|...,[flag1],[flag2],...
- * </pre>
- * with each mode specified as:
- * <pre>
- * [width]x[height]/[densityDpi]
- * </pre>
- * Supported flags:
- * <ul>
- * <li><pre>secure</pre>: creates a secure display</li>
- * </ul>
  * </p>
  */
 final class OverlayDisplayAdapter extends DisplayAdapter {
@@ -75,13 +58,8 @@ final class OverlayDisplayAdapter extends DisplayAdapter {
     private static final int MAX_WIDTH = 4096;
     private static final int MAX_HEIGHT = 4096;
 
-    private static final Pattern DISPLAY_PATTERN =
-            Pattern.compile("([^,]+)(,[a-z]+)*");
-    private static final Pattern MODE_PATTERN =
-            Pattern.compile("(\\d+)x(\\d+)/(\\d+)");
-
-    // Unique id prefix for overlay displays.
-    private static final String UNIQUE_ID_PREFIX = "overlay:";
+    private static final Pattern SETTING_PATTERN =
+            Pattern.compile("(\\d+)x(\\d+)/(\\d+)(,[a-z]+)*");
 
     private final Handler mUiHandler;
     private final ArrayList<OverlayDisplayHandle> mOverlays =
@@ -155,51 +133,40 @@ final class OverlayDisplayAdapter extends DisplayAdapter {
 
         int count = 0;
         for (String part : value.split(";")) {
-            Matcher displayMatcher = DISPLAY_PATTERN.matcher(part);
-            if (displayMatcher.matches()) {
+            Matcher matcher = SETTING_PATTERN.matcher(part);
+            if (matcher.matches()) {
                 if (count >= 4) {
                     Slog.w(TAG, "Too many overlay display devices specified: " + value);
                     break;
                 }
-                String modeString = displayMatcher.group(1);
-                String flagString = displayMatcher.group(2);
-                ArrayList<OverlayMode> modes = new ArrayList<>();
-                for (String mode : modeString.split("\\|")) {
-                    Matcher modeMatcher = MODE_PATTERN.matcher(mode);
-                    if (modeMatcher.matches()) {
-                        try {
-                            int width = Integer.parseInt(modeMatcher.group(1), 10);
-                            int height = Integer.parseInt(modeMatcher.group(2), 10);
-                            int densityDpi = Integer.parseInt(modeMatcher.group(3), 10);
-                            if (width >= MIN_WIDTH && width <= MAX_WIDTH
-                                    && height >= MIN_HEIGHT && height <= MAX_HEIGHT
-                                    && densityDpi >= DisplayMetrics.DENSITY_LOW
-                                    && densityDpi <= DisplayMetrics.DENSITY_XXXHIGH) {
-                                modes.add(new OverlayMode(width, height, densityDpi));
-                                continue;
-                            } else {
-                                Slog.w(TAG, "Ignoring out-of-range overlay display mode: " + mode);
-                            }
-                        } catch (NumberFormatException ex) {
-                        }
-                    } else if (mode.isEmpty()) {
+                try {
+                    int width = Integer.parseInt(matcher.group(1), 10);
+                    int height = Integer.parseInt(matcher.group(2), 10);
+                    int densityDpi = Integer.parseInt(matcher.group(3), 10);
+                    String flagString = matcher.group(4);
+                    if (width >= MIN_WIDTH && width <= MAX_WIDTH
+                            && height >= MIN_HEIGHT && height <= MAX_HEIGHT
+                            && densityDpi >= DisplayMetrics.DENSITY_LOW
+                            && densityDpi <= DisplayMetrics.DENSITY_XXHIGH) {
+                        int number = ++count;
+                        String name = getContext().getResources().getString(
+                                com.android.internal.R.string.display_manager_overlay_display_name,
+                                number);
+                        int gravity = chooseOverlayGravity(number);
+                        boolean secure = flagString != null && flagString.contains(",secure");
+
+                        Slog.i(TAG, "Showing overlay display device #" + number
+                                + ": name=" + name + ", width=" + width + ", height=" + height
+                                + ", densityDpi=" + densityDpi + ", secure=" + secure);
+
+                        mOverlays.add(new OverlayDisplayHandle(name,
+                                width, height, densityDpi, gravity, secure));
                         continue;
                     }
+                } catch (NumberFormatException ex) {
                 }
-                if (!modes.isEmpty()) {
-                    int number = ++count;
-                    String name = getContext().getResources().getString(
-                            com.android.internal.R.string.display_manager_overlay_display_name,
-                            number);
-                    int gravity = chooseOverlayGravity(number);
-                    boolean secure = flagString != null && flagString.contains(",secure");
-
-                    Slog.i(TAG, "Showing overlay display device #" + number
-                            + ": name=" + name + ", modes=" + Arrays.toString(modes.toArray()));
-
-                    mOverlays.add(new OverlayDisplayHandle(name, modes, gravity, secure, number));
-                    continue;
-                }
+            } else if (part.isEmpty()) {
+                continue;
             }
             Slog.w(TAG, "Malformed overlay display devices setting: " + value);
         }
@@ -219,41 +186,32 @@ final class OverlayDisplayAdapter extends DisplayAdapter {
         }
     }
 
-    private abstract class OverlayDisplayDevice extends DisplayDevice {
+    private final class OverlayDisplayDevice extends DisplayDevice {
         private final String mName;
+        private final int mWidth;
+        private final int mHeight;
         private final float mRefreshRate;
-        private final long mDisplayPresentationDeadlineNanos;
+        private final int mDensityDpi;
         private final boolean mSecure;
-        private final List<OverlayMode> mRawModes;
-        private final Display.Mode[] mModes;
-        private final int mDefaultMode;
 
         private int mState;
         private SurfaceTexture mSurfaceTexture;
         private Surface mSurface;
         private DisplayDeviceInfo mInfo;
-        private int mActiveMode;
 
         public OverlayDisplayDevice(IBinder displayToken, String name,
-                List<OverlayMode> modes, int activeMode, int defaultMode,
-                float refreshRate, long presentationDeadlineNanos,
-                boolean secure, int state,
-                SurfaceTexture surfaceTexture, int number) {
-            super(OverlayDisplayAdapter.this, displayToken, UNIQUE_ID_PREFIX + number);
+                int width, int height, float refreshRate,
+                int densityDpi, boolean secure, int state,
+                SurfaceTexture surfaceTexture) {
+            super(OverlayDisplayAdapter.this, displayToken);
             mName = name;
+            mWidth = width;
+            mHeight = height;
             mRefreshRate = refreshRate;
-            mDisplayPresentationDeadlineNanos = presentationDeadlineNanos;
+            mDensityDpi = densityDpi;
             mSecure = secure;
             mState = state;
             mSurfaceTexture = surfaceTexture;
-            mRawModes = modes;
-            mModes = new Display.Mode[modes.size()];
-            for (int i = 0; i < modes.size(); i++) {
-                OverlayMode mode = modes.get(i);
-                mModes[i] = createMode(mode.mWidth, mode.mHeight, refreshRate);
-            }
-            mActiveMode = activeMode;
-            mDefaultMode = defaultMode;
         }
 
         public void destroyLocked() {
@@ -283,21 +241,14 @@ final class OverlayDisplayAdapter extends DisplayAdapter {
         @Override
         public DisplayDeviceInfo getDisplayDeviceInfoLocked() {
             if (mInfo == null) {
-                Display.Mode mode = mModes[mActiveMode];
-                OverlayMode rawMode = mRawModes.get(mActiveMode);
                 mInfo = new DisplayDeviceInfo();
                 mInfo.name = mName;
-                mInfo.uniqueId = getUniqueId();
-                mInfo.width = mode.getPhysicalWidth();
-                mInfo.height = mode.getPhysicalHeight();
-                mInfo.modeId = mode.getModeId();
-                mInfo.defaultModeId = mModes[0].getModeId();
-                mInfo.supportedModes = mModes;
-                mInfo.densityDpi = rawMode.mDensityDpi;
-                mInfo.xDpi = rawMode.mDensityDpi;
-                mInfo.yDpi = rawMode.mDensityDpi;
-                mInfo.presentationDeadlineNanos = mDisplayPresentationDeadlineNanos +
-                        1000000000L / (int) mRefreshRate;   // display's deadline + 1 frame
+                mInfo.width = mWidth;
+                mInfo.height = mHeight;
+                mInfo.refreshRate = mRefreshRate;
+                mInfo.densityDpi = mDensityDpi;
+                mInfo.xDpi = mDensityDpi;
+                mInfo.yDpi = mDensityDpi;
                 mInfo.flags = DisplayDeviceInfo.FLAG_PRESENTATION;
                 if (mSecure) {
                     mInfo.flags |= DisplayDeviceInfo.FLAG_SECURE;
@@ -308,40 +259,6 @@ final class OverlayDisplayAdapter extends DisplayAdapter {
             }
             return mInfo;
         }
-
-        @Override
-        public void requestColorTransformAndModeInTransactionLocked(int color, int id) {
-            int index = -1;
-            if (id == 0) {
-                // Use the default.
-                index = 0;
-            } else {
-                for (int i = 0; i < mModes.length; i++) {
-                    if (mModes[i].getModeId() == id) {
-                        index = i;
-                        break;
-                    }
-                }
-            }
-            if (index == -1) {
-                Slog.w(TAG, "Unable to locate mode " + id + ", reverting to default.");
-                index = mDefaultMode;
-            }
-            if (mActiveMode == index) {
-                return;
-            }
-            mActiveMode = index;
-            mInfo = null;
-            sendDisplayDeviceEventLocked(this, DISPLAY_DEVICE_EVENT_CHANGED);
-            onModeChangedLocked(index);
-        }
-
-        /**
-         * Called when the device switched to a new mode.
-         *
-         * @param index index of the mode in the list of modes
-         */
-        public abstract void onModeChangedLocked(int index);
     }
 
     /**
@@ -351,32 +268,25 @@ final class OverlayDisplayAdapter extends DisplayAdapter {
      * Guarded by the {@link DisplayManagerService.SyncRoot} lock.
      */
     private final class OverlayDisplayHandle implements OverlayDisplayWindow.Listener {
-        private static final int DEFAULT_MODE_INDEX = 0;
-
         private final String mName;
-        private final List<OverlayMode> mModes;
+        private final int mWidth;
+        private final int mHeight;
+        private final int mDensityDpi;
         private final int mGravity;
         private final boolean mSecure;
-        private final int mNumber;
 
         private OverlayDisplayWindow mWindow;
         private OverlayDisplayDevice mDevice;
-        private int mActiveMode;
 
-        public OverlayDisplayHandle(String name, List<OverlayMode> modes, int gravity,
-                boolean secure, int number) {
+        public OverlayDisplayHandle(String name,
+                int width, int height, int densityDpi, int gravity, boolean secure) {
             mName = name;
-            mModes = modes;
+            mWidth = width;
+            mHeight = height;
+            mDensityDpi = densityDpi;
             mGravity = gravity;
             mSecure = secure;
-            mNumber = number;
 
-            mActiveMode = 0;
-
-            showLocked();
-        }
-
-        private void showLocked() {
             mUiHandler.post(mShowRunnable);
         }
 
@@ -385,28 +295,14 @@ final class OverlayDisplayAdapter extends DisplayAdapter {
             mUiHandler.post(mDismissRunnable);
         }
 
-        private void onActiveModeChangedLocked(int index) {
-            mUiHandler.removeCallbacks(mResizeRunnable);
-            mActiveMode = index;
-            if (mWindow != null) {
-                mUiHandler.post(mResizeRunnable);
-            }
-        }
-
         // Called on the UI thread.
         @Override
-        public void onWindowCreated(SurfaceTexture surfaceTexture, float refreshRate,
-                long presentationDeadlineNanos, int state) {
+        public void onWindowCreated(SurfaceTexture surfaceTexture, float refreshRate, int state) {
             synchronized (getSyncRoot()) {
                 IBinder displayToken = SurfaceControl.createDisplay(mName, mSecure);
-                mDevice = new OverlayDisplayDevice(displayToken, mName, mModes, mActiveMode,
-                        DEFAULT_MODE_INDEX, refreshRate, presentationDeadlineNanos,
-                        mSecure, state, surfaceTexture, mNumber) {
-                    @Override
-                    public void onModeChangedLocked(int index) {
-                        onActiveModeChangedLocked(index);
-                    }
-                };
+                mDevice = new OverlayDisplayDevice(displayToken, mName,
+                        mWidth, mHeight, refreshRate, mDensityDpi, mSecure,
+                        state, surfaceTexture);
 
                 sendDisplayDeviceEventLocked(mDevice, DISPLAY_DEVICE_EVENT_ADDED);
             }
@@ -436,17 +332,17 @@ final class OverlayDisplayAdapter extends DisplayAdapter {
 
         public void dumpLocked(PrintWriter pw) {
             pw.println("  " + mName + ":");
-            pw.println("    mModes=" + Arrays.toString(mModes.toArray()));
-            pw.println("    mActiveMode=" + mActiveMode);
+            pw.println("    mWidth=" + mWidth);
+            pw.println("    mHeight=" + mHeight);
+            pw.println("    mDensityDpi=" + mDensityDpi);
             pw.println("    mGravity=" + mGravity);
             pw.println("    mSecure=" + mSecure);
-            pw.println("    mNumber=" + mNumber);
 
             // Try to dump the window state.
             if (mWindow != null) {
                 final IndentingPrintWriter ipw = new IndentingPrintWriter(pw, "    ");
                 ipw.increaseIndent();
-                DumpUtils.dumpAsync(mUiHandler, mWindow, ipw, "", 200);
+                DumpUtils.dumpAsync(mUiHandler, mWindow, ipw, 200);
             }
         }
 
@@ -454,9 +350,8 @@ final class OverlayDisplayAdapter extends DisplayAdapter {
         private final Runnable mShowRunnable = new Runnable() {
             @Override
             public void run() {
-                OverlayMode mode = mModes.get(mActiveMode);
                 OverlayDisplayWindow window = new OverlayDisplayWindow(getContext(),
-                        mName, mode.mWidth, mode.mHeight, mode.mDensityDpi, mGravity, mSecure,
+                        mName, mWidth, mHeight, mDensityDpi, mGravity, mSecure,
                         OverlayDisplayHandle.this);
                 window.show();
 
@@ -481,47 +376,5 @@ final class OverlayDisplayAdapter extends DisplayAdapter {
                 }
             }
         };
-
-        // Runs on the UI thread.
-        private final Runnable mResizeRunnable = new Runnable() {
-            @Override
-            public void run() {
-                OverlayMode mode;
-                OverlayDisplayWindow window;
-                synchronized (getSyncRoot()) {
-                    if (mWindow == null) {
-                        return;
-                    }
-                    mode = mModes.get(mActiveMode);
-                    window = mWindow;
-                }
-                window.resize(mode.mWidth, mode.mHeight, mode.mDensityDpi);
-            }
-        };
-    }
-
-    /**
-     * A display mode for an overlay display.
-     */
-    private static final class OverlayMode {
-        final int mWidth;
-        final int mHeight;
-        final int mDensityDpi;
-
-        OverlayMode(int width, int height, int densityDpi) {
-            mWidth = width;
-            mHeight = height;
-            mDensityDpi = densityDpi;
-        }
-
-        @Override
-        public String toString() {
-            return new StringBuilder("{")
-                    .append("width=").append(mWidth)
-                    .append(", height=").append(mHeight)
-                    .append(", densityDpi=").append(mDensityDpi)
-                    .append("}")
-                    .toString();
-        }
     }
 }

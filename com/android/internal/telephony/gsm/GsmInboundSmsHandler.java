@@ -23,12 +23,10 @@ import android.provider.Telephony.Sms.Intents;
 
 import com.android.internal.telephony.CommandsInterface;
 import com.android.internal.telephony.InboundSmsHandler;
-import com.android.internal.telephony.Phone;
+import com.android.internal.telephony.PhoneBase;
 import com.android.internal.telephony.SmsConstants;
 import com.android.internal.telephony.SmsMessageBase;
 import com.android.internal.telephony.SmsStorageMonitor;
-import com.android.internal.telephony.uicc.IccRecords;
-import com.android.internal.telephony.uicc.UiccController;
 import com.android.internal.telephony.uicc.UsimServiceTable;
 
 /**
@@ -44,7 +42,7 @@ public class GsmInboundSmsHandler extends InboundSmsHandler {
      * Create a new GSM inbound SMS handler.
      */
     private GsmInboundSmsHandler(Context context, SmsStorageMonitor storageMonitor,
-            Phone phone) {
+            PhoneBase phone) {
         super("GsmInboundSmsHandler", context, storageMonitor, phone,
                 GsmCellBroadcastHandler.makeGsmCellBroadcastHandler(context, phone));
         phone.mCi.setOnNewGsmSms(getHandler(), EVENT_NEW_SMS, null);
@@ -67,7 +65,7 @@ public class GsmInboundSmsHandler extends InboundSmsHandler {
      * Wait for state machine to enter startup state. We can't send any messages until then.
      */
     public static GsmInboundSmsHandler makeInboundSmsHandler(Context context,
-            SmsStorageMonitor storageMonitor, Phone phone) {
+            SmsStorageMonitor storageMonitor, PhoneBase phone) {
         GsmInboundSmsHandler handler = new GsmInboundSmsHandler(context, storageMonitor, phone);
         handler.start();
         return handler;
@@ -109,11 +107,11 @@ public class GsmInboundSmsHandler extends InboundSmsHandler {
 
         boolean handled = false;
         if (sms.isMWISetMessage()) {
-            updateMessageWaitingIndicator(sms.getNumOfVoicemails());
+            mPhone.setVoiceMessageWaiting(1, -1);  // line 1: unknown number of msgs waiting
             handled = sms.isMwiDontStore();
             if (DBG) log("Received voice mail indicator set SMS shouldStore=" + !handled);
         } else if (sms.isMWIClearMessage()) {
-            updateMessageWaitingIndicator(0);
+            mPhone.setVoiceMessageWaiting(1, 0);   // line 1: no msgs waiting
             handled = sms.isMwiDontStore();
             if (DBG) log("Received voice mail indicator clear SMS shouldStore=" + !handled);
         }
@@ -129,28 +127,6 @@ public class GsmInboundSmsHandler extends InboundSmsHandler {
         }
 
         return dispatchNormalMessage(smsb);
-    }
-
-    private void updateMessageWaitingIndicator(int voicemailCount) {
-        // range check
-        if (voicemailCount < 0) {
-            voicemailCount = -1;
-        } else if (voicemailCount > 0xff) {
-            // TS 23.040 9.2.3.24.2
-            // "The value 255 shall be taken to mean 255 or greater"
-            voicemailCount = 0xff;
-        }
-        // update voice mail count in Phone
-        mPhone.setVoiceMessageCount(voicemailCount);
-        // store voice mail count in SIM & shared preferences
-        IccRecords records = UiccController.getInstance().getIccRecords(
-                mPhone.getPhoneId(), UiccController.APP_FAM_3GPP);
-        if (records != null) {
-            log("updateMessageWaitingIndicator: updating SIM Records");
-            records.setVoiceMessageWaiting(1, voicemailCount);
-        } else {
-            log("updateMessageWaitingIndicator: SIM Records not found");
-        }
     }
 
     /**
@@ -172,7 +148,7 @@ public class GsmInboundSmsHandler extends InboundSmsHandler {
      * @param phone
      */
     @Override
-    protected void onUpdatePhoneObject(Phone phone) {
+    protected void onUpdatePhoneObject(PhoneBase phone) {
         super.onUpdatePhoneObject(phone);
         log("onUpdatePhoneObject: dispose of old CellBroadcastHandler and make a new one");
         mCellBroadcastHandler.dispose();

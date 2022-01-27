@@ -18,6 +18,7 @@ package android.graphics;
 
 import android.os.Parcel;
 import android.os.Parcelable;
+import android.util.FloatMath;
 
 
 /**
@@ -108,7 +109,7 @@ public class PointF implements Parcelable {
      * Returns the euclidian distance from (0,0) to (x,y)
      */
     public static float length(float x, float y) {
-        return (float) Math.hypot(x, y);
+        return FloatMath.sqrt(x * x + y * y);
     }
 
     /**

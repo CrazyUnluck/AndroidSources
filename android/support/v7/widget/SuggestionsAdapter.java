@@ -30,7 +30,6 @@ import android.database.Cursor;
 import android.graphics.drawable.Drawable;
 import android.net.Uri;
 import android.os.Bundle;
-import android.support.v4.content.ContextCompat;
 import android.support.v4.widget.ResourceCursorAdapter;
 import android.support.v7.appcompat.R;
 import android.text.Spannable;
@@ -65,12 +64,11 @@ class SuggestionsAdapter extends ResourceCursorAdapter implements OnClickListene
     static final int REFINE_BY_ENTRY = 1;
     static final int REFINE_ALL = 2;
 
-    private final SearchManager mSearchManager;
-    private final SearchView mSearchView;
-    private final SearchableInfo mSearchable;
-    private final Context mProviderContext;
-    private final WeakHashMap<String, Drawable.ConstantState> mOutsideDrawablesCache;
-    private final int mCommitIconResId;
+    private SearchManager mSearchManager;
+    private SearchView mSearchView;
+    private SearchableInfo mSearchable;
+    private Context mProviderContext;
+    private WeakHashMap<String, Drawable.ConstantState> mOutsideDrawablesCache;
     private boolean mClosed = false;
     private int mQueryRefinement = REFINE_BY_ENTRY;
 
@@ -90,15 +88,15 @@ class SuggestionsAdapter extends ResourceCursorAdapter implements OnClickListene
     // private final Runnable mStartSpinnerRunnable;
     // private final Runnable mStopSpinnerRunnable;
 
-    public SuggestionsAdapter(Context context, SearchView searchView, SearchableInfo searchable,
+    public SuggestionsAdapter(Context context, SearchView searchView,
+            SearchableInfo searchable,
             WeakHashMap<String, Drawable.ConstantState> outsideDrawablesCache) {
-        super(context, searchView.getSuggestionRowLayout(), null /* no initial cursor */,
-                true /* auto-requery */);
+        super(context, R.layout.abc_search_dropdown_item_icons_2line,
+                null,   // no initial cursor
+                true);  // auto-requery
         mSearchManager = (SearchManager) mContext.getSystemService(Context.SEARCH_SERVICE);
         mSearchView = searchView;
         mSearchable = searchable;
-        mCommitIconResId = searchView.getSuggestionCommitIconResId();
-
         // set up provider resources (gives us icons, etc.)
         mProviderContext = context;
 
@@ -111,7 +109,7 @@ class SuggestionsAdapter extends ResourceCursorAdapter implements OnClickListene
      * copied to the query text field.
      * <p>
      *
-     * @param refine which queries to refine. Possible values are {@link #REFINE_NONE},
+     * @param refineWhat which queries to refine. Possible values are {@link #REFINE_NONE},
      * {@link #REFINE_BY_ENTRY}, and {@link #REFINE_ALL}.
      */
     public void setQueryRefinement(int refineWhat) {
@@ -195,9 +193,9 @@ class SuggestionsAdapter extends ResourceCursorAdapter implements OnClickListene
         Bundle extras = cursor != null ? cursor.getExtras() : null;
         if (DBG) {
             Log.d(LOG_TAG, "updateSpinnerState - extra = "
-                + (extras != null
-                        ? extras.getBoolean(SearchManager.CURSOR_EXTRA_KEY_IN_PROGRESS)
-                        : null));
+                    + (extras != null
+                    ? extras.getBoolean(SearchManager.CURSOR_EXTRA_KEY_IN_PROGRESS)
+                    : null));
         }
         // Check if the Cursor indicates that the query is not complete and show the spinner
         if (extras != null
@@ -241,12 +239,8 @@ class SuggestionsAdapter extends ResourceCursorAdapter implements OnClickListene
      */
     @Override
     public View newView(Context context, Cursor cursor, ViewGroup parent) {
-        final View v = super.newView(context, cursor, parent);
+        View v = super.newView(context, cursor, parent);
         v.setTag(new ChildViewCache(v));
-
-        // Set up icon.
-        final ImageView iconRefine = (ImageView) v.findViewById(R.id.edit_query);
-        iconRefine.setImageResource(mCommitIconResId);
         return v;
     }
 
@@ -315,7 +309,7 @@ class SuggestionsAdapter extends ResourceCursorAdapter implements OnClickListene
         }
         if (mQueryRefinement == REFINE_ALL
                 || (mQueryRefinement == REFINE_BY_ENTRY
-                        && (flags & SearchManager.FLAG_QUERY_REFINEMENT) != 0)) {
+                && (flags & SearchManager.FLAG_QUERY_REFINEMENT) != 0)) {
             views.mIconRefine.setVisibility(View.VISIBLE);
             views.mIconRefine.setTag(views.mText1.getText());
             views.mIconRefine.setOnClickListener(this);
@@ -495,7 +489,7 @@ class SuggestionsAdapter extends ResourceCursorAdapter implements OnClickListene
                 return drawable;
             }
             // Not cached, find it by resource ID
-            drawable = ContextCompat.getDrawable(mProviderContext, resourceId);
+            drawable = mProviderContext.getResources().getDrawable(resourceId);
             // Stick it in the cache, using the URI as key
             storeInIconCache(drawableUri, drawable);
             return drawable;
