@@ -97,8 +97,8 @@ public abstract class DnsPacket {
         private static final int MAXNAMESIZE = 255;
         private static final int MAXLABELSIZE = 63;
         private static final int MAXLABELCOUNT = 128;
-        private static final int NAME_NORMAL = 0;
-        private static final int NAME_COMPRESSION = 0xC0;
+        public static final int NAME_NORMAL = 0;
+        public static final int NAME_COMPRESSION = 0xC0;
         private final DecimalFormat mByteFormat = new DecimalFormat();
         private final FieldPosition mPos = new FieldPosition(0);
 

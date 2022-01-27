@@ -16,6 +16,8 @@
 
 package com.android.server;
 
+import static android.system.OsConstants.O_RDONLY;
+
 import android.content.BroadcastReceiver;
 import android.content.Context;
 import android.content.Intent;
@@ -23,36 +25,41 @@ import android.content.pm.IPackageManager;
 import android.os.Build;
 import android.os.DropBoxManager;
 import android.os.Environment;
-import android.os.FileObserver;
 import android.os.FileUtils;
+import android.os.MessageQueue.OnFileDescriptorEventListener;
 import android.os.RecoverySystem;
 import android.os.RemoteException;
 import android.os.ServiceManager;
 import android.os.SystemProperties;
 import android.os.storage.StorageManager;
 import android.provider.Downloads;
+import android.system.ErrnoException;
+import android.system.Os;
 import android.text.TextUtils;
 import android.util.AtomicFile;
 import android.util.EventLog;
 import android.util.Slog;
+import android.util.TypedXmlPullParser;
+import android.util.TypedXmlSerializer;
 import android.util.Xml;
 
 import com.android.internal.annotations.VisibleForTesting;
 import com.android.internal.logging.MetricsLogger;
-import com.android.internal.util.FastXmlSerializer;
 import com.android.internal.util.FrameworkStatsLog;
 import com.android.internal.util.XmlUtils;
 
 import org.xmlpull.v1.XmlPullParser;
 import org.xmlpull.v1.XmlPullParserException;
-import org.xmlpull.v1.XmlSerializer;
 
+import java.io.BufferedReader;
 import java.io.File;
+import java.io.FileDescriptor;
 import java.io.FileInputStream;
 import java.io.FileNotFoundException;
 import java.io.FileOutputStream;
 import java.io.IOException;
-import java.nio.charset.StandardCharsets;
+import java.io.InputStreamReader;
+import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.Iterator;
 import java.util.regex.Matcher;
@@ -75,8 +82,8 @@ public class BootReceiver extends BroadcastReceiver {
         SystemProperties.getInt("ro.debuggable", 0) == 1 ? 196608 : 65536;
     private static final int GMSCORE_LASTK_LOG_SIZE = 196608;
 
-    private static final File TOMBSTONE_DIR = new File("/data/tombstones");
     private static final String TAG_TOMBSTONE = "SYSTEM_TOMBSTONE";
+    private static final String TAG_TOMBSTONE_PROTO = "SYSTEM_TOMBSTONE_PROTO";
 
     // The pre-froyo package and class of the system updater, which
     // ran in the system process.  We need to remove its packages here
@@ -85,9 +92,6 @@ public class BootReceiver extends BroadcastReceiver {
         "com.google.android.systemupdater";
     private static final String OLD_UPDATER_CLASS =
         "com.google.android.systemupdater.SystemUpdateReceiver";
-
-    // Keep a reference to the observer so the finalizer doesn't disable it.
-    private static FileObserver sTombstoneObserver = null;
 
     private static final String LOG_FILES_FILE = "log-files.xml";
     private static final AtomicFile sFile = new AtomicFile(new File(
@@ -121,6 +125,15 @@ public class BootReceiver extends BroadcastReceiver {
     private static final String METRIC_SYSTEM_SERVER = "shutdown_system_server";
     private static final String METRIC_SHUTDOWN_TIME_START = "begin_shutdown";
 
+    // Location of ftrace pipe for notifications from kernel memory tools like KFENCE and KASAN.
+    private static final String ERROR_REPORT_TRACE_PIPE =
+            "/sys/kernel/tracing/instances/bootreceiver/trace_pipe";
+    // Stop after sending this many reports. See http://b/182159975.
+    private static final int MAX_ERROR_REPORTS = 8;
+    private static int sSentReports = 0;
+    // Avoid reporing the same bug from processDmesg() twice.
+    private static String sLastReportedBug = null;
+
     @Override
     public void onReceive(final Context context, Intent intent) {
         // Log boot events in the background to avoid blocking the main thread with I/O
@@ -148,13 +161,217 @@ public class BootReceiver extends BroadcastReceiver {
 
             }
         }.start();
+
+        FileDescriptor tracefd = null;
+        try {
+            tracefd = Os.open(ERROR_REPORT_TRACE_PIPE, O_RDONLY, 0600);
+        } catch (ErrnoException e) {
+            Slog.wtf(TAG, "Could not open " + ERROR_REPORT_TRACE_PIPE, e);
+            return;
+        }
+
+        /*
+         * Event listener to watch for memory tool error reports.
+         * We read from /sys/kernel/tracing/instances/bootreceiver/trace_pipe (set up by the
+         * system), which will print an ftrace event when a memory corruption is detected in the
+         * kernel.
+         * When an error is detected, we run the dmesg shell command and process its output.
+         */
+        OnFileDescriptorEventListener traceCallback = new OnFileDescriptorEventListener() {
+            final int mBufferSize = 1024;
+            byte[] mTraceBuffer = new byte[mBufferSize];
+            @Override
+            public int onFileDescriptorEvents(FileDescriptor fd, int events) {
+                /*
+                 * Read from the tracing pipe set up to monitor the error_report_end events.
+                 * When a tracing event occurs, the kernel writes a short (~100 bytes) line to the
+                 * pipe, e.g.:
+                 *   ...-11210  [004] d..1   285.322307: error_report_end: [kfence] ffffff8938a05000
+                 * The buffer size we use for reading should be enough to read the whole
+                 * line, but to be on the safe side we keep reading until the buffer
+                 * contains a '\n' character. In the unlikely case of a very buggy kernel
+                 * the buffer may contain multiple tracing events that cannot be attributed
+                 * to particular error reports. In that case the latest error report
+                 * residing in dmesg is picked.
+                 */
+                try {
+                    int nbytes = Os.read(fd, mTraceBuffer, 0, mBufferSize);
+                    if (nbytes > 0) {
+                        String readStr = new String(mTraceBuffer);
+                        if (readStr.indexOf("\n") == -1) {
+                            return OnFileDescriptorEventListener.EVENT_INPUT;
+                        }
+                        processDmesg(context);
+                    }
+                } catch (Exception e) {
+                    Slog.wtf(TAG, "Error processing dmesg output", e);
+                    return 0;  // Unregister the handler.
+                }
+                return OnFileDescriptorEventListener.EVENT_INPUT;
+            }
+        };
+
+        IoThread.get().getLooper().getQueue().addOnFileDescriptorEventListener(
+                tracefd, OnFileDescriptorEventListener.EVENT_INPUT, traceCallback);
+
+    }
+
+    /**
+     * Check whether it is safe to collect this dmesg line or not.
+     *
+     * We only consider lines belonging to KASAN or KFENCE reports, but those may still contain
+     * user information, namely the process name:
+     *
+     *   [   69.547684] [ T6006]c7   6006  CPU: 7 PID: 6006 Comm: sh Tainted: G S       C O      ...
+     *
+     * hardware information:
+     *
+     *   [   69.558923] [ T6006]c7   6006  Hardware name: <REDACTED>
+     *
+     * or register dump (in KASAN reports only):
+     *
+     *   ... RIP: 0033:0x7f96443109da
+     *   ... RSP: 002b:00007ffcf0b51b08 EFLAGS: 00000202 ORIG_RAX: 00000000000000af
+     *   ... RAX: ffffffffffffffda RBX: 000055dc3ee521a0 RCX: 00007f96443109da
+     *
+     * (on x86_64)
+     *
+     *   ... pc : lpm_cpuidle_enter+0x258/0x384
+     *   ... lr : lpm_cpuidle_enter+0x1d4/0x384
+     *   ... sp : ffffff800820bea0
+     *   ... x29: ffffff800820bea0 x28: ffffffc2305f3ce0
+     *   ... ...
+     *   ... x9 : 0000000000000001 x8 : 0000000000000000
+     * (on ARM64)
+     *
+     * We therefore omit the lines that contain "Comm:", "Hardware name:", or match the general
+     * purpose register regexp.
+     *
+     * @param  line single line of `dmesg` output.
+     * @return      updated line with sensitive data removed, or null if the line must be skipped.
+     */
+    public static String stripSensitiveData(String line) {
+        /*
+         * General purpose register names begin with "R" on x86_64 and "x" on ARM64. The letter is
+         * followed by two symbols (numbers, letters or spaces) and a colon, which is followed by a
+         * 16-digit hex number. The optional "_" prefix accounts for ORIG_RAX on x86.
+         */
+        final String registerRegex = "[ _][Rx]..: [0-9a-f]{16}";
+        final Pattern registerPattern = Pattern.compile(registerRegex);
+
+        final String corruptionRegex = "Detected corrupted memory at 0x[0-9a-f]+";
+        final Pattern corruptionPattern = Pattern.compile(corruptionRegex);
+
+        if (line.contains("Comm: ") || line.contains("Hardware name: ")) return null;
+        if (registerPattern.matcher(line).find()) return null;
+
+        Matcher cm = corruptionPattern.matcher(line);
+        if (cm.find()) return cm.group(0);
+        return line;
+    }
+
+    /*
+     * Search dmesg output for the last error report from KFENCE or KASAN and copy it to Dropbox.
+     *
+     * Example report printed by the kernel (redacted to fit into 100 column limit):
+     *   [   69.236673] [ T6006]c7   6006  =========================================================
+     *   [   69.245688] [ T6006]c7   6006  BUG: KFENCE: out-of-bounds in kfence_handle_page_fault
+     *   [   69.245688] [ T6006]c7   6006
+     *   [   69.257816] [ T6006]c7   6006  Out-of-bounds access at 0xffffffca75c45000 (...)
+     *   [   69.267102] [ T6006]c7   6006   kfence_handle_page_fault+0x1bc/0x208
+     *   [   69.273536] [ T6006]c7   6006   __do_kernel_fault+0xa8/0x11c
+     *   ...
+     *   [   69.355427] [ T6006]c7   6006  kfence-#2 [0xffffffca75c46f30-0xffffffca75c46fff, ...
+     *   [   69.366938] [ T6006]c7   6006   __d_alloc+0x3c/0x1b4
+     *   [   69.371946] [ T6006]c7   6006   d_alloc_parallel+0x48/0x538
+     *   [   69.377578] [ T6006]c7   6006   __lookup_slow+0x60/0x15c
+     *   ...
+     *   [   69.547684] [ T6006]c7   6006  CPU: 7 PID: 6006 Comm: sh Tainted: G S       C O      ...
+     *   [   69.558923] [ T6006]c7   6006  Hardware name: <REDACTED>
+     *   [   69.567059] [ T6006]c7   6006  =========================================================
+     *
+     *   We rely on the kernel printing task/CPU ID for every log line (CONFIG_PRINTK_CALLER=y).
+     *   E.g. for the above report the task ID is T6006. Report lines may interleave with lines
+     *   printed by other kernel tasks, which will have different task IDs, so in order to collect
+     *   the report we:
+     *    - find the next occurrence of the "BUG: " line in the kernel log, parse it to obtain the
+     *      task ID and the tool name;
+     *    - scan the rest of dmesg output and pick every line that has the same task ID, until we
+     *      encounter a horizontal ruler, i.e.:
+     *      [   69.567059] [ T6006]c7   6006  ======================================================
+     *    - add that line to the error report, unless it contains sensitive information (see
+     *      logLinePotentiallySensitive())
+     *    - repeat the above steps till the last report is found.
+     */
+    private void processDmesg(Context ctx) throws IOException {
+        if (sSentReports == MAX_ERROR_REPORTS) return;
+        /*
+         * Only SYSTEM_KASAN_ERROR_REPORT and SYSTEM_KFENCE_ERROR_REPORT are supported at the
+         * moment.
+         */
+        final String[] bugTypes = new String[] { "KASAN", "KFENCE" };
+        final String tsRegex = "^\\[[^]]+\\] ";
+        final String bugRegex =
+                tsRegex + "\\[([^]]+)\\].*BUG: (" + String.join("|", bugTypes) + "):";
+        final Pattern bugPattern = Pattern.compile(bugRegex);
+
+        Process p = new ProcessBuilder("/system/bin/timeout", "-k", "90s", "60s",
+                                       "dmesg").redirectErrorStream(true).start();
+        BufferedReader reader = new BufferedReader(new InputStreamReader(p.getInputStream()));
+        String line = null;
+        String task = null;
+        String tool = null;
+        String bugTitle = null;
+        Pattern reportPattern = null;
+        ArrayList<String> currentReport = null;
+        String lastReport = null;
+
+        while ((line = reader.readLine()) != null) {
+            if (currentReport == null) {
+                Matcher bm = bugPattern.matcher(line);
+                if (!bm.find()) continue;
+                task = bm.group(1);
+                tool = bm.group(2);
+                bugTitle = line;
+                currentReport = new ArrayList<String>();
+                currentReport.add(line);
+                String reportRegex = tsRegex + "\\[" + task + "\\].*";
+                reportPattern = Pattern.compile(reportRegex);
+                continue;
+            }
+            Matcher rm = reportPattern.matcher(line);
+            if (!rm.matches()) continue;
+            if ((line = stripSensitiveData(line)) == null) continue;
+            if (line.contains("================================")) {
+                lastReport = String.join("\n", currentReport);
+                currentReport = null;
+                continue;
+            }
+            currentReport.add(line);
+        }
+        if (lastReport == null) {
+            Slog.w(TAG, "Could not find report in dmesg.");
+            return;
+        }
+
+        // Avoid sending the same bug report twice.
+        if (bugTitle.equals(sLastReportedBug)) return;
+
+        final String reportTag = "SYSTEM_" + tool + "_ERROR_REPORT";
+        final DropBoxManager db = ctx.getSystemService(DropBoxManager.class);
+        final String headers = getCurrentBootHeaders();
+        final String reportText = headers + lastReport;
+
+        addTextToDropBox(db, reportTag, reportText, "/dev/kmsg", LOG_SIZE);
+        sLastReportedBug = bugTitle;
+        sSentReports++;
     }
 
     private void removeOldUpdatePackages(Context context) {
         Downloads.removeAllDownloadsByPackage(context, OLD_UPDATER_PACKAGE, OLD_UPDATER_CLASS);
     }
 
-    private String getPreviousBootHeaders() {
+    private static String getPreviousBootHeaders() {
         try {
             return FileUtils.readTextFile(lastHeaderFile, 0, null);
         } catch (IOException e) {
@@ -162,7 +379,7 @@ public class BootReceiver extends BroadcastReceiver {
         }
     }
 
-    private String getCurrentBootHeaders() throws IOException {
+    private static String getCurrentBootHeaders() throws IOException {
         return new StringBuilder(512)
             .append("Build: ").append(Build.FINGERPRINT).append("\n")
             .append("Hardware: ").append(Build.BOARD).append("\n")
@@ -176,7 +393,7 @@ public class BootReceiver extends BroadcastReceiver {
     }
 
 
-    private String getBootHeadersToLogAndUpdate() throws IOException {
+    private static String getBootHeadersToLogAndUpdate() throws IOException {
         final String oldHeaders = getPreviousBootHeaders();
         final String newHeaders = getCurrentBootHeaders();
 
@@ -248,38 +465,31 @@ public class BootReceiver extends BroadcastReceiver {
         logFsMountTime();
         addFsckErrorsToDropBoxAndLogFsStat(db, timestamps, headers, -LOG_SIZE, "SYSTEM_FSCK");
         logSystemServerShutdownTimeMetrics();
-
-        // Scan existing tombstones (in case any new ones appeared)
-        File[] tombstoneFiles = TOMBSTONE_DIR.listFiles();
-        for (int i = 0; tombstoneFiles != null && i < tombstoneFiles.length; i++) {
-            if (tombstoneFiles[i].isFile()) {
-                addFileToDropBox(db, timestamps, headers, tombstoneFiles[i].getPath(),
-                        LOG_SIZE, "SYSTEM_TOMBSTONE");
-            }
-        }
-
         writeTimestamps(timestamps);
+    }
 
-        // Start watching for new tombstone files; will record them as they occur.
-        // This gets registered with the singleton file observer thread.
-        sTombstoneObserver = new FileObserver(TOMBSTONE_DIR.getPath(), FileObserver.CREATE) {
-            @Override
-            public void onEvent(int event, String path) {
-                HashMap<String, Long> timestamps = readTimestamps();
-                try {
-                    File file = new File(TOMBSTONE_DIR, path);
-                    if (file.isFile() && file.getName().startsWith("tombstone_")) {
-                        addFileToDropBox(db, timestamps, headers, file.getPath(), LOG_SIZE,
-                                TAG_TOMBSTONE);
-                    }
-                } catch (IOException e) {
-                    Slog.e(TAG, "Can't log tombstone", e);
-                }
-                writeTimestamps(timestamps);
+    /**
+     * Add a tombstone to the DropBox.
+     *
+     * @param ctx Context
+     * @param tombstone path to the tombstone
+     */
+    public static void addTombstoneToDropBox(Context ctx, File tombstone, boolean proto) {
+        final DropBoxManager db = ctx.getSystemService(DropBoxManager.class);
+        final String bootReason = SystemProperties.get("ro.boot.bootreason", null);
+        HashMap<String, Long> timestamps = readTimestamps();
+        try {
+            if (proto) {
+                db.addFile(TAG_TOMBSTONE_PROTO, tombstone, 0);
+            } else {
+                final String headers = getBootHeadersToLogAndUpdate();
+                addFileToDropBox(db, timestamps, headers, tombstone.getPath(), LOG_SIZE,
+                        TAG_TOMBSTONE);
             }
-        };
-
-        sTombstoneObserver.startWatching();
+        } catch (IOException e) {
+            Slog.e(TAG, "Can't log tombstone", e);
+        }
+        writeTimestamps(timestamps);
     }
 
     private static void addLastkToDropBox(
@@ -712,8 +922,7 @@ public class BootReceiver extends BroadcastReceiver {
             HashMap<String, Long> timestamps = new HashMap<String, Long>();
             boolean success = false;
             try (final FileInputStream stream = sFile.openRead()) {
-                XmlPullParser parser = Xml.newPullParser();
-                parser.setInput(stream, StandardCharsets.UTF_8.name());
+                TypedXmlPullParser parser = Xml.resolvePullParser(stream);
 
                 int type;
                 while ((type = parser.next()) != XmlPullParser.START_TAG
@@ -735,8 +944,7 @@ public class BootReceiver extends BroadcastReceiver {
                     String tagName = parser.getName();
                     if (tagName.equals("log")) {
                         final String filename = parser.getAttributeValue(null, "filename");
-                        final long timestamp = Long.valueOf(parser.getAttributeValue(
-                                    null, "timestamp"));
+                        final long timestamp = parser.getAttributeLong(null, "timestamp");
                         timestamps.put(filename, timestamp);
                     } else {
                         Slog.w(TAG, "Unknown tag: " + parser.getName());
@@ -764,7 +972,7 @@ public class BootReceiver extends BroadcastReceiver {
         }
     }
 
-    private void writeTimestamps(HashMap<String, Long> timestamps) {
+    private static void writeTimestamps(HashMap<String, Long> timestamps) {
         synchronized (sFile) {
             final FileOutputStream stream;
             try {
@@ -775,8 +983,7 @@ public class BootReceiver extends BroadcastReceiver {
             }
 
             try {
-                XmlSerializer out = new FastXmlSerializer();
-                out.setOutput(stream, StandardCharsets.UTF_8.name());
+                TypedXmlSerializer out = Xml.resolveSerializer(stream);
                 out.startDocument(null, true);
                 out.startTag(null, "log-files");
 
@@ -785,7 +992,7 @@ public class BootReceiver extends BroadcastReceiver {
                     String filename = itor.next();
                     out.startTag(null, "log");
                     out.attribute(null, "filename", filename);
-                    out.attribute(null, "timestamp", timestamps.get(filename).toString());
+                    out.attributeLong(null, "timestamp", timestamps.get(filename));
                     out.endTag(null, "log");
                 }
 

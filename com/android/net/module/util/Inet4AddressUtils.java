@@ -163,4 +163,30 @@ public class Inet4AddressUtils {
             throws IllegalArgumentException {
         return intToInet4AddressHTH(prefixLengthToV4NetmaskIntHTH(prefixLength));
     }
+
+    /**
+     * Trim leading zeros from IPv4 address strings
+     * Non-v4 addresses and host names remain unchanged.
+     * For example, 192.168.000.010 -> 192.168.0.10
+     * @param addr a string representing an ip address
+     * @return a string properly trimmed
+     */
+    public static String trimAddressZeros(String addr) {
+        if (addr == null) return null;
+        String[] octets = addr.split("\\.");
+        if (octets.length != 4) return addr;
+        StringBuilder builder = new StringBuilder(16);
+        String result = null;
+        for (int i = 0; i < 4; i++) {
+            try {
+                if (octets[i].length() > 3) return addr;
+                builder.append(Integer.parseInt(octets[i]));
+            } catch (NumberFormatException e) {
+                return addr;
+            }
+            if (i < 3) builder.append('.');
+        }
+        result = builder.toString();
+        return result;
+    }
 }

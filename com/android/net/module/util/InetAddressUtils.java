@@ -18,6 +18,7 @@ package com.android.net.module.util;
 
 import android.os.Parcel;
 
+import java.net.Inet6Address;
 import java.net.InetAddress;
 import java.net.UnknownHostException;
 
@@ -27,6 +28,8 @@ import java.net.UnknownHostException;
  */
 public class InetAddressUtils {
 
+    private static final int INET6_ADDR_LENGTH = 16;
+
     /**
      * Writes an InetAddress to a parcel. The address may be null. This is likely faster than
      * calling writeSerializable.
@@ -35,6 +38,13 @@ public class InetAddressUtils {
     public static void parcelInetAddress(Parcel parcel, InetAddress address, int flags) {
         byte[] addressArray = (address != null) ? address.getAddress() : null;
         parcel.writeByteArray(addressArray);
+        if (address instanceof Inet6Address) {
+            final Inet6Address v6Address = (Inet6Address) address;
+            final boolean hasScopeId = v6Address.getScopeId() != 0;
+            parcel.writeBoolean(hasScopeId);
+            if (hasScopeId) parcel.writeInt(v6Address.getScopeId());
+        }
+
     }
 
     /**
@@ -47,7 +57,14 @@ public class InetAddressUtils {
         if (addressArray == null) {
             return null;
         }
+
         try {
+            if (addressArray.length == INET6_ADDR_LENGTH) {
+                final boolean hasScopeId = in.readBoolean();
+                final int scopeId = hasScopeId ? in.readInt() : 0;
+                return Inet6Address.getByAddress(null /* host */, addressArray, scopeId);
+            }
+
             return InetAddress.getByAddress(addressArray);
         } catch (UnknownHostException e) {
             return null;
